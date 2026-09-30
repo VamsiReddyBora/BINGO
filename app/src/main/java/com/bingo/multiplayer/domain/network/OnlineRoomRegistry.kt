@@ -394,13 +394,16 @@ object OnlineRoomRegistry {
                         val effReady = when {
                             existing.lobbyReadyStatus == "LEFT_LOBBY" || known?.lobbyReadyStatus == "LEFT_LOBBY" -> "LEFT_LOBBY"
                             existing.lobbyReadyStatus == "IN_GAME" || known?.lobbyReadyStatus == "IN_GAME" -> "IN_GAME"
-                            existing.lobbyReadyStatus == "READY" || known?.lobbyReadyStatus == "READY" -> "READY"
-                            existing.lobbyReadyStatus.isNotBlank() -> existing.lobbyReadyStatus
+                            known != null && known.readyVersion > existing.readyVersion -> known.lobbyReadyStatus
+                            existing.readyVersion > (known?.readyVersion ?: 0L) -> existing.lobbyReadyStatus
                             known?.lobbyReadyStatus?.isNotBlank() == true -> known.lobbyReadyStatus
+                            existing.lobbyReadyStatus.isNotBlank() -> existing.lobbyReadyStatus
                             else -> "NOT_READY"
                         }
+                        val effVer = maxOf(existing.readyVersion, known?.readyVersion ?: 0L)
                         existing.copy(
                             lobbyReadyStatus = effReady,
+                            readyVersion = effVer,
                             lastSeenTimestamp = maxOf(existing.lastSeenTimestamp, known?.lastSeenTimestamp ?: 0L)
                         )
                     } else if (existing.isHost && isHostAlive) {
@@ -459,7 +462,8 @@ object OnlineRoomRegistry {
     suspend fun updatePlayerReadyStatus(
         roomCode: String,
         playerId: String,
-        readyStatus: String
+        readyStatus: String,
+        readyVersion: Long = System.currentTimeMillis()
     ): Boolean = withContext(Dispatchers.IO) {
         val cleanCode = roomCode.trim().uppercase()
         if (cleanCode.isBlank() || playerId.isBlank()) return@withContext false
@@ -470,15 +474,29 @@ object OnlineRoomRegistry {
             val updatedPlayers = if (session.players.any { it.id == playerId || (it.username.isNotBlank() && it.username.equals(playerId, ignoreCase = true)) }) {
                 session.players.map { p ->
                     if (p.id == playerId || (p.username.isNotBlank() && p.username.equals(playerId, ignoreCase = true))) {
-                        modified = true
-                        p.copy(lobbyReadyStatus = readyStatus, lastSeenTimestamp = now)
+                        if (readyVersion > 0L && readyVersion < p.readyVersion) {
+                            p // Ignore out-of-order stale update
+                        } else {
+                            modified = true
+                            p.copy(
+                                lobbyReadyStatus = readyStatus,
+                                readyVersion = maxOf(readyVersion, p.readyVersion),
+                                lastSeenTimestamp = now
+                            )
+                        }
                     } else {
                         p
                     }
                 }
             } else {
                 modified = true
-                session.players + Player(id = playerId, displayName = "Player", lobbyReadyStatus = readyStatus, lastSeenTimestamp = now)
+                session.players + Player(
+                    id = playerId,
+                    displayName = "Player",
+                    lobbyReadyStatus = readyStatus,
+                    readyVersion = readyVersion,
+                    lastSeenTimestamp = now
+                )
             }
             if (!modified) return@withContext true
             val updatedSession = session.copy(players = updatedPlayers, lastHeartbeat = now)

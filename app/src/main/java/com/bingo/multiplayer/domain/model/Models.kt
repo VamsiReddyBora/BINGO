@@ -36,7 +36,8 @@ data class Player(
     val currentStreak: Int = 0,
     val level: Int = 1,
     val lastSeenTimestamp: Long = System.currentTimeMillis(),
-    val lobbyReadyStatus: String = if (isHost) "READY" else "NOT_READY"
+    val lobbyReadyStatus: String = if (isHost) "READY" else "NOT_READY",
+    val readyVersion: Long = 0L
 ) {
     val winRatePercentage: Int
         get() = if (gamesPlayed > 0) ((gamesWon.toFloat() / gamesPlayed) * 100).toInt() else 0

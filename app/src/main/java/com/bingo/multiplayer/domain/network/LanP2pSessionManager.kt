@@ -275,8 +275,13 @@ class LanP2pSessionManager {
                             (packet.displayName.isNotBlank() && it.displayName.equals(packet.displayName, ignoreCase = true))
                         }
                     if (existing != null) {
+                        if (packet.readyVersion > 0L && packet.readyVersion < existing.readyVersion) {
+                            return
+                        }
+                        val nextVersion = maxOf(packet.readyVersion, existing.readyVersion)
                         playerRegistry[existing.id] = existing.copy(
                             lobbyReadyStatus = packet.readyStatus,
+                            readyVersion = nextVersion,
                             lastSeenTimestamp = System.currentTimeMillis()
                         )
                         _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
@@ -317,7 +322,8 @@ class LanP2pSessionManager {
 
     fun updateLocalReadyStatus(status: String) {
         val p = localPlayer ?: return
-        val updated = p.copy(lobbyReadyStatus = status)
+        val nextVersion = maxOf(System.currentTimeMillis(), p.readyVersion + 1L)
+        val updated = p.copy(lobbyReadyStatus = status, readyVersion = nextVersion)
         localPlayer = updated
         playerRegistry[p.id] = updated
         _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
@@ -326,6 +332,7 @@ class LanP2pSessionManager {
                 type = "READY_STATUS",
                 playerId = p.id,
                 readyStatus = status,
+                readyVersion = nextVersion,
                 username = p.username,
                 displayName = p.displayName
             )

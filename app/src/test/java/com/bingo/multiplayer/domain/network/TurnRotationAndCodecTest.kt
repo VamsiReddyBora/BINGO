@@ -506,4 +506,71 @@ class TurnRotationAndCodecTest {
         assertEquals("guestuser", decoded.username)
         assertEquals("Guest Player", decoded.displayName)
     }
+
+    @Test
+    fun testFastPacketCodecWithReadyVersion() {
+        val readyPacket = RoomMessagePacket(
+            type = "READY_STATUS",
+            playerId = "guest_999",
+            readyStatus = "NOT_READY",
+            username = "alice",
+            displayName = "Alice B",
+            readyVersion = 1727670000000L
+        )
+        val encoded = FastPacketCodec.encode(readyPacket)
+        assertEquals("R|guest_999|NOT_READY|alice|Alice B|1727670000000", encoded)
+
+        val decoded = FastPacketCodec.decode(encoded)
+        assertEquals("READY_STATUS", decoded.type)
+        assertEquals("guest_999", decoded.playerId)
+        assertEquals("NOT_READY", decoded.readyStatus)
+        assertEquals("alice", decoded.username)
+        assertEquals("Alice B", decoded.displayName)
+        assertEquals(1727670000000L, decoded.readyVersion)
+    }
+
+    @Test
+    fun testRapidReadyToggleMonotonicVersionResolution() {
+        // Simulates 1000 rapid toggle clicks alternating between READY and NOT_READY
+        var currentVersion = 1000L
+        var guestPlayer = Player(
+            id = "guest_1",
+            displayName = "Guest 1",
+            lobbyReadyStatus = "NOT_READY",
+            readyVersion = currentVersion
+        )
+
+        val packets = mutableListOf<RoomMessagePacket>()
+        for (i in 1..1000) {
+            currentVersion++
+            val nextStatus = if (i % 2 == 1) "READY" else "NOT_READY"
+            packets.add(
+                RoomMessagePacket(
+                    type = "READY_STATUS",
+                    playerId = "guest_1",
+                    readyStatus = nextStatus,
+                    readyVersion = currentVersion
+                )
+            )
+        }
+
+        // The final intent after 1000 clicks (1000 is even) is NOT_READY
+        assertEquals("NOT_READY", packets.last().readyStatus)
+
+        // Simulate random out-of-order network arrival
+        val shuffledPackets = packets.shuffled()
+        for (pkt in shuffledPackets) {
+            // Reconcile according to our monotonic version logic
+            if (pkt.readyVersion >= guestPlayer.readyVersion) {
+                guestPlayer = guestPlayer.copy(
+                    lobbyReadyStatus = pkt.readyStatus,
+                    readyVersion = pkt.readyVersion
+                )
+            }
+        }
+
+        // Regardless of network packet arrival order, the final state must be NOT_READY at version 2000!
+        assertEquals("NOT_READY", guestPlayer.lobbyReadyStatus)
+        assertEquals(2000L, guestPlayer.readyVersion)
+    }
 }

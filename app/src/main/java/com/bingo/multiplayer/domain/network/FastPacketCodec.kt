@@ -28,7 +28,9 @@ object FastPacketCodec {
             "PING" -> "G|${packet.playerId}|${packet.pingTimestamp}"
             "PONG" -> "O|${packet.playerId}|${packet.pingTimestamp}"
             "READY_STATUS" -> {
-                if (packet.username.isBlank() && packet.displayName.isBlank()) {
+                if (packet.readyVersion > 0L) {
+                    "R|${packet.playerId}|${packet.readyStatus}|${packet.username}|${packet.displayName}|${packet.readyVersion}"
+                } else if (packet.username.isBlank() && packet.displayName.isBlank()) {
                     "R|${packet.playerId}|${packet.readyStatus}"
                 } else {
                     "R|${packet.playerId}|${packet.readyStatus}|${packet.username}|${packet.displayName}"
@@ -38,10 +40,10 @@ object FastPacketCodec {
             "HEARTBEAT" -> {
                 if (packet.players.isNotEmpty()) {
                     json.encodeToString(packet)
-                } else if (packet.username.isNullOrEmpty() && packet.avatarUrl.isNullOrEmpty() && (packet.readyStatus.isEmpty() || packet.readyStatus == "NOT_READY")) {
+                } else if (packet.username.isNullOrEmpty() && packet.avatarUrl.isNullOrEmpty() && (packet.readyStatus.isEmpty() || packet.readyStatus == "NOT_READY") && packet.readyVersion == 0L) {
                     "H|${packet.playerId}|${packet.displayName}|${if (packet.isHost) "1" else "0"}|${packet.timestamp}"
                 } else {
-                    "H|${packet.playerId}|${packet.displayName}|${if (packet.isHost) "1" else "0"}|${packet.timestamp}|${packet.username ?: ""}|${packet.avatarUrl ?: ""}|${packet.readyStatus}"
+                    "H|${packet.playerId}|${packet.displayName}|${if (packet.isHost) "1" else "0"}|${packet.timestamp}|${packet.username ?: ""}|${packet.avatarUrl ?: ""}|${packet.readyStatus}|${packet.readyVersion}"
                 }
             }
             else -> json.encodeToString(packet)
@@ -118,7 +120,8 @@ object FastPacketCodec {
                         playerId = parts.getOrNull(1) ?: "",
                         readyStatus = parts.getOrNull(2) ?: "NOT_READY",
                         username = parts.getOrNull(3) ?: "",
-                        displayName = parts.getOrNull(4) ?: ""
+                        displayName = parts.getOrNull(4) ?: "",
+                        readyVersion = parts.getOrNull(5)?.toLongOrNull() ?: 0L
                     )
                 }
 
@@ -135,6 +138,7 @@ object FastPacketCodec {
                     val parts = trimmed.split("|")
                     val isHost = parts.getOrNull(3) == "1"
                     val ready = parts.getOrNull(7)?.takeIf { it.isNotBlank() } ?: if (isHost) "READY" else "NOT_READY"
+                    val readyVer = parts.getOrNull(8)?.toLongOrNull() ?: 0L
                     RoomMessagePacket(
                         type = "HEARTBEAT",
                         playerId = parts.getOrNull(1) ?: "",
@@ -143,7 +147,8 @@ object FastPacketCodec {
                         timestamp = parts.getOrNull(4)?.toLongOrNull() ?: System.currentTimeMillis(),
                         username = parts.getOrNull(5)?.takeIf { it.isNotBlank() } ?: (parts.getOrNull(2) ?: ""),
                         avatarUrl = parts.getOrNull(6)?.takeIf { it.isNotBlank() },
-                        readyStatus = ready
+                        readyStatus = ready,
+                        readyVersion = readyVer
                     )
                 }
 
