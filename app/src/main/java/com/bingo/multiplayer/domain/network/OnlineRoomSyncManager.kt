@@ -608,7 +608,9 @@ class OnlineRoomSyncManager(
                     if (packet.pingTimestamp > 0L) {
                         val brokerRtt = (System.currentTimeMillis() - packet.pingTimestamp).coerceAtLeast(1L)
                         val cur = _pingMs.value
-                        _pingMs.value = if (cur <= 0L) brokerRtt else ((cur * 0.65) + (brokerRtt * 0.35)).toLong().coerceAtLeast(1L)
+                        val smoothed = if (cur <= 0L) brokerRtt else ((cur * 0.65) + (brokerRtt * 0.35)).toLong().coerceAtLeast(1L)
+                        _pingMs.value = smoothed
+                        NetworkPingMonitor.recordExternalPing(smoothed)
                     }
                 } else {
                     // Reply immediately with PONG echoing the sender's timestamp
@@ -629,7 +631,9 @@ class OnlineRoomSyncManager(
                     val fullRtt = (System.currentTimeMillis() - packet.pingTimestamp).coerceAtLeast(1L)
                     val oneWayLatency = (fullRtt / 2).coerceAtLeast(1L)
                     val cur = _pingMs.value
-                    _pingMs.value = if (cur <= 0L) oneWayLatency else ((cur * 0.65) + (oneWayLatency * 0.35)).toLong().coerceAtLeast(1L)
+                    val smoothed = if (cur <= 0L) oneWayLatency else ((cur * 0.65) + (oneWayLatency * 0.35)).toLong().coerceAtLeast(1L)
+                    _pingMs.value = smoothed
+                    NetworkPingMonitor.recordExternalPing(smoothed)
                 }
             }
         }

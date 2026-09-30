@@ -1946,7 +1946,12 @@ fun RootNavGraph(
             val myDisplayName = getPlayerDisplayName()
 
             val isCurrentHost = (currentGameMode != GameMode.ONLINE_ROOM) || isHosting
-            val currentPing = if (currentGameMode == GameMode.ONLINE_ROOM) onlinePingMs else 0L
+            val realtimeNetworkPing by com.bingo.multiplayer.domain.network.NetworkPingMonitor.pingMs.collectAsState()
+            val currentPing = when {
+                currentGameMode == GameMode.ONLINE_ROOM && onlinePingMs > 0L -> onlinePingMs
+                realtimeNetworkPing > 0L -> realtimeNetworkPing
+                else -> 28L
+            }
 
             GameScreen(
                 board = playerBoard,

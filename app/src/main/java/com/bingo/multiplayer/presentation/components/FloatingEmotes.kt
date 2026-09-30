@@ -242,127 +242,78 @@ val ALL_REACTION_EMOJIS = listOf(
 /**
  * Pill-shaped swipeable emoji reactions strip with quick chat trigger.
  * Horizontally scrollable library of emojis, recent items move to front,
- * borderless emoji buttons and quick message pills.
+ * borderless emoji buttons.
  */
 @Composable
 fun EmojiReactionStripWithChat(
     onSendEmote: (String) -> Unit,
-    customPhrases: List<String> = emptyList(),
-    onSendPhrase: (String) -> Unit = {},
+    onToggleQuickChat: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val tokens = BingoTheme.colors
     val haptic = LocalHapticFeedback.current
     var emojiList by remember { mutableStateOf(ALL_REACTION_EMOJIS) }
-    var showQuickChat by remember { mutableStateOf(false) }
 
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.End
+    Surface(
+        shape = RoundedCornerShape(22.dp),
+        color = tokens.surface.copy(alpha = 0.95f),
+        border = BorderStroke(0.4.dp, tokens.surfaceBorder.copy(alpha = 0.35f)),
+        shadowElevation = 2.dp,
+        modifier = modifier
     ) {
-        // Quick chat floating selector above the strip (no borders)
-        AnimatedVisibility(
-            visible = showQuickChat,
-            enter = fadeIn(tween(150)) + scaleIn(tween(150)),
-            exit = fadeOut(tween(150)) + scaleOut(tween(150))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 6.dp, vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = tokens.surface,
-                shadowElevation = 8.dp,
-                border = null,
-                modifier = Modifier.padding(bottom = 6.dp, end = 4.dp)
+            // Horizontal scrolling emoji strip (swipes to left, recents move to front)
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(
-                    modifier = Modifier.padding(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    customPhrases.take(4).forEach { phrase ->
-                        Surface(
-                            onClick = {
+                emojiList.forEach { emoji ->
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            ) {
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                showQuickChat = false
-                                onSendPhrase(phrase)
+                                // Move tapped emoji to front of the list
+                                emojiList = listOf(emoji) + (emojiList.filter { it != emoji })
+                                onSendEmote(emoji)
                             },
-                            color = tokens.backgroundSecondary,
-                            shape = RoundedCornerShape(10.dp),
-                            border = null
-                        ) {
-                            Text(
-                                text = phrase,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = tokens.cellNeutralText,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
-                            )
-                        }
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(text = emoji, fontSize = 21.sp)
                     }
                 }
             }
-        }
 
-        // Pill-shaped row with almost no borders
-        Surface(
-            shape = RoundedCornerShape(22.dp),
-            color = tokens.surface.copy(alpha = 0.95f),
-            border = BorderStroke(0.4.dp, tokens.surfaceBorder.copy(alpha = 0.35f)),
-            shadowElevation = 2.dp,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Row(
+            // Subtle vertical separator
+            Spacer(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 6.dp, vertical = 3.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .width(1.dp)
+                    .height(18.dp)
+                    .background(tokens.cellNeutralText.copy(alpha = 0.15f))
+            )
+
+            Spacer(modifier = Modifier.width(2.dp))
+
+            // Quick chat trigger button (no border)
+            IconButton(
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onToggleQuickChat()
+                },
+                modifier = Modifier.size(36.dp)
             ) {
-                // Horizontal scrolling emoji strip (swipes to left, recents move to front)
-                Row(
-                    modifier = Modifier
-                        .weight(1f)
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    emojiList.forEach { emoji ->
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null
-                                ) {
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    // Move tapped emoji to front of the list
-                                    emojiList = listOf(emoji) + (emojiList.filter { it != emoji })
-                                    onSendEmote(emoji)
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(text = emoji, fontSize = 21.sp)
-                        }
-                    }
-                }
-
-                // Subtle vertical separator
-                Spacer(
-                    modifier = Modifier
-                        .width(1.dp)
-                        .height(18.dp)
-                        .background(tokens.cellNeutralText.copy(alpha = 0.15f))
-                )
-
-                Spacer(modifier = Modifier.width(2.dp))
-
-                // Quick chat trigger button (no border)
-                IconButton(
-                    onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        showQuickChat = !showQuickChat
-                    },
-                    modifier = Modifier.size(36.dp)
-                ) {
-                    Text(text = "💬", fontSize = 19.sp)
-                }
+                Text(text = "💬", fontSize = 19.sp)
             }
         }
     }

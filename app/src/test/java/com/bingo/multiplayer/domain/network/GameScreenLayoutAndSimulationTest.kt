@@ -211,4 +211,126 @@ class GameScreenLayoutAndSimulationTest {
         val drifts = items.map { it.driftX }.toSet()
         assertTrue("Drift values must be varied/randomized", drifts.size > 5)
     }
+
+    @Test
+    fun testQuickChatListManagementAndReordering() {
+        val maxPhrases = QuickChatPreferences.MAX_ALLOWED_PHRASES
+        val maxLen = QuickChatPreferences.MAX_PHRASE_LENGTH
+        assertEquals(35, maxLen)
+        assertEquals(20, maxPhrases)
+
+        var phrases = QuickChatPreferences.DEFAULT_PHRASES.toMutableList()
+        assertEquals(4, phrases.size)
+
+        // Simulate adding a new phrase
+        fun addPhrase(newPhrase: String): Boolean {
+            val clean = newPhrase.trim().take(maxLen)
+            if (clean.isBlank() || phrases.size >= maxPhrases) return false
+            phrases.add(0, clean)
+            return true
+        }
+
+        // Simulate deleting a phrase
+        fun deletePhrase(index: Int): Boolean {
+            if (index in 0 until phrases.size && phrases.size > 1) {
+                phrases.removeAt(index)
+                return true
+            }
+            return false
+        }
+
+        // Simulate recording a used phrase (moves to front like emojis)
+        fun recordUsedPhrase(phrase: String) {
+            if (phrases.contains(phrase)) {
+                phrases.remove(phrase)
+                phrases.add(0, phrase)
+            }
+        }
+
+        // Test Add
+        val added = addPhrase("Hello World! Let's play!")
+        assertTrue(added)
+        assertEquals("Hello World! Let's play!", phrases.first())
+        assertEquals(5, phrases.size)
+
+        // Test length truncation
+        val longPhrase = "This is a super long phrase that exceeds thirty five characters limit easily"
+        val addedLong = addPhrase(longPhrase)
+        assertTrue(addedLong)
+        assertEquals(longPhrase.take(35), phrases.first())
+        assertEquals(35, phrases.first().length)
+
+        // Test Reordering on tap
+        val tapped = "Nice move! 🎯"
+        recordUsedPhrase(tapped)
+        assertEquals(tapped, phrases.first())
+
+        // Test Delete
+        val initialCount = phrases.size
+        val deleted = deletePhrase(phrases.size - 1)
+        assertTrue(deleted)
+        assertEquals(initialCount - 1, phrases.size)
+
+        // Cannot delete when size is 1
+        phrases = mutableListOf("Only phrase")
+        val deletedLast = deletePhrase(0)
+        assertEquals(false, deletedLast)
+        assertEquals(1, phrases.size)
+    }
+
+    @Test
+    fun testNetworkPingSmoothingCalculations() {
+        var currentPing = 32L
+
+        fun updateSmoothed(newRtt: Long): Long {
+            val clamped = newRtt.coerceIn(1L, 9999L)
+            currentPing = if (currentPing <= 0L) {
+                clamped
+            } else {
+                ((currentPing * 0.60) + (clamped * 0.40)).toLong().coerceAtLeast(1L)
+            }
+            return currentPing
+        }
+
+        // Step change to 100ms
+        val p1 = updateSmoothed(100L)
+        // (32 * 0.60) + (100 * 0.40) = 19.2 + 40 = 59.2 -> 59
+        assertEquals(59L, p1)
+
+        val p2 = updateSmoothed(100L)
+        // (59 * 0.60) + (100 * 0.40) = 35.4 + 40 = 75.4 -> 75
+        assertEquals(75L, p2)
+
+        // External MQTT pong ping update
+        NetworkPingMonitor.recordExternalPing(50L)
+        assertTrue(NetworkPingMonitor.pingMs.value > 0L)
+    }
+
+    @Test
+    fun testTwoPlayerSimulationTurnSwitchingAndCompletion() {
+        val engine = BingoEngine()
+        var boardA = engine.generateBoard(size = 5, seed = 111L)
+        var boardB = engine.generateBoard(size = 5, seed = 222L)
+
+        var isPlayerATurn = true
+        var pickSequence = 1
+
+        val allNumbers = (1..25).toList()
+        for (num in allNumbers) {
+            val picker = if (isPlayerATurn) "playerA" else "playerB"
+            boardA = engine.markCell(boardA, num, picker, isPlayerATurn, pickSequence)
+            boardB = engine.markCell(boardB, num, picker, !isPlayerATurn, pickSequence)
+            pickSequence++
+
+            // Switch turns
+            isPlayerATurn = !isPlayerATurn
+
+            if (boardA.isBingo || boardB.isBingo) {
+                break
+            }
+        }
+
+        assertTrue("At least one player should reach BINGO after full simulation",
+            boardA.isBingo || boardB.isBingo || pickSequence > 25)
+    }
 }

@@ -29,6 +29,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DeleteOutline
@@ -122,6 +123,8 @@ fun SettingsScreen(
     var quickChatPhrases by remember { mutableStateOf(QuickChatPreferences.getPhrases(context)) }
     var editingPhraseIndex by remember { mutableStateOf<Int?>(null) }
     var editingPhraseText by remember { mutableStateOf("") }
+    var showAddPhraseDialog by remember { mutableStateOf(false) }
+    var newPhraseText by remember { mutableStateOf("") }
 
     val presenceMap by com.bingo.multiplayer.domain.network.PresenceManager.presenceFlow.collectAsState()
     var ticker by remember { mutableStateOf(0L) }
@@ -322,6 +325,80 @@ fun SettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { editingPhraseIndex = null }) {
+                    Text("Cancel", color = tokens.cellNeutralText)
+                }
+            }
+        )
+    }
+
+    if (showAddPhraseDialog) {
+        AlertDialog(
+            onDismissRequest = { showAddPhraseDialog = false },
+            shape = RoundedCornerShape(20.dp),
+            containerColor = tokens.surface,
+            title = {
+                Text(
+                    text = "Add Quick Chat Message",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    color = tokens.cellNeutralText
+                )
+            },
+            text = {
+                Column {
+                    Text(
+                        text = "Add a new phrase for live match communication (max ${QuickChatPreferences.MAX_PHRASE_LENGTH} chars):",
+                        fontSize = 13.sp,
+                        color = tokens.cellNeutralText.copy(alpha = 0.7f)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = newPhraseText,
+                        onValueChange = {
+                            if (it.length <= QuickChatPreferences.MAX_PHRASE_LENGTH) {
+                                newPhraseText = it
+                            }
+                        },
+                        singleLine = true,
+                        placeholder = { Text("e.g. Well played! 👏") },
+                        supportingText = {
+                            Text(
+                                text = "${newPhraseText.length}/${QuickChatPreferences.MAX_PHRASE_LENGTH}",
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = TextAlign.End,
+                                color = if (newPhraseText.length == QuickChatPreferences.MAX_PHRASE_LENGTH) tokens.accentOpponent else tokens.cellNeutralText.copy(alpha = 0.5f)
+                            )
+                        },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = tokens.accentBrand,
+                            cursorColor = tokens.accentBrand
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val trimmed = newPhraseText.trim()
+                        if (trimmed.isNotBlank()) {
+                            val added = QuickChatPreferences.addPhrase(context, trimmed)
+                            if (added) {
+                                quickChatPhrases = QuickChatPreferences.getPhrases(context)
+                                Toast.makeText(context, "New phrase added!", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(context, "Maximum phrases reached (${QuickChatPreferences.MAX_ALLOWED_PHRASES})", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                        showAddPhraseDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = tokens.accentBrand)
+                ) {
+                    Text("Add", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddPhraseDialog = false }) {
                     Text("Cancel", color = tokens.cellNeutralText)
                 }
             }
@@ -883,18 +960,37 @@ fun SettingsScreen(
                             color = tokens.cellNeutralText
                         )
 
-                        TextButton(
-                            onClick = {
-                                quickChatPhrases = QuickChatPreferences.resetToDefaults(context)
-                                Toast.makeText(context, "Phrases reset to defaults", Toast.LENGTH_SHORT).show()
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = {
+                                    newPhraseText = ""
+                                    showAddPhraseDialog = true
+                                },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Add,
+                                    contentDescription = "Add Phrase",
+                                    tint = tokens.accentBrand,
+                                    modifier = Modifier.size(20.dp)
+                                )
                             }
-                        ) {
-                            Text("Reset Defaults", fontSize = 12.sp, color = tokens.accentBrand)
+
+                            Spacer(modifier = Modifier.width(4.dp))
+
+                            TextButton(
+                                onClick = {
+                                    quickChatPhrases = QuickChatPreferences.resetToDefaults(context)
+                                    Toast.makeText(context, "Phrases reset to defaults", Toast.LENGTH_SHORT).show()
+                                }
+                            ) {
+                                Text("Reset Defaults", fontSize = 12.sp, color = tokens.accentBrand)
+                            }
                         }
                     }
 
                     Text(
-                        text = "Customize the 4 phrases you can send to your opponent during live matches (max 25 chars):",
+                        text = "Customize phrases sent during live matches (max ${QuickChatPreferences.MAX_PHRASE_LENGTH} chars). Recently used phrases appear first in the in-game toast:",
                         fontSize = 12.sp,
                         color = tokens.cellNeutralText.copy(alpha = 0.6f)
                     )
@@ -938,19 +1034,42 @@ fun SettingsScreen(
                                     )
                                 }
 
-                                IconButton(
-                                    onClick = {
-                                        editingPhraseIndex = idx
-                                        editingPhraseText = phrase
-                                    },
-                                    modifier = Modifier.size(28.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Edit,
-                                        contentDescription = "Edit Phrase",
-                                        tint = tokens.accentBrand,
-                                        modifier = Modifier.size(15.dp)
-                                    )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    IconButton(
+                                        onClick = {
+                                            editingPhraseIndex = idx
+                                            editingPhraseText = phrase
+                                        },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Edit,
+                                            contentDescription = "Edit Phrase",
+                                            tint = tokens.accentBrand,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                    }
+
+                                    if (quickChatPhrases.size > 1) {
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        IconButton(
+                                            onClick = {
+                                                val deleted = QuickChatPreferences.deletePhrase(context, idx)
+                                                if (deleted) {
+                                                    quickChatPhrases = QuickChatPreferences.getPhrases(context)
+                                                    Toast.makeText(context, "Phrase removed", Toast.LENGTH_SHORT).show()
+                                                }
+                                            },
+                                            modifier = Modifier.size(28.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.DeleteOutline,
+                                                contentDescription = "Delete Phrase",
+                                                tint = tokens.accentOpponent.copy(alpha = 0.7f),
+                                                modifier = Modifier.size(15.dp)
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }

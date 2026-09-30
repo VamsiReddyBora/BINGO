@@ -9,7 +9,10 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,11 +21,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
@@ -98,6 +104,7 @@ import com.bingo.multiplayer.presentation.components.RecentPicksQueuePill
  * Modern Award-Winning Indie Game Match Screen.
  * Complete tactile styling, AMOLED Dark / Premium Light tokens, and victory celebration.
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun GameScreen(
     board: Board,
@@ -138,6 +145,8 @@ fun GameScreen(
     val view = LocalView.current
     val context = LocalContext.current
     val quickChatPhrases = remember { QuickChatPreferences.getPhrases(context) }
+    var showQuickChat by remember { mutableStateOf(false) }
+    var currentPhrases by remember { mutableStateOf(quickChatPhrases) }
 
     // ── Floating Emotes State ──
     var activeEmotes by remember { mutableStateOf(listOf<FloatingEmoteItem>()) }
@@ -349,12 +358,10 @@ fun GameScreen(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 // Modern Aesthetic Top Bar (Items 1, 2, 3)
-                Row(
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
                 ) {
                     // Item 1: Top Left Door Open Exit Button
                     IconButton(
@@ -365,7 +372,9 @@ fun GameScreen(
                                 onSurrender()
                             }
                         },
-                        modifier = Modifier.size(36.dp)
+                        modifier = Modifier
+                            .size(36.dp)
+                            .align(Alignment.CenterStart)
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ExitToApp,
@@ -375,7 +384,7 @@ fun GameScreen(
                         )
                     }
 
-                    // Item 2: Top Center 🛜 Wifi Icon + Ping (0-250 green, 250-500 yellow, 500-999+ red, capped at 999+)
+                    // Item 2: Top Center 🛜 Wifi Icon (Black) + Ping (Color varies based on value, perfectly centered!)
                     val pingColor = when {
                         pingMs <= 250L -> Color(0xFF16A34A)
                         pingMs <= 500L -> Color(0xFFEAB308)
@@ -385,12 +394,13 @@ fun GameScreen(
 
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
+                        horizontalArrangement = Arrangement.Center,
+                        modifier = Modifier.align(Alignment.Center)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Wifi,
                             contentDescription = "Ping",
-                            tint = pingColor,
+                            tint = Color.Black,
                             modifier = Modifier.size(17.dp)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
@@ -402,7 +412,7 @@ fun GameScreen(
                         )
                     }
 
-                    // Item 3: Top Right Cute ⌛ Timer flipping for every second
+                    // Item 3: Top Right Pause Button FIRST, then ⌛ Timer NEXT
                     val hourglassFlipAngle by animateFloatAsState(
                         targetValue = (30 - turnTimeRemaining) * 180f,
                         animationSpec = tween(durationMillis = 400, easing = FastOutSlowInEasing),
@@ -412,25 +422,9 @@ fun GameScreen(
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.End,
-                        modifier = Modifier.scale(urgentTimerScale)
+                        modifier = Modifier.align(Alignment.CenterEnd)
                     ) {
-                        Text(
-                            text = "⌛",
-                            fontSize = 16.sp,
-                            modifier = Modifier.graphicsLayer {
-                                rotationZ = hourglassFlipAngle
-                            }
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "${turnTimeRemaining}s",
-                            fontSize = 13.5.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = if (turnTimeRemaining <= 5) Color(0xFFDC2626) else tokens.cellNeutralText
-                        )
-
-                        Spacer(modifier = Modifier.width(4.dp))
-
+                        // 1. Pause button comes first
                         IconButton(
                             onClick = onTogglePause,
                             modifier = Modifier.size(32.dp)
@@ -438,8 +432,31 @@ fun GameScreen(
                             Icon(
                                 imageVector = if (isGamePaused) Icons.Default.PlayArrow else Icons.Default.Pause,
                                 contentDescription = if (isGamePaused) "Resume Game" else "Pause Game",
-                                tint = tokens.cellNeutralText.copy(alpha = 0.5f),
-                                modifier = Modifier.size(18.dp)
+                                tint = tokens.cellNeutralText.copy(alpha = 0.6f),
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(4.dp))
+
+                        // 2. Timer comes next
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.scale(urgentTimerScale)
+                        ) {
+                            Text(
+                                text = "⌛",
+                                fontSize = 16.sp,
+                                modifier = Modifier.graphicsLayer {
+                                    rotationZ = hourglassFlipAngle
+                                }
+                            )
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text(
+                                text = "${turnTimeRemaining}s",
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = if (turnTimeRemaining <= 5) Color(0xFFDC2626) else tokens.cellNeutralText
                             )
                         }
                     }
@@ -740,10 +757,8 @@ fun GameScreen(
                             spawnEmote(emote, isSelf = true)
                             onSendEmote(emote)
                         },
-                        customPhrases = quickChatPhrases,
-                        onSendPhrase = { phrase ->
-                            spawnEmote(phrase, isSelf = true)
-                            onSendEmote(phrase)
+                        onToggleQuickChat = {
+                            showQuickChat = !showQuickChat
                         },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -759,6 +774,73 @@ fun GameScreen(
                     activeEmotes = activeEmotes.filter { it.id != finishedId }
                 }
             )
+
+            // Item 4: Quick Chat Floating Toast Layer (Overlaid on top of the board, zero layout shift)
+            if (showQuickChat && !isGameOver) {
+                // Tap anywhere on the screen outside to dismiss automatically
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) {
+                            showQuickChat = false
+                        }
+                )
+
+                // The Floating Toast Popover Box
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = tokens.surface,
+                    shadowElevation = 8.dp,
+                    border = null,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 14.dp, bottom = 48.dp)
+                        .width(205.dp)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .padding(6.dp)
+                            .heightIn(max = 168.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        currentPhrases.forEach { phrase ->
+                            Surface(
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    showQuickChat = false
+                                    // Move tapped phrase to front (recent like emojis)
+                                    currentPhrases = listOf(phrase) + currentPhrases.filter { it != phrase }
+                                    QuickChatPreferences.recordUsedPhrase(context, phrase)
+                                    spawnEmote(phrase, isSelf = true)
+                                    onSendEmote(phrase)
+                                },
+                                color = tokens.backgroundSecondary,
+                                shape = RoundedCornerShape(10.dp),
+                                border = null,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = phrase,
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = tokens.cellNeutralText,
+                                    maxLines = 1,
+                                    modifier = Modifier
+                                        .padding(horizontal = 10.dp, vertical = 7.dp)
+                                        .basicMarquee(
+                                            iterations = Int.MAX_VALUE,
+                                            velocity = 30.dp
+                                        )
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -804,19 +886,19 @@ private fun InGameBottomBar(
         border = BorderStroke(0.5.dp, tokens.surfaceBorder),
         shadowElevation = 2.dp
     ) {
-        Row(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            contentAlignment = Alignment.Center
         ) {
             // Item 5: Left - 3-number FIFO sliding queue pill
             RecentPicksQueuePill(
-                pickedNumbersHistory = pickedNumbersHistory
+                pickedNumbersHistory = pickedNumbersHistory,
+                modifier = Modifier.align(Alignment.CenterStart)
             )
 
-            // Item 6: Center - Profile vs Profile with smooth turn zoom
+            // Item 6: Center - Profile vs Profile with smooth turn zoom (Dead Center!)
             BottomTurnProfileVsProfile(
                 isMyTurn = isMyTurn,
                 isGameOver = isGameOver,
@@ -825,7 +907,8 @@ private fun InGameBottomBar(
                 myUsername = myUsername,
                 opponentAvatarUrl = opponentAvatarUrl,
                 opponentName = opponentName,
-                opponentUsername = opponentUsername
+                opponentUsername = opponentUsername,
+                modifier = Modifier.align(Alignment.Center)
             )
 
             // Item 6: Right - Plain reload icon that rotates in the arrow direction (clockwise) and stops after 1 rotation
@@ -834,7 +917,9 @@ private fun InGameBottomBar(
                     refreshAngle += 360f
                     onSyncGame()
                 },
-                modifier = Modifier.size(36.dp)
+                modifier = Modifier
+                    .size(36.dp)
+                    .align(Alignment.CenterEnd)
             ) {
                 Icon(
                     imageVector = Icons.Default.Refresh,
