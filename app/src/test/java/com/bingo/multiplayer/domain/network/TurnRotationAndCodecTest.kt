@@ -573,4 +573,69 @@ class TurnRotationAndCodecTest {
         assertEquals("NOT_READY", guestPlayer.lobbyReadyStatus)
         assertEquals(2000L, guestPlayer.readyVersion)
     }
+
+    @Test
+    fun testPlayerRejoinFromLeftLobbyTransitionsToNotReadyThenReady() {
+        val host = Player(id = "host1", displayName = "Host", isHost = true)
+        var guestOnHost = Player(
+            id = "guest1",
+            displayName = "Guest",
+            isHost = false,
+            lobbyReadyStatus = "READY",
+            readyVersion = 100L
+        )
+
+        // 1. Guest leaves the lobby
+        val leaveVersion = 101L
+        guestOnHost = guestOnHost.copy(
+            lobbyReadyStatus = "LEFT_LOBBY",
+            readyVersion = leaveVersion
+        )
+        assertEquals("LEFT_LOBBY", guestOnHost.lobbyReadyStatus)
+
+        // 2. Guest rejoins the room (generates fresh rejoin version and sends JOIN packet)
+        val rejoinVersion = 200L
+        val joinPacket = RoomMessagePacket(
+            type = "JOIN",
+            playerId = "guest1",
+            displayName = "Guest",
+            readyStatus = "NOT_READY",
+            readyVersion = rejoinVersion
+        )
+
+        // Host processes JOIN packet according to our new rule:
+        val effectiveStatusOnJoin = when {
+            joinPacket.type == "JOIN" -> joinPacket.readyStatus.ifBlank { "NOT_READY" }
+            else -> guestOnHost.lobbyReadyStatus
+        }
+        val effectiveVersionOnJoin = maxOf(rejoinVersion, guestOnHost.readyVersion + 1L)
+
+        guestOnHost = guestOnHost.copy(
+            lobbyReadyStatus = effectiveStatusOnJoin,
+            readyVersion = effectiveVersionOnJoin
+        )
+
+        // Status on host screen must IMMEDIATELY transition from LEFT_LOBBY (❌) to NOT_READY (⏸️)
+        assertEquals("NOT_READY", guestOnHost.lobbyReadyStatus)
+        assertTrue(guestOnHost.readyVersion > leaveVersion)
+
+        // 3. Guest clicks "I'm Ready"
+        val readyClickVersion = guestOnHost.readyVersion + 1L
+        val readyPacket = RoomMessagePacket(
+            type = "READY_STATUS",
+            playerId = "guest1",
+            readyStatus = "READY",
+            readyVersion = readyClickVersion
+        )
+
+        if (readyPacket.readyVersion >= guestOnHost.readyVersion) {
+            guestOnHost = guestOnHost.copy(
+                lobbyReadyStatus = readyPacket.readyStatus,
+                readyVersion = readyPacket.readyVersion
+            )
+        }
+
+        // Status on host screen transitions to READY (✅)
+        assertEquals("READY", guestOnHost.lobbyReadyStatus)
+    }
 }

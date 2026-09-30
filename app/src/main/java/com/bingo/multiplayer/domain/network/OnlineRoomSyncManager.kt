@@ -343,10 +343,14 @@ class OnlineRoomSyncManager(
                     // 2. Monotonic readyVersion determines the winner between in-memory MQTT and cloud session.
                     val effReady = when {
                         isLocal -> localP.lobbyReadyStatus
-                        p.lobbyReadyStatus == "LEFT_LOBBY" || existing?.lobbyReadyStatus == "LEFT_LOBBY" -> "LEFT_LOBBY"
                         p.lobbyReadyStatus == "IN_GAME" || existing?.lobbyReadyStatus == "IN_GAME" -> "IN_GAME"
                         existing != null && existing.readyVersion > p.readyVersion -> existing.lobbyReadyStatus
-                        p.readyVersion >= (existing?.readyVersion ?: 0L) && p.lobbyReadyStatus.isNotBlank() -> p.lobbyReadyStatus
+                        p.readyVersion > (existing?.readyVersion ?: 0L) && p.lobbyReadyStatus.isNotBlank() -> p.lobbyReadyStatus
+                        p.lobbyReadyStatus == "LEFT_LOBBY" || existing?.lobbyReadyStatus == "LEFT_LOBBY" -> {
+                            if (p.lobbyReadyStatus != "LEFT_LOBBY" && p.lobbyReadyStatus.isNotBlank()) p.lobbyReadyStatus
+                            else if (existing?.lobbyReadyStatus != "LEFT_LOBBY" && existing?.lobbyReadyStatus?.isNotBlank() == true) existing.lobbyReadyStatus
+                            else "LEFT_LOBBY"
+                        }
                         p.isHost -> "READY"
                         p.lobbyReadyStatus.isNotBlank() -> p.lobbyReadyStatus
                         existing?.lobbyReadyStatus != null -> existing.lobbyReadyStatus
@@ -506,13 +510,18 @@ class OnlineRoomSyncManager(
                     val effectiveStreak = if (packet.currentStreak > 0) packet.currentStreak else (existing?.currentStreak ?: 0)
                     val effectiveLevel = if (packet.level > 1) packet.level else (existing?.level ?: 1)
                     val effectiveReadyStatus = when {
+                        packet.type == "JOIN" -> packet.readyStatus.ifBlank { if (packet.isHost) "READY" else "NOT_READY" }
                         packet.readyStatus.isNotBlank() && packet.readyVersion >= (existing?.readyVersion ?: 0L) -> packet.readyStatus
                         existing?.lobbyReadyStatus != null -> existing.lobbyReadyStatus
                         packet.readyStatus.isNotBlank() -> packet.readyStatus
                         packet.isHost -> "READY"
                         else -> "NOT_READY"
                     }
-                    val effectiveReadyVer = maxOf(packet.readyVersion, existing?.readyVersion ?: 0L)
+                    val effectiveReadyVer = if (packet.type == "JOIN") {
+                        maxOf(System.currentTimeMillis(), packet.readyVersion, (existing?.readyVersion ?: 0L) + 1L)
+                    } else {
+                        maxOf(packet.readyVersion, existing?.readyVersion ?: 0L)
+                    }
 
                     val updated = Player(
                         id = packet.playerId,
@@ -531,8 +540,14 @@ class OnlineRoomSyncManager(
                     playerRegistry[packet.playerId] = updated
                     _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
 
-                    // If Host receives a JOIN packet, Host immediately replies with a ROOM_STATE containing all players!
+                    // If Host receives a JOIN packet, Host immediately updates cloud registry and replies with a ROOM_STATE containing all players!
                     if (packet.type == "JOIN" && localPlayer?.isHost == true && packet.playerId != localPlayer?.id) {
+                        val code = currentRoomCode
+                        if (code != null) {
+                            scope.launch(Dispatchers.IO) {
+                                OnlineRoomRegistry.updatePlayerReadyStatus(code, packet.playerId, effectiveReadyStatus, effectiveReadyVer)
+                            }
+                        }
                         localPlayer?.let { h ->
                             broadcastPacket(
                                 RoomMessagePacket(
@@ -616,9 +631,17 @@ class OnlineRoomSyncManager(
                         } else {
                             // Non-host player left the lobby: mark as LEFT_LOBBY so other players and host see ❌
                             // Do NOT automatically delete from the lobby registry!
+                            val leaveVer = maxOf(System.currentTimeMillis(), existing.readyVersion + 1L)
                             playerRegistry[packet.playerId] = existing.copy(
-                                lobbyReadyStatus = "LEFT_LOBBY"
+                                lobbyReadyStatus = "LEFT_LOBBY",
+                                readyVersion = leaveVer
                             )
+                            val code = currentRoomCode
+                            if (code != null && localPlayer?.isHost == true) {
+                                scope.launch(Dispatchers.IO) {
+                                    OnlineRoomRegistry.updatePlayerReadyStatus(code, packet.playerId, "LEFT_LOBBY", leaveVer)
+                                }
+                            }
                         }
                         _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
                     }

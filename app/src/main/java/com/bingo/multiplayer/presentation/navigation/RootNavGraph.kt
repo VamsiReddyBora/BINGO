@@ -238,6 +238,7 @@ fun RootNavGraph(
     fun acceptAndJoinRoom(targetRoomCode: String) {
         val cleanCode = targetRoomCode.trim().uppercase()
         val user = (authRepository.authState.value as? AuthState.Authenticated)?.user
+        val joinerVersion = System.currentTimeMillis()
         val localJoiner = Player(
             id = getLocalUid(),
             displayName = getPlayerDisplayName(),
@@ -248,7 +249,8 @@ fun RootNavGraph(
             gamesWon = user?.gamesWon ?: 0,
             currentStreak = user?.currentStreak ?: 0,
             level = user?.level ?: 1,
-            lastSeenTimestamp = System.currentTimeMillis()
+            lastSeenTimestamp = joinerVersion,
+            readyVersion = joinerVersion
         )
         coroutineScope.launch {
             when (val result = com.bingo.multiplayer.domain.network.OnlineRoomRegistry.validateAndJoinRoom(cleanCode, localJoiner)) {
@@ -262,7 +264,11 @@ fun RootNavGraph(
                     currentGameMode = GameMode.ONLINE_ROOM
                     isUsingP2p = false
                     isHosting = false
-                    onlineRoomSync.connectToRoom(cleanCode, localJoiner, initialPlayers = result.room.players)
+                    val returnedPlayer = result.room.players.find { it.id == localJoiner.id }
+                    val effJoiner = if (returnedPlayer != null) {
+                        localJoiner.copy(readyVersion = returnedPlayer.readyVersion)
+                    } else localJoiner
+                    onlineRoomSync.connectToRoom(cleanCode, effJoiner, initialPlayers = result.room.players)
                     navController.navigate(Screen.Lobby.route)
                 }
                 is com.bingo.multiplayer.domain.network.RoomJoinResult.NotFound -> {
@@ -1083,6 +1089,7 @@ fun RootNavGraph(
             JoinRoomScreen(
                 onJoinRoom = { code ->
                     val cleanCode = code.trim().uppercase()
+                    val joinerVersion = System.currentTimeMillis()
                     val localJoiner = Player(
                         id = getLocalUid(),
                         displayName = getPlayerDisplayName(),
@@ -1093,7 +1100,8 @@ fun RootNavGraph(
                         gamesWon = user?.gamesWon ?: 0,
                         currentStreak = user?.currentStreak ?: 0,
                         level = user?.level ?: 1,
-                        lastSeenTimestamp = System.currentTimeMillis()
+                        lastSeenTimestamp = joinerVersion,
+                        readyVersion = joinerVersion
                     )
                     when (val result = com.bingo.multiplayer.domain.network.OnlineRoomRegistry.validateAndJoinRoom(cleanCode, localJoiner)) {
                         is com.bingo.multiplayer.domain.network.RoomJoinResult.Success -> {
@@ -1101,7 +1109,11 @@ fun RootNavGraph(
                             currentGameMode = GameMode.ONLINE_ROOM
                             isUsingP2p = false
                             isHosting = false
-                            onlineRoomSync.connectToRoom(cleanCode, localJoiner, initialPlayers = result.room.players)
+                            val returnedPlayer = result.room.players.find { it.id == localJoiner.id }
+                            val effJoiner = if (returnedPlayer != null) {
+                                localJoiner.copy(readyVersion = returnedPlayer.readyVersion)
+                            } else localJoiner
+                            onlineRoomSync.connectToRoom(cleanCode, effJoiner, initialPlayers = result.room.players)
                             navController.navigate(Screen.Lobby.route) {
                                 popUpTo(Screen.JoinRoom.route) { inclusive = true }
                             }

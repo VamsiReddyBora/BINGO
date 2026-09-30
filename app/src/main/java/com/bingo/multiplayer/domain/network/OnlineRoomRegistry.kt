@@ -274,10 +274,12 @@ object OnlineRoomRegistry {
                 return@withContext RoomJoinResult.Expired("Room $cleanCode has expired or the host has left.")
             }
 
-            val safeJoiner = sanitizePlayer(joiner.copy(isHost = false, lastSeenTimestamp = now, lobbyReadyStatus = "NOT_READY"))
-            val isAlreadyInRoom = session.players.any {
-                it.id == safeJoiner.id || (it.username.isNotBlank() && it.username.equals(safeJoiner.username, ignoreCase = true))
+            val existingInSession = session.players.find {
+                it.id == joiner.id || (it.username.isNotBlank() && it.username.equals(joiner.username, ignoreCase = true))
             }
+            val joinVersion = maxOf(now, (existingInSession?.readyVersion ?: 0L) + 1L)
+            val safeJoiner = sanitizePlayer(joiner.copy(isHost = false, lastSeenTimestamp = now, lobbyReadyStatus = "NOT_READY", readyVersion = joinVersion))
+            val isAlreadyInRoom = existingInSession != null
 
             if (!isAlreadyInRoom && session.players.size >= 8) {
                 return@withContext RoomJoinResult.AlreadyFull("Room $cleanCode is full (max 8 players).")
@@ -392,10 +394,14 @@ object OnlineRoomRegistry {
                             it.id == existing.id || (it.username.isNotBlank() && it.username.equals(existing.username, ignoreCase = true))
                         }
                         val effReady = when {
-                            existing.lobbyReadyStatus == "LEFT_LOBBY" || known?.lobbyReadyStatus == "LEFT_LOBBY" -> "LEFT_LOBBY"
                             existing.lobbyReadyStatus == "IN_GAME" || known?.lobbyReadyStatus == "IN_GAME" -> "IN_GAME"
                             known != null && known.readyVersion > existing.readyVersion -> known.lobbyReadyStatus
                             existing.readyVersion > (known?.readyVersion ?: 0L) -> existing.lobbyReadyStatus
+                            existing.lobbyReadyStatus == "LEFT_LOBBY" || known?.lobbyReadyStatus == "LEFT_LOBBY" -> {
+                                if (existing.lobbyReadyStatus != "LEFT_LOBBY" && existing.lobbyReadyStatus.isNotBlank()) existing.lobbyReadyStatus
+                                else if (known?.lobbyReadyStatus != "LEFT_LOBBY" && known?.lobbyReadyStatus?.isNotBlank() == true) known.lobbyReadyStatus
+                                else "LEFT_LOBBY"
+                            }
                             known?.lobbyReadyStatus?.isNotBlank() == true -> known.lobbyReadyStatus
                             existing.lobbyReadyStatus.isNotBlank() -> existing.lobbyReadyStatus
                             else -> "NOT_READY"
