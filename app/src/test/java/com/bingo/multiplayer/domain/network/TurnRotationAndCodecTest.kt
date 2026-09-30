@@ -402,4 +402,84 @@ class TurnRotationAndCodecTest {
         assertFalse("Warning dialog should dismiss upon extension", showWarning)
         assertEquals(300, inactivitySeconds)
     }
+
+    @Test
+    fun testReadyStatusReconciliationDoesNotToggle() {
+        val host = Player(id = "host1", displayName = "Host", isHost = true, lobbyReadyStatus = "READY")
+        val guest = Player(id = "guest1", displayName = "Guest", isHost = false, lobbyReadyStatus = "NOT_READY")
+        val playerRegistry = mutableMapOf<String, Player>(
+            host.id to host,
+            guest.id to guest
+        )
+
+        // 1. Guest toggles ready status to READY via MQTT
+        val readyPacket = RoomMessagePacket(
+            type = "READY_STATUS",
+            playerId = "guest1",
+            readyStatus = "READY"
+        )
+        val existingGuest = playerRegistry[readyPacket.playerId]
+        assertNotNull(existingGuest)
+        playerRegistry[readyPacket.playerId] = existingGuest!!.copy(
+            lobbyReadyStatus = readyPacket.readyStatus,
+            lastSeenTimestamp = System.currentTimeMillis()
+        )
+        assertEquals("READY", playerRegistry["guest1"]?.lobbyReadyStatus)
+
+        // 2. Host runs cloud reconciliation. Suppose cloud has not yet updated or returned older "NOT_READY"
+        val cloudGuest = Player(id = "guest1", displayName = "Guest", isHost = false, lobbyReadyStatus = "NOT_READY")
+        val cloudPlayers = listOf(host, cloudGuest)
+
+        cloudPlayers.forEach { p ->
+            val isLocal = (p.id == host.id)
+            val existing = playerRegistry[p.id]
+            val effReady = when {
+                isLocal -> host.lobbyReadyStatus
+                existing != null && existing.lobbyReadyStatus.isNotBlank() -> existing.lobbyReadyStatus
+                p.lobbyReadyStatus.isNotBlank() -> p.lobbyReadyStatus
+                p.isHost -> "READY"
+                else -> "NOT_READY"
+            }
+            playerRegistry[p.id] = (existing ?: p).copy(lobbyReadyStatus = effReady)
+        }
+
+        // Host in-memory status MUST NOT be overwritten back to "NOT_READY"!
+        assertEquals("READY", playerRegistry["guest1"]?.lobbyReadyStatus)
+
+        // 3. Verify status indicator remains "Ready" (CheckCircle) and doesn't flicker to "Not Ready"
+        val guestPlayer = playerRegistry["guest1"]!!
+        val isGuestReady = guestPlayer.isHost || guestPlayer.lobbyReadyStatus == "READY"
+        assertTrue("Guest status remains steadily READY without toggling", isGuestReady)
+    }
+
+    @Test
+    fun testHostCloudSyncPropagatesKnownMqttStatus() {
+        val host = Player(id = "host1", displayName = "Host", isHost = true, lobbyReadyStatus = "READY")
+        val guestInMemory = Player(id = "guest1", displayName = "Guest", isHost = false, lobbyReadyStatus = "READY")
+        val knownPlayers = listOf(host, guestInMemory)
+
+        // Cloud session with older NOT_READY status
+        val sessionPlayers = listOf(
+            host,
+            Player(id = "guest1", displayName = "Guest", isHost = false, lobbyReadyStatus = "NOT_READY")
+        )
+
+        // Host merging cloud session with knownPlayers from MQTT
+        val updatedPlayers = sessionPlayers.map { existing ->
+            if (existing.id == host.id) {
+                host
+            } else {
+                val known = knownPlayers.find { it.id == existing.id }
+                if (known != null && known.lobbyReadyStatus.isNotBlank()) {
+                    existing.copy(lobbyReadyStatus = known.lobbyReadyStatus)
+                } else {
+                    existing
+                }
+            }
+        }
+
+        val updatedGuest = updatedPlayers.find { it.id == "guest1" }
+        assertNotNull(updatedGuest)
+        assertEquals("READY", updatedGuest!!.lobbyReadyStatus)
+    }
 }

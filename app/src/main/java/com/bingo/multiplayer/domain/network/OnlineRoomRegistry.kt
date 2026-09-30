@@ -362,7 +362,8 @@ object OnlineRoomRegistry {
      */
     suspend fun syncRoom(
         roomCode: String,
-        localPlayer: Player
+        localPlayer: Player,
+        knownPlayers: List<Player> = emptyList()
     ): OnlineRoomSession? = withContext(Dispatchers.IO) {
         val cleanCode = roomCode.trim().uppercase()
         if (cleanCode.isBlank()) return@withContext null
@@ -386,6 +387,20 @@ object OnlineRoomRegistry {
                 session.players.map { existing ->
                     if (existing.id == safeLocal.id || (existing.username.isNotBlank() && existing.username.equals(safeLocal.username, ignoreCase = true))) {
                         safeLocal
+                    } else if (localPlayer.isHost) {
+                        val known = knownPlayers.find {
+                            it.id == existing.id || (it.username.isNotBlank() && it.username.equals(existing.username, ignoreCase = true))
+                        }
+                        if (known != null && known.lobbyReadyStatus.isNotBlank()) {
+                            existing.copy(
+                                lobbyReadyStatus = known.lobbyReadyStatus,
+                                lastSeenTimestamp = maxOf(existing.lastSeenTimestamp, known.lastSeenTimestamp)
+                            )
+                        } else if (existing.isHost && isHostAlive) {
+                            existing.copy(lastSeenTimestamp = now)
+                        } else {
+                            existing
+                        }
                     } else if (existing.isHost && isHostAlive) {
                         existing.copy(lastSeenTimestamp = now)
                     } else {
@@ -408,8 +423,13 @@ object OnlineRoomRegistry {
                 lastHeartbeat = newHeartbeat
             )
 
-            // Write back to cloud & MQTT if host or if local player was not present
-            if (localPlayer.isHost || !playerExists) {
+            val localStatusChanged = session.players.any {
+                (it.id == safeLocal.id || (it.username.isNotBlank() && it.username.equals(safeLocal.username, ignoreCase = true))) &&
+                it.lobbyReadyStatus != safeLocal.lobbyReadyStatus
+            }
+
+            // Write back to cloud & MQTT if host, if local player was not present, or if local ready status changed
+            if (localPlayer.isHost || !playerExists || localStatusChanged) {
                 try {
                     val updatedJson = json.encodeToString(updatedSession)
                     val b64 = encodeBase64Url(updatedJson)
@@ -428,6 +448,49 @@ object OnlineRoomRegistry {
         } catch (e: Exception) {
             Log.w(TAG, "syncRoom error for $cleanCode: ${e.message}")
             return@withContext null
+        }
+    }
+
+    /**
+     * Instantly updates a specific player's ready status in the room session across cloud and MQTT.
+     */
+    suspend fun updatePlayerReadyStatus(
+        roomCode: String,
+        playerId: String,
+        readyStatus: String
+    ): Boolean = withContext(Dispatchers.IO) {
+        val cleanCode = roomCode.trim().uppercase()
+        if (cleanCode.isBlank() || playerId.isBlank()) return@withContext false
+        try {
+            var session = getRoom(cleanCode) ?: getRoomMqtt(cleanCode) ?: return@withContext false
+            val now = System.currentTimeMillis()
+            var modified = false
+            val updatedPlayers = session.players.map { p ->
+                if (p.id == playerId || (p.username.isNotBlank() && p.username.equals(playerId, ignoreCase = true))) {
+                    if (p.lobbyReadyStatus != readyStatus) {
+                        modified = true
+                    }
+                    p.copy(lobbyReadyStatus = readyStatus, lastSeenTimestamp = now)
+                } else {
+                    p
+                }
+            }
+            if (!modified) return@withContext true
+            val updatedSession = session.copy(players = updatedPlayers, lastHeartbeat = now)
+            val updatedJson = json.encodeToString(updatedSession)
+            val b64 = encodeBase64Url(updatedJson)
+            val encVal = URLEncoder.encode(b64, "UTF-8")
+            val request = Request.Builder()
+                .url("$BASE_URL/UpdateValue/$API_KEY/room_$cleanCode?value=$encVal")
+                .post("".toRequestBody(null))
+                .header("Content-Length", "0")
+                .build()
+            client.newCall(request).execute().close()
+            publishRoomMetaMqtt(updatedSession)
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "updatePlayerReadyStatus error for $cleanCode: ${e.message}")
+            false
         }
     }
 

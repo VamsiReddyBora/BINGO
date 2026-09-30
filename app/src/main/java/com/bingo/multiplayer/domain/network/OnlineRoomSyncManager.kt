@@ -294,7 +294,7 @@ class OnlineRoomSyncManager(
      */
     private suspend fun reconcileWithCloud(code: String, localP: Player) {
         try {
-            val cloudSession = OnlineRoomRegistry.syncRoom(code, localP) ?: return
+            val cloudSession = OnlineRoomRegistry.syncRoom(code, localP, playerRegistry.values.toList()) ?: return
             val now = System.currentTimeMillis()
             var hasNewPlayer = false
 
@@ -335,9 +335,14 @@ class OnlineRoomSyncManager(
                         else -> existing?.lastSeenTimestamp ?: p.lastSeenTimestamp
                     }
 
+                    // Prevent status toggling / clobbering:
+                    // 1. Local player's own status is authoritative.
+                    // 2. Existing remote player's status from real-time MQTT is authoritative over older cloud state.
+                    // 3. Fallback to cloud session status or role defaults.
                     val effReady = when {
+                        isLocal -> localP.lobbyReadyStatus
+                        existing != null && existing.lobbyReadyStatus.isNotBlank() -> existing.lobbyReadyStatus
                         p.lobbyReadyStatus.isNotBlank() -> p.lobbyReadyStatus
-                        existing?.lobbyReadyStatus != null -> existing.lobbyReadyStatus
                         p.isHost -> "READY"
                         else -> "NOT_READY"
                     }
@@ -447,6 +452,8 @@ class OnlineRoomSyncManager(
                             else -> existing?.displayName ?: "Player"
                         }
                         val effReady = when {
+                            isLocal -> localPlayer?.lobbyReadyStatus ?: p.lobbyReadyStatus
+                            existing != null && existing.lobbyReadyStatus.isNotBlank() -> existing.lobbyReadyStatus
                             p.lobbyReadyStatus.isNotBlank() -> p.lobbyReadyStatus
                             p.isHost -> "READY"
                             else -> "NOT_READY"
@@ -544,6 +551,12 @@ class OnlineRoomSyncManager(
                         )
                         _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
                     }
+                    val code = currentRoomCode
+                    if (code != null && localPlayer?.isHost == true) {
+                        scope.launch(Dispatchers.IO) {
+                            OnlineRoomRegistry.updatePlayerReadyStatus(code, packet.playerId, packet.readyStatus)
+                        }
+                    }
                 }
             }
 
@@ -611,12 +624,24 @@ class OnlineRoomSyncManager(
                 readyStatus = status
             )
         )
+        val code = currentRoomCode
+        if (code != null) {
+            scope.launch(Dispatchers.IO) {
+                OnlineRoomRegistry.updatePlayerReadyStatus(code, p.id, status)
+            }
+        }
     }
 
     fun updatePlayerReadyStatus(playerId: String, status: String) {
         val existing = playerRegistry[playerId] ?: return
         playerRegistry[playerId] = existing.copy(lobbyReadyStatus = status)
         _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+        val code = currentRoomCode
+        if (code != null) {
+            scope.launch(Dispatchers.IO) {
+                OnlineRoomRegistry.updatePlayerReadyStatus(code, playerId, status)
+            }
+        }
     }
 
     fun removePlayer(playerId: String) {
