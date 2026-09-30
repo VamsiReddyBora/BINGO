@@ -39,7 +39,8 @@ data class RoomMessagePacket(
     val timestamp: Long = System.currentTimeMillis(),
     val readyStatus: String = "",
     val targetPlayerId: String = "",
-    val readyVersion: Long = 0L
+    val readyVersion: Long = 0L,
+    val isManualBoard: Boolean = false
 )
 
 class OnlineRoomSyncManager(
@@ -114,7 +115,7 @@ class OnlineRoomSyncManager(
                     isAutomaticReconnect = true
                     isCleanSession = true
                     connectionTimeout = 10
-                    keepAliveInterval = 60
+                    keepAliveInterval = 30
                     socketFactory = LowLatencySocketFactory()
                 }
 
@@ -279,7 +280,7 @@ class OnlineRoomSyncManager(
                 if (client.isConnected) {
                     val payload = FastPacketCodec.encode(packet)
                     val qosLevel = when (packet.type) {
-                        "PICK_NUMBER", "PING", "PONG" -> 0 // Instant line-rate flight, zero ACK wait
+                        "PICK_NUMBER", "TURN_TIMEOUT", "BOARD_READY", "PING", "PONG", "GAME_SYNC" -> 0 // Instant line-rate flight, zero ACK wait
                         else -> 1 // Guaranteed delivery for room control & state
                     }
                     val message = MqttMessage(payload.toByteArray(StandardCharsets.UTF_8)).apply {
@@ -558,7 +559,14 @@ class OnlineRoomSyncManager(
             }
 
             "PING" -> {
-                if (packet.playerId != localPlayer?.id) {
+                if (packet.playerId == localPlayer?.id) {
+                    // Direct broker round-trip echo: provides exact client-to-broker network ping
+                    if (packet.pingTimestamp > 0L) {
+                        val brokerRtt = (System.currentTimeMillis() - packet.pingTimestamp).coerceAtLeast(1L)
+                        val cur = _pingMs.value
+                        _pingMs.value = if (cur <= 0L) brokerRtt else ((cur * 0.65) + (brokerRtt * 0.35)).toLong().coerceAtLeast(1L)
+                    }
+                } else {
                     // Reply immediately with PONG echoing the sender's timestamp
                     broadcastPacket(
                         RoomMessagePacket(
@@ -572,8 +580,12 @@ class OnlineRoomSyncManager(
 
             "PONG" -> {
                 if (packet.playerId != localPlayer?.id && packet.pingTimestamp > 0L) {
-                    val rtt = (System.currentTimeMillis() - packet.pingTimestamp).coerceAtLeast(1L)
-                    _pingMs.value = rtt
+                    // Peer round-trip: elapsed time covers 4 network hops (Sender->Broker->Receiver->Broker->Sender)
+                    // One-way transit latency between players = elapsed / 2
+                    val fullRtt = (System.currentTimeMillis() - packet.pingTimestamp).coerceAtLeast(1L)
+                    val oneWayLatency = (fullRtt / 2).coerceAtLeast(1L)
+                    val cur = _pingMs.value
+                    _pingMs.value = if (cur <= 0L) oneWayLatency else ((cur * 0.65) + (oneWayLatency * 0.35)).toLong().coerceAtLeast(1L)
                 }
             }
         }

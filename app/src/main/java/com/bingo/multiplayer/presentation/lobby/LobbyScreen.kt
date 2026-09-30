@@ -69,6 +69,8 @@ fun LobbyScreen(
     inactivityResetToken: Int = 0,
     onExtendLobby: () -> Unit = {},
     onExpireLobby: () -> Unit = {},
+    isManualBoard: Boolean = false,
+    onManualBoardChange: ((Boolean) -> Unit)? = null,
     onStartGame: () -> Unit,
     onBack: () -> Unit
 ) {
@@ -1089,6 +1091,34 @@ fun LobbyScreen(
             val readyCount = LobbyLifecycleEngine.countReadyPlayers(effectivePlayers)
 
             if (isHost) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 12.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(tokens.surface)
+                        .clickable { onManualBoardChange?.invoke(!isManualBoard) }
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Manual designed board",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = tokens.cellNeutralText
+                    )
+                    Checkbox(
+                        checked = isManualBoard,
+                        onCheckedChange = { onManualBoardChange?.invoke(it) },
+                        colors = CheckboxDefaults.colors(
+                            checkedColor = tokens.accentBrand,
+                            uncheckedColor = tokens.surfaceBorder,
+                            checkmarkColor = Color.White
+                        )
+                    )
+                }
+
                 Button(
                     onClick = {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)

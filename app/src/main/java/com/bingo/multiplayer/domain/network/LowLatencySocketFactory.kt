@@ -16,8 +16,9 @@ class LowLatencySocketFactory : SocketFactory() {
         try {
             socket.tcpNoDelay = true // Disables 40-100ms Nagle buffering
             socket.trafficClass = 0x10 // Low-delay QoS priority
-            socket.sendBufferSize = 8192
-            socket.receiveBufferSize = 8192
+            socket.sendBufferSize = 16384
+            socket.receiveBufferSize = 16384
+            socket.soTimeout = 0
         } catch (_: Exception) {}
         return socket
     }

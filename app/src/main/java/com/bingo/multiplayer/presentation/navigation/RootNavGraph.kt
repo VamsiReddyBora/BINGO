@@ -42,6 +42,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.bingo.multiplayer.core.designsystem.BingoTheme
+import com.bingo.multiplayer.domain.engine.ManualBoardEngine
+import com.bingo.multiplayer.presentation.manual.ManualBoardDesignScreen
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -58,6 +60,7 @@ sealed class Screen(val route: String) {
     data object Game : Screen("game")
     data object Dashboard : Screen("dashboard")
     data object NearbyLobby : Screen("nearby_lobby")
+    data object ManualBoardDesign : Screen("manual_board_design")
 }
 
 @Composable
@@ -100,6 +103,11 @@ fun RootNavGraph(
     var didPlayerWin by remember { mutableStateOf(false) }
     var isDrawMatch by remember { mutableStateOf(false) }
     var currentMatchSeed by remember { androidx.compose.runtime.mutableLongStateOf(0L) }
+    var isManualBoard by remember { mutableStateOf(false) }
+    var isLocalBoardReady by remember { mutableStateOf(false) }
+    var isOpponentBoardReady by remember { mutableStateOf(false) }
+    var countdownSeconds by remember { mutableIntStateOf(-1) }
+    var firstTurnPlayerName by remember { mutableStateOf("") }
 
     // History and Turn Authority (reconciles network packets and prevents stalls)
     val pickedNumbersHistory = remember { mutableStateListOf<Int>() }
@@ -148,6 +156,9 @@ fun RootNavGraph(
         currentRoute != Screen.Login.route
 
     BackHandler(enabled = shouldInterceptBack) {
+        if (currentRoute == Screen.ManualBoardDesign.route) {
+            return@BackHandler
+        }
         if (currentRoute == Screen.Game.route && !isGameOver) {
             showLeaveMatchDialog = true
             return@BackHandler
@@ -455,6 +466,37 @@ fun RootNavGraph(
         navController.navigate(Screen.Game.route)
     }
 
+    fun startCountdownAndInitiateTurn() {
+        coroutineScope.launch {
+            val candidateUids = realTimePlayers.map { it.id }.filter { it.isNotBlank() }.distinct()
+            val myUid = getLocalUid()
+            val effCandidates = if (candidateUids.size >= 2) candidateUids else {
+                val other = realTimePlayers.firstOrNull { it.id != myUid }?.id ?: "opponent"
+                listOf(myUid, other)
+            }
+            val firstTurnUid = ManualBoardEngine.determineRandomFirstTurn(currentMatchSeed, effCandidates)
+            val assignedPlayer = realTimePlayers.find { it.id == firstTurnUid }
+            firstTurnPlayerName = assignedPlayer?.displayName ?: if (firstTurnUid == myUid) "You" else "Opponent"
+
+            for (s in 5 downTo 1) {
+                countdownSeconds = s
+                delay(1000L)
+            }
+            countdownSeconds = 0
+            delay(300L)
+            countdownSeconds = -1
+
+            currentTurnPlayerId = firstTurnUid
+            isMyTurn = (currentTurnPlayerId == myUid)
+            turnNumber = 1
+            turnTimer = 30
+            isGamePaused = false
+            isGameOver = false
+            didPlayerWin = false
+            isDrawMatch = false
+        }
+    }
+
     fun executePick(
         number: Int,
         isOwnPick: Boolean,
@@ -586,7 +628,7 @@ fun RootNavGraph(
         when (packet.type) {
             "START_GAME" -> {
                 if (!isHosting) {
-                    val isInGame = currentRoute == Screen.Game.route
+                    val isInGame = currentRoute == Screen.Game.route || currentRoute == Screen.ManualBoardDesign.route
                     if (!com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.shouldStartNewMatch(
                             isHost = false,
                             incomingSeed = packet.seed,
@@ -604,19 +646,38 @@ fun RootNavGraph(
                     } else if (currentGameMode == GameMode.NEARBY_NETWORK) {
                         lanP2pSync.updateLocalReadyStatus("IN_GAME")
                     }
-                    startNewGame(
-                        mode = if (isUsingP2p) GameMode.NEARBY_NETWORK else GameMode.ONLINE_ROOM,
-                        difficulty = AiDifficulty.EASY,
-                        size = packet.boardSize,
-                        firstTurnPlayerId = packet.playerId,
-                        hostSeed = packet.seed
-                    )
+                    if (packet.isManualBoard) {
+                        isManualBoard = true
+                        currentMatchSeed = packet.seed
+                        boardSize = packet.boardSize
+                        isLocalBoardReady = false
+                        isOpponentBoardReady = false
+                        countdownSeconds = -1
+                        firstTurnPlayerName = ""
+                        pickedNumbersHistory.clear()
+                        isGameOver = false
+                        didPlayerWin = false
+                        isDrawMatch = false
+                        navController.navigate(Screen.ManualBoardDesign.route)
+                    } else {
+                        isManualBoard = false
+                        isLocalBoardReady = true
+                        isOpponentBoardReady = true
+                        countdownSeconds = -1
+                        startNewGame(
+                            mode = if (isUsingP2p) GameMode.NEARBY_NETWORK else GameMode.ONLINE_ROOM,
+                            difficulty = AiDifficulty.EASY,
+                            size = packet.boardSize,
+                            firstTurnPlayerId = packet.playerId,
+                            hostSeed = packet.seed
+                        )
+                    }
                 }
             }
 
             "PLAY_AGAIN" -> {
                 if (!isHosting && (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK)) {
-                    val isInGame = currentRoute == Screen.Game.route
+                    val isInGame = currentRoute == Screen.Game.route || currentRoute == Screen.ManualBoardDesign.route
                     if (!com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.shouldStartNewMatch(
                             isHost = false,
                             incomingSeed = packet.seed,
@@ -627,13 +688,47 @@ fun RootNavGraph(
                         return
                     }
                     pickedNumbersHistory.clear()
-                    startNewGame(
-                        mode = currentGameMode,
-                        difficulty = AiDifficulty.EASY,
-                        size = packet.boardSize,
-                        firstTurnPlayerId = packet.playerId,
-                        hostSeed = packet.seed
-                    )
+                    if (packet.isManualBoard || isManualBoard) {
+                        isManualBoard = true
+                        currentMatchSeed = packet.seed
+                        boardSize = packet.boardSize
+                        isLocalBoardReady = false
+                        isOpponentBoardReady = false
+                        countdownSeconds = -1
+                        firstTurnPlayerName = ""
+                        pickedNumbersHistory.clear()
+                        isGameOver = false
+                        didPlayerWin = false
+                        isDrawMatch = false
+                        navController.navigate(Screen.ManualBoardDesign.route)
+                    } else {
+                        isManualBoard = false
+                        isLocalBoardReady = true
+                        isOpponentBoardReady = true
+                        countdownSeconds = -1
+                        startNewGame(
+                            mode = currentGameMode,
+                            difficulty = AiDifficulty.EASY,
+                            size = packet.boardSize,
+                            firstTurnPlayerId = packet.playerId,
+                            hostSeed = packet.seed
+                        )
+                    }
+                }
+            }
+
+            "BOARD_READY" -> {
+                if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
+                    if (!com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPacketForActiveMatch(packet.seed, currentMatchSeed)) {
+                        return
+                    }
+                    if (packet.pickedHistory.isNotEmpty()) {
+                        opponentBoard = ManualBoardEngine.buildBoard(packet.pickedHistory, boardSize)
+                    }
+                    isOpponentBoardReady = true
+                    if (isLocalBoardReady && countdownSeconds < 0) {
+                        startCountdownAndInitiateTurn()
+                    }
                 }
             }
 
@@ -1265,6 +1360,8 @@ fun RootNavGraph(
                         lanP2pSync.removePlayer(targetId)
                     }
                 },
+                isManualBoard = isManualBoard,
+                onManualBoardChange = { isManualBoard = it },
                 onStartGame = {
                     val dynamicSize = calculateBoardSize(realTimePlayers.size)
                     val seed = Random.nextLong()
@@ -1289,7 +1386,8 @@ fun RootNavGraph(
                         type = "START_GAME",
                         boardSize = dynamicSize,
                         seed = seed,
-                        playerId = myId
+                        playerId = myId,
+                        isManualBoard = isManualBoard
                     )
                     broadcastPacket(startPacket)
                     coroutineScope.launch {
@@ -1299,13 +1397,35 @@ fun RootNavGraph(
                         broadcastPacket(startPacket)
                     }
 
-                    startNewGame(
-                        mode = if (isUsingP2p) GameMode.NEARBY_NETWORK else GameMode.ONLINE_ROOM,
-                        difficulty = AiDifficulty.EASY,
-                        size = dynamicSize,
-                        firstTurnPlayerId = myId,
-                        hostSeed = seed
-                    )
+                    if (isManualBoard) {
+                        boardSize = dynamicSize
+                        currentMatchSeed = seed
+                        isLocalBoardReady = false
+                        isOpponentBoardReady = false
+                        countdownSeconds = -1
+                        firstTurnPlayerName = ""
+                        pickedNumbersHistory.clear()
+                        isProcessingTurn = false
+                        turnTimer = 30
+                        isGamePaused = false
+                        pausedByPlayerName = ""
+                        recentPick = null
+                        isGameOver = false
+                        didPlayerWin = false
+                        isDrawMatch = false
+                        wantsToPlayAgainPlayerName = null
+                        opponentDisconnectMessage = null
+                        opponentSurrenderMessage = null
+                        navController.navigate(Screen.ManualBoardDesign.route)
+                    } else {
+                        startNewGame(
+                            mode = if (isUsingP2p) GameMode.NEARBY_NETWORK else GameMode.ONLINE_ROOM,
+                            difficulty = AiDifficulty.EASY,
+                            size = dynamicSize,
+                            firstTurnPlayerId = myId,
+                            hostSeed = seed
+                        )
+                    }
                 },
                 onBack = {
                     if (isHosting && currentGameMode == GameMode.ONLINE_ROOM && roomCode.isNotBlank()) {
@@ -1453,12 +1573,71 @@ fun RootNavGraph(
             )
         }
 
+        // 5c. Manual Board Design Screen
+        composable(Screen.ManualBoardDesign.route) {
+            ManualBoardDesignScreen(
+                boardSize = boardSize,
+                roomCode = roomCode,
+                onBoardReady = { boardNumbers ->
+                    playerBoard = ManualBoardEngine.buildBoard(boardNumbers, boardSize)
+                    isLocalBoardReady = true
+
+                    broadcastPacket(
+                        RoomMessagePacket(
+                            type = "BOARD_READY",
+                            playerId = getLocalUid(),
+                            seed = currentMatchSeed,
+                            pickedHistory = boardNumbers
+                        )
+                    )
+
+                    navController.navigate(Screen.Game.route) {
+                        popUpTo(Screen.ManualBoardDesign.route) { inclusive = true }
+                    }
+
+                    if (isOpponentBoardReady && countdownSeconds < 0) {
+                        startCountdownAndInitiateTurn()
+                    }
+                },
+                onLeave = {
+                    if (isHosting && currentGameMode == GameMode.ONLINE_ROOM && roomCode.isNotBlank()) {
+                        broadcastPacket(
+                            RoomMessagePacket(
+                                type = "HOST_LEFT",
+                                playerId = getLocalUid(),
+                                isHost = true
+                            )
+                        )
+                        coroutineScope.launch {
+                            com.bingo.multiplayer.domain.network.OnlineRoomRegistry.closeRoom(roomCode)
+                        }
+                    } else if (!isHosting) {
+                        if (currentGameMode == GameMode.ONLINE_ROOM) {
+                            onlineRoomSync.updateLocalReadyStatus("LEFT_LOBBY")
+                        } else if (currentGameMode == GameMode.NEARBY_NETWORK) {
+                            lanP2pSync.updateLocalReadyStatus("LEFT_LOBBY")
+                        }
+                    }
+                    disconnectRoom()
+                    isHosting = false
+                    navController.navigate(Screen.MainMenu.route) {
+                        popUpTo(Screen.MainMenu.route) { inclusive = false }
+                        launchSingleTop = true
+                    }
+                }
+            )
+        }
+
         // 6. Active Game Screen
         composable(Screen.Game.route) {
             BackHandler {
                 if (!isGameOver) {
                     showLeaveMatchDialog = true
                 } else {
+                    isLocalBoardReady = false
+                    isOpponentBoardReady = false
+                    countdownSeconds = -1
+                    firstTurnPlayerName = ""
                     if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
                         val targetRoute = if (currentGameMode == GameMode.NEARBY_NETWORK) Screen.NearbyLobby.route else Screen.Lobby.route
                         if (isHosting) {
@@ -1567,6 +1746,9 @@ fun RootNavGraph(
                 isHost = isCurrentHost,
                 pingMs = currentPing,
                 wantsToPlayAgainName = wantsToPlayAgainPlayerName,
+                isWaitingForOpponentBoard = isManualBoard && (!isLocalBoardReady || !isOpponentBoardReady),
+                countdownSeconds = countdownSeconds,
+                firstTurnPlayerName = firstTurnPlayerName,
                 onRequestPlayAgain = {
                     if (currentGameMode == GameMode.ONLINE_ROOM) {
                         broadcastPacket(
@@ -1625,7 +1807,8 @@ fun RootNavGraph(
                                 type = "PLAY_AGAIN",
                                 boardSize = boardSize,
                                 seed = seed,
-                                playerId = getLocalUid()
+                                playerId = getLocalUid(),
+                                isManualBoard = isManualBoard
                             )
                             broadcastPacket(playAgainPacket)
                             coroutineScope.launch {
@@ -1634,19 +1817,44 @@ fun RootNavGraph(
                                 delay(250L)
                                 broadcastPacket(playAgainPacket)
                             }
-                            startNewGame(
-                                mode = currentGameMode,
-                                difficulty = currentAiDifficulty,
-                                size = boardSize,
-                                firstTurnPlayerId = getLocalUid(),
-                                hostSeed = seed
-                            )
+                            if (isManualBoard) {
+                                currentMatchSeed = seed
+                                isLocalBoardReady = false
+                                isOpponentBoardReady = false
+                                countdownSeconds = -1
+                                firstTurnPlayerName = ""
+                                pickedNumbersHistory.clear()
+                                isProcessingTurn = false
+                                turnTimer = 30
+                                isGamePaused = false
+                                pausedByPlayerName = ""
+                                recentPick = null
+                                isGameOver = false
+                                didPlayerWin = false
+                                isDrawMatch = false
+                                wantsToPlayAgainPlayerName = null
+                                opponentDisconnectMessage = null
+                                opponentSurrenderMessage = null
+                                navController.navigate(Screen.ManualBoardDesign.route)
+                            } else {
+                                startNewGame(
+                                    mode = currentGameMode,
+                                    difficulty = currentAiDifficulty,
+                                    size = boardSize,
+                                    firstTurnPlayerId = getLocalUid(),
+                                    hostSeed = seed
+                                )
+                            }
                         }
                     } else {
                         startNewGame(currentGameMode, currentAiDifficulty, boardSize)
                     }
                 },
                 onBackToMenu = {
+                    isLocalBoardReady = false
+                    isOpponentBoardReady = false
+                    countdownSeconds = -1
+                    firstTurnPlayerName = ""
                     disconnectRoom()
                     navController.navigate(Screen.MainMenu.route) {
                         popUpTo(Screen.MainMenu.route) { inclusive = true }
@@ -1654,6 +1862,10 @@ fun RootNavGraph(
                 },
                 onReturnToLobby = if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
                     {
+                        isLocalBoardReady = false
+                        isOpponentBoardReady = false
+                        countdownSeconds = -1
+                        firstTurnPlayerName = ""
                         val targetRoute = if (currentGameMode == GameMode.NEARBY_NETWORK) Screen.NearbyLobby.route else Screen.Lobby.route
                         if (isHosting) {
                             if (currentGameMode == GameMode.ONLINE_ROOM) {
@@ -1830,6 +2042,10 @@ fun RootNavGraph(
                         }
                         isGameOver = true
                         didPlayerWin = false
+                        isLocalBoardReady = false
+                        isOpponentBoardReady = false
+                        countdownSeconds = -1
+                        firstTurnPlayerName = ""
                         recordFinishedMatch(false)
                         disconnectRoom()
                         lanDiscovery.stopBroadcasting()

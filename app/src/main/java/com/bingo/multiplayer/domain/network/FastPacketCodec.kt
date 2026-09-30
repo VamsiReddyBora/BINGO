@@ -33,6 +33,10 @@ object FastPacketCodec {
                     "T|${packet.playerId}|${packet.turnNumber}|${packet.currentTurnPlayerId}|$historyStr"
                 }
             }
+            "BOARD_READY" -> {
+                val boardStr = packet.pickedHistory.joinToString(",")
+                "B|${packet.playerId}|${packet.seed}|$boardStr"
+            }
             "PING" -> "G|${packet.playerId}|${packet.pingTimestamp}"
             "PONG" -> "O|${packet.playerId}|${packet.pingTimestamp}"
             "READY_STATUS" -> {
@@ -51,7 +55,7 @@ object FastPacketCodec {
                 } else if (packet.username.isNullOrEmpty() && packet.avatarUrl.isNullOrEmpty() && (packet.readyStatus.isEmpty() || packet.readyStatus == "NOT_READY") && packet.readyVersion == 0L) {
                     "H|${packet.playerId}|${packet.displayName}|${if (packet.isHost) "1" else "0"}|${packet.timestamp}"
                 } else {
-                    "H|${packet.playerId}|${packet.displayName}|${if (packet.isHost) "1" else "0"}|${packet.timestamp}|${packet.username ?: ""}|${packet.avatarUrl ?: ""}|${packet.readyStatus}|${packet.readyVersion}"
+                    "H|${packet.playerId}|${packet.displayName}|${if (packet.isHost) "1" else "0"}|${packet.timestamp}|${packet.username}|${packet.avatarUrl ?: ""}|${packet.readyStatus}|${packet.readyVersion}"
                 }
             }
             else -> json.encodeToString(packet)
@@ -104,6 +108,23 @@ object FastPacketCodec {
                         currentTurnPlayerId = currentTurnId,
                         pickedHistory = history,
                         seed = seed
+                    )
+                }
+
+                trimmed.startsWith("B|") -> {
+                    val parts = trimmed.split("|")
+                    val playerId = parts.getOrNull(1) ?: ""
+                    val seed = parts.getOrNull(2)?.toLongOrNull() ?: 0L
+                    val boardRaw = parts.getOrNull(3) ?: ""
+                    val boardNumbers = if (boardRaw.isNotBlank()) {
+                        boardRaw.split(",").mapNotNull { it.toIntOrNull() }
+                    } else emptyList()
+
+                    RoomMessagePacket(
+                        type = "BOARD_READY",
+                        playerId = playerId,
+                        seed = seed,
+                        pickedHistory = boardNumbers
                     )
                 }
 
