@@ -1110,7 +1110,7 @@ fun LobbyScreen(
                     )
                     Checkbox(
                         checked = isManualBoard,
-                        onCheckedChange = { onManualBoardChange?.invoke(it) },
+                        onCheckedChange = null,
                         colors = CheckboxDefaults.colors(
                             checkedColor = tokens.accentBrand,
                             uncheckedColor = tokens.surfaceBorder,

@@ -109,10 +109,7 @@ fun GameScreen(
     opponentUsername: String? = null,
     myAvatarUrl: String? = null,
     myUsername: String? = null,
-    myDisplayName: String? = null,
-    isWaitingForOpponentBoard: Boolean = false,
-    countdownSeconds: Int = -1,
-    firstTurnPlayerName: String = ""
+    myDisplayName: String? = null
 ) {
     val tokens = BingoTheme.colors
     val haptic = LocalHapticFeedback.current
@@ -254,107 +251,6 @@ fun GameScreen(
                     Text("Exit Match", color = tokens.cellNeutralText)
                 }
             }
-        )
-    }
-
-    if (isWaitingForOpponentBoard) {
-        AlertDialog(
-            onDismissRequest = { /* Modal */ },
-            shape = RoundedCornerShape(20.dp),
-            containerColor = tokens.surface,
-            icon = {
-                Text(text = "⌛", fontSize = 36.sp)
-            },
-            title = {
-                Text(
-                    text = "Arranging the board",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
-                    color = tokens.cellNeutralText,
-                    textAlign = TextAlign.Center
-                )
-            },
-            text = {
-                Text(
-                    text = if (opponentName.isNotBlank())
-                        "$opponentName is arranging their board...\nGame will start automatically when ready."
-                    else
-                        "Other player is arranging their board...\nGame will start automatically when ready.",
-                    fontSize = 14.sp,
-                    color = tokens.cellNeutralText.copy(alpha = 0.8f),
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            },
-            confirmButton = {},
-            dismissButton = {
-                TextButton(onClick = { showSurrenderDialog = true }) {
-                    Text("Leave Room", color = tokens.accentOpponent)
-                }
-            }
-        )
-    }
-
-    if (countdownSeconds in 1..5) {
-        AlertDialog(
-            onDismissRequest = { /* Modal */ },
-            shape = RoundedCornerShape(24.dp),
-            containerColor = tokens.surface,
-            icon = {
-                Box(
-                    modifier = Modifier
-                        .size(64.dp)
-                        .background(tokens.accentBrand.copy(alpha = 0.15f), CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "$countdownSeconds",
-                        fontSize = 32.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = tokens.accentBrand
-                    )
-                }
-            },
-            title = {
-                Text(
-                    text = "Game Starting in $countdownSeconds",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 20.sp,
-                    color = tokens.cellNeutralText,
-                    textAlign = TextAlign.Center
-                )
-            },
-            text = {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = "Both boards ready!",
-                        fontSize = 13.sp,
-                        color = tokens.cellNeutralText.copy(alpha = 0.7f),
-                        textAlign = TextAlign.Center
-                    )
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(tokens.background)
-                            .padding(horizontal = 14.dp, vertical = 8.dp)
-                    ) {
-                        Text(
-                            text = if (firstTurnPlayerName.isNotBlank())
-                                "🎯 First Turn: $firstTurnPlayerName"
-                            else
-                                "🎯 First turn assigned randomly",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp,
-                            color = tokens.accentBrand
-                        )
-                    }
-                }
-            },
-            confirmButton = {}
         )
     }
 
@@ -751,7 +647,7 @@ fun GameScreen(
         ) {
             BingoBoardView(
                 board = displayedBoard,
-                isInteractive = isMyTurn && !isGameOver && !isGamePaused && !isWaitingForOpponentBoard && countdownSeconds <= 0,
+                isInteractive = isMyTurn && !isGameOver && !isGamePaused,
                 onCellClicked = onCellPicked
             )
         }

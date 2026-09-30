@@ -115,9 +115,7 @@ class AccountSessionManager(
 
     private val appKey = NetworkConfig.KEYVALUE_APP_KEY
     private val legacyAppKey = "uewa9cmq"
-    private val binIdCache = ConcurrentHashMap<String, String>()
-    private val registryCache = ConcurrentHashMap<String, Pair<Long, PlayerRegistryEntry>>()
-    private val userMutexes = ConcurrentHashMap<String, Mutex>()
+
 
     private fun getUserMutex(googleId: String): Mutex =
         userMutexes.computeIfAbsent(googleId) { Mutex() }
@@ -288,6 +286,10 @@ class AccountSessionManager(
                 }
 
                 val cleanUser = backup.profile.username.trim().lowercase().removePrefix("@")
+                backupMemoryCache[gid] = backup
+                if (cleanUser.isNotBlank()) {
+                    backupMemoryCache["user_$cleanUser"] = backup
+                }
                 if (cleanUser.isNotBlank() && !binId.isNullOrBlank()) {
                     setKeyValue("user_$cleanUser", binId)
                     binIdCache["user_$cleanUser"] = binId
@@ -306,10 +308,10 @@ class AccountSessionManager(
                 } catch (_: Exception) {}
 
                 Log.i("AccountSessionManager", "Cloud backup result for $gid: success=$success, binId=$binId, user=$cleanUser")
-                success
+                success || backupMemoryCache.containsKey(gid)
             } catch (e: Exception) {
                 Log.w("AccountSessionManager", "backupUserDataSync failed for $gid: ${e.message}", e)
-                false
+                backupMemoryCache.containsKey(gid)
             }
         }
     }
@@ -346,21 +348,23 @@ class AccountSessionManager(
                     }
                     if (binId.isNullOrBlank()) {
                         Log.d("AccountSessionManager", "No cloud bin found in KV for Google ID $gid")
-                        return@withLock null
+                        return@withLock backupMemoryCache[gid]
                     }
                     binIdCache[gid] = binId
 
                     val rawJson = getJsonBin(binId)
                     if (rawJson.isNullOrBlank()) {
                         Log.d("AccountSessionManager", "Empty bin content for binId $binId")
-                        return@withLock null
+                        return@withLock backupMemoryCache[gid]
                     }
 
                     val backup = json.decodeFromString<com.bingo.multiplayer.domain.model.CloudUserDataBackup>(rawJson)
                     val cleanUser = backup.profile.username.trim().lowercase().removePrefix("@")
                     if (cleanUser.isNotBlank()) {
                         binIdCache["user_$cleanUser"] = binId
+                        backupMemoryCache["user_$cleanUser"] = backup
                     }
+                    backupMemoryCache[gid] = backup
                     Log.i(
                         "AccountSessionManager",
                         "Restored cloud backup for $gid: user=${backup.profile.username}, played=${backup.profile.gamesPlayed}, won=${backup.profile.gamesWon}, hasAvatar=${backup.profile.avatarBase64 != null}"
@@ -368,12 +372,12 @@ class AccountSessionManager(
                     backup
                 } catch (e: Exception) {
                     Log.w("AccountSessionManager", "fetchUserDataBackup error: ${e.message}", e)
-                    null
+                    backupMemoryCache[gid]
                 }
             }
         }
 
-        result ?: fetchUserDataBackupMqtt(gid, timeoutMs = 2000L)
+        result ?: backupMemoryCache[gid] ?: fetchUserDataBackupMqtt(gid, timeoutMs = 2000L)
     }
 
     /**
@@ -1168,6 +1172,11 @@ class AccountSessionManager(
     }
 
     companion object {
+        private val binIdCache = ConcurrentHashMap<String, String>()
+        private val registryCache = ConcurrentHashMap<String, Pair<Long, PlayerRegistryEntry>>()
+        private val userMutexes = ConcurrentHashMap<String, Mutex>()
+        private val backupMemoryCache = ConcurrentHashMap<String, com.bingo.multiplayer.domain.model.CloudUserDataBackup>()
+
         val defaultInstance by lazy { AccountSessionManager() }
 
         suspend fun searchPlayerByUsername(

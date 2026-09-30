@@ -1,14 +1,12 @@
 package com.bingo.multiplayer.presentation.manual
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -53,15 +51,27 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.bingo.multiplayer.domain.engine.ManualBoardEngine
 import com.bingo.multiplayer.core.designsystem.BingoTheme
+import com.bingo.multiplayer.domain.engine.ManualBoardEngine
 
+/**
+ * AMOLED & Premium Light Mode Manual Board Design Screen.
+ * Uses the exact same clean boxes as the Game Screen (clean white boxes, hairline borders).
+ * Waiting popup and synchronized countdown are displayed over this clean background
+ * before any navigation to the active Game Screen occurs.
+ */
 @Composable
 fun ManualBoardDesignScreen(
     boardSize: Int = 5,
     roomCode: String = "",
+    opponentName: String = "",
+    isWaitingForOpponent: Boolean = false,
+    countdownSeconds: Int = -1,
+    firstTurnPlayerName: String = "",
     onBoardReady: (List<Int>) -> Unit,
     onLeave: () -> Unit
 ) {
@@ -80,6 +90,7 @@ fun ManualBoardDesignScreen(
         showLeaveDialog = true
     }
 
+    // Leave Confirmation Dialog
     if (showLeaveDialog) {
         AlertDialog(
             onDismissRequest = { showLeaveDialog = false },
@@ -115,6 +126,109 @@ fun ManualBoardDesignScreen(
                     Text("Stay", color = tokens.cellNeutralText)
                 }
             }
+        )
+    }
+
+    // ── Waiting for other players to arrange their boards (Clean background, NOT GameScreen) ──
+    if (isWaitingForOpponent && countdownSeconds < 0) {
+        AlertDialog(
+            onDismissRequest = { /* Modal */ },
+            shape = RoundedCornerShape(20.dp),
+            containerColor = tokens.surface,
+            icon = {
+                Text(text = "⌛", fontSize = 36.sp)
+            },
+            title = {
+                Text(
+                    text = "Arranging the board",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    color = tokens.cellNeutralText,
+                    textAlign = TextAlign.Center
+                )
+            },
+            text = {
+                Text(
+                    text = if (opponentName.isNotBlank())
+                        "$opponentName is arranging their board...\nGame will start automatically when ready."
+                    else
+                        "Waiting for other players to arrange their board...\nGame will start automatically when ready.",
+                    fontSize = 14.sp,
+                    color = tokens.cellNeutralText.copy(alpha = 0.8f),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showLeaveDialog = true }) {
+                    Text("Leave Room", color = tokens.accentOpponent)
+                }
+            }
+        )
+    }
+
+    // ── Synchronized 5-Second Countdown Dialog (Clean background, NOT GameScreen) ──
+    if (countdownSeconds in 1..5) {
+        AlertDialog(
+            onDismissRequest = { /* Modal */ },
+            shape = RoundedCornerShape(24.dp),
+            containerColor = tokens.surface,
+            icon = {
+                Box(
+                    modifier = Modifier
+                        .size(64.dp)
+                        .background(tokens.accentBrand.copy(alpha = 0.15f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "$countdownSeconds",
+                        fontSize = 32.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = tokens.accentBrand
+                    )
+                }
+            },
+            title = {
+                Text(
+                    text = "Game Starting in $countdownSeconds",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 20.sp,
+                    color = tokens.cellNeutralText,
+                    textAlign = TextAlign.Center
+                )
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "Both boards ready!",
+                        fontSize = 13.sp,
+                        color = tokens.cellNeutralText.copy(alpha = 0.7f),
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(tokens.background)
+                            .padding(horizontal = 14.dp, vertical = 8.dp)
+                    ) {
+                        Text(
+                            text = if (firstTurnPlayerName.isNotBlank())
+                                "🎯 First Turn: $firstTurnPlayerName"
+                            else
+                                "🎯 First turn assigned randomly",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = tokens.accentBrand
+                        )
+                    }
+                }
+            },
+            confirmButton = {}
         )
     }
 
@@ -255,23 +369,41 @@ fun ManualBoardDesignScreen(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // ── N x N Grid Layout ──
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = tokens.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            // ── N x N Grid Layout (Identical clean white boxes to GameScreen) ──
+            val spacing = when {
+                boardSize <= 4 -> 8.dp
+                boardSize == 5 -> 6.dp
+                boardSize == 6 -> 5.dp
+                else -> 4.dp
+            }
+
+            val cornerRadius: Dp = when {
+                boardSize <= 5 -> 12.dp
+                boardSize == 6 -> 10.dp
+                else -> 8.dp
+            }
+            val cellShape = RoundedCornerShape(cornerRadius)
+
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 4.dp),
+                contentAlignment = Alignment.Center
             ) {
+                val maxBoardWidth = maxWidth.coerceAtMost(maxHeight)
+
                 Column(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                        .size(maxBoardWidth)
+                        .aspectRatio(1f),
+                    verticalArrangement = Arrangement.spacedBy(spacing)
                 ) {
                     for (r in 0 until boardSize) {
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(spacing)
                         ) {
                             for (c in 0 until boardSize) {
                                 val idx = r * boardSize + c
@@ -282,24 +414,14 @@ fun ManualBoardDesignScreen(
                                     modifier = Modifier
                                         .weight(1f)
                                         .aspectRatio(1f)
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .background(
-                                            when {
-                                                number != null && isMostRecent -> tokens.accentBrand.copy(alpha = 0.22f)
-                                                number != null -> tokens.background
-                                                else -> tokens.surfaceBorder.copy(alpha = 0.35f)
-                                            }
-                                        )
+                                        .clip(cellShape)
+                                        .background(tokens.cellNeutralBg)
                                         .border(
-                                            width = if (isMostRecent) 2.dp else 1.dp,
-                                            color = when {
-                                                isMostRecent -> tokens.accentBrand
-                                                number != null -> tokens.surfaceBorder
-                                                else -> tokens.surfaceBorder.copy(alpha = 0.5f)
-                                            },
-                                            shape = RoundedCornerShape(10.dp)
+                                            width = if (isMostRecent) 1.5.dp else 0.5.dp,
+                                            color = if (isMostRecent) tokens.accentBrand else tokens.cellNeutralBorder,
+                                            shape = cellShape
                                         )
-                                        .clickable {
+                                        .clickable(enabled = !isWaitingForOpponent && countdownSeconds < 0) {
                                             if (number == null && nextNumber <= totalCells) {
                                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                                 val res = ManualBoardEngine.placeNextNumber(grid, idx, nextNumber, boardSize)
@@ -308,7 +430,6 @@ fun ManualBoardDesignScreen(
                                                     nextNumber = res.second
                                                 }
                                             } else if (isMostRecent) {
-                                                // Quick tap on the most recently placed number to undo it
                                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                                 val res = ManualBoardEngine.undoLastNumber(grid, nextNumber)
                                                 if (res != null) {
@@ -322,16 +443,9 @@ fun ManualBoardDesignScreen(
                                     if (number != null) {
                                         Text(
                                             text = number.toString(),
-                                            fontSize = if (boardSize > 6) 13.sp else 16.sp,
+                                            fontSize = computeMinimalFontSize(boardSize),
                                             fontWeight = FontWeight.Bold,
                                             color = if (isMostRecent) tokens.accentBrand else tokens.cellNeutralText
-                                        )
-                                    } else {
-                                        Text(
-                                            text = "·",
-                                            fontSize = 18.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = tokens.cellNeutralText.copy(alpha = 0.25f)
                                         )
                                     }
                                 }
@@ -358,7 +472,7 @@ fun ManualBoardDesignScreen(
                             nextNumber = res.second
                         }
                     },
-                    enabled = nextNumber > 1,
+                    enabled = nextNumber > 1 && !isWaitingForOpponent && countdownSeconds < 0,
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier.weight(1f)
                 ) {
@@ -380,7 +494,7 @@ fun ManualBoardDesignScreen(
                         grid = res.first
                         nextNumber = res.second
                     },
-                    enabled = filledCount > 0,
+                    enabled = filledCount > 0 && !isWaitingForOpponent && countdownSeconds < 0,
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier.weight(1f)
                 ) {
@@ -402,7 +516,7 @@ fun ManualBoardDesignScreen(
                         grid = res.first
                         nextNumber = res.second
                     },
-                    enabled = !isComplete,
+                    enabled = !isComplete && !isWaitingForOpponent && countdownSeconds < 0,
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier.weight(1.3f)
                 ) {
@@ -422,13 +536,13 @@ fun ManualBoardDesignScreen(
             // ── Board Ready Button ──
             Button(
                 onClick = {
-                    if (isComplete) {
+                    if (isComplete && !isWaitingForOpponent) {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         val finalNumbers = grid.map { it!! }
                         onBoardReady(finalNumbers)
                     }
                 },
-                enabled = isComplete,
+                enabled = isComplete && !isWaitingForOpponent && countdownSeconds < 0,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(52.dp),
@@ -442,16 +556,30 @@ fun ManualBoardDesignScreen(
                     imageVector = Icons.Default.CheckCircle,
                     contentDescription = null,
                     modifier = Modifier.size(20.dp),
-                    tint = if (isComplete) Color.White else tokens.cellNeutralText.copy(alpha = 0.4f)
+                    tint = if (isComplete && !isWaitingForOpponent) Color.White else tokens.cellNeutralText.copy(alpha = 0.4f)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = if (isComplete) "Board Ready ✅" else "Board Ready ($filledCount/$totalCells)",
+                    text = when {
+                        isWaitingForOpponent -> "Waiting for Opponent... ⌛"
+                        isComplete -> "Board Ready ✅"
+                        else -> "Board Ready ($filledCount/$totalCells)"
+                    },
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
-                    color = if (isComplete) Color.White else tokens.cellNeutralText.copy(alpha = 0.4f)
+                    color = if (isComplete && !isWaitingForOpponent) Color.White else tokens.cellNeutralText.copy(alpha = 0.4f)
                 )
             }
         }
+    }
+}
+
+private fun computeMinimalFontSize(boardSize: Int): TextUnit {
+    return when (boardSize) {
+        4 -> 22.sp
+        5 -> 19.sp
+        6 -> 16.sp
+        7 -> 13.sp
+        else -> 11.sp
     }
 }

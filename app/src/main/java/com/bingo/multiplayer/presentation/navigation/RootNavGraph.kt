@@ -468,15 +468,15 @@ fun RootNavGraph(
 
     fun startCountdownAndInitiateTurn() {
         coroutineScope.launch {
-            val candidateUids = realTimePlayers.map { it.id }.filter { it.isNotBlank() }.distinct()
+            val candidateUids = realTimePlayers.map { it.id }.filter { it.isNotBlank() }.distinct().sorted()
             val myUid = getLocalUid()
             val effCandidates = if (candidateUids.size >= 2) candidateUids else {
                 val other = realTimePlayers.firstOrNull { it.id != myUid }?.id ?: "opponent"
-                listOf(myUid, other)
+                listOf(myUid, other).sorted()
             }
             val firstTurnUid = ManualBoardEngine.determineRandomFirstTurn(currentMatchSeed, effCandidates)
             val assignedPlayer = realTimePlayers.find { it.id == firstTurnUid }
-            firstTurnPlayerName = assignedPlayer?.displayName ?: if (firstTurnUid == myUid) "You" else "Opponent"
+            firstTurnPlayerName = if (firstTurnUid == myUid) "You" else (assignedPlayer?.displayName ?: "Opponent")
 
             for (s in 5 downTo 1) {
                 countdownSeconds = s
@@ -494,6 +494,10 @@ fun RootNavGraph(
             isGameOver = false
             didPlayerWin = false
             isDrawMatch = false
+
+            navController.navigate(Screen.Game.route) {
+                popUpTo(Screen.ManualBoardDesign.route) { inclusive = true }
+            }
         }
     }
 
@@ -1382,12 +1386,13 @@ fun RootNavGraph(
                         }
                     }
 
+                    val manualMode = isManualBoard
                     val startPacket = RoomMessagePacket(
                         type = "START_GAME",
                         boardSize = dynamicSize,
                         seed = seed,
                         playerId = myId,
-                        isManualBoard = isManualBoard
+                        isManualBoard = manualMode
                     )
                     broadcastPacket(startPacket)
                     coroutineScope.launch {
@@ -1397,7 +1402,7 @@ fun RootNavGraph(
                         broadcastPacket(startPacket)
                     }
 
-                    if (isManualBoard) {
+                    if (manualMode) {
                         boardSize = dynamicSize
                         currentMatchSeed = seed
                         isLocalBoardReady = false
@@ -1575,24 +1580,38 @@ fun RootNavGraph(
 
         // 5c. Manual Board Design Screen
         composable(Screen.ManualBoardDesign.route) {
+            val opponentPlayer = if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
+                realTimePlayers.firstOrNull { it.id != getLocalUid() }
+            } else null
+
+            val opponentDisplayName = when (currentGameMode) {
+                GameMode.AI_EASY -> "AI (Easy)"
+                GameMode.AI_HARD -> "AI (Master)"
+                GameMode.ONLINE_ROOM -> opponentPlayer?.displayName ?: "Opponent"
+                GameMode.NEARBY_NETWORK -> opponentPlayer?.displayName ?: "Nearby Peer"
+            }
+
             ManualBoardDesignScreen(
                 boardSize = boardSize,
                 roomCode = roomCode,
+                opponentName = opponentDisplayName,
+                isWaitingForOpponent = isLocalBoardReady && !isOpponentBoardReady,
+                countdownSeconds = countdownSeconds,
+                firstTurnPlayerName = firstTurnPlayerName,
                 onBoardReady = { boardNumbers ->
                     playerBoard = ManualBoardEngine.buildBoard(boardNumbers, boardSize)
                     isLocalBoardReady = true
 
-                    broadcastPacket(
-                        RoomMessagePacket(
-                            type = "BOARD_READY",
-                            playerId = getLocalUid(),
-                            seed = currentMatchSeed,
-                            pickedHistory = boardNumbers
-                        )
+                    val readyPacket = RoomMessagePacket(
+                        type = "BOARD_READY",
+                        playerId = getLocalUid(),
+                        seed = currentMatchSeed,
+                        pickedHistory = boardNumbers
                     )
-
-                    navController.navigate(Screen.Game.route) {
-                        popUpTo(Screen.ManualBoardDesign.route) { inclusive = true }
+                    broadcastPacket(readyPacket)
+                    coroutineScope.launch {
+                        delay(200L)
+                        broadcastPacket(readyPacket)
                     }
 
                     if (isOpponentBoardReady && countdownSeconds < 0) {
@@ -1746,9 +1765,6 @@ fun RootNavGraph(
                 isHost = isCurrentHost,
                 pingMs = currentPing,
                 wantsToPlayAgainName = wantsToPlayAgainPlayerName,
-                isWaitingForOpponentBoard = isManualBoard && (!isLocalBoardReady || !isOpponentBoardReady),
-                countdownSeconds = countdownSeconds,
-                firstTurnPlayerName = firstTurnPlayerName,
                 onRequestPlayAgain = {
                     if (currentGameMode == GameMode.ONLINE_ROOM) {
                         broadcastPacket(
