@@ -926,4 +926,173 @@ class TwoPlayerMatchSimulationTest {
 
         println("✅ Simulation Test 6 (Split-Screen / Dual Instance Packet Isolation) PASSED successfully!")
     }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // TEST 7: NEARBY NETWORK (LAN/HOTSPOT) P2P WITH FULL LOBBY & MANUAL BOARD FLOW
+    // ════════════════════════════════════════════════════════════════════════════
+    @Test
+    fun testSimulation_NearbyNetworkP2p_ManualBoardAndRematchFlow() {
+        val bus = VirtualMessageBus()
+        // Host (Alice) broadcasts Nearby LAN Match
+        val host = SimulatedClient("host_lan", "AliceLan", isHost = true, messageBus = bus)
+        // Guest (Bob) discovers Host on Wi-Fi and joins
+        val guest = SimulatedClient("guest_lan", "BobLan", isHost = false, messageBus = bus)
+        bus.register(host)
+        bus.register(guest)
+
+        // Step 1: Host creates Nearby LAN lobby
+        host.screen = "LOBBY"
+        host.currentRoomCode = "LAN_4912"
+        host.boardSize = 5
+        assertEquals("LOBBY", host.screen)
+        assertEquals("READY", host.localPlayer.lobbyReadyStatus)
+
+        // Step 2: Guest discovers game via LAN discovery and connects as client
+        guest.screen = "LOBBY"
+        guest.currentRoomCode = "LAN_4912"
+        guest.boardSize = 5
+        guest.sendPacket(
+            RoomMessagePacket(
+                type = "JOIN",
+                playerId = guest.id,
+                displayName = guest.displayName,
+                isHost = false,
+                readyStatus = "NOT_READY"
+            )
+        )
+
+        // Both players are in the lobby
+        assertEquals(2, host.roomPlayers.size)
+        assertEquals(2, guest.roomPlayers.size)
+        assertEquals("NOT_READY", host.roomPlayers[guest.id]?.lobbyReadyStatus)
+        assertFalse("Host Start button must be disabled until guest is READY",
+            LobbyLifecycleEngine.canStartMatch(host.roomPlayers.values.toList()))
+
+        // Step 3: Host enables Manual Board mode in the lobby
+        host.isManualBoardMode = true
+        host.sendPacket(
+            RoomMessagePacket(
+                type = "SETTINGS_UPDATE",
+                playerId = host.id,
+                isManualBoard = true
+            )
+        )
+        // Guest receives settings update
+        guest.isManualBoardMode = true
+        assertTrue(guest.isManualBoardMode)
+
+        // Step 4: Guest toggles "I'M READY" in the lobby
+        guest.localPlayer = LobbyLifecycleEngine.onLocalStatusChange(guest.localPlayer, "READY")
+        guest.sendPacket(
+            RoomMessagePacket(
+                type = "READY_STATUS",
+                playerId = guest.id,
+                readyStatus = "READY",
+                readyVersion = guest.localPlayer.readyVersion
+            )
+        )
+        host.roomPlayers[guest.id] = guest.localPlayer
+
+        assertTrue("Host Start button must now be enabled",
+            LobbyLifecycleEngine.canStartMatch(host.roomPlayers.values.toList()))
+
+        // Step 5: Host clicks "Start Match (5x5)"
+        val matchSeed = 9988776655L
+        host.currentMatchSeed = matchSeed
+        host.screen = "MANUAL_BOARD"
+        host.manualGrid = ManualBoardEngine.createEmptyGrid(5)
+
+        host.sendPacket(
+            RoomMessagePacket(
+                type = "START_GAME",
+                playerId = host.id,
+                boardSize = 5,
+                seed = matchSeed,
+                isManualBoard = true
+            )
+        )
+
+        // Both clients must transition to MANUAL_BOARD design screen
+        assertEquals("MANUAL_BOARD", host.screen)
+        assertEquals("MANUAL_BOARD", guest.screen)
+        assertEquals(matchSeed, guest.currentMatchSeed)
+
+        // Step 6: Both design and submit their boards
+        val hostGridNumbers = (1..25).toList()
+        val guestGridNumbers = (25 downTo 1).toList()
+
+        host.submitBoardReady(hostGridNumbers)
+        assertTrue(host.isWaitingForOpponent)
+        assertEquals("MANUAL_BOARD", host.screen) // Still waiting for guest
+
+        guest.submitBoardReady(guestGridNumbers)
+
+        // Both received BOARD_READY, 5-second countdown finishes, both enter GAME
+        assertEquals("GAME", host.screen)
+        assertEquals("GAME", guest.screen)
+        assertEquals(host.currentTurnPlayerId, guest.currentTurnPlayerId)
+        assertTrue("Exactly one player must have first turn",
+            (host.isMyTurn && !guest.isMyTurn) || (!host.isMyTurn && guest.isMyTurn))
+
+        // Step 7: Simulate move exchange over LAN P2P
+        val firstPicker = if (host.isMyTurn) host else guest
+        val secondPicker = if (host.isMyTurn) guest else host
+
+        firstPicker.pickNumber(10)
+        assertTrue(host.pickedNumbersHistory.contains(10))
+        assertTrue(guest.pickedNumbersHistory.contains(10))
+        assertEquals(secondPicker.id, host.currentTurnPlayerId)
+        assertEquals(secondPicker.id, guest.currentTurnPlayerId)
+        assertTrue(secondPicker.isMyTurn)
+        assertFalse(firstPicker.isMyTurn)
+
+        // Finish game
+        host.isGameOver = true
+        host.didPlayerWin = true
+        guest.isGameOver = true
+        guest.didPlayerWin = false
+
+        // Step 8: Both click "Return to Lobby" / "Rematch"
+        host.returnToLobby()
+        guest.returnToLobby()
+
+        assertEquals("LOBBY", host.screen)
+        assertEquals("LOBBY", guest.screen)
+        assertEquals("READY", host.localPlayer.lobbyReadyStatus)
+        assertEquals("NOT_READY", guest.localPlayer.lobbyReadyStatus)
+        assertFalse("Host Start button must be disabled for rematch until guest readies up",
+            LobbyLifecycleEngine.canStartMatch(host.roomPlayers.values.toList()))
+
+        // Step 9: Guest readies up again for Match 2
+        guest.localPlayer = LobbyLifecycleEngine.onLocalStatusChange(guest.localPlayer, "READY")
+        guest.sendPacket(
+            RoomMessagePacket(
+                type = "READY_STATUS",
+                playerId = guest.id,
+                readyStatus = "READY",
+                readyVersion = guest.localPlayer.readyVersion
+            )
+        )
+        host.roomPlayers[guest.id] = guest.localPlayer
+        assertTrue("Host Start button must be enabled again for rematch",
+            LobbyLifecycleEngine.canStartMatch(host.roomPlayers.values.toList()))
+
+        // Match 2 starts
+        val match2Seed = 5544332211L
+        host.currentMatchSeed = match2Seed
+        host.screen = "MANUAL_BOARD"
+        host.sendPacket(
+            RoomMessagePacket(
+                type = "START_GAME",
+                playerId = host.id,
+                boardSize = 5,
+                seed = match2Seed,
+                isManualBoard = true
+            )
+        )
+        assertEquals("MANUAL_BOARD", guest.screen)
+        assertEquals(match2Seed, guest.currentMatchSeed)
+
+        println("✅ Simulation Test 7 (Nearby Network P2P with Full Lobby & Manual Board Flow) PASSED successfully!")
+    }
 }

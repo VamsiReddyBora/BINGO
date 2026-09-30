@@ -998,11 +998,18 @@ fun RootNavGraph(
                         Toast.makeText(context, "Host has left the lobby.", Toast.LENGTH_LONG).show()
                         disconnectRoom()
                         isHosting = false
-                        navController.navigate(Screen.MainMenu.route) {
-                            popUpTo(Screen.MainMenu.route) { inclusive = false }
+                        val exitDest = if (currentGameMode == GameMode.NEARBY_NETWORK) Screen.NearbyLobby.route else Screen.MainMenu.route
+                        navController.navigate(exitDest) {
+                            popUpTo(exitDest) { inclusive = false }
                             launchSingleTop = true
                         }
                     }
+                }
+            }
+
+            "SETTINGS_UPDATE" -> {
+                if (!isHosting) {
+                    isManualBoard = packet.isManualBoard
                 }
             }
 
@@ -1328,7 +1335,7 @@ fun RootNavGraph(
         // 5. Lobby Screen with Real-Time Presence & Refresh
         composable(Screen.Lobby.route) {
             BackHandler {
-                if (isHosting && currentGameMode == GameMode.ONLINE_ROOM && roomCode.isNotBlank()) {
+                if (isHosting) {
                     broadcastPacket(
                         RoomMessagePacket(
                             type = "HOST_LEFT",
@@ -1336,20 +1343,27 @@ fun RootNavGraph(
                             isHost = true
                         )
                     )
-                    coroutineScope.launch {
-                        com.bingo.multiplayer.domain.network.OnlineRoomRegistry.closeRoom(roomCode)
+                    if (currentGameMode == GameMode.ONLINE_ROOM && roomCode.isNotBlank()) {
+                        coroutineScope.launch {
+                            com.bingo.multiplayer.domain.network.OnlineRoomRegistry.closeRoom(roomCode)
+                        }
                     }
+                    lanDiscovery.stopBroadcasting()
+                    lanDiscovery.stopDiscovering()
                 } else if (!isHosting) {
                     if (currentGameMode == GameMode.ONLINE_ROOM) {
                         onlineRoomSync.updateLocalReadyStatus("LEFT_LOBBY")
                     } else if (currentGameMode == GameMode.NEARBY_NETWORK) {
                         lanP2pSync.updateLocalReadyStatus("LEFT_LOBBY")
+                        lanDiscovery.stopDiscovering()
                     }
                 }
                 disconnectRoom()
                 isHosting = false
-                navController.navigate(Screen.MainMenu.route) {
-                    popUpTo(Screen.MainMenu.route) { inclusive = false }
+                joinedLanGame = null
+                val backDest = if (currentGameMode == GameMode.NEARBY_NETWORK) Screen.NearbyLobby.route else Screen.MainMenu.route
+                navController.navigate(backDest) {
+                    popUpTo(backDest) { inclusive = false }
                     launchSingleTop = true
                 }
             }
@@ -1360,9 +1374,10 @@ fun RootNavGraph(
                 isHost = isHosting,
                 currentUser = user,
                 currentUserId = getLocalUid(),
-                friendsRepository = friendsRepository,
-                isRefreshing = isRefreshing,
+                friendsRepository = if (currentGameMode == GameMode.NEARBY_NETWORK) null else friendsRepository,
+                isRefreshing = if (currentGameMode == GameMode.NEARBY_NETWORK) false else isRefreshing,
                 inactivityResetToken = lobbyInactivityResetToken,
+                isNearbyNetwork = (currentGameMode == GameMode.NEARBY_NETWORK),
                 onExtendLobby = {
                     lobbyInactivityResetToken++
                     broadcastPacket(
@@ -1399,11 +1414,13 @@ fun RootNavGraph(
                     }
                 },
                 onRefresh = {
-                    coroutineScope.launch {
-                        onlineRoomSync.refreshNow()
+                    if (currentGameMode == GameMode.ONLINE_ROOM) {
+                        coroutineScope.launch {
+                            onlineRoomSync.refreshNow()
+                        }
                     }
                 },
-                onSearchPlayer = { username ->
+                onSearchPlayer = if (currentGameMode == GameMode.NEARBY_NETWORK) null else { username ->
                     authRepository.sessionManager.clearRegistryCache(username)
                     authRepository.sessionManager.searchPlayerByUsername(username, forceRefresh = true)
                 },
@@ -1423,9 +1440,18 @@ fun RootNavGraph(
                     }
                 },
                 isManualBoard = isManualBoard,
-                onManualBoardChange = { isManualBoard = it },
+                onManualBoardChange = { manual ->
+                    isManualBoard = manual
+                    broadcastPacket(
+                        RoomMessagePacket(
+                            type = "SETTINGS_UPDATE",
+                            playerId = getLocalUid(),
+                            isManualBoard = manual
+                        )
+                    )
+                },
                 onStartGame = {
-                    val dynamicSize = calculateBoardSize(realTimePlayers.size)
+                    val dynamicSize = if (currentGameMode == GameMode.NEARBY_NETWORK && boardSize in 5..8) boardSize else calculateBoardSize(realTimePlayers.size)
                     val seed = Random.nextLong().let { if (it == 0L) 1L else it }
                     val myId = getLocalUid()
                     val manualMode = isManualBoard
@@ -1443,6 +1469,8 @@ fun RootNavGraph(
                         onlineRoomSync.updateLocalReadyStatus("IN_GAME")
                     } else if (currentGameMode == GameMode.NEARBY_NETWORK) {
                         lanP2pSync.updateLocalReadyStatus("IN_GAME")
+                        lanDiscovery.stopBroadcasting()
+                        lanDiscovery.stopDiscovering()
                     }
 
                     val startPacket = RoomMessagePacket(
@@ -1494,7 +1522,7 @@ fun RootNavGraph(
                     }
                 },
                 onBack = {
-                    if (isHosting && currentGameMode == GameMode.ONLINE_ROOM && roomCode.isNotBlank()) {
+                    if (isHosting) {
                         broadcastPacket(
                             RoomMessagePacket(
                                 type = "HOST_LEFT",
@@ -1502,20 +1530,27 @@ fun RootNavGraph(
                                 isHost = true
                             )
                         )
-                        coroutineScope.launch {
-                            com.bingo.multiplayer.domain.network.OnlineRoomRegistry.closeRoom(roomCode)
+                        if (currentGameMode == GameMode.ONLINE_ROOM && roomCode.isNotBlank()) {
+                            coroutineScope.launch {
+                                com.bingo.multiplayer.domain.network.OnlineRoomRegistry.closeRoom(roomCode)
+                            }
                         }
+                        lanDiscovery.stopBroadcasting()
+                        lanDiscovery.stopDiscovering()
                     } else if (!isHosting) {
                         if (currentGameMode == GameMode.ONLINE_ROOM) {
                             onlineRoomSync.updateLocalReadyStatus("LEFT_LOBBY")
                         } else if (currentGameMode == GameMode.NEARBY_NETWORK) {
                             lanP2pSync.updateLocalReadyStatus("LEFT_LOBBY")
+                            lanDiscovery.stopDiscovering()
                         }
                     }
                     disconnectRoom()
                     isHosting = false
-                    navController.navigate(Screen.MainMenu.route) {
-                        popUpTo(Screen.MainMenu.route) { inclusive = false }
+                    joinedLanGame = null
+                    val backDest = if (currentGameMode == GameMode.NEARBY_NETWORK) Screen.NearbyLobby.route else Screen.MainMenu.route
+                    navController.navigate(backDest) {
+                        popUpTo(backDest) { inclusive = false }
                         launchSingleTop = true
                     }
                 }
@@ -1551,8 +1586,9 @@ fun RootNavGraph(
                 onStartBroadcasting = { selectedSize ->
                     isHosting = true
                     isUsingP2p = true
+                    currentGameMode = GameMode.NEARBY_NETWORK
                     joinedLanGame = null
-                    val internalCode = "P2P_${(1000..9999).random()}"
+                    val internalCode = "LAN_${(1000..9999).random()}"
                     roomCode = internalCode
                     boardSize = selectedSize
                     val localHost = Player(
@@ -1565,11 +1601,13 @@ fun RootNavGraph(
                         gamesWon = user?.gamesWon ?: 0,
                         currentStreak = user?.currentStreak ?: 0,
                         level = user?.level ?: 1,
+                        lobbyReadyStatus = "READY",
                         lastSeenTimestamp = System.currentTimeMillis()
                     )
                     
                     lanP2pSync.connectAsHost(localHost)
                     lanDiscovery.startBroadcasting(localHost, selectedSize, internalCode)
+                    navController.navigate(Screen.Lobby.route)
                 },
                 onStopBroadcasting = {
                     isHosting = false
@@ -1579,6 +1617,7 @@ fun RootNavGraph(
                 onJoinDiscoveredGame = { game ->
                     isHosting = false
                     isUsingP2p = true
+                    currentGameMode = GameMode.NEARBY_NETWORK
                     joinedLanGame = game
                     roomCode = game.roomCode
                     boardSize = game.boardSize
@@ -1592,38 +1631,73 @@ fun RootNavGraph(
                         gamesWon = user?.gamesWon ?: 0,
                         currentStreak = user?.currentStreak ?: 0,
                         level = user?.level ?: 1,
+                        lobbyReadyStatus = "NOT_READY",
                         lastSeenTimestamp = System.currentTimeMillis()
                     )
                     lanP2pSync.connectAsClient(game.hostIp, localJoiner)
+                    navController.navigate(Screen.Lobby.route)
                 },
                 onLeaveJoinedGame = {
                     joinedLanGame = null
                     disconnectRoom()
                 },
                 onStartGame = {
-                    val seed = Random.nextLong()
+                    val dynamicSize = if (boardSize in 5..8) boardSize else calculateBoardSize(realTimePlayers.size)
+                    val seed = Random.nextLong().let { if (it == 0L) 1L else it }
                     val myId = getLocalUid()
+                    val manualMode = isManualBoard
+
                     lanP2pSync.updateLocalReadyStatus("IN_GAME")
-                    realTimePlayers.filter { !it.isHost }.forEach {
-                        lanP2pSync.updatePlayerReadyStatus(it.id, "IN_GAME")
-                    }
-                    broadcastPacket(
-                        RoomMessagePacket(
-                            type = "START_GAME",
-                            boardSize = boardSize,
-                            seed = seed,
-                            playerId = myId
-                        )
-                    )
                     lanDiscovery.stopBroadcasting()
                     lanDiscovery.stopDiscovering()
-                    startNewGame(
-                        mode = GameMode.ONLINE_ROOM,
-                        difficulty = AiDifficulty.EASY,
-                        size = boardSize,
-                        firstTurnPlayerId = myId,
-                        hostSeed = seed
+
+                    val startPacket = RoomMessagePacket(
+                        type = "START_GAME",
+                        boardSize = dynamicSize,
+                        seed = seed,
+                        playerId = myId,
+                        isManualBoard = manualMode
                     )
+                    broadcastPacket(startPacket)
+                    coroutineScope.launch {
+                        delay(150L)
+                        broadcastPacket(startPacket)
+                        delay(250L)
+                        broadcastPacket(startPacket)
+                    }
+
+                    if (manualMode) {
+                        boardSize = dynamicSize
+                        currentMatchSeed = seed
+                        isLocalBoardReady = false
+                        isOpponentBoardReady = false
+                        countdownSeconds = -1
+                        firstTurnPlayerName = ""
+                        pickedNumbersHistory.clear()
+                        isProcessingTurn = false
+                        turnNumber = 1
+                        currentTurnPlayerId = ""
+                        isMyTurn = false
+                        turnTimer = 30
+                        isGamePaused = false
+                        pausedByPlayerName = ""
+                        recentPick = null
+                        isGameOver = false
+                        didPlayerWin = false
+                        isDrawMatch = false
+                        wantsToPlayAgainPlayerName = null
+                        opponentDisconnectMessage = null
+                        opponentSurrenderMessage = null
+                        navController.navigate(Screen.ManualBoardDesign.route)
+                    } else {
+                        startNewGame(
+                            mode = GameMode.NEARBY_NETWORK,
+                            difficulty = AiDifficulty.EASY,
+                            size = dynamicSize,
+                            firstTurnPlayerId = null,
+                            hostSeed = seed
+                        )
+                    }
                 },
                 onBack = {
                     lanDiscovery.stopBroadcasting()
@@ -1737,7 +1811,7 @@ fun RootNavGraph(
                     firstTurnPlayerName = ""
                     onlineRoomSync.resetMatchSession()
                     if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
-                        val targetRoute = if (currentGameMode == GameMode.NEARBY_NETWORK) Screen.NearbyLobby.route else Screen.Lobby.route
+                        val targetRoute = Screen.Lobby.route
                         if (isHosting) {
                             if (currentGameMode == GameMode.ONLINE_ROOM) {
                                 coroutineScope.launch {
@@ -2007,7 +2081,7 @@ fun RootNavGraph(
                         countdownSeconds = -1
                         firstTurnPlayerName = ""
                         onlineRoomSync.resetMatchSession()
-                        val targetRoute = if (currentGameMode == GameMode.NEARBY_NETWORK) Screen.NearbyLobby.route else Screen.Lobby.route
+                        val targetRoute = Screen.Lobby.route
                         if (isHosting) {
                             if (currentGameMode == GameMode.ONLINE_ROOM) {
                                 coroutineScope.launch {

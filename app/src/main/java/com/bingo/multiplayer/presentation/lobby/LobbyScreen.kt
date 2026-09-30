@@ -71,6 +71,7 @@ fun LobbyScreen(
     onExpireLobby: () -> Unit = {},
     isManualBoard: Boolean = false,
     onManualBoardChange: ((Boolean) -> Unit)? = null,
+    isNearbyNetwork: Boolean = false,
     onStartGame: () -> Unit,
     onBack: () -> Unit
 ) {
@@ -263,7 +264,7 @@ fun LobbyScreen(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        text = "ROOM CODE",
+                        text = if (isNearbyNetwork) "NEARBY LAN MATCH" else "ROOM CODE",
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 1.sp,
@@ -617,7 +618,7 @@ fun LobbyScreen(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
-                                text = "Waiting for other players to enter room code $roomCode…",
+                                text = if (isNearbyNetwork) "Waiting for friends on your Wi-Fi or Hotspot to join…" else "Waiting for other players to enter room code $roomCode…",
                                 fontSize = 12.sp,
                                 color = tokens.cellNeutralText.copy(alpha = 0.6f),
                                 textAlign = TextAlign.Center,
@@ -822,13 +823,14 @@ fun LobbyScreen(
             }
 
             // ── Search Player by Username Card ──
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                color = tokens.surface,
-                border = BorderStroke(1.dp, tokens.surfaceBorder),
-                shadowElevation = 1.dp
-            ) {
+            if (onSearchPlayer != null) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    color = tokens.surface,
+                    border = BorderStroke(1.dp, tokens.surfaceBorder),
+                    shadowElevation = 1.dp
+                ) {
                 Column(modifier = Modifier.padding(18.dp)) {
                     Text(
                         text = "FIND PLAYER BY USERNAME",
@@ -1074,6 +1076,7 @@ fun LobbyScreen(
                     }
                 }
             }
+            }
 
             Spacer(modifier = Modifier.height(24.dp))
 
@@ -1156,6 +1159,36 @@ fun LobbyScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
+                    if (isManualBoard) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = tokens.accentBrand.copy(alpha = 0.12f),
+                            border = BorderStroke(1.dp, tokens.accentBrand.copy(alpha = 0.3f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.DesignServices,
+                                    contentDescription = null,
+                                    tint = tokens.accentBrand,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Manual Designed Board enabled by Host",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = tokens.accentBrand
+                                )
+                            }
+                        }
+                    }
+
                     if (isMyReadyState) {
                         OutlinedButton(
                             onClick = {
