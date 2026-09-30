@@ -1,0 +1,17 @@
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+build/
+app/build/
+captures/
+.externalNativeBuild
+.cxx
+*.hprof
+*.Zone.Identifier
+*.sh
+TestP2p.kt
+
+# User requested release apk to be tracked in repository
+!Bingo.apk
