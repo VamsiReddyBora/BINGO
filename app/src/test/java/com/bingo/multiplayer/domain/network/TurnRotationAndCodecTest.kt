@@ -29,6 +29,33 @@ class TurnRotationAndCodecTest {
         assertEquals(3, decoded.turnNumber)
         assertEquals("player_b", decoded.currentTurnPlayerId)
         assertEquals(listOf(5, 12, 17), decoded.pickedHistory)
+        assertEquals(0L, decoded.seed)
+    }
+
+    @Test
+    fun testFastPacketCodecPickNumberWithSeed() {
+        val original = RoomMessagePacket(
+            type = "PICK_NUMBER",
+            number = 17,
+            playerId = "player_a",
+            turnNumber = 3,
+            currentTurnPlayerId = "player_b",
+            pickedHistory = listOf(5, 12, 17),
+            seed = 9876543210123L
+        )
+
+        val encoded = FastPacketCodec.encode(original)
+        assertTrue("Encoded micro-payload should start with P|", encoded.startsWith("P|"))
+        assertTrue("Payload should contain seed", encoded.endsWith("|9876543210123"))
+
+        val decoded = FastPacketCodec.decode(encoded)
+        assertEquals("PICK_NUMBER", decoded.type)
+        assertEquals(17, decoded.number)
+        assertEquals("player_a", decoded.playerId)
+        assertEquals(3, decoded.turnNumber)
+        assertEquals("player_b", decoded.currentTurnPlayerId)
+        assertEquals(listOf(5, 12, 17), decoded.pickedHistory)
+        assertEquals(9876543210123L, decoded.seed)
     }
 
     @Test
@@ -52,6 +79,58 @@ class TurnRotationAndCodecTest {
         assertEquals(4, decoded.turnNumber)
         assertEquals("player_b", decoded.currentTurnPlayerId)
         assertEquals(listOf(5, 12, 17), decoded.pickedHistory)
+        assertEquals(0L, decoded.seed)
+    }
+
+    @Test
+    fun testFastPacketCodecTurnTimeoutWithSeed() {
+        val original = RoomMessagePacket(
+            type = "TURN_TIMEOUT",
+            number = -1,
+            playerId = "player_a",
+            turnNumber = 4,
+            currentTurnPlayerId = "player_b",
+            pickedHistory = listOf(5, 12, 17),
+            seed = 5555566666777L
+        )
+
+        val encoded = FastPacketCodec.encode(original)
+        assertTrue("Encoded micro-payload should start with T|", encoded.startsWith("T|"))
+        assertTrue("Payload should contain seed", encoded.endsWith("|5555566666777"))
+
+        val decoded = FastPacketCodec.decode(encoded)
+        assertEquals("TURN_TIMEOUT", decoded.type)
+        assertEquals(-1, decoded.number)
+        assertEquals("player_a", decoded.playerId)
+        assertEquals(4, decoded.turnNumber)
+        assertEquals("player_b", decoded.currentTurnPlayerId)
+        assertEquals(listOf(5, 12, 17), decoded.pickedHistory)
+        assertEquals(5555566666777L, decoded.seed)
+    }
+
+    @Test
+    fun testFastPacketCodecBackwardCompatibilityWithoutSeed() {
+        // Legacy 5-part string: P|15|player_1|2|player_2|1,5,15
+        val legacyPick = "P|15|player_1|2|player_2|1,5,15"
+        val decodedPick = FastPacketCodec.decode(legacyPick)
+        assertEquals("PICK_NUMBER", decodedPick.type)
+        assertEquals(15, decodedPick.number)
+        assertEquals("player_1", decodedPick.playerId)
+        assertEquals(2, decodedPick.turnNumber)
+        assertEquals("player_2", decodedPick.currentTurnPlayerId)
+        assertEquals(listOf(1, 5, 15), decodedPick.pickedHistory)
+        assertEquals(0L, decodedPick.seed)
+
+        // Legacy 4-part string: T|player_1|3|player_2|1,5,15
+        val legacyTimeout = "T|player_1|3|player_2|1,5,15"
+        val decodedTimeout = FastPacketCodec.decode(legacyTimeout)
+        assertEquals("TURN_TIMEOUT", decodedTimeout.type)
+        assertEquals(-1, decodedTimeout.number)
+        assertEquals("player_1", decodedTimeout.playerId)
+        assertEquals(3, decodedTimeout.turnNumber)
+        assertEquals("player_2", decodedTimeout.currentTurnPlayerId)
+        assertEquals(listOf(1, 5, 15), decodedTimeout.pickedHistory)
+        assertEquals(0L, decodedTimeout.seed)
     }
 
     @Test

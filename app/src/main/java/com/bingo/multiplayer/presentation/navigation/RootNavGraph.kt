@@ -99,6 +99,7 @@ fun RootNavGraph(
     var isGameOver by remember { mutableStateOf(false) }
     var didPlayerWin by remember { mutableStateOf(false) }
     var isDrawMatch by remember { mutableStateOf(false) }
+    var currentMatchSeed by remember { androidx.compose.runtime.mutableLongStateOf(0L) }
 
     // History and Turn Authority (reconciles network packets and prevents stalls)
     val pickedNumbersHistory = remember { mutableStateListOf<Int>() }
@@ -418,6 +419,7 @@ fun RootNavGraph(
         boardSize = size
         
         val baseSeed = hostSeed ?: kotlin.random.Random.nextLong()
+        currentMatchSeed = baseSeed
         if (mode == GameMode.ONLINE_ROOM || mode == GameMode.NEARBY_NETWORK) {
             if (isHosting) {
                 playerBoard = engine.generateBoard(size, baseSeed)
@@ -544,7 +546,8 @@ fun RootNavGraph(
                         playerId = pickerId,
                         turnNumber = turnNumber,
                         pickedHistory = pickedNumbersHistory.toList(),
-                        currentTurnPlayerId = nextPlayerId
+                        currentTurnPlayerId = nextPlayerId,
+                        seed = currentMatchSeed
                     )
                 )
             }
@@ -566,7 +569,8 @@ fun RootNavGraph(
                         turnNumber = turnNumber,
                         pickedHistory = pickedNumbersHistory.toList(),
                         currentTurnPlayerId = currentTurnPlayerId,
-                        playerId = getLocalUid()
+                        playerId = getLocalUid(),
+                        seed = currentMatchSeed
                     )
                 )
             }
@@ -582,6 +586,16 @@ fun RootNavGraph(
         when (packet.type) {
             "START_GAME" -> {
                 if (!isHosting) {
+                    val isInGame = currentRoute == Screen.Game.route
+                    if (!com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.shouldStartNewMatch(
+                            isHost = false,
+                            incomingSeed = packet.seed,
+                            currentMatchSeed = currentMatchSeed,
+                            isGameOver = isGameOver,
+                            isCurrentlyInGame = isInGame
+                        )) {
+                        return
+                    }
                     pickedNumbersHistory.clear()
                     lanDiscovery.stopBroadcasting()
                     lanDiscovery.stopDiscovering()
@@ -602,6 +616,16 @@ fun RootNavGraph(
 
             "PLAY_AGAIN" -> {
                 if (!isHosting && (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK)) {
+                    val isInGame = currentRoute == Screen.Game.route
+                    if (!com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.shouldStartNewMatch(
+                            isHost = false,
+                            incomingSeed = packet.seed,
+                            currentMatchSeed = currentMatchSeed,
+                            isGameOver = isGameOver,
+                            isCurrentlyInGame = isInGame
+                        )) {
+                        return
+                    }
                     pickedNumbersHistory.clear()
                     startNewGame(
                         mode = currentGameMode,
@@ -615,6 +639,9 @@ fun RootNavGraph(
 
             "PICK_NUMBER" -> {
                 if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
+                    if (!com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPacketForActiveMatch(packet.seed, currentMatchSeed)) {
+                        return
+                    }
                     var anyNewPick = false
 
                     // 1. Reconcile any missing numbers from packet's history
@@ -696,6 +723,9 @@ fun RootNavGraph(
 
             "TURN_TIMEOUT" -> {
                 if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
+                    if (!com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPacketForActiveMatch(packet.seed, currentMatchSeed)) {
+                        return
+                    }
                     if (packet.turnNumber >= turnNumber) {
                         turnNumber = packet.turnNumber.coerceAtLeast(turnNumber + 1)
                         turnTimer = 30
@@ -713,6 +743,9 @@ fun RootNavGraph(
 
             "GAME_SYNC" -> {
                 if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
+                    if (!com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPacketForActiveMatch(packet.seed, currentMatchSeed)) {
+                        return
+                    }
                     var anyNewPick = false
 
                     // 1. Reconcile missing numbers from packet's history
@@ -1585,18 +1618,29 @@ fun RootNavGraph(
                     }
                 },
                 onPlayAgain = {
-                    if (currentGameMode == GameMode.ONLINE_ROOM) {
+                    if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
                         if (isHosting) {
                             val seed = Random.nextLong()
-                            broadcastPacket(
-                                RoomMessagePacket(
-                                    type = "PLAY_AGAIN",
-                                    boardSize = boardSize,
-                                    seed = seed,
-                                    playerId = getLocalUid()
-                                )
+                            val playAgainPacket = RoomMessagePacket(
+                                type = "PLAY_AGAIN",
+                                boardSize = boardSize,
+                                seed = seed,
+                                playerId = getLocalUid()
                             )
-                            startNewGame(currentGameMode, currentAiDifficulty, boardSize, hostSeed = seed)
+                            broadcastPacket(playAgainPacket)
+                            coroutineScope.launch {
+                                delay(200L)
+                                broadcastPacket(playAgainPacket)
+                                delay(250L)
+                                broadcastPacket(playAgainPacket)
+                            }
+                            startNewGame(
+                                mode = currentGameMode,
+                                difficulty = currentAiDifficulty,
+                                size = boardSize,
+                                firstTurnPlayerId = getLocalUid(),
+                                hostSeed = seed
+                            )
                         }
                     } else {
                         startNewGame(currentGameMode, currentAiDifficulty, boardSize)

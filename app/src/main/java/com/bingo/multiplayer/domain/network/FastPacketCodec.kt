@@ -19,11 +19,19 @@ object FastPacketCodec {
         return when (packet.type) {
             "PICK_NUMBER" -> {
                 val historyStr = packet.pickedHistory.joinToString(",")
-                "P|${packet.number}|${packet.playerId}|${packet.turnNumber}|${packet.currentTurnPlayerId}|$historyStr"
+                if (packet.seed != 0L) {
+                    "P|${packet.number}|${packet.playerId}|${packet.turnNumber}|${packet.currentTurnPlayerId}|$historyStr|${packet.seed}"
+                } else {
+                    "P|${packet.number}|${packet.playerId}|${packet.turnNumber}|${packet.currentTurnPlayerId}|$historyStr"
+                }
             }
             "TURN_TIMEOUT" -> {
                 val historyStr = packet.pickedHistory.joinToString(",")
-                "T|${packet.playerId}|${packet.turnNumber}|${packet.currentTurnPlayerId}|$historyStr"
+                if (packet.seed != 0L) {
+                    "T|${packet.playerId}|${packet.turnNumber}|${packet.currentTurnPlayerId}|$historyStr|${packet.seed}"
+                } else {
+                    "T|${packet.playerId}|${packet.turnNumber}|${packet.currentTurnPlayerId}|$historyStr"
+                }
             }
             "PING" -> "G|${packet.playerId}|${packet.pingTimestamp}"
             "PONG" -> "O|${packet.playerId}|${packet.pingTimestamp}"
@@ -61,6 +69,7 @@ object FastPacketCodec {
                     val turnNumber = parts.getOrNull(3)?.toIntOrNull() ?: 0
                     val currentTurnId = parts.getOrNull(4) ?: ""
                     val historyRaw = parts.getOrNull(5) ?: ""
+                    val seed = parts.getOrNull(6)?.toLongOrNull() ?: 0L
                     val history = if (historyRaw.isNotBlank()) {
                         historyRaw.split(",").mapNotNull { it.toIntOrNull() }
                     } else emptyList()
@@ -71,7 +80,8 @@ object FastPacketCodec {
                         playerId = playerId,
                         turnNumber = turnNumber,
                         currentTurnPlayerId = currentTurnId,
-                        pickedHistory = history
+                        pickedHistory = history,
+                        seed = seed
                     )
                 }
 
@@ -81,6 +91,7 @@ object FastPacketCodec {
                     val turnNumber = parts.getOrNull(2)?.toIntOrNull() ?: 0
                     val currentTurnId = parts.getOrNull(3) ?: ""
                     val historyRaw = parts.getOrNull(4) ?: ""
+                    val seed = parts.getOrNull(5)?.toLongOrNull() ?: 0L
                     val history = if (historyRaw.isNotBlank()) {
                         historyRaw.split(",").mapNotNull { it.toIntOrNull() }
                     } else emptyList()
@@ -91,7 +102,8 @@ object FastPacketCodec {
                         playerId = playerId,
                         turnNumber = turnNumber,
                         currentTurnPlayerId = currentTurnId,
-                        pickedHistory = history
+                        pickedHistory = history,
+                        seed = seed
                     )
                 }
 

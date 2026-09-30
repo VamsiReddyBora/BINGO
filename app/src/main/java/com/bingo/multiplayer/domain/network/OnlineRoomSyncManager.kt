@@ -364,17 +364,6 @@ class OnlineRoomSyncManager(
 
             _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
 
-            // Dual-channel game start synchronization: if cloud status is PLAYING and guest hasn't started yet
-            if (!localP.isHost && cloudSession.status == "PLAYING") {
-                val startPacket = RoomMessagePacket(
-                    type = "START_GAME",
-                    playerId = cloudSession.hostId,
-                    boardSize = cloudSession.boardSize,
-                    timestamp = cloudSession.lastHeartbeat
-                )
-                handleIncomingPacket(startPacket)
-            }
-
             // If host discovers a new player via cloud, broadcast ROOM_STATE over MQTT so joiner is also immediately updated
             if (localP.isHost && hasNewPlayer) {
                 broadcastPacket(

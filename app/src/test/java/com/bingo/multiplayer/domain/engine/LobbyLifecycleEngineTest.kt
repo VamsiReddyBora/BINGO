@@ -252,4 +252,82 @@ class LobbyLifecycleEngineTest {
         )
         assertEquals(LobbyLifecycleEngine.STATUS_IN_GAME, status)
     }
+
+    @Test
+    fun testShouldStartNewMatchRejectsDuplicateWhileActive() {
+        val activeSeed = 123456789L
+
+        // While guest is in game and game is not over, duplicate start packet with same seed must be rejected
+        val duplicateAllowed = LobbyLifecycleEngine.shouldStartNewMatch(
+            isHost = false,
+            incomingSeed = activeSeed,
+            currentMatchSeed = activeSeed,
+            isGameOver = false,
+            isCurrentlyInGame = true
+        )
+        assertFalse("Duplicate START_GAME/PLAY_AGAIN packet during active match must be rejected", duplicateAllowed)
+
+        // Rogue packet with seed = 0 must be rejected
+        val rogueZeroSeedAllowed = LobbyLifecycleEngine.shouldStartNewMatch(
+            isHost = false,
+            incomingSeed = 0L,
+            currentMatchSeed = activeSeed,
+            isGameOver = false,
+            isCurrentlyInGame = true
+        )
+        assertFalse("Rogue start packet with seed = 0 must be rejected", rogueZeroSeedAllowed)
+
+        // When game is over (e.g. Play Again), new seed must be accepted
+        val newSeed = 987654321L
+        val playAgainAllowed = LobbyLifecycleEngine.shouldStartNewMatch(
+            isHost = false,
+            incomingSeed = newSeed,
+            currentMatchSeed = activeSeed,
+            isGameOver = true,
+            isCurrentlyInGame = true
+        )
+        assertTrue("New match with fresh seed after game over must be accepted", playAgainAllowed)
+
+        // Starting from lobby (isCurrentlyInGame = false) must be accepted
+        val lobbyStartAllowed = LobbyLifecycleEngine.shouldStartNewMatch(
+            isHost = false,
+            incomingSeed = newSeed,
+            currentMatchSeed = 0L,
+            isGameOver = false,
+            isCurrentlyInGame = false
+        )
+        assertTrue("Initial match start from lobby must be accepted", lobbyStartAllowed)
+
+        // Host always triggers match initiation
+        assertTrue(
+            "Host always starts",
+            LobbyLifecycleEngine.shouldStartNewMatch(
+                isHost = true,
+                incomingSeed = null,
+                currentMatchSeed = 0L,
+                isGameOver = false,
+                isCurrentlyInGame = false
+            )
+        )
+    }
+
+    @Test
+    fun testIsPacketForActiveMatchRejectsStaleMovesAcrossConsecutiveMatches() {
+        val match1Seed = 111111L
+        val match2Seed = 222222L
+
+        // Moves belonging to active match must be accepted
+        assertTrue(LobbyLifecycleEngine.isPacketForActiveMatch(match1Seed, match1Seed))
+        assertTrue(LobbyLifecycleEngine.isPacketForActiveMatch(match2Seed, match2Seed))
+
+        // Stale moves delayed over network from match 1 arriving during match 2 must be rejected
+        assertFalse(
+            "Stale packet from match 1 arriving in match 2 must be discarded",
+            LobbyLifecycleEngine.isPacketForActiveMatch(match1Seed, match2Seed)
+        )
+
+        // Backward compatibility: unseeded legacy packets (0L or null) accepted
+        assertTrue(LobbyLifecycleEngine.isPacketForActiveMatch(0L, match2Seed))
+        assertTrue(LobbyLifecycleEngine.isPacketForActiveMatch(null, match2Seed))
+    }
 }
