@@ -1154,6 +1154,7 @@ fun RootNavGraph(
                 players = realTimePlayers,
                 isHost = isHosting,
                 currentUser = user,
+                currentUserId = getLocalUid(),
                 friendsRepository = friendsRepository,
                 isRefreshing = isRefreshing,
                 inactivityResetToken = lobbyInactivityResetToken,

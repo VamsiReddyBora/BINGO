@@ -58,6 +58,7 @@ fun LobbyScreen(
     players: List<Player>,
     isHost: Boolean,
     currentUser: com.bingo.multiplayer.domain.model.UserProfile? = null,
+    currentUserId: String = "",
     friendsRepository: com.bingo.multiplayer.domain.repository.FriendsRepository? = null,
     isRefreshing: Boolean = false,
     onRefresh: () -> Unit = {},
@@ -74,6 +75,9 @@ fun LobbyScreen(
     val tokens = BingoTheme.colors
     val haptic = LocalHapticFeedback.current
     val coroutineScope = rememberCoroutineScope()
+
+    val localUid = currentUserId.ifBlank { currentUser?.uid ?: "" }
+    var localReadyOverride by remember { mutableStateOf<Boolean?>(null) }
 
     var searchQuery by remember { mutableStateOf("") }
     var isSearching by remember { mutableStateOf(false) }
@@ -378,6 +382,8 @@ fun LobbyScreen(
                                 .padding(vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            val isMe = (localUid.isNotBlank() && player.id == localUid) || (currentUser?.username?.isNotBlank() == true && (player.username.equals(currentUser.username, ignoreCase = true) || player.displayName.equals(currentUser.username, ignoreCase = true)))
+
                             @OptIn(ExperimentalFoundationApi::class)
                             Row(
                                 modifier = Modifier
@@ -403,7 +409,6 @@ fun LobbyScreen(
                                     .padding(vertical = 4.dp, horizontal = 2.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                val isMe = player.id == currentUser?.uid || (currentUser?.username?.isNotBlank() == true && (player.username.equals(currentUser.username, ignoreCase = true) || player.displayName.equals(currentUser.username, ignoreCase = true)))
                                 var remoteAvatar by remember(player.id, player.username, player.avatarUrl) {
                                     mutableStateOf(player.avatarUrl?.takeIf { !com.bingo.multiplayer.domain.network.isLocalFilePath(it) })
                                 }
@@ -483,7 +488,6 @@ fun LobbyScreen(
                                 )
                             }
 
-                            val isMe = player.id == currentUser?.uid || (currentUser?.username?.isNotBlank() == true && player.displayName.equals(currentUser.username, ignoreCase = true))
                             if (!isMe && friendsRepository != null) {
                                 val isAlreadyFriend = friendsRepository.isFriend(player.id) || friendsRepository.isFriend(player.displayName)
                                 val hasSent = friendsRepository.hasSentRequest(player.displayName) || friendsRepository.hasSentRequest(player.id)
@@ -544,16 +548,24 @@ fun LobbyScreen(
                             val livePres = presenceMap[cleanUser]
                             val effectiveTs = livePres?.timestamp?.takeIf { it > 0L } ?: player.lastSeenTimestamp
                             val rawStatus = if (isMe) "online" else com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(cleanUser, effectiveTs)
-                            val isPlayerOnline = rawStatus.equals("online", ignoreCase = true) || isMe
+
+                            val effectivePlayerReady = if (isMe && localReadyOverride != null) {
+                                if (localReadyOverride == true) "READY" else "NOT_READY"
+                            } else {
+                                player.lobbyReadyStatus
+                            }
+
+                            val isPlayerLeft = player.lobbyReadyStatus == "LEFT_LOBBY" ||
+                                               (!isMe && (System.currentTimeMillis() - player.lastSeenTimestamp) > 60_000L && rawStatus.equals("offline", ignoreCase = true))
 
                             val (readyIcon, readyTint, readyDesc) = when {
-                                player.lobbyReadyStatus == "IN_GAME" -> Triple(Icons.Default.HourglassBottom, Color(0xFFF59E0B), "In Game")
-                                player.lobbyReadyStatus == "LEFT_LOBBY" || (!isPlayerOnline && !isMe) -> Triple(Icons.Default.Cancel, Color(0xFFEF4444), "Left Lobby")
-                                player.isHost || player.lobbyReadyStatus == "READY" -> Triple(Icons.Default.CheckCircle, Color(0xFF16A34A), if (player.isHost) "Host Ready" else "Ready")
+                                effectivePlayerReady == "IN_GAME" -> Triple(Icons.Default.HourglassBottom, Color(0xFFF59E0B), "In Game")
+                                isPlayerLeft -> Triple(Icons.Default.Cancel, Color(0xFFEF4444), "Left Lobby")
+                                player.isHost || effectivePlayerReady == "READY" -> Triple(Icons.Default.CheckCircle, Color(0xFF16A34A), if (player.isHost) "Host Ready" else "Ready")
                                 else -> Triple(Icons.Default.PauseCircle, Color(0xFFEAB308), "Not Ready")
                             }
 
-                            if (isHost && !player.isHost && (player.lobbyReadyStatus == "LEFT_LOBBY" || !isPlayerOnline)) {
+                            if (isHost && !player.isHost && isPlayerLeft) {
                                 IconButton(
                                     onClick = {
                                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -1048,8 +1060,26 @@ fun LobbyScreen(
             Spacer(modifier = Modifier.height(24.dp))
 
             // ── Action Buttons ──
-            val allReady = players.size >= 2 && players.all { it.isHost || it.lobbyReadyStatus == "READY" }
-            val readyCount = players.count { it.isHost || it.lobbyReadyStatus == "READY" }
+            val allReady = players.size >= 2 && players.all {
+                val isThisLocal = (localUid.isNotBlank() && it.id == localUid) ||
+                                  (currentUser?.username?.isNotBlank() == true && (it.username.equals(currentUser.username, ignoreCase = true) || it.displayName.equals(currentUser.username, ignoreCase = true)))
+                val st = if (isThisLocal && localReadyOverride != null) {
+                    if (localReadyOverride == true) "READY" else "NOT_READY"
+                } else {
+                    it.lobbyReadyStatus
+                }
+                it.isHost || st == "READY"
+            }
+            val readyCount = players.count {
+                val isThisLocal = (localUid.isNotBlank() && it.id == localUid) ||
+                                  (currentUser?.username?.isNotBlank() == true && (it.username.equals(currentUser.username, ignoreCase = true) || it.displayName.equals(currentUser.username, ignoreCase = true)))
+                val st = if (isThisLocal && localReadyOverride != null) {
+                    if (localReadyOverride == true) "READY" else "NOT_READY"
+                } else {
+                    it.lobbyReadyStatus
+                }
+                it.isHost || st == "READY"
+            }
 
             if (isHost) {
                 Button(
@@ -1086,10 +1116,11 @@ fun LobbyScreen(
                 }
             } else {
                 val myPlayer = players.find {
-                    it.id == currentUser?.uid ||
+                    (localUid.isNotBlank() && it.id == localUid) ||
                     (currentUser?.username?.isNotBlank() == true && (it.username.equals(currentUser.username, ignoreCase = true) || it.displayName.equals(currentUser.username, ignoreCase = true)))
-                }
-                val isMyStatusReady = myPlayer?.lobbyReadyStatus == "READY"
+                } ?: if (!isHost) players.firstOrNull { !it.isHost } else null
+
+                val isMyStatusReady = localReadyOverride ?: (myPlayer?.lobbyReadyStatus == "READY")
 
                 Column(
                     modifier = Modifier.fillMaxWidth(),
@@ -1099,6 +1130,7 @@ fun LobbyScreen(
                         OutlinedButton(
                             onClick = {
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                localReadyOverride = false
                                 onToggleReady?.invoke(false)
                             },
                             modifier = Modifier
@@ -1122,6 +1154,7 @@ fun LobbyScreen(
                         Button(
                             onClick = {
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                localReadyOverride = true
                                 onToggleReady?.invoke(true)
                             },
                             modifier = Modifier

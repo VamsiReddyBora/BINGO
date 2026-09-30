@@ -337,12 +337,14 @@ class OnlineRoomSyncManager(
 
                     // Prevent status toggling / clobbering:
                     // 1. Local player's own status is authoritative.
-                    // 2. Existing remote player's status from real-time MQTT is authoritative over older cloud state.
-                    // 3. Fallback to cloud session status or role defaults.
+                    // 2. Recent in-memory MQTT status (received within 5s) takes precedence over delayed cloud response.
+                    // 3. Cloud session ready status takes effect if no recent MQTT packet has arrived.
+                    val isRecentMqtt = existing != null && (now - existing.lastSeenTimestamp) < 5_000L && existing.lobbyReadyStatus.isNotBlank()
                     val effReady = when {
                         isLocal -> localP.lobbyReadyStatus
-                        existing != null && existing.lobbyReadyStatus.isNotBlank() -> existing.lobbyReadyStatus
+                        isRecentMqtt -> existing!!.lobbyReadyStatus
                         p.lobbyReadyStatus.isNotBlank() -> p.lobbyReadyStatus
+                        existing?.lobbyReadyStatus != null -> existing.lobbyReadyStatus
                         p.isHost -> "READY"
                         else -> "NOT_READY"
                     }
@@ -453,8 +455,8 @@ class OnlineRoomSyncManager(
                         }
                         val effReady = when {
                             isLocal -> localPlayer?.lobbyReadyStatus ?: p.lobbyReadyStatus
-                            existing != null && existing.lobbyReadyStatus.isNotBlank() -> existing.lobbyReadyStatus
                             p.lobbyReadyStatus.isNotBlank() -> p.lobbyReadyStatus
+                            existing?.lobbyReadyStatus != null -> existing.lobbyReadyStatus
                             p.isHost -> "READY"
                             else -> "NOT_READY"
                         }
@@ -544,13 +546,24 @@ class OnlineRoomSyncManager(
             "READY_STATUS" -> {
                 if (packet.playerId.isNotEmpty()) {
                     val existing = playerRegistry[packet.playerId]
-                    if (existing != null) {
-                        playerRegistry[packet.playerId] = existing.copy(
+                    val updated = if (existing != null) {
+                        existing.copy(
                             lobbyReadyStatus = packet.readyStatus,
                             lastSeenTimestamp = System.currentTimeMillis()
                         )
-                        _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+                    } else {
+                        Player(
+                            id = packet.playerId,
+                            displayName = packet.displayName.ifBlank { "Player" },
+                            username = packet.username,
+                            isHost = packet.isHost,
+                            avatarUrl = packet.avatarUrl,
+                            lobbyReadyStatus = packet.readyStatus,
+                            lastSeenTimestamp = System.currentTimeMillis()
+                        )
                     }
+                    playerRegistry[packet.playerId] = updated
+                    _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
                     val code = currentRoomCode
                     if (code != null && localPlayer?.isHost == true) {
                         scope.launch(Dispatchers.IO) {
@@ -613,7 +626,8 @@ class OnlineRoomSyncManager(
 
     fun updateLocalReadyStatus(status: String) {
         val p = localPlayer ?: return
-        val updated = p.copy(lobbyReadyStatus = status)
+        val now = System.currentTimeMillis()
+        val updated = p.copy(lobbyReadyStatus = status, lastSeenTimestamp = now)
         localPlayer = updated
         playerRegistry[p.id] = updated
         _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
@@ -621,7 +635,12 @@ class OnlineRoomSyncManager(
             RoomMessagePacket(
                 type = "READY_STATUS",
                 playerId = p.id,
-                readyStatus = status
+                displayName = p.displayName,
+                username = p.username,
+                isHost = p.isHost,
+                avatarUrl = p.avatarUrl,
+                readyStatus = status,
+                timestamp = now
             )
         )
         val code = currentRoomCode

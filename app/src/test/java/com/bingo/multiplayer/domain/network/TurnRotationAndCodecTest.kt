@@ -431,12 +431,15 @@ class TurnRotationAndCodecTest {
         val cloudPlayers = listOf(host, cloudGuest)
 
         cloudPlayers.forEach { p ->
+            val now = System.currentTimeMillis()
             val isLocal = (p.id == host.id)
             val existing = playerRegistry[p.id]
+            val isRecentMqtt = existing != null && (now - existing.lastSeenTimestamp) < 5_000L && existing.lobbyReadyStatus.isNotBlank()
             val effReady = when {
                 isLocal -> host.lobbyReadyStatus
-                existing != null && existing.lobbyReadyStatus.isNotBlank() -> existing.lobbyReadyStatus
+                isRecentMqtt -> existing!!.lobbyReadyStatus
                 p.lobbyReadyStatus.isNotBlank() -> p.lobbyReadyStatus
+                existing?.lobbyReadyStatus != null -> existing.lobbyReadyStatus
                 p.isHost -> "READY"
                 else -> "NOT_READY"
             }

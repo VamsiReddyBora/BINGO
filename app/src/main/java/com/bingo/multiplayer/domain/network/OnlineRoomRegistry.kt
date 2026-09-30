@@ -465,15 +465,18 @@ object OnlineRoomRegistry {
             var session = getRoom(cleanCode) ?: getRoomMqtt(cleanCode) ?: return@withContext false
             val now = System.currentTimeMillis()
             var modified = false
-            val updatedPlayers = session.players.map { p ->
-                if (p.id == playerId || (p.username.isNotBlank() && p.username.equals(playerId, ignoreCase = true))) {
-                    if (p.lobbyReadyStatus != readyStatus) {
+            val updatedPlayers = if (session.players.any { it.id == playerId || (it.username.isNotBlank() && it.username.equals(playerId, ignoreCase = true)) }) {
+                session.players.map { p ->
+                    if (p.id == playerId || (p.username.isNotBlank() && p.username.equals(playerId, ignoreCase = true))) {
                         modified = true
+                        p.copy(lobbyReadyStatus = readyStatus, lastSeenTimestamp = now)
+                    } else {
+                        p
                     }
-                    p.copy(lobbyReadyStatus = readyStatus, lastSeenTimestamp = now)
-                } else {
-                    p
                 }
+            } else {
+                modified = true
+                session.players + Player(id = playerId, displayName = "Player", lobbyReadyStatus = readyStatus, lastSeenTimestamp = now)
             }
             if (!modified) return@withContext true
             val updatedSession = session.copy(players = updatedPlayers, lastHeartbeat = now)
