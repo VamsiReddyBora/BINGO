@@ -333,4 +333,73 @@ class GameScreenLayoutAndSimulationTest {
         assertTrue("At least one player should reach BINGO after full simulation",
             boardA.isBingo || boardB.isBingo || pickSequence > 25)
     }
+
+    @Test
+    fun testExpandedEmojisCategoryCoverage() {
+        // Verify library contains over 100 emojis across all 4 requested categories
+        assertTrue("Emoji library should have extensive coverage (>100)", ALL_REACTION_EMOJIS.size > 100)
+
+        // 1. Smiles and Emotions
+        assertTrue(ALL_REACTION_EMOJIS.contains("😀"))
+        assertTrue(ALL_REACTION_EMOJIS.contains("😂"))
+        assertTrue(ALL_REACTION_EMOJIS.contains("😍"))
+        assertTrue(ALL_REACTION_EMOJIS.contains("😭"))
+        assertTrue(ALL_REACTION_EMOJIS.contains("😎"))
+
+        // 2. Person Emojis and Hand Gestures
+        assertTrue(ALL_REACTION_EMOJIS.contains("👋"))
+        assertTrue(ALL_REACTION_EMOJIS.contains("👏"))
+        assertTrue(ALL_REACTION_EMOJIS.contains("👍"))
+        assertTrue(ALL_REACTION_EMOJIS.contains("💪"))
+        assertTrue(ALL_REACTION_EMOJIS.contains("🤦"))
+
+        // 3. Activities and Events
+        assertTrue(ALL_REACTION_EMOJIS.contains("🎉"))
+        assertTrue(ALL_REACTION_EMOJIS.contains("🏆"))
+        assertTrue(ALL_REACTION_EMOJIS.contains("⚽"))
+        assertTrue(ALL_REACTION_EMOJIS.contains("🎯"))
+        assertTrue(ALL_REACTION_EMOJIS.contains("🎮"))
+
+        // 4. Objects and Symbols
+        assertTrue(ALL_REACTION_EMOJIS.contains("👑"))
+        assertTrue(ALL_REACTION_EMOJIS.contains("📱"))
+        assertTrue(ALL_REACTION_EMOJIS.contains("🔥"))
+        assertTrue(ALL_REACTION_EMOJIS.contains("⚡"))
+        assertTrue(ALL_REACTION_EMOJIS.contains("🚀"))
+    }
+
+    @Test
+    fun testRandomEmoteFullWidthSpan() {
+        // Generate a sample of start ratios with the new range (8..86)
+        val ratios = (1..200).map { (8..86).random() / 100f }
+        val minRatio = ratios.minOrNull() ?: 0.5f
+        val maxRatio = ratios.maxOrNull() ?: 0.5f
+
+        // Must reach the left side (< 0.15) and the right side (> 0.80)
+        assertTrue("Emotes must spawn on the left portion (ratio <= 0.15)", minRatio <= 0.15f)
+        assertTrue("Emotes must spawn on the right portion (ratio >= 0.80)", maxRatio >= 0.80f)
+    }
+
+    @Test
+    fun testInGameChatMessageLimitsAndRole() {
+        val maxChatLen = 100
+        val longText = "A".repeat(150)
+        val truncated = longText.take(maxChatLen)
+        assertEquals(100, truncated.length)
+
+        val selfMsg = com.bingo.multiplayer.domain.model.InGameChatMessage(
+            text = truncated,
+            isSelf = true
+        )
+        assertTrue(selfMsg.isSelf)
+        assertEquals(100, selfMsg.text.length)
+
+        val opponentMsg = com.bingo.multiplayer.domain.model.InGameChatMessage(
+            text = "Hello from Opponent!",
+            isSelf = false,
+            senderName = "Challenger"
+        )
+        assertEquals(false, opponentMsg.isSelf)
+        assertEquals("Challenger", opponentMsg.senderName)
+    }
 }

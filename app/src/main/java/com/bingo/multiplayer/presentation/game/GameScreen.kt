@@ -32,6 +32,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Notifications
@@ -42,6 +43,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
@@ -50,6 +52,20 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.graphics.toArgb
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import com.bingo.multiplayer.domain.model.InGameChatMessage
 
 import android.app.Activity
 import android.content.Context
@@ -138,6 +154,8 @@ fun GameScreen(
     incomingEmote: String? = null,
     incomingEmoteTimestamp: Long = 0L,
     onSendEmote: (String) -> Unit = {},
+    incomingChatMessage: InGameChatMessage? = null,
+    onSendChatMessage: (String) -> Unit = {},
     pickedNumbersHistory: List<Int> = emptyList()
 ) {
     val tokens = BingoTheme.colors
@@ -148,15 +166,63 @@ fun GameScreen(
     var showQuickChat by remember { mutableStateOf(false) }
     var currentPhrases by remember { mutableStateOf(quickChatPhrases) }
 
+    // ── In-Game WhatsApp Style Chat State ──
+    var chatMessages by remember { mutableStateOf(listOf<InGameChatMessage>()) }
+    var customChatInput by remember { mutableStateOf("") }
+    var isCustomChatFocused by remember { mutableStateOf(false) }
+    val chatFocusRequester = remember { FocusRequester() }
+    val coroutineScope = rememberCoroutineScope()
+
+    LaunchedEffect(incomingChatMessage) {
+        if (incomingChatMessage != null) {
+            chatMessages = chatMessages + incomingChatMessage
+        }
+    }
+
+    fun submitCustomChatMessage() {
+        val trimmed = customChatInput.trim().take(100)
+        if (trimmed.isNotBlank()) {
+            chatMessages = chatMessages + InGameChatMessage(
+                text = trimmed,
+                isSelf = true
+            )
+            onSendChatMessage(trimmed)
+            customChatInput = ""
+            showQuickChat = false
+            isCustomChatFocused = false
+
+            val opponentIsAi = opponentName.contains("ai", ignoreCase = true) ||
+                    opponentUsername?.contains("ai", ignoreCase = true) == true ||
+                    (onReturnToLobby == null && myPlayerId.isBlank())
+
+            if (opponentIsAi) {
+                coroutineScope.launch {
+                    delay((1200..2400).random().toLong())
+                    val aiReplies = listOf(
+                        "Nice one! 🎯",
+                        "Good move! 🍀",
+                        "Game on! Let's see who wins! 🔥",
+                        "I'm close to BINGO! ⚡",
+                        "Haha nice! 😄",
+                        "Thinking of my next number... 🧠",
+                        "Watch out for my next pick! 🚀"
+                    )
+                    chatMessages = chatMessages + InGameChatMessage(
+                        text = aiReplies.random(),
+                        isSelf = false,
+                        senderName = opponentName
+                    )
+                }
+            }
+        }
+    }
+
     // ── Floating Emotes State ──
     var activeEmotes by remember { mutableStateOf(listOf<FloatingEmoteItem>()) }
 
     fun spawnEmote(emoji: String, isSelf: Boolean, senderName: String? = null) {
-        val randomX = if (isSelf) {
-            0.55f + ((0..25).random() / 100f)
-        } else {
-            0.15f + ((0..25).random() / 100f)
-        }
+        // Uniform random distribution from left (8%) to right (86%) across the whole screen width
+        val randomX = (8..86).random() / 100f
         activeEmotes = activeEmotes + FloatingEmoteItem(
             emoji = emoji,
             startXRatio = randomX,
@@ -213,17 +279,18 @@ fun GameScreen(
         }
     }
 
-    DisposableEffect(Unit) {
+    // Requirement 4: Match app background and adapt status bar icons (black/white) without hiding them
+    val isDarkTheme = tokens.isDark
+    val statusBarColor = tokens.background
+    DisposableEffect(isDarkTheme, statusBarColor) {
         val window = (view.context as? Activity)?.window
-        var insetsController: WindowInsetsControllerCompat? = null
         if (window != null) {
-            insetsController = WindowCompat.getInsetsController(window, view)
-            insetsController.hide(WindowInsetsCompat.Type.statusBars())
-            insetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            val insetsController = WindowCompat.getInsetsController(window, view)
+            insetsController.show(WindowInsetsCompat.Type.statusBars())
+            insetsController.isAppearanceLightStatusBars = !isDarkTheme
+            window.statusBarColor = statusBarColor.toArgb()
         }
-        onDispose {
-            insetsController?.show(WindowInsetsCompat.Type.statusBars())
-        }
+        onDispose { }
     }
     var showSurrenderDialog by remember { mutableStateOf(false) }
     BackHandler(enabled = !isGameOver) {
@@ -747,8 +814,18 @@ fun GameScreen(
                     onCellClicked = onCellPicked
                 )
 
-                // Reserved empty space between number table and emoji strip
-                Spacer(modifier = Modifier.weight(0.18f))
+                // In-Game WhatsApp style Chat Space between number table and emoji reactions strip
+                InGameChatSpace(
+                    messages = chatMessages,
+                    onDoubleTapToChat = {
+                        showQuickChat = true
+                        isCustomChatFocused = true
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(0.24f)
+                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                )
 
                 // Item 7: Pill shaped swipeable emoji reactions strip with quick chat just above bottom bar
                 if (!isGameOver) {
@@ -759,6 +836,7 @@ fun GameScreen(
                         },
                         onToggleQuickChat = {
                             showQuickChat = !showQuickChat
+                            isCustomChatFocused = false
                         },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -775,7 +853,7 @@ fun GameScreen(
                 }
             )
 
-            // Item 4: Quick Chat Floating Toast Layer (Overlaid on top of the board, zero layout shift)
+            // Item 4 & Add-on: Quick Chat Floating Toast Layer & Custom Runtime Message Text Box Row
             if (showQuickChat && !isGameOver) {
                 // Tap anywhere on the screen outside to dismiss automatically
                 Box(
@@ -786,58 +864,145 @@ fun GameScreen(
                             indication = null
                         ) {
                             showQuickChat = false
+                            isCustomChatFocused = false
                         }
                 )
 
-                // The Floating Toast Popover Box
+                // The Floating Toast Popover Box with .imePadding() to sit above keyboard
                 Surface(
                     shape = RoundedCornerShape(16.dp),
                     color = tokens.surface,
                     shadowElevation = 8.dp,
-                    border = null,
+                    border = BorderStroke(0.5.dp, tokens.surfaceBorder),
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .padding(end = 14.dp, bottom = 48.dp)
-                        .width(205.dp)
+                        .padding(end = 12.dp, bottom = 48.dp)
+                        .imePadding()
+                        .width(235.dp)
                 ) {
                     Column(
-                        modifier = Modifier
-                            .padding(6.dp)
-                            .heightIn(max = 168.dp)
-                            .verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                        modifier = Modifier.padding(7.dp)
                     ) {
-                        currentPhrases.forEach { phrase ->
-                            Surface(
-                                onClick = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    showQuickChat = false
-                                    // Move tapped phrase to front (recent like emojis)
-                                    currentPhrases = listOf(phrase) + currentPhrases.filter { it != phrase }
-                                    QuickChatPreferences.recordUsedPhrase(context, phrase)
-                                    spawnEmote(phrase, isSelf = true)
-                                    onSendEmote(phrase)
-                                },
-                                color = tokens.backgroundSecondary,
-                                shape = RoundedCornerShape(10.dp),
-                                border = null,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text(
-                                    text = phrase,
-                                    fontSize = 12.5.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = tokens.cellNeutralText,
-                                    maxLines = 1,
-                                    modifier = Modifier
-                                        .padding(horizontal = 10.dp, vertical = 7.dp)
-                                        .basicMarquee(
-                                            iterations = Int.MAX_VALUE,
-                                            velocity = 30.dp
-                                        )
-                                )
+                        // 1. Quick chat phrases list (scrollable, top 4 recents visible)
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 135.dp)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            currentPhrases.forEach { phrase ->
+                                Surface(
+                                    onClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        showQuickChat = false
+                                        isCustomChatFocused = false
+                                        // Move tapped phrase to front (recent like emojis)
+                                        currentPhrases = listOf(phrase) + currentPhrases.filter { it != phrase }
+                                        QuickChatPreferences.recordUsedPhrase(context, phrase)
+                                        spawnEmote(phrase, isSelf = true)
+                                        onSendEmote(phrase)
+                                    },
+                                    color = tokens.backgroundSecondary,
+                                    shape = RoundedCornerShape(10.dp),
+                                    border = null,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        text = phrase,
+                                        fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = tokens.cellNeutralText,
+                                        maxLines = 1,
+                                        modifier = Modifier
+                                            .padding(horizontal = 10.dp, vertical = 7.dp)
+                                            .basicMarquee(
+                                                iterations = Int.MAX_VALUE,
+                                                velocity = 30.dp
+                                            )
+                                    )
+                                }
                             }
                         }
+
+                        HorizontalDivider(
+                            color = tokens.surfaceBorder,
+                            thickness = 0.6.dp,
+                            modifier = Modifier.padding(vertical = 5.dp)
+                        )
+
+                        // 2. Add-on: Thin text box row for custom runtime message transfer with 0/100 limit & Send button
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = tokens.backgroundSecondary,
+                            border = BorderStroke(0.6.dp, tokens.surfaceBorder),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                            ) {
+                                BasicTextField(
+                                    value = customChatInput,
+                                    onValueChange = { if (it.length <= 100) customChatInput = it },
+                                    textStyle = TextStyle(
+                                        fontSize = 12.sp,
+                                        color = tokens.cellNeutralText,
+                                        fontWeight = FontWeight.Medium
+                                    ),
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(
+                                        imeAction = ImeAction.Send,
+                                        keyboardType = KeyboardType.Text
+                                    ),
+                                    keyboardActions = KeyboardActions(
+                                        onSend = { submitCustomChatMessage() }
+                                    ),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .focusRequester(chatFocusRequester),
+                                    decorationBox = { innerTextField ->
+                                        if (customChatInput.isEmpty()) {
+                                            Text(
+                                                text = "Type message...",
+                                                fontSize = 11.5.sp,
+                                                color = tokens.cellNeutralText.copy(alpha = 0.45f)
+                                            )
+                                        }
+                                        innerTextField()
+                                    }
+                                )
+
+                                Text(
+                                    text = "${customChatInput.length}/100",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (customChatInput.length == 100) tokens.accentOpponent else tokens.cellNeutralText.copy(alpha = 0.45f),
+                                    modifier = Modifier.padding(horizontal = 4.dp)
+                                )
+
+                                IconButton(
+                                    onClick = { submitCustomChatMessage() },
+                                    enabled = customChatInput.isNotBlank(),
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.Send,
+                                        contentDescription = "Send Message",
+                                        tint = if (customChatInput.isNotBlank()) tokens.accentBrand else tokens.cellNeutralText.copy(alpha = 0.3f),
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                LaunchedEffect(isCustomChatFocused) {
+                    if (isCustomChatFocused) {
+                        try {
+                            chatFocusRequester.requestFocus()
+                        } catch (_: Exception) {}
                     }
                 }
             }
@@ -859,19 +1024,6 @@ private fun InGameBottomBar(
     onSyncGame: () -> Unit
 ) {
     val tokens = BingoTheme.colors
-    val view = LocalView.current
-    DisposableEffect(Unit) {
-        val window = (view.context as? Activity)?.window
-        var insetsController: WindowInsetsControllerCompat? = null
-        if (window != null) {
-            insetsController = WindowCompat.getInsetsController(window, view)
-            insetsController.hide(WindowInsetsCompat.Type.statusBars())
-            insetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        }
-        onDispose {
-            insetsController?.show(WindowInsetsCompat.Type.statusBars())
-        }
-    }
 
     var refreshAngle by remember { mutableFloatStateOf(0f) }
     val animatedRefreshAngle by animateFloatAsState(

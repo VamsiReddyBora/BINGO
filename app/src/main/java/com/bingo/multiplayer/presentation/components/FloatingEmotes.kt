@@ -71,7 +71,7 @@ val QUICK_EMOTES = listOf("🔥", "😱", "😂", "🎯", "👏")
 data class FloatingEmoteItem(
     val id: Long = System.currentTimeMillis() + (0..100000).random(),
     val emoji: String,
-    val startXRatio: Float = ((20..80).random() / 100f),
+    val startXRatio: Float = ((8..86).random() / 100f),
     val isSelf: Boolean = true,
     val senderName: String? = null,
     val swayAmplitude: Float = (14f + (0..28).random().toFloat()),
@@ -233,10 +233,51 @@ fun FloatingEmoteBar(
 }
 
 val ALL_REACTION_EMOJIS = listOf(
-    "🔥", "😂", "🎯", "👏", "😱", "😎", "🥳", "👍", "⚡", "🤯",
-    "💀", "🤩", "🎉", "🚀", "🥶", "😈", "🍿", "😴", "🤐", "🤫",
-    "🤝", "🙌", "🏆", "💯", "🍀", "👀", "💪", "✨", "💔", "🫡",
-    "👌", "😍", "🤙", "✌️"
+    // 1. Smiles and Emotions
+    "😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣", "🥲", "🥹",
+    "😊", "😇", "🙂", "😉", "😌", "😍", "🥰", "😘", "😋", "😛",
+    "😝", "😜", "🤪", "🤨", "🧐", "🤓", "😎", "🥸", "🤩", "🥳",
+    "😏", "😒", "😞", "😔", "😟", "😕", "🙁", "😣", "😫", "😩",
+    "🥺", "😢", "😭", "😮‍💨", "😤", "😠", "😡", "🤬", "🤯", "😳",
+    "🥵", "🥶", "😱", "😨", "😰", "😥", "😓", "🤗", "🤔", "🫣",
+    "🤭", "🫢", "🫡", "🤫", "🫠", "🤥", "😶", "😐", "😑", "😬",
+    "🫨", "🥱", "😴", "🤤", "😵", "😵‍💫", "🤐", "🥴", "🤢", "🤮",
+    "🤧", "😷", "🤒", "🤕", "🤑", "🤠", "😈", "👿", "👹", "👺",
+    "🤡", "💩", "👻", "💀", "☠️", "👽", "👾", "🤖", "🎃",
+
+    // 2. Person Emojis and Hand Gestures
+    "👋", "🤚", "🖐️", "✋", "🖖", "👌", "🤌", "🤏", "✌️", "🤞",
+    "🫰", "🤟", "🤘", "🤙", "👈", "👉", "👆", "👇", "☝️", "🫵",
+    "👍", "👎", "✊", "👊", "🤛", "🤜", "👏", "🙌", "🫶", "👐",
+    "🤲", "🤝", "🙏", "✍️", "🤳", "💪", "👀", "👁️", "👅", "👄",
+    "👶", "👦", "👧", "👨", "👩", "🧓", "👴", "👵", "🤦", "🤷",
+    "👮", "🕵️", "💂", "🥷", "👷", "🤴", "👸", "👳", "👰", "🤰",
+    "👼", "🎅", "🧙", "🧚", "🧛", "🧜", "🧝", "🧞", "🧟", "💃",
+    "🕺", "🕴️", "🧗", "🧘", "🏃", "🚶",
+
+    // 3. Activities and Events
+    "🎉", "🎊", "🎈", "🎁", "🎀", "🪄", "🎟️", "🎫", "🏆", "🥇",
+    "🥈", "🥉", "🏅", "🎖️", "⚽", "🏀", "🏈", "⚾", "🥎", "🎾",
+    "🏐", "🏉", "🥏", "🎱", "🪀", "🏓", "🏸", "🏒", "🏑", "🏏",
+    "🥅", "⛳", "🏹", "🎣", "🥊", "🥋", "🛹", "🛼", "🛷", "⛸️",
+    "🎿", "⛷️", "🏂", "🏋️", "🤼", "🤸", "⛹️", "🤺", "🤾", "🏌️",
+    "🏇", "🏄", "🏊", "🤽", "🚣", "🚵", "🚴", "🎪", "🎭", "🎨",
+    "🎬", "🎤", "🎧", "🎼", "🎹", "🥁", "🎷", "🎺", "🎸", "🎻",
+    "🎲", "♟️", "🎯", "🎳", "🎮", "🎰", "🧩",
+
+    // 4. Objects and Symbols
+    "👑", "💍", "💎", "💡", "🔦", "🕯️", "💣", "🧨", "🪓", "🔪",
+    "🗡️", "⚔️", "🛡️", "🏺", "🔮", "🧿", "🪬", "📿", "💈", "⚗️",
+    "🔭", "🔬", "🩹", "🩺", "💊", "💉", "🧬", "🧹", "🧺", "🧻",
+    "🧼", "🫧", "🪥", "🪒", "🧽", "🪣", "🧴", "🔑", "🗝️", "🚪",
+    "🪑", "🛋️", "🛏️", "🧸", "🖼️", "🪞", "🪟", "🛍️", "🛒", "📱",
+    "📲", "💻", "⌨️", "🖥️", "🖨️", "🖱️", "📷", "📸", "📹", "🎥",
+    "📽️", "🎞️", "📞", "☎️", "📺", "📻", "🎙️", "🧭", "⏱️", "⏲️",
+    "⏰", "🕰️", "⌛", "⏳", "📡", "🔋", "🪫", "🔌", "💵", "🪙",
+    "💸", "💳", "🧾", "✉️", "📦", "📬", "📮", "📝", "📁", "📂",
+    "📅", "📆", "📈", "📉", "📊", "📌", "📍", "📎", "🔒", "🔓",
+    "🔏", "🔐", "🔨", "⚒️", "🛠️", "🔧", "🪛", "🔩", "⚙️", "⚖️",
+    "🧲", "🚀", "🛸", "🔥", "⚡", "✨", "🌟", "💫", "💥", "🍿"
 )
 
 /**
@@ -404,43 +445,49 @@ private fun SingleFloatingEmoteBubble(
             },
         contentAlignment = Alignment.Center
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            val isPhrase = item.emoji.length > 3
-            Surface(
-                shape = if (isPhrase) RoundedCornerShape(16.dp) else CircleShape,
-                color = tokens.surface.copy(alpha = 0.95f),
-                border = BorderStroke(1.2.dp, if (item.isSelf) tokens.accentBrand else tokens.accentOpponent),
-                shadowElevation = 6.dp,
-                modifier = if (isPhrase) Modifier.wrapContentSize() else Modifier.size(48.dp)
+        val isPhrase = item.emoji.length > 3
+        if (!isPhrase) {
+            // Plain emoji with NO border!
+            Text(
+                text = item.emoji,
+                fontSize = 32.sp
+            )
+        } else {
+            // For text use a thin black border (no purple outline!)
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Box(
-                    modifier = if (isPhrase) Modifier.padding(horizontal = 14.dp, vertical = 8.dp) else Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = tokens.surface.copy(alpha = 0.96f),
+                    border = BorderStroke(0.6.dp, Color.Black.copy(alpha = 0.85f)),
+                    shadowElevation = 3.dp,
+                    modifier = Modifier.wrapContentSize()
                 ) {
                     Text(
-                        text = if (isPhrase) "💬 ${item.emoji}" else item.emoji,
-                        fontSize = if (isPhrase) 13.sp else 24.sp,
-                        fontWeight = if (isPhrase) FontWeight.Bold else FontWeight.Normal,
-                        color = if (isPhrase) tokens.cellNeutralText else Color.Unspecified
+                        text = "💬 ${item.emoji}",
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.Black,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                     )
                 }
-            }
 
-            if (!item.isSelf && !item.senderName.isNullOrBlank()) {
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = tokens.surface.copy(alpha = 0.85f),
-                    modifier = Modifier.padding(top = 2.dp)
-                ) {
-                    Text(
-                        text = item.senderName,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = tokens.accentOpponent,
-                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                    )
+                if (!item.isSelf && !item.senderName.isNullOrBlank()) {
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = tokens.surface.copy(alpha = 0.85f),
+                        border = BorderStroke(0.5.dp, Color.Black.copy(alpha = 0.4f)),
+                        modifier = Modifier.padding(top = 2.dp)
+                    ) {
+                        Text(
+                            text = item.senderName,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.Black,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                        )
+                    }
                 }
             }
         }

@@ -18,6 +18,7 @@ import com.bingo.multiplayer.domain.engine.BingoEngine
 import com.bingo.multiplayer.domain.model.AuthState
 import com.bingo.multiplayer.domain.model.Friend
 import com.bingo.multiplayer.domain.model.GameMode
+import com.bingo.multiplayer.domain.model.InGameChatMessage
 import com.bingo.multiplayer.domain.model.Player
 import com.bingo.multiplayer.domain.model.RecentPick
 import com.bingo.multiplayer.domain.model.UserProfile
@@ -110,6 +111,7 @@ fun RootNavGraph(
     var firstTurnPlayerName by remember { mutableStateOf("") }
     var latestIncomingEmote by remember { mutableStateOf<String?>(null) }
     var latestIncomingEmoteTimestamp by remember { androidx.compose.runtime.mutableLongStateOf(0L) }
+    var latestIncomingChatMessage by remember { mutableStateOf<InGameChatMessage?>(null) }
     var opponentPlayerId by remember { mutableStateOf("") }
 
     // History and Turn Authority (reconciles network packets and prevents stalls)
@@ -913,6 +915,16 @@ fun RootNavGraph(
             "EMOTE", "CHAT_PHRASE" -> {
                 latestIncomingEmote = packet.displayName
                 latestIncomingEmoteTimestamp = packet.timestamp
+            }
+
+            "CHAT_MESSAGE" -> {
+                latestIncomingChatMessage = InGameChatMessage(
+                    id = packet.timestamp,
+                    text = packet.displayName,
+                    isSelf = false,
+                    senderName = packet.username.takeIf { it.isNotBlank() } ?: "Opponent",
+                    timestamp = packet.timestamp
+                )
             }
 
             "GAME_SYNC" -> {
@@ -1979,6 +1991,20 @@ fun RootNavGraph(
                                 type = "EMOTE",
                                 playerId = getLocalUid(),
                                 displayName = emoji,
+                                timestamp = System.currentTimeMillis()
+                            )
+                        )
+                    }
+                },
+                incomingChatMessage = latestIncomingChatMessage,
+                onSendChatMessage = { messageText ->
+                    if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
+                        broadcastPacket(
+                            RoomMessagePacket(
+                                type = "CHAT_MESSAGE",
+                                playerId = getLocalUid(),
+                                displayName = messageText,
+                                username = getPlayerDisplayName(),
                                 timestamp = System.currentTimeMillis()
                             )
                         )

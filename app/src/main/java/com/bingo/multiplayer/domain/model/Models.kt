@@ -183,3 +183,13 @@ enum class GameMode {
     NEARBY_NETWORK
 }
 
+@Keep
+@Serializable
+data class InGameChatMessage(
+    val id: Long = System.currentTimeMillis() + (0..10000).random(),
+    val text: String,
+    val isSelf: Boolean = true,
+    val senderName: String? = null,
+    val timestamp: Long = System.currentTimeMillis()
+)
+
