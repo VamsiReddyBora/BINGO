@@ -69,12 +69,23 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.draw.scale
 import com.bingo.multiplayer.core.designsystem.BingoTheme
 import com.bingo.multiplayer.domain.model.Board
 import com.bingo.multiplayer.domain.model.RecentPick
 import com.bingo.multiplayer.presentation.common.PlayerAvatar
 import com.bingo.multiplayer.presentation.components.BingoBoardView
 import com.bingo.multiplayer.presentation.components.BingoHeaderTracker
+import com.bingo.multiplayer.presentation.components.FloatingEmoteBar
+import com.bingo.multiplayer.presentation.components.FloatingEmoteItem
+import com.bingo.multiplayer.presentation.components.FloatingEmotesOverlay
 
 /**
  * Modern Award-Winning Indie Game Match Screen.
@@ -109,11 +120,69 @@ fun GameScreen(
     opponentUsername: String? = null,
     myAvatarUrl: String? = null,
     myUsername: String? = null,
-    myDisplayName: String? = null
+    myDisplayName: String? = null,
+    incomingEmote: String? = null,
+    incomingEmoteTimestamp: Long = 0L,
+    onSendEmote: (String) -> Unit = {}
 ) {
     val tokens = BingoTheme.colors
     val haptic = LocalHapticFeedback.current
     val view = LocalView.current
+
+    // ── Floating Emotes State ──
+    var activeEmotes by remember { mutableStateOf(listOf<FloatingEmoteItem>()) }
+
+    fun spawnEmote(emoji: String, isSelf: Boolean, senderName: String? = null) {
+        val randomX = if (isSelf) {
+            0.55f + ((0..25).random() / 100f)
+        } else {
+            0.15f + ((0..25).random() / 100f)
+        }
+        activeEmotes = activeEmotes + FloatingEmoteItem(
+            emoji = emoji,
+            startXRatio = randomX,
+            isSelf = isSelf,
+            senderName = senderName
+        )
+    }
+
+    LaunchedEffect(incomingEmote, incomingEmoteTimestamp) {
+        if (!incomingEmote.isNullOrBlank()) {
+            spawnEmote(incomingEmote, isSelf = false, senderName = opponentName)
+        }
+    }
+
+    // ── Turn Urgency Countdown & Pulse ──
+    val isUrgentTimer = turnTimeRemaining <= 5 && !isGamePaused && !isGameOver
+    val urgentInfiniteTransition = rememberInfiniteTransition(label = "urgentCountdownTransition")
+    val urgentTimerScale by if (isUrgentTimer) {
+        urgentInfiniteTransition.animateFloat(
+            initialValue = 1.0f,
+            targetValue = 1.15f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 400, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "urgentTimerScale"
+        )
+    } else {
+        remember { mutableFloatStateOf(1.0f) }
+    }
+
+    // Trigger haptic clock tick in the player's hands on countdown <= 5s
+    LaunchedEffect(turnTimeRemaining, isMyTurn) {
+        if (isUrgentTimer && isMyTurn) {
+            try {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            } catch (_: Exception) {}
+        }
+    }
+
+    val turnStatusScale by animateFloatAsState(
+        targetValue = if (isMyTurn && !isGameOver && !isGamePaused) 1.04f else 1.0f,
+        animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+        label = "turnStatusScale"
+    )
 
     // Trigger haptic vibration whenever the opponent picks a number
     LaunchedEffect(recentPick) {
@@ -290,7 +359,11 @@ fun GameScreen(
                             isGamePaused -> Color(0xFFF1F5F9)
                             isMyTurn -> tokens.cellPlayerPickBg
                             else -> tokens.cellOpponentPickBg
-                        }
+                        },
+                        border = if (isMyTurn && !isGameOver && !isGamePaused) {
+                            BorderStroke(1.5.dp, tokens.accentBrand)
+                        } else null,
+                        modifier = Modifier.scale(turnStatusScale)
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
@@ -300,8 +373,8 @@ fun GameScreen(
                                 text = when {
                                     isGameOver -> "GAME OVER"
                                     isGamePaused -> "PAUSED"
-                                    isMyTurn -> "YOUR TURN"
-                                    else -> "$opponentName's Turn"
+                                    isMyTurn -> "⚡ YOUR TURN ⚡"
+                                    else -> "$opponentName's Turn ⏳"
                                 },
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
@@ -339,16 +412,18 @@ fun GameScreen(
                                 Spacer(modifier = Modifier.width(4.dp))
                             }
 
-                            // Turn countdown timer
+                            // Turn countdown timer with pulsing urgency when <= 5s
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
-                                color = if (turnTimeRemaining <= 5 && !isGamePaused) Color(0xFFFFEDD5) else tokens.backgroundSecondary
+                                color = if (isUrgentTimer) Color(0xFFFEE2E2) else tokens.backgroundSecondary,
+                                border = if (isUrgentTimer) BorderStroke(1.5.dp, Color(0xFFDC2626)) else null,
+                                modifier = Modifier.scale(urgentTimerScale)
                             ) {
                                 Text(
-                                    text = "⏱ ${turnTimeRemaining}s",
+                                    text = if (isUrgentTimer) "⚠️ ${turnTimeRemaining}s" else "⏱ ${turnTimeRemaining}s",
                                     fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (turnTimeRemaining <= 5 && !isGamePaused) Color(0xFFEA580C) else tokens.cellNeutralText,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = if (isUrgentTimer) Color(0xFFDC2626) else tokens.cellNeutralText,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                 )
                             }
@@ -649,6 +724,25 @@ fun GameScreen(
                 board = displayedBoard,
                 isInteractive = isMyTurn && !isGameOver && !isGamePaused,
                 onCellClicked = onCellPicked
+            )
+
+            // Floating Quick Emote Bar pinned near bottom-end above footer
+            FloatingEmoteBar(
+                onEmoteSelected = { emoji ->
+                    spawnEmote(emoji, isSelf = true)
+                    onSendEmote(emoji)
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 16.dp, bottom = 12.dp)
+            )
+
+            // Floating Reaction Emotes Overlay (rising animated bubbles)
+            FloatingEmotesOverlay(
+                activeEmotes = activeEmotes,
+                onEmoteFinished = { finishedId ->
+                    activeEmotes = activeEmotes.filter { it.id != finishedId }
+                }
             )
         }
     }

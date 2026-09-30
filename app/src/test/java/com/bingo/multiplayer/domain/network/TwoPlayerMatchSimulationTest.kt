@@ -154,8 +154,12 @@ class TwoPlayerMatchSimulationTest {
                             val engine = BingoEngine()
                             playerBoard = engine.generateBoard(packet.boardSize, packet.seed + 1)
                             opponentBoard = engine.generateBoard(packet.boardSize, packet.seed)
-                            val candidateUids = roomPlayers.keys.toList().sorted()
-                            val firstTurnUid = ManualBoardEngine.determineRandomFirstTurn(packet.seed, candidateUids)
+                            val firstTurnUid = if (packet.currentTurnPlayerId.isNotBlank()) {
+                                packet.currentTurnPlayerId
+                            } else {
+                                val candidateUids = roomPlayers.keys.toList().sorted()
+                                ManualBoardEngine.determineRandomFirstTurn(packet.seed, candidateUids)
+                            }
                             currentTurnPlayerId = firstTurnUid
                             isMyTurn = (currentTurnPlayerId == id)
                             recordTurnSwitch(firstTurnUid)
@@ -202,6 +206,24 @@ class TwoPlayerMatchSimulationTest {
                         isDrawMatch = false
                         didPlayerWin = pWon
                     } else {
+                        turnNumber = packet.turnNumber.coerceAtLeast(turnNumber + 1)
+                        turnTimer = 30
+                        val nextId = if (packet.currentTurnPlayerId.isNotBlank()) {
+                            packet.currentTurnPlayerId
+                        } else {
+                            calculateNextTurn(packet.playerId)
+                        }
+                        currentTurnPlayerId = nextId
+                        isMyTurn = (currentTurnPlayerId == id)
+                        recordTurnSwitch(nextId)
+                    }
+                }
+
+                "TURN_TIMEOUT" -> {
+                    if (!LobbyLifecycleEngine.isPacketForActiveMatch(packet.seed, currentMatchSeed)) {
+                        return
+                    }
+                    if (packet.turnNumber >= turnNumber) {
                         turnNumber = packet.turnNumber.coerceAtLeast(turnNumber + 1)
                         turnTimer = 30
                         val nextId = if (packet.currentTurnPlayerId.isNotBlank()) {
@@ -312,6 +334,48 @@ class TwoPlayerMatchSimulationTest {
                     playerId = id,
                     turnNumber = turnNumber,
                     pickedHistory = pickedNumbersHistory.toList(),
+                    currentTurnPlayerId = nextId,
+                    seed = currentMatchSeed
+                )
+            )
+        }
+
+        fun onTurnTimeout() {
+            if (isGameOver || !isMyTurn) return
+            turnNumber += 1
+            turnTimer = 30
+            val nextId = calculateNextTurn(id)
+            currentTurnPlayerId = nextId
+            isMyTurn = (nextId == id)
+            recordTurnSwitch(nextId)
+
+            sendPacket(
+                RoomMessagePacket(
+                    type = "TURN_TIMEOUT",
+                    number = -1,
+                    playerId = id,
+                    turnNumber = turnNumber,
+                    currentTurnPlayerId = nextId,
+                    seed = currentMatchSeed
+                )
+            )
+        }
+
+        fun onFallbackTimeout(activePickerId: String) {
+            if (isGameOver || isMyTurn) return
+            turnNumber += 1
+            turnTimer = 30
+            val nextId = id
+            currentTurnPlayerId = nextId
+            isMyTurn = true
+            recordTurnSwitch(nextId)
+
+            sendPacket(
+                RoomMessagePacket(
+                    type = "TURN_TIMEOUT",
+                    number = -1,
+                    playerId = activePickerId,
+                    turnNumber = turnNumber,
                     currentTurnPlayerId = nextId,
                     seed = currentMatchSeed
                 )
@@ -1094,5 +1158,198 @@ class TwoPlayerMatchSimulationTest {
         assertEquals(match2Seed, guest.currentMatchSeed)
 
         println("✅ Simulation Test 7 (Nearby Network P2P with Full Lobby & Manual Board Flow) PASSED successfully!")
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // TEST 8: TURN TIMEOUT - ACTIVE PLAYER MISSES TURN, CONTROL SWITCHES TO OPPONENT
+    // ════════════════════════════════════════════════════════════════════════════
+    @Test
+    fun testSimulation_TurnTimeout_ActivePlayerTimesOut_ControlSwitchesCleanly() {
+        val bus = VirtualMessageBus()
+        val host = SimulatedClient("host_1", "HostAlice", isHost = true, messageBus = bus)
+        val guest = SimulatedClient("guest_2", "GuestBob", isHost = false, messageBus = bus)
+        bus.register(host)
+        bus.register(guest)
+
+        // Setup room and ready states
+        host.roomPlayers[guest.id] = guest.localPlayer
+        guest.roomPlayers[host.id] = host.localPlayer
+
+        val matchSeed = 9988776655L
+        host.currentMatchSeed = matchSeed
+        guest.currentMatchSeed = matchSeed
+
+        // Host determines first turn deterministically and sends START_GAME with currentTurnPlayerId
+        val candidates = listOf(host.id, guest.id).sorted()
+        val firstTurnUid = ManualBoardEngine.determineRandomFirstTurn(matchSeed, candidates)
+
+        val startPacket = RoomMessagePacket(
+            type = "START_GAME",
+            playerId = host.id,
+            boardSize = 5,
+            seed = matchSeed,
+            currentTurnPlayerId = firstTurnUid,
+            isManualBoard = false
+        )
+        host.currentTurnPlayerId = firstTurnUid
+        host.isMyTurn = (firstTurnUid == host.id)
+        host.screen = "GAME"
+        host.turnNumber = 1
+        host.turnTimer = 30
+        host.sendPacket(startPacket)
+
+        assertEquals("GAME", guest.screen)
+        assertEquals("Both players must agree on active turn player", host.currentTurnPlayerId, guest.currentTurnPlayerId)
+        val activeClient = if (host.isMyTurn) host else guest
+        val waitingClient = if (host.isMyTurn) guest else host
+
+        assertTrue("Active player must have isMyTurn=true", activeClient.isMyTurn)
+        assertFalse("Waiting player must have isMyTurn=false", waitingClient.isMyTurn)
+        assertEquals(1, activeClient.turnNumber)
+        assertEquals(1, waitingClient.turnNumber)
+
+        // Active player runs out of time (30s countdown hits 0s)
+        activeClient.onTurnTimeout()
+
+        // VERIFY: Control cleanly switches to waiting player!
+        assertEquals("Turn number must increment after timeout", 2, activeClient.turnNumber)
+        assertEquals("Turn number must increment on opponent after timeout packet", 2, waitingClient.turnNumber)
+        assertEquals(30, activeClient.turnTimer)
+        assertEquals(30, waitingClient.turnTimer)
+
+        assertFalse("Former active player must have isMyTurn=false", activeClient.isMyTurn)
+        assertTrue("Waiting player must now have isMyTurn=true (control switched)", waitingClient.isMyTurn)
+        assertEquals(waitingClient.id, activeClient.currentTurnPlayerId)
+        assertEquals(waitingClient.id, guest.currentTurnPlayerId)
+
+        // Now newly active player can pick a number
+        waitingClient.pickNumber(15)
+        assertEquals(3, activeClient.turnNumber)
+        assertEquals(3, waitingClient.turnNumber)
+        assertTrue("Control rotated back to original active player", activeClient.isMyTurn)
+        assertFalse(waitingClient.isMyTurn)
+        assertTrue(activeClient.pickedNumbersHistory.contains(15))
+        assertTrue(waitingClient.pickedNumbersHistory.contains(15))
+
+        println("✅ Simulation Test 8 (Turn Timeout - Control Switches Cleanly) PASSED successfully!")
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // TEST 9: TURN TIMEOUT - PACKET LOSS / FALLBACK ROTATION (NO 0s FREEZE)
+    // ════════════════════════════════════════════════════════════════════════════
+    @Test
+    fun testSimulation_TurnTimeout_DroppedPacket_NonActivePlayerFallbackTakesControl() {
+        val bus = VirtualMessageBus()
+        val host = SimulatedClient("host_1", "HostAlice", isHost = true, messageBus = bus)
+        val guest = SimulatedClient("guest_2", "GuestBob", isHost = false, messageBus = bus)
+        bus.register(host)
+        bus.register(guest)
+
+        host.roomPlayers[guest.id] = guest.localPlayer
+        guest.roomPlayers[host.id] = host.localPlayer
+
+        val matchSeed = 1122334455L
+        host.currentMatchSeed = matchSeed
+        guest.currentMatchSeed = matchSeed
+
+        // Force Host as first turn player
+        host.currentTurnPlayerId = host.id
+        host.isMyTurn = true
+        host.screen = "GAME"
+        host.turnNumber = 1
+        host.turnTimer = 30
+
+        guest.currentTurnPlayerId = host.id
+        guest.isMyTurn = false
+        guest.screen = "GAME"
+        guest.turnNumber = 1
+        guest.turnTimer = 30
+
+        // Simulate host times out BUT packet is dropped over network (guest doesn't receive it)
+        // Guest timer hits 0s. After 1.5s grace period, guest's fail-safe triggers:
+        guest.onFallbackTimeout(activePickerId = host.id)
+
+        // VERIFY: Guest takes control locally and broadcasts TURN_TIMEOUT back to host
+        assertTrue("Guest must gain isMyTurn=true via fallback", guest.isMyTurn)
+        assertEquals(guest.id, guest.currentTurnPlayerId)
+        assertEquals(2, guest.turnNumber)
+        assertEquals(30, guest.turnTimer)
+
+        // Host receives the packet from guest and reconciles
+        assertFalse("Host must have isMyTurn=false", host.isMyTurn)
+        assertEquals(guest.id, host.currentTurnPlayerId)
+        assertEquals(2, host.turnNumber)
+        assertEquals(30, host.turnTimer)
+
+        println("✅ Simulation Test 9 (Turn Timeout - Fallback Rotation & Zero-Stall Guarantee) PASSED successfully!")
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // TEST 10: CONSECUTIVE TIMEOUTS - ALTERNATES INDEFINITELY WITHOUT STALL
+    // ════════════════════════════════════════════════════════════════════════════
+    @Test
+    fun testSimulation_TurnTimeout_ConsecutiveTimeouts_AlternatesContinuouslyWithoutStall() {
+        val bus = VirtualMessageBus()
+        val host = SimulatedClient("host_1", "HostAlice", isHost = true, messageBus = bus)
+        val guest = SimulatedClient("guest_2", "GuestBob", isHost = false, messageBus = bus)
+        bus.register(host)
+        bus.register(guest)
+
+        host.roomPlayers[guest.id] = guest.localPlayer
+        guest.roomPlayers[host.id] = host.localPlayer
+
+        val matchSeed = 4455667788L
+        host.currentMatchSeed = matchSeed
+        guest.currentMatchSeed = matchSeed
+
+        host.currentTurnPlayerId = host.id
+        host.isMyTurn = true
+        host.screen = "GAME"
+        host.turnNumber = 1
+
+        guest.currentTurnPlayerId = host.id
+        guest.isMyTurn = false
+        guest.screen = "GAME"
+        guest.turnNumber = 1
+
+        // Turn 1: Host times out -> Guest gets turn
+        host.onTurnTimeout()
+        assertEquals(2, host.turnNumber)
+        assertEquals(2, guest.turnNumber)
+        assertFalse(host.isMyTurn)
+        assertTrue(guest.isMyTurn)
+        assertEquals(guest.id, host.currentTurnPlayerId)
+        assertEquals(guest.id, guest.currentTurnPlayerId)
+
+        // Turn 2: Guest times out -> Host gets turn
+        guest.onTurnTimeout()
+        assertEquals(3, host.turnNumber)
+        assertEquals(3, guest.turnNumber)
+        assertTrue(host.isMyTurn)
+        assertFalse(guest.isMyTurn)
+        assertEquals(host.id, host.currentTurnPlayerId)
+        assertEquals(host.id, guest.currentTurnPlayerId)
+
+        // Turn 3: Host times out again -> Guest gets turn
+        host.onTurnTimeout()
+        assertEquals(4, host.turnNumber)
+        assertEquals(4, guest.turnNumber)
+        assertFalse(host.isMyTurn)
+        assertTrue(guest.isMyTurn)
+        assertEquals(guest.id, host.currentTurnPlayerId)
+        assertEquals(guest.id, guest.currentTurnPlayerId)
+
+        // Turn 4: Guest picks number 7 -> Host gets turn
+        guest.pickNumber(7)
+        assertEquals(5, host.turnNumber)
+        assertEquals(5, guest.turnNumber)
+        assertTrue(host.isMyTurn)
+        assertFalse(guest.isMyTurn)
+        assertEquals(host.id, host.currentTurnPlayerId)
+        assertEquals(host.id, guest.currentTurnPlayerId)
+        assertEquals(listOf(7), host.pickedNumbersHistory.toList())
+        assertEquals(listOf(7), guest.pickedNumbersHistory.toList())
+
+        println("✅ Simulation Test 10 (Consecutive Timeouts Alternation) PASSED successfully!")
     }
 }

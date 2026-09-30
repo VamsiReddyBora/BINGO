@@ -108,6 +108,9 @@ fun RootNavGraph(
     var isOpponentBoardReady by remember { mutableStateOf(false) }
     var countdownSeconds by remember { mutableIntStateOf(-1) }
     var firstTurnPlayerName by remember { mutableStateOf("") }
+    var latestIncomingEmote by remember { mutableStateOf<String?>(null) }
+    var latestIncomingEmoteTimestamp by remember { androidx.compose.runtime.mutableLongStateOf(0L) }
+    var opponentPlayerId by remember { mutableStateOf("") }
 
     // History and Turn Authority (reconciles network packets and prevents stalls)
     val pickedNumbersHistory = remember { mutableStateListOf<Int>() }
@@ -392,26 +395,27 @@ fun RootNavGraph(
     }
 
     fun calculateNextTurnPlayerId(currentPickerId: String): String {
+        val myUid = getLocalUid()
         return when (currentGameMode) {
             GameMode.AI_EASY, GameMode.AI_HARD -> {
-                if (currentPickerId == "ai_bot") getLocalUid() else "ai_bot"
+                if (currentPickerId == "ai_bot") myUid else "ai_bot"
             }
             GameMode.ONLINE_ROOM, GameMode.NEARBY_NETWORK -> {
                 val activePlayers = realTimePlayers.filter { it.id.isNotBlank() }
-                if (activePlayers.size >= 2) {
+                if (activePlayers.size > 2) {
                     val currentIndex = activePlayers.indexOfFirst { it.id == currentPickerId }
                     val nextIndex = if (currentIndex != -1) {
                         (currentIndex + 1) % activePlayers.size
-                    } else {
-                        val localIndex = activePlayers.indexOfFirst { it.id == getLocalUid() }
-                        if (localIndex != -1) (localIndex + 1) % activePlayers.size else 0
-                    }
+                    } else 0
                     activePlayers[nextIndex].id
                 } else {
-                    if (currentPickerId == getLocalUid()) {
-                        realTimePlayers.firstOrNull { it.id != getLocalUid() }?.id ?: "opponent"
+                    if (currentPickerId == myUid) {
+                        val other = realTimePlayers.firstOrNull { it.id.isNotBlank() && it.id != myUid }?.id
+                            ?: opponentPlayerId.takeIf { it.isNotBlank() }
+                            ?: "opponent"
+                        other
                     } else {
-                        getLocalUid()
+                        myUid
                     }
                 }
             }
@@ -453,7 +457,9 @@ fun RootNavGraph(
         } else if (mode == GameMode.ONLINE_ROOM || mode == GameMode.NEARBY_NETWORK) {
             val candidateUids = realTimePlayers.map { it.id }.filter { it.isNotBlank() }.distinct().sorted()
             val effCandidates = if (candidateUids.size >= 2) candidateUids else {
-                val other = realTimePlayers.firstOrNull { it.id != myUid }?.id ?: "opponent"
+                val other = realTimePlayers.firstOrNull { it.id != myUid }?.id
+                    ?: opponentPlayerId.takeIf { it.isNotBlank() }
+                    ?: "opponent"
                 listOf(myUid, other).sorted()
             }
             ManualBoardEngine.determineRandomFirstTurn(baseSeed, effCandidates)
@@ -483,7 +489,9 @@ fun RootNavGraph(
             val candidateUids = realTimePlayers.map { it.id }.filter { it.isNotBlank() }.distinct().sorted()
             val myUid = getLocalUid()
             val effCandidates = if (candidateUids.size >= 2) candidateUids else {
-                val other = realTimePlayers.firstOrNull { it.id != myUid }?.id ?: "opponent"
+                val other = realTimePlayers.firstOrNull { it.id != myUid }?.id
+                    ?: opponentPlayerId.takeIf { it.isNotBlank() }
+                    ?: "opponent"
                 listOf(myUid, other).sorted()
             }
             val firstTurnUid = ManualBoardEngine.determineRandomFirstTurn(currentMatchSeed, effCandidates)
@@ -659,6 +667,10 @@ fun RootNavGraph(
             }
         }
 
+        if (packet.playerId.isNotBlank() && packet.playerId != myUid) {
+            opponentPlayerId = packet.playerId
+        }
+
         when (packet.type) {
             "START_GAME" -> {
                 if (!isHosting) {
@@ -716,7 +728,7 @@ fun RootNavGraph(
                             mode = if (isUsingP2p) GameMode.NEARBY_NETWORK else GameMode.ONLINE_ROOM,
                             difficulty = AiDifficulty.EASY,
                             size = packet.boardSize,
-                            firstTurnPlayerId = null,
+                            firstTurnPlayerId = packet.currentTurnPlayerId.takeIf { it.isNotBlank() },
                             hostSeed = packet.seed
                         )
                     }
@@ -896,6 +908,11 @@ fun RootNavGraph(
                         recentPick = RecentPick(number = -1, pickedByPlayerId = packet.playerId, turnNumber = turnNumber)
                     }
                 }
+            }
+
+            "EMOTE" -> {
+                latestIncomingEmote = packet.displayName
+                latestIncomingEmoteTimestamp = packet.timestamp
             }
 
             "GAME_SYNC" -> {
@@ -1473,11 +1490,17 @@ fun RootNavGraph(
                         lanDiscovery.stopDiscovering()
                     }
 
+                    val otherPlayerId = realTimePlayers.firstOrNull { it.id.isNotBlank() && it.id != myId }?.id
+                        ?: opponentPlayerId.takeIf { it.isNotBlank() }
+                    val candidateUids = if (otherPlayerId != null) listOf(myId, otherPlayerId).sorted() else listOf(myId)
+                    val chosenFirstTurnUid = ManualBoardEngine.determineRandomFirstTurn(seed, candidateUids)
+
                     val startPacket = RoomMessagePacket(
                         type = "START_GAME",
                         boardSize = dynamicSize,
                         seed = seed,
                         playerId = myId,
+                        currentTurnPlayerId = chosenFirstTurnUid,
                         isManualBoard = manualMode
                     )
                     broadcastPacket(startPacket)
@@ -1516,7 +1539,7 @@ fun RootNavGraph(
                             mode = if (isUsingP2p) GameMode.NEARBY_NETWORK else GameMode.ONLINE_ROOM,
                             difficulty = AiDifficulty.EASY,
                             size = dynamicSize,
-                            firstTurnPlayerId = null,
+                            firstTurnPlayerId = chosenFirstTurnUid,
                             hostSeed = seed
                         )
                     }
@@ -1651,11 +1674,17 @@ fun RootNavGraph(
                     lanDiscovery.stopBroadcasting()
                     lanDiscovery.stopDiscovering()
 
+                    val otherPlayerId = realTimePlayers.firstOrNull { it.id.isNotBlank() && it.id != myId }?.id
+                        ?: opponentPlayerId.takeIf { it.isNotBlank() }
+                    val candidateUids = if (otherPlayerId != null) listOf(myId, otherPlayerId).sorted() else listOf(myId)
+                    val chosenFirstTurnUid = ManualBoardEngine.determineRandomFirstTurn(seed, candidateUids)
+
                     val startPacket = RoomMessagePacket(
                         type = "START_GAME",
                         boardSize = dynamicSize,
                         seed = seed,
                         playerId = myId,
+                        currentTurnPlayerId = chosenFirstTurnUid,
                         isManualBoard = manualMode
                     )
                     broadcastPacket(startPacket)
@@ -1694,7 +1723,7 @@ fun RootNavGraph(
                             mode = GameMode.NEARBY_NETWORK,
                             difficulty = AiDifficulty.EASY,
                             size = dynamicSize,
-                            firstTurnPlayerId = null,
+                            firstTurnPlayerId = chosenFirstTurnUid,
                             hostSeed = seed
                         )
                     }
@@ -1879,6 +1908,23 @@ fun RootNavGraph(
                             pickerId = getLocalUid(),
                             shouldBroadcast = true
                         )
+                    } else if (!isMyTurn && !isGameOver && !isGamePaused && turnTimer == 0) {
+                        // Fail-safe grace period: If peer missed their turn or packet was lost,
+                        // rotate turn to local player after 1.5s so the game never freezes at 0s!
+                        delay(1500L)
+                        if (!isMyTurn && !isGameOver && !isGamePaused && turnTimer == 0) {
+                            val activePicker = currentTurnPlayerId.ifBlank {
+                                realTimePlayers.firstOrNull { it.id != getLocalUid() }?.id
+                                    ?: opponentPlayerId.takeIf { it.isNotBlank() }
+                                    ?: "opponent"
+                            }
+                            executePick(
+                                number = -1,
+                                isOwnPick = false,
+                                pickerId = activePicker,
+                                shouldBroadcast = true
+                            )
+                        }
                     }
                 }
             }
@@ -1918,6 +1964,20 @@ fun RootNavGraph(
                 isHost = isCurrentHost,
                 pingMs = currentPing,
                 wantsToPlayAgainName = wantsToPlayAgainPlayerName,
+                incomingEmote = latestIncomingEmote,
+                incomingEmoteTimestamp = latestIncomingEmoteTimestamp,
+                onSendEmote = { emoji ->
+                    if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
+                        broadcastPacket(
+                            RoomMessagePacket(
+                                type = "EMOTE",
+                                playerId = getLocalUid(),
+                                displayName = emoji,
+                                timestamp = System.currentTimeMillis()
+                            )
+                        )
+                    }
+                },
                 onRequestPlayAgain = {
                     if (currentGameMode == GameMode.ONLINE_ROOM) {
                         broadcastPacket(

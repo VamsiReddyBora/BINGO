@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -27,7 +28,7 @@ import com.bingo.multiplayer.domain.model.Board
 private val BINGO_LETTERS = listOf('B', 'I', 'N', 'G', 'O')
 
 /**
- * Minimal, clean Bingo Board grid.
+ * Minimal, clean Bingo Board grid with 3D tactile cells and animated neon laser strike overlay.
  */
 @Composable
 fun BingoBoardView(
@@ -52,31 +53,44 @@ fun BingoBoardView(
     ) {
         val maxBoardWidth = maxWidth.coerceAtMost(maxHeight)
 
-        Column(
+        Box(
             modifier = Modifier
                 .size(maxBoardWidth)
                 .aspectRatio(1f),
-            verticalArrangement = Arrangement.spacedBy(spacing)
+            contentAlignment = Alignment.Center
         ) {
-            for (r in 0 until size) {
-                Row(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(spacing)
-                ) {
-                    for (c in 0 until size) {
-                        val cell = board.getCell(r, c)
-                        BingoCell(
-                            cell = cell,
-                            boardDimension = size,
-                            enabled = isInteractive,
-                            onCellClick = { onCellClicked(cell.number) },
-                            modifier = Modifier.weight(1f)
-                        )
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(spacing)
+            ) {
+                for (r in 0 until size) {
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(spacing)
+                    ) {
+                        for (c in 0 until size) {
+                            val cell = board.getCell(r, c)
+                            BingoCell(
+                                cell = cell,
+                                boardDimension = size,
+                                enabled = isInteractive,
+                                onCellClick = { onCellClicked(cell.number) },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
                     }
                 }
             }
+
+            // Laser strike overlay rendered directly over completed lines
+            BingoLineStrikesOverlay(
+                completedLines = board.completedLines,
+                boardSize = size,
+                spacing = spacing,
+                modifier = Modifier.fillMaxSize()
+            )
         }
     }
 }
