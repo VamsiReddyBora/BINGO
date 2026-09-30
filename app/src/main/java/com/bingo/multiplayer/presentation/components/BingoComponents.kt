@@ -1,7 +1,9 @@
 package com.bingo.multiplayer.presentation.components
 
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -12,23 +14,24 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.bingo.multiplayer.core.designsystem.BingoTheme
 import com.bingo.multiplayer.domain.model.Board
 
 private val BINGO_LETTERS = listOf('B', 'I', 'N', 'G', 'O')
 
 /**
- * Minimal, clean Bingo Board grid with 3D tactile cells and animated neon laser strike overlay.
+ * Minimal, clean Bingo Board grid with 3D tactile cells (laser strike overlay removed).
  */
 @Composable
 fun BingoBoardView(
@@ -39,9 +42,8 @@ fun BingoBoardView(
 ) {
     val size = board.size
     val spacing = when {
-        size <= 4 -> 8.dp
-        size == 5 -> 6.dp
-        size == 6 -> 5.dp
+        size <= 5 -> 8.dp
+        size == 6 -> 6.dp
         else -> 4.dp
     }
 
@@ -83,20 +85,14 @@ fun BingoBoardView(
                     }
                 }
             }
-
-            // Laser strike overlay rendered directly over completed lines
-            BingoLineStrikesOverlay(
-                completedLines = board.completedLines,
-                boardSize = size,
-                spacing = spacing,
-                modifier = Modifier.fillMaxSize()
-            )
         }
     }
 }
 
 /**
- * Minimal B-I-N-G-O letter progression tracker.
+ * Clean plain-text B-I-N-G-O progression tracker in black with realistic extended horizontal strike-through.
+ * When a line is completed, a horizontal strike-off line draws smoothly across the letter extending
+ * beyond the character boundaries for an authentic pen cross-out feel.
  */
 @Composable
 fun BingoHeaderTracker(
@@ -104,41 +100,55 @@ fun BingoHeaderTracker(
     targetLines: Int = 5,
     modifier: Modifier = Modifier
 ) {
-    val tokens = BingoTheme.colors
+    val extraStars = if (targetLines > 5) List(targetLines - 5) { '★' } else emptyList()
+    val displayLetters = (BINGO_LETTERS.take(targetLines) + extraStars).take(targetLines)
 
     Row(
         modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        val extraStars = if (targetLines > 5) List(targetLines - 5) { '★' } else emptyList()
-        val displayLetters = (BINGO_LETTERS.take(targetLines) + extraStars).take(targetLines)
         displayLetters.forEachIndexed { index, letter ->
             val isUnlocked = index < completedLines
-            val shape = RoundedCornerShape(10.dp)
+
+            val strikeProgress by animateFloatAsState(
+                targetValue = if (isUnlocked) 1f else 0f,
+                animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing),
+                label = "strikeProgress_$index"
+            )
 
             Box(
                 modifier = Modifier
-                    .size(40.dp)
-                    .clip(shape)
-                    .background(
-                        if (isUnlocked) tokens.completedLetterGradientEnd else tokens.surface
-                    )
-                    .then(
-                        if (isUnlocked) {
-                            Modifier
-                        } else {
-                            Modifier.background(tokens.surface)
-                        }
-                    ),
+                    .wrapContentSize()
+                    .padding(horizontal = 6.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = letter.toString(),
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = if (isUnlocked) Color.White else tokens.cellNeutralText.copy(alpha = 0.4f)
+                    fontSize = 25.sp,
+                    fontWeight = FontWeight.Black,
+                    color = Color.Black
                 )
+
+                if (strikeProgress > 0f) {
+                    Canvas(
+                        modifier = Modifier.matchParentSize()
+                    ) {
+                        val extensionPx = 6.dp.toPx()
+                        val startX = -extensionPx
+                        val totalTargetWidth = size.width + (2 * extensionPx)
+                        val currentEndX = startX + (totalTargetWidth * strikeProgress)
+                        val centerY = size.height / 2f
+
+                        drawLine(
+                            color = Color.Black,
+                            start = Offset(startX, centerY),
+                            end = Offset(currentEndX, centerY),
+                            strokeWidth = 3.5.dp.toPx(),
+                            cap = StrokeCap.Round
+                        )
+                    }
+                }
             }
         }
     }

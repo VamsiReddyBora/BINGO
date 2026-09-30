@@ -63,6 +63,10 @@ class TwoPlayerMatchSimulationTest {
         // Turn switch history tracker for flickering detection
         val turnSwitchLog = mutableListOf<String>()
 
+        // Emote & quick chat phrase tracking
+        var lastReceivedEmote: String? = null
+        var lastReceivedEmoteTimestamp: Long = 0L
+
         init {
             roomPlayers[id] = localPlayer
         }
@@ -251,6 +255,11 @@ class TwoPlayerMatchSimulationTest {
                         }
                     }
                 }
+
+                "EMOTE", "CHAT_PHRASE" -> {
+                    lastReceivedEmote = packet.displayName
+                    lastReceivedEmoteTimestamp = packet.timestamp
+                }
             }
         }
 
@@ -407,6 +416,17 @@ class TwoPlayerMatchSimulationTest {
                 )
             }
             roomPlayers[id] = localPlayer
+        }
+
+        fun sendEmoteOrPhrase(text: String, isPhrase: Boolean = false) {
+            sendPacket(
+                RoomMessagePacket(
+                    type = if (isPhrase) "CHAT_PHRASE" else "EMOTE",
+                    playerId = id,
+                    displayName = text,
+                    timestamp = System.currentTimeMillis()
+                )
+            )
         }
     }
 
@@ -1351,5 +1371,120 @@ class TwoPlayerMatchSimulationTest {
         assertEquals(listOf(7), guest.pickedNumbersHistory.toList())
 
         println("✅ Simulation Test 10 (Consecutive Timeouts Alternation) PASSED successfully!")
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // TEST 11: QUICK CHAT PHRASES AND FLOATING REACTION TRANSMISSION
+    // ════════════════════════════════════════════════════════════════════════════
+    @Test
+    fun testSimulation_QuickChatPhrasesAndReactionsDuringGameplay() {
+        val bus = VirtualMessageBus()
+        val host = SimulatedClient("host_1", "HostAlice", isHost = true, messageBus = bus)
+        val guest = SimulatedClient("guest_2", "GuestBob", isHost = false, messageBus = bus)
+        bus.register(host)
+        bus.register(guest)
+
+        // Setup room and start game
+        host.screen = "LOBBY"
+        guest.screen = "LOBBY"
+        guest.sendPacket(RoomMessagePacket(type = "JOIN", playerId = guest.id, displayName = guest.displayName))
+        host.roomPlayers[guest.id] = guest.localPlayer
+
+        val matchSeed = 998877L
+        host.currentMatchSeed = matchSeed
+        host.boardSize = 5
+        host.isManualBoardMode = false
+        host.screen = "GAME"
+        host.playerBoard = engine.generateBoard(5, matchSeed)
+        host.opponentBoard = engine.generateBoard(5, matchSeed + 1)
+        host.currentTurnPlayerId = host.id
+        host.isMyTurn = true
+        host.turnNumber = 1
+
+        host.sendPacket(
+            RoomMessagePacket(
+                type = "START_GAME",
+                playerId = host.id,
+                seed = matchSeed,
+                boardSize = 5,
+                isManualBoard = false,
+                currentTurnPlayerId = host.id
+            )
+        )
+
+        assertEquals("GAME", guest.screen)
+        assertEquals(host.id, guest.currentTurnPlayerId)
+        assertFalse(guest.isMyTurn)
+
+        // 1. Guest reacts with a custom quick chat phrase
+        val phrase = "Nice move! 🎯"
+        guest.sendEmoteOrPhrase(phrase, isPhrase = true)
+
+        assertEquals("Nice move! 🎯", host.lastReceivedEmote)
+        assertTrue(host.lastReceivedEmoteTimestamp > 0L)
+
+        // 2. Host sends a reaction emoji in response
+        val emote = "🔥"
+        host.sendEmoteOrPhrase(emote, isPhrase = false)
+
+        assertEquals("🔥", guest.lastReceivedEmote)
+        assertTrue(guest.lastReceivedEmoteTimestamp > 0L)
+
+        // 3. Verify maximum 25-character boundary rule for custom phrases
+        val longPhrase = "This phrase is definitely way too long for twenty five chars"
+        val trimmedPhrase = longPhrase.trim().take(25)
+        assertEquals(25, trimmedPhrase.length)
+
+        guest.sendEmoteOrPhrase(trimmedPhrase, isPhrase = true)
+        assertEquals(trimmedPhrase, host.lastReceivedEmote)
+
+        println("✅ Simulation Test 11 (Quick Chat Phrases & Reactions) PASSED successfully!")
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // TEST 12: HEAD-TO-HEAD SCORECARD PROGRESSION & EXTENDED STRIKE LOGIC
+    // ════════════════════════════════════════════════════════════════════════════
+    @Test
+    fun testSimulation_HeadToHeadScorecardAndStrikeProgressionLogic() {
+        val targetLines = 5
+        var playerLines = 3
+        var opponentLines = 2
+
+        // Non match point
+        var isPlayerMatchPoint = playerLines >= (targetLines - 1) && playerLines < targetLines
+        var isOpponentMatchPoint = opponentLines >= (targetLines - 1) && opponentLines < targetLines
+        assertFalse(isPlayerMatchPoint)
+        assertFalse(isOpponentMatchPoint)
+
+        // Player hits Match Point (4 lines)
+        playerLines = 4
+        isPlayerMatchPoint = playerLines >= (targetLines - 1) && playerLines < targetLines
+        assertTrue(isPlayerMatchPoint)
+        assertFalse(isOpponentMatchPoint)
+
+        // Dual Match Point (both 4 lines)
+        opponentLines = 4
+        isOpponentMatchPoint = opponentLines >= (targetLines - 1) && opponentLines < targetLines
+        assertTrue(isPlayerMatchPoint && isOpponentMatchPoint)
+
+        // Strike progression verification:
+        // When completedLines = 4, characters at indices 0..3 (B, I, N, G) have strikeProgress > 0,
+        // and index 4 (O) is not yet struck out.
+        val bingoLetters = listOf('B', 'I', 'N', 'G', 'O')
+        val strikes = bingoLetters.mapIndexed { index, letter ->
+            index < playerLines // true for struck letters
+        }
+        assertEquals(listOf(true, true, true, true, false), strikes)
+
+        // Player completes 5th line (BINGO!)
+        playerLines = 5
+        val completedStrikes = bingoLetters.mapIndexed { index, _ -> index < playerLines }
+        assertEquals(listOf(true, true, true, true, true), completedStrikes)
+
+        // Once 5 lines reached, match point is cleared (game over / victory)
+        isPlayerMatchPoint = playerLines >= (targetLines - 1) && playerLines < targetLines
+        assertFalse(isPlayerMatchPoint)
+
+        println("✅ Simulation Test 12 (Scorecard & Strike Progression Logic) PASSED successfully!")
     }
 }

@@ -910,7 +910,7 @@ fun RootNavGraph(
                 }
             }
 
-            "EMOTE" -> {
+            "EMOTE", "CHAT_PHRASE" -> {
                 latestIncomingEmote = packet.displayName
                 latestIncomingEmoteTimestamp = packet.timestamp
             }

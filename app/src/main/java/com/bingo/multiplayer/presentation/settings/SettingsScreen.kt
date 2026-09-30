@@ -76,6 +76,7 @@ import com.bingo.multiplayer.domain.model.AuthProvider
 import com.bingo.multiplayer.domain.model.AuthState
 import com.bingo.multiplayer.domain.model.UserProfile
 import com.bingo.multiplayer.domain.network.PlayerRegistryEntry
+import com.bingo.multiplayer.domain.network.QuickChatPreferences
 import com.bingo.multiplayer.domain.repository.AuthRepository
 import com.bingo.multiplayer.domain.repository.FriendsRepository
 import com.bingo.multiplayer.presentation.common.PlayerAvatar
@@ -117,6 +118,10 @@ fun SettingsScreen(
     var foundPlayer by remember { mutableStateOf<PlayerRegistryEntry?>(null) }
     var searchAttempted by remember { mutableStateOf(false) }
     var selectedProfilePlayer by remember { mutableStateOf<PlayerProfileData?>(null) }
+
+    var quickChatPhrases by remember { mutableStateOf(QuickChatPreferences.getPhrases(context)) }
+    var editingPhraseIndex by remember { mutableStateOf<Int?>(null) }
+    var editingPhraseText by remember { mutableStateOf("") }
 
     val presenceMap by com.bingo.multiplayer.domain.network.PresenceManager.presenceFlow.collectAsState()
     var ticker by remember { mutableStateOf(0L) }
@@ -246,6 +251,77 @@ fun SettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showSignOutDialog = false }) {
+                    Text("Cancel", color = tokens.cellNeutralText)
+                }
+            }
+        )
+    }
+
+    if (editingPhraseIndex != null) {
+        val index = editingPhraseIndex!!
+        AlertDialog(
+            onDismissRequest = { editingPhraseIndex = null },
+            shape = RoundedCornerShape(20.dp),
+            containerColor = tokens.surface,
+            title = {
+                Text(
+                    text = "Edit Quick Chat #${index + 1}",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    color = tokens.cellNeutralText
+                )
+            },
+            text = {
+                Column {
+                    Text(
+                        text = "Customize this in-game phrase (max ${QuickChatPreferences.MAX_PHRASE_LENGTH} characters):",
+                        fontSize = 13.sp,
+                        color = tokens.cellNeutralText.copy(alpha = 0.7f)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = editingPhraseText,
+                        onValueChange = {
+                            if (it.length <= QuickChatPreferences.MAX_PHRASE_LENGTH) {
+                                editingPhraseText = it
+                            }
+                        },
+                        singleLine = true,
+                        placeholder = { Text("e.g. Good move! 🔥") },
+                        supportingText = {
+                            Text(
+                                text = "${editingPhraseText.length}/${QuickChatPreferences.MAX_PHRASE_LENGTH}",
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = TextAlign.End,
+                                color = if (editingPhraseText.length == QuickChatPreferences.MAX_PHRASE_LENGTH) tokens.accentOpponent else tokens.cellNeutralText.copy(alpha = 0.5f)
+                            )
+                        },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = tokens.accentBrand,
+                            cursorColor = tokens.accentBrand
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val trimmed = editingPhraseText.trim()
+                        if (trimmed.isNotBlank()) {
+                            QuickChatPreferences.savePhrase(context, index, trimmed)
+                            quickChatPhrases = QuickChatPreferences.getPhrases(context)
+                            Toast.makeText(context, "Phrase updated!", Toast.LENGTH_SHORT).show()
+                        }
+                        editingPhraseIndex = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = tokens.accentBrand)
+                ) {
+                    Text("Save", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { editingPhraseIndex = null }) {
                     Text("Cancel", color = tokens.cellNeutralText)
                 }
             }
@@ -787,7 +863,104 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // ── Section 4: Sign Out ──
+            // ── Section 4: In-Game Quick Chat Phrases (Option E) ──
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                color = tokens.surface,
+                border = BorderStroke(1.dp, tokens.surfaceBorder)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "In-Game Quick Chat",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = tokens.cellNeutralText
+                        )
+
+                        TextButton(
+                            onClick = {
+                                quickChatPhrases = QuickChatPreferences.resetToDefaults(context)
+                                Toast.makeText(context, "Phrases reset to defaults", Toast.LENGTH_SHORT).show()
+                            }
+                        ) {
+                            Text("Reset Defaults", fontSize = 12.sp, color = tokens.accentBrand)
+                        }
+                    }
+
+                    Text(
+                        text = "Customize the 4 phrases you can send to your opponent during live matches (max 25 chars):",
+                        fontSize = 12.sp,
+                        color = tokens.cellNeutralText.copy(alpha = 0.6f)
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    quickChatPhrases.forEachIndexed { idx, phrase ->
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 3.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            color = tokens.backgroundSecondary,
+                            border = BorderStroke(0.5.dp, tokens.surfaceBorder)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    modifier = Modifier.weight(1f),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "${idx + 1}.",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = tokens.accentBrand
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = phrase,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = tokens.cellNeutralText,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+
+                                IconButton(
+                                    onClick = {
+                                        editingPhraseIndex = idx
+                                        editingPhraseText = phrase
+                                    },
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Edit,
+                                        contentDescription = "Edit Phrase",
+                                        tint = tokens.accentBrand,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // ── Section 5: Sign Out ──
             OutlinedButton(
                 onClick = { showSignOutDialog = true },
                 modifier = Modifier

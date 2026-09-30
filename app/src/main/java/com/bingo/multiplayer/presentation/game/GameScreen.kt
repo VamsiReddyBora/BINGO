@@ -80,12 +80,14 @@ import androidx.compose.ui.draw.scale
 import com.bingo.multiplayer.core.designsystem.BingoTheme
 import com.bingo.multiplayer.domain.model.Board
 import com.bingo.multiplayer.domain.model.RecentPick
+import com.bingo.multiplayer.domain.network.QuickChatPreferences
 import com.bingo.multiplayer.presentation.common.PlayerAvatar
 import com.bingo.multiplayer.presentation.components.BingoBoardView
 import com.bingo.multiplayer.presentation.components.BingoHeaderTracker
 import com.bingo.multiplayer.presentation.components.FloatingEmoteBar
 import com.bingo.multiplayer.presentation.components.FloatingEmoteItem
 import com.bingo.multiplayer.presentation.components.FloatingEmotesOverlay
+import com.bingo.multiplayer.presentation.components.HeadToHeadScorecard
 
 /**
  * Modern Award-Winning Indie Game Match Screen.
@@ -128,6 +130,8 @@ fun GameScreen(
     val tokens = BingoTheme.colors
     val haptic = LocalHapticFeedback.current
     val view = LocalView.current
+    val context = LocalContext.current
+    val quickChatPhrases = remember { QuickChatPreferences.getPhrases(context) }
 
     // ── Floating Emotes State ──
     var activeEmotes by remember { mutableStateOf(listOf<FloatingEmoteItem>()) }
@@ -717,20 +721,48 @@ fun GameScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding),
-            contentAlignment = Alignment.Center
+                .padding(innerPadding)
         ) {
-            BingoBoardView(
-                board = displayedBoard,
-                isInteractive = isMyTurn && !isGameOver && !isGamePaused,
-                onCellClicked = onCellPicked
-            )
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceEvenly
+            ) {
+                BingoBoardView(
+                    board = displayedBoard,
+                    isInteractive = isMyTurn && !isGameOver && !isGamePaused,
+                    onCellClicked = onCellPicked
+                )
+
+                if (!isGameOver) {
+                    HeadToHeadScorecard(
+                        playerName = myDisplayName ?: "You",
+                        playerAvatarUrl = myAvatarUrl,
+                        playerUsername = myUsername,
+                        playerLines = board.completedLinesCount,
+                        opponentName = opponentName,
+                        opponentAvatarUrl = opponentAvatarUrl,
+                        opponentUsername = opponentUsername,
+                        opponentLines = opponentBoard?.completedLinesCount ?: 0,
+                        targetLines = board.size,
+                        isMyTurn = isMyTurn,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    )
+                }
+            }
 
             // Floating Quick Emote Bar pinned near bottom-end above footer
             FloatingEmoteBar(
                 onEmoteSelected = { emoji ->
                     spawnEmote(emoji, isSelf = true)
                     onSendEmote(emoji)
+                },
+                customPhrases = quickChatPhrases,
+                onPhraseSelected = { phrase ->
+                    spawnEmote(phrase, isSelf = true)
+                    onSendEmote(phrase)
                 },
                 modifier = Modifier
                     .align(Alignment.BottomEnd)

@@ -22,9 +22,12 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -51,6 +54,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bingo.multiplayer.core.designsystem.BingoTheme
@@ -74,6 +78,8 @@ data class FloatingEmoteItem(
 @Composable
 fun FloatingEmoteBar(
     onEmoteSelected: (String) -> Unit,
+    customPhrases: List<String> = emptyList(),
+    onPhraseSelected: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var isExpanded by remember { mutableStateOf(false) }
@@ -86,65 +92,107 @@ fun FloatingEmoteBar(
     ) {
         if (isExpanded) {
             Surface(
-                shape = RoundedCornerShape(24.dp),
+                shape = RoundedCornerShape(20.dp),
                 color = tokens.surface,
                 border = BorderStroke(1.dp, tokens.surfaceBorder),
-                shadowElevation = 6.dp,
+                shadowElevation = 8.dp,
                 modifier = Modifier.padding(end = 4.dp)
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    modifier = Modifier.padding(8.dp),
+                    horizontalAlignment = Alignment.End
                 ) {
-                    QUICK_EMOTES.forEach { emoji ->
-                        var isPressed by remember { mutableStateOf(false) }
-                        val pressScale by animateFloatAsState(
-                            targetValue = if (isPressed) 0.85f else 1.0f,
-                            animationSpec = tween(durationMillis = 80),
-                            label = "emotePressScale"
-                        )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        QUICK_EMOTES.forEach { emoji ->
+                            var isPressed by remember { mutableStateOf(false) }
+                            val pressScale by animateFloatAsState(
+                                targetValue = if (isPressed) 0.85f else 1.0f,
+                                animationSpec = tween(durationMillis = 80),
+                                label = "emotePressScale"
+                            )
 
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .scale(pressScale)
+                                    .clip(CircleShape)
+                                    .background(tokens.backgroundSecondary)
+                                    .pointerInput(Unit) {
+                                        detectTapGestures(
+                                            onPress = {
+                                                isPressed = true
+                                                tryAwaitRelease()
+                                                isPressed = false
+                                            },
+                                            onTap = {
+                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                onEmoteSelected(emoji)
+                                                isExpanded = false
+                                            }
+                                        )
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(text = emoji, fontSize = 20.sp)
+                            }
+                        }
+
+                        // Close Button
                         Box(
                             modifier = Modifier
-                                .size(38.dp)
-                                .scale(pressScale)
+                                .size(32.dp)
                                 .clip(CircleShape)
-                                .background(tokens.backgroundSecondary)
-                                .pointerInput(Unit) {
-                                    detectTapGestures(
-                                        onPress = {
-                                            isPressed = true
-                                            tryAwaitRelease()
-                                            isPressed = false
-                                        },
-                                        onTap = {
-                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                            onEmoteSelected(emoji)
-                                            isExpanded = false
-                                        }
-                                    )
-                                },
+                                .clickable { isExpanded = false },
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(text = emoji, fontSize = 20.sp)
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Close Emotes",
+                                tint = tokens.cellNeutralText.copy(alpha = 0.5f),
+                                modifier = Modifier.size(16.dp)
+                            )
                         }
                     }
 
-                    // Close Button
-                    Box(
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clip(CircleShape)
-                            .clickable { isExpanded = false },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Close Emotes",
-                            tint = tokens.cellNeutralText.copy(alpha = 0.5f),
-                            modifier = Modifier.size(16.dp)
-                        )
+                    // Quick Chat Phrases (Option E)
+                    if (customPhrases.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            customPhrases.take(4).chunked(2).forEach { rowPhrases ->
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    rowPhrases.forEach { phrase ->
+                                        Surface(
+                                            onClick = {
+                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                onPhraseSelected(phrase)
+                                                isExpanded = false
+                                            },
+                                            shape = RoundedCornerShape(12.dp),
+                                            color = tokens.backgroundSecondary,
+                                            border = BorderStroke(0.5.dp, tokens.surfaceBorder)
+                                        ) {
+                                            Text(
+                                                text = phrase,
+                                                fontSize = 11.5.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = tokens.cellNeutralText,
+                                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -263,20 +311,23 @@ private fun SingleFloatingEmoteBubble(
         Column(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            val isPhrase = item.emoji.length > 3
             Surface(
-                shape = CircleShape,
-                color = tokens.surface.copy(alpha = 0.92f),
-                border = BorderStroke(1.dp, tokens.surfaceBorder),
+                shape = if (isPhrase) RoundedCornerShape(16.dp) else CircleShape,
+                color = tokens.surface.copy(alpha = 0.95f),
+                border = BorderStroke(1.2.dp, if (item.isSelf) tokens.accentBrand else tokens.accentOpponent),
                 shadowElevation = 6.dp,
-                modifier = Modifier.size(48.dp)
+                modifier = if (isPhrase) Modifier.wrapContentSize() else Modifier.size(48.dp)
             ) {
                 Box(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = if (isPhrase) Modifier.padding(horizontal = 14.dp, vertical = 8.dp) else Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = item.emoji,
-                        fontSize = 24.sp
+                        text = if (isPhrase) "💬 ${item.emoji}" else item.emoji,
+                        fontSize = if (isPhrase) 13.sp else 24.sp,
+                        fontWeight = if (isPhrase) FontWeight.Bold else FontWeight.Normal,
+                        color = if (isPhrase) tokens.cellNeutralText else Color.Unspecified
                     )
                 }
             }
