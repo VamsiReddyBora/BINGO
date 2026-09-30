@@ -1048,20 +1048,23 @@ fun GameScreen(
 
                         Spacer(modifier = Modifier.width(6.dp))
 
-                        // Send Button
-                        IconButton(
-                            onClick = { submitCustomChatMessage() },
-                            enabled = customChatInput.isNotBlank(),
+                        // Send Button (compact, proportionate to text box)
+                        Box(
+                            contentAlignment = Alignment.Center,
                             modifier = Modifier
-                                .size(36.dp)
+                                .size(28.dp)
                                 .clip(CircleShape)
                                 .background(if (customChatInput.isNotBlank()) tokens.accentBrand else tokens.backgroundSecondary)
+                                .clickable(
+                                    enabled = customChatInput.isNotBlank(),
+                                    onClick = { submitCustomChatMessage() }
+                                )
                         ) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.Send,
                                 contentDescription = "Send Message",
                                 tint = if (customChatInput.isNotBlank()) Color.White else tokens.cellNeutralText.copy(alpha = 0.35f),
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(14.dp)
                             )
                         }
                     }
