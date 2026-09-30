@@ -1957,6 +1957,7 @@ fun RootNavGraph(
                 pausedByPlayerName = pausedByPlayerName,
                 onTogglePause = { togglePause() },
                 recentPick = recentPick,
+                pickedNumbersHistory = pickedNumbersHistory.toList(),
                 opponentName = opponentDisplayName,
                 isGameOver = isGameOver,
                 didPlayerWin = didPlayerWin,

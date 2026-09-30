@@ -9,11 +9,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -53,34 +56,100 @@ fun BingoBoardView(
             .padding(horizontal = 16.dp),
         contentAlignment = Alignment.Center
     ) {
-        val maxBoardWidth = maxWidth.coerceAtMost(maxHeight)
+        val maxBoardWidth = maxWidth.coerceAtMost(maxHeight - 44.dp)
 
-        Box(
-            modifier = Modifier
-                .size(maxBoardWidth)
-                .aspectRatio(1f),
-            contentAlignment = Alignment.Center
+        Column(
+            modifier = Modifier.width(maxBoardWidth),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Column(
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(spacing)
+            // Column Letters Row (B I N G O directly above columns)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(spacing)
             ) {
-                for (r in 0 until size) {
-                    Row(
+                for (c in 0 until size) {
+                    val letter = if (c < BINGO_LETTERS.size) BINGO_LETTERS[c] else '★'
+                    val isUnlocked = c < board.completedLinesCount || (board.isBingo && c < size)
+                    val strikeProgress by animateFloatAsState(
+                        targetValue = if (isUnlocked) 1f else 0f,
+                        animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing),
+                        label = "boardColStrike_$c"
+                    )
+
+                    Box(
                         modifier = Modifier
                             .weight(1f)
-                            .fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(spacing)
+                            .height(34.dp),
+                        contentAlignment = Alignment.Center
                     ) {
-                        for (c in 0 until size) {
-                            val cell = board.getCell(r, c)
-                            BingoCell(
-                                cell = cell,
-                                boardDimension = size,
-                                enabled = isInteractive,
-                                onCellClick = { onCellClicked(cell.number) },
-                                modifier = Modifier.weight(1f)
-                            )
+                        Text(
+                            text = letter.toString(),
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.Black,
+                            color = Color.Black
+                        )
+
+                        // Diagonal strike across the letter on completion
+                        if (isUnlocked || strikeProgress > 0f) {
+                            Canvas(modifier = Modifier.matchParentSize()) {
+                                val progress = if (isUnlocked) 1f else strikeProgress
+                                val extensionPx = 5.dp.toPx()
+                                val charBoxHalf = 12.dp.toPx()
+                                val midX = this.size.width / 2f
+                                val midY = this.size.height / 2f
+
+                                // Diagonal strike from bottom-left to top-right
+                                val startX = midX - charBoxHalf - extensionPx
+                                val startY = midY + charBoxHalf + extensionPx
+                                val targetEndX = midX + charBoxHalf + extensionPx
+                                val targetEndY = midY - charBoxHalf - extensionPx
+
+                                val curEndX = startX + (targetEndX - startX) * progress
+                                val curEndY = startY + (targetEndY - startY) * progress
+
+                                drawLine(
+                                    color = Color.Black,
+                                    start = Offset(startX, startY),
+                                    end = Offset(curEndX, curEndY),
+                                    strokeWidth = 3.5.dp.toPx(),
+                                    cap = StrokeCap.Round
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // 5x5 Grid of Cells
+            Box(
+                modifier = Modifier
+                    .size(maxBoardWidth)
+                    .aspectRatio(1f),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(spacing)
+                ) {
+                    for (r in 0 until size) {
+                        Row(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(spacing)
+                        ) {
+                            for (c in 0 until size) {
+                                val cell = board.getCell(r, c)
+                                BingoCell(
+                                    cell = cell,
+                                    boardDimension = size,
+                                    enabled = isInteractive,
+                                    onCellClick = { onCellClicked(cell.number) },
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
                         }
                     }
                 }

@@ -77,6 +77,8 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.draw.scale
+import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.ui.graphics.graphicsLayer
 import com.bingo.multiplayer.core.designsystem.BingoTheme
 import com.bingo.multiplayer.domain.model.Board
 import com.bingo.multiplayer.domain.model.RecentPick
@@ -84,10 +86,13 @@ import com.bingo.multiplayer.domain.network.QuickChatPreferences
 import com.bingo.multiplayer.presentation.common.PlayerAvatar
 import com.bingo.multiplayer.presentation.components.BingoBoardView
 import com.bingo.multiplayer.presentation.components.BingoHeaderTracker
+import com.bingo.multiplayer.presentation.components.BottomTurnProfileVsProfile
+import com.bingo.multiplayer.presentation.components.EmojiReactionStripWithChat
 import com.bingo.multiplayer.presentation.components.FloatingEmoteBar
 import com.bingo.multiplayer.presentation.components.FloatingEmoteItem
 import com.bingo.multiplayer.presentation.components.FloatingEmotesOverlay
 import com.bingo.multiplayer.presentation.components.HeadToHeadScorecard
+import com.bingo.multiplayer.presentation.components.RecentPicksQueuePill
 
 /**
  * Modern Award-Winning Indie Game Match Screen.
@@ -125,7 +130,8 @@ fun GameScreen(
     myDisplayName: String? = null,
     incomingEmote: String? = null,
     incomingEmoteTimestamp: Long = 0L,
-    onSendEmote: (String) -> Unit = {}
+    onSendEmote: (String) -> Unit = {},
+    pickedNumbersHistory: List<Int> = emptyList()
 ) {
     val tokens = BingoTheme.colors
     val haptic = LocalHapticFeedback.current
@@ -182,12 +188,6 @@ fun GameScreen(
         }
     }
 
-    val turnStatusScale by animateFloatAsState(
-        targetValue = if (isMyTurn && !isGameOver && !isGamePaused) 1.04f else 1.0f,
-        animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
-        label = "turnStatusScale"
-    )
-
     // Trigger haptic vibration whenever the opponent picks a number
     LaunchedEffect(recentPick) {
         if (recentPick != null && recentPick.number > 0) {
@@ -237,20 +237,24 @@ fun GameScreen(
     }
 
     if (showSurrenderDialog) {
+        val isMultiplayerLobbyGame = (onReturnToLobby != null)
         AlertDialog(
             onDismissRequest = { showSurrenderDialog = false },
             shape = RoundedCornerShape(24.dp),
             containerColor = tokens.surface,
             title = {
                 Text(
-                    text = "Leave Match?",
+                    text = if (isMultiplayerLobbyGame) "Return to Lobby?" else "Exit Match?",
                     fontWeight = FontWeight.Bold,
                     color = tokens.cellNeutralText
                 )
             },
             text = {
                 Text(
-                    text = "Are you sure you want to leave the match? Leaving the match will count as a loss.",
+                    text = if (isMultiplayerLobbyGame)
+                        "Are you sure you want to leave this match? You will return to the lobby."
+                    else
+                        "Are you sure you want to leave the match and return to the main menu?",
                     color = tokens.cellNeutralText.copy(alpha = 0.8f)
                 )
             },
@@ -258,14 +262,22 @@ fun GameScreen(
                 Button(
                     onClick = {
                         showSurrenderDialog = false
-                        onSurrender()
+                        if (isMultiplayerLobbyGame) {
+                            onReturnToLobby?.invoke()
+                        } else {
+                            onSurrender()
+                        }
                     },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = tokens.accentOpponent
                     ),
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("Leave Match", color = Color.White, fontWeight = FontWeight.Bold)
+                    Text(
+                        text = if (isMultiplayerLobbyGame) "Return to Lobby" else "Exit to Menu",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             },
             dismissButton = {
@@ -336,7 +348,7 @@ fun GameScreen(
                     .padding(top = 10.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Top control bar: minimalist exit, status badge, small tiny counter on top right, minimalist pause button
+                // Modern Aesthetic Top Bar (Items 1, 2, 3)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -344,109 +356,91 @@ fun GameScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // Item 1: Top Left Door Open Exit Button
                     IconButton(
-                        onClick = { showSurrenderDialog = true },
+                        onClick = {
+                            if (onReturnToLobby != null) {
+                                showSurrenderDialog = true
+                            } else {
+                                onSurrender()
+                            }
+                        },
                         modifier = Modifier.size(36.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Close,
+                            imageVector = Icons.AutoMirrored.Filled.ExitToApp,
                             contentDescription = "Exit Match",
-                            tint = tokens.cellNeutralText.copy(alpha = 0.7f),
-                            modifier = Modifier.size(22.dp)
+                            tint = tokens.cellNeutralText.copy(alpha = 0.8f),
+                            modifier = Modifier.size(24.dp)
                         )
                     }
 
-                    Surface(
-                        shape = RoundedCornerShape(20.dp),
-                        color = when {
-                            isGameOver -> tokens.backgroundSecondary
-                            isGamePaused -> Color(0xFFF1F5F9)
-                            isMyTurn -> tokens.cellPlayerPickBg
-                            else -> tokens.cellOpponentPickBg
-                        },
-                        border = if (isMyTurn && !isGameOver && !isGamePaused) {
-                            BorderStroke(1.5.dp, tokens.accentBrand)
-                        } else null,
-                        modifier = Modifier.scale(turnStatusScale)
+                    // Item 2: Top Center 🛜 Wifi Icon + Ping (0-250 green, 250-500 yellow, 500-999+ red, capped at 999+)
+                    val pingColor = when {
+                        pingMs <= 250L -> Color(0xFF16A34A)
+                        pingMs <= 500L -> Color(0xFFEAB308)
+                        else -> Color(0xFFDC2626)
+                    }
+                    val pingText = if (pingMs > 999L) "999+ms" else "${pingMs}ms"
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = when {
-                                    isGameOver -> "GAME OVER"
-                                    isGamePaused -> "PAUSED"
-                                    isMyTurn -> "⚡ YOUR TURN ⚡"
-                                    else -> "$opponentName's Turn ⏳"
-                                },
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = when {
-                                    isGameOver -> tokens.cellNeutralText
-                                    isGamePaused -> Color(0xFF475569)
-                                    isMyTurn -> tokens.accentBrand
-                                    else -> tokens.accentOpponent
-                                }
-                            )
-                        }
+                        Icon(
+                            imageVector = Icons.Default.Wifi,
+                            contentDescription = "Ping",
+                            tint = pingColor,
+                            modifier = Modifier.size(17.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = pingText,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = pingColor
+                        )
                     }
 
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (!isGameOver) {
-                            // Real-time PUBG-style Ping Display
-                            if (pingMs > 0L) {
-                                val pingColor = when {
-                                    pingMs < 80L -> Color(0xFF16A34A)
-                                    pingMs < 150L -> Color(0xFFEAB308)
-                                    else -> Color(0xFFDC2626)
-                                }
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = tokens.backgroundSecondary
-                                ) {
-                                    Text(
-                                        text = "${pingMs}ms",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = pingColor,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(4.dp))
-                            }
+                    // Item 3: Top Right Cute ⌛ Timer flipping for every second
+                    val hourglassFlipAngle by animateFloatAsState(
+                        targetValue = (30 - turnTimeRemaining) * 180f,
+                        animationSpec = tween(durationMillis = 400, easing = FastOutSlowInEasing),
+                        label = "hourglassFlip"
+                    )
 
-                            // Turn countdown timer with pulsing urgency when <= 5s
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = if (isUrgentTimer) Color(0xFFFEE2E2) else tokens.backgroundSecondary,
-                                border = if (isUrgentTimer) BorderStroke(1.5.dp, Color(0xFFDC2626)) else null,
-                                modifier = Modifier.scale(urgentTimerScale)
-                            ) {
-                                Text(
-                                    text = if (isUrgentTimer) "⚠️ ${turnTimeRemaining}s" else "⏱ ${turnTimeRemaining}s",
-                                    fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = if (isUrgentTimer) Color(0xFFDC2626) else tokens.cellNeutralText,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.End,
+                        modifier = Modifier.scale(urgentTimerScale)
+                    ) {
+                        Text(
+                            text = "⌛",
+                            fontSize = 16.sp,
+                            modifier = Modifier.graphicsLayer {
+                                rotationZ = hourglassFlipAngle
                             }
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "${turnTimeRemaining}s",
+                            fontSize = 13.5.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = if (turnTimeRemaining <= 5) Color(0xFFDC2626) else tokens.cellNeutralText
+                        )
 
-                            Spacer(modifier = Modifier.width(4.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
 
-                            IconButton(
-                                onClick = onTogglePause,
-                                modifier = Modifier.size(36.dp)
-                            ) {
-                                Icon(
-                                    imageVector = if (isGamePaused) Icons.Default.PlayArrow else Icons.Default.Pause,
-                                    contentDescription = if (isGamePaused) "Resume Game" else "Pause Game",
-                                    tint = tokens.accentBrand,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-                        } else {
-                            Spacer(modifier = Modifier.size(36.dp))
+                        IconButton(
+                            onClick = onTogglePause,
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isGamePaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                                contentDescription = if (isGamePaused) "Resume Game" else "Pause Game",
+                                tint = tokens.cellNeutralText.copy(alpha = 0.5f),
+                                modifier = Modifier.size(18.dp)
+                            )
                         }
                     }
                 }
@@ -582,13 +576,6 @@ fun GameScreen(
                         }
                     }
                 }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                BingoHeaderTracker(
-                    completedLines = displayedBoard.completedLinesCount,
-                    targetLines = displayedBoard.size
-                )
             }
         },
         bottomBar = {
@@ -707,13 +694,17 @@ fun GameScreen(
                     }
                 }
             } else {
-                GameFooterBar(
-                    recentPick = recentPick,
-                    opponentName = opponentName,
+                InGameBottomBar(
+                    pickedNumbersHistory = pickedNumbersHistory,
+                    isMyTurn = isMyTurn,
+                    isGameOver = isGameOver,
+                    myAvatarUrl = myAvatarUrl,
+                    myDisplayName = myDisplayName,
+                    myUsername = myUsername,
                     opponentAvatarUrl = opponentAvatarUrl,
+                    opponentName = opponentName,
                     opponentUsername = opponentUsername,
-                    onSyncGame = onSyncGame,
-                    onSurrender = { showSurrenderDialog = true }
+                    onSyncGame = onSyncGame
                 )
             }
         }
@@ -727,49 +718,41 @@ fun GameScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(horizontal = 14.dp, vertical = 6.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.SpaceEvenly
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                // Reserved empty space between top bar and Bingo board
+                Spacer(modifier = Modifier.weight(0.12f))
+
+                // Item 4: 5x5 Bingo Board with B-I-N-G-O letters atop columns & diagonal strikes
                 BingoBoardView(
                     board = displayedBoard,
                     isInteractive = isMyTurn && !isGameOver && !isGamePaused,
                     onCellClicked = onCellPicked
                 )
 
+                // Reserved empty space between number table and emoji strip
+                Spacer(modifier = Modifier.weight(0.18f))
+
+                // Item 7: Pill shaped swipeable emoji reactions strip with quick chat just above bottom bar
                 if (!isGameOver) {
-                    HeadToHeadScorecard(
-                        playerName = myDisplayName ?: "You",
-                        playerAvatarUrl = myAvatarUrl,
-                        playerUsername = myUsername,
-                        playerLines = board.completedLinesCount,
-                        opponentName = opponentName,
-                        opponentAvatarUrl = opponentAvatarUrl,
-                        opponentUsername = opponentUsername,
-                        opponentLines = opponentBoard?.completedLinesCount ?: 0,
-                        targetLines = board.size,
-                        isMyTurn = isMyTurn,
-                        modifier = Modifier.padding(horizontal = 4.dp)
+                    EmojiReactionStripWithChat(
+                        onSendEmote = { emote ->
+                            spawnEmote(emote, isSelf = true)
+                            onSendEmote(emote)
+                        },
+                        customPhrases = quickChatPhrases,
+                        onSendPhrase = { phrase ->
+                            spawnEmote(phrase, isSelf = true)
+                            onSendEmote(phrase)
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 4.dp)
                     )
                 }
             }
 
-            // Floating Quick Emote Bar pinned near bottom-end above footer
-            FloatingEmoteBar(
-                onEmoteSelected = { emoji ->
-                    spawnEmote(emoji, isSelf = true)
-                    onSendEmote(emoji)
-                },
-                customPhrases = quickChatPhrases,
-                onPhraseSelected = { phrase ->
-                    spawnEmote(phrase, isSelf = true)
-                    onSendEmote(phrase)
-                },
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 16.dp, bottom = 12.dp)
-            )
-
-            // Floating Reaction Emotes Overlay (rising animated bubbles)
+            // Floating Reaction Emotes Overlay (rising animated bubbles across randomized unique paths)
             FloatingEmotesOverlay(
                 activeEmotes = activeEmotes,
                 onEmoteFinished = { finishedId ->
@@ -781,13 +764,17 @@ fun GameScreen(
 }
 
 @Composable
-private fun GameFooterBar(
-    recentPick: RecentPick?,
+private fun InGameBottomBar(
+    pickedNumbersHistory: List<Int>,
+    isMyTurn: Boolean,
+    isGameOver: Boolean,
+    myAvatarUrl: String?,
+    myDisplayName: String?,
+    myUsername: String?,
+    opponentAvatarUrl: String?,
     opponentName: String,
-    opponentAvatarUrl: String? = null,
-    opponentUsername: String? = null,
-    onSyncGame: () -> Unit = {},
-    onSurrender: () -> Unit
+    opponentUsername: String?,
+    onSyncGame: () -> Unit
 ) {
     val tokens = BingoTheme.colors
     val view = LocalView.current
@@ -804,88 +791,61 @@ private fun GameFooterBar(
         }
     }
 
+    var refreshAngle by remember { mutableFloatStateOf(0f) }
+    val animatedRefreshAngle by animateFloatAsState(
+        targetValue = refreshAngle,
+        animationSpec = tween(durationMillis = 600, easing = FastOutSlowInEasing),
+        label = "refreshAngle"
+    )
+
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = tokens.surface,
         border = BorderStroke(0.5.dp, tokens.surfaceBorder),
-        shadowElevation = 0.dp
+        shadowElevation = 2.dp
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 12.dp),
+                .padding(horizontal = 16.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = tokens.recentPickBg
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Notifications,
-                        contentDescription = null,
-                        tint = tokens.recentPickText,
-                        modifier = Modifier.size(15.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = if (recentPick != null) {
-                            if (recentPick.number == -1) "Turn Passed" else "Last: #${recentPick.number}"
-                        } else "No picks yet",
-                        color = tokens.recentPickText,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp
-                    )
-                }
-            }
+            // Item 5: Left - 3-number FIFO sliding queue pill
+            RecentPicksQueuePill(
+                pickedNumbersHistory = pickedNumbersHistory
+            )
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            // Item 6: Center - Profile vs Profile with smooth turn zoom
+            BottomTurnProfileVsProfile(
+                isMyTurn = isMyTurn,
+                isGameOver = isGameOver,
+                myAvatarUrl = myAvatarUrl,
+                myDisplayName = myDisplayName,
+                myUsername = myUsername,
+                opponentAvatarUrl = opponentAvatarUrl,
+                opponentName = opponentName,
+                opponentUsername = opponentUsername
+            )
+
+            // Item 6: Right - Plain reload icon that rotates in the arrow direction (clockwise) and stops after 1 rotation
+            IconButton(
+                onClick = {
+                    refreshAngle += 360f
+                    onSyncGame()
+                },
+                modifier = Modifier.size(36.dp)
             ) {
-                PlayerAvatar(
-                    avatarPathOrUri = opponentAvatarUrl,
-                    displayName = opponentName,
-                    username = opponentUsername,
-                    size = 24.dp
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = "Refresh Game",
+                    tint = tokens.cellNeutralText.copy(alpha = 0.7f),
+                    modifier = Modifier
+                        .size(24.dp)
+                        .graphicsLayer {
+                            rotationZ = animatedRefreshAngle
+                        }
                 )
-                Text(
-                    text = "vs $opponentName",
-                    style = BingoTheme.typography.cardSubtitle,
-                    color = tokens.cellNeutralText,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                IconButton(
-                    onClick = onSyncGame
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Refresh,
-                        contentDescription = "Sync Game",
-                        tint = tokens.cellNeutralText.copy(alpha = 0.65f),
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-
-                IconButton(
-                    onClick = onSurrender
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ExitToApp,
-                        contentDescription = "Leave Match",
-                        tint = Color(0xFFEF4444),
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
             }
         }
     }

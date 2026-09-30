@@ -16,23 +16,28 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -64,11 +69,15 @@ import kotlin.math.sin
 val QUICK_EMOTES = listOf("🔥", "😱", "😂", "🎯", "👏")
 
 data class FloatingEmoteItem(
-    val id: Long = System.currentTimeMillis() + (0..10000).random(),
+    val id: Long = System.currentTimeMillis() + (0..100000).random(),
     val emoji: String,
-    val startXRatio: Float = 0.5f,
+    val startXRatio: Float = ((20..80).random() / 100f),
     val isSelf: Boolean = true,
-    val senderName: String? = null
+    val senderName: String? = null,
+    val swayAmplitude: Float = (14f + (0..28).random().toFloat()),
+    val swayFrequency: Float = (2.0f + (0..25).random().toFloat() / 10f),
+    val driftX: Float = (-35f + (0..70).random().toFloat()),
+    val swayPhase: Float = ((0..60).random().toFloat() / 10f)
 )
 
 /**
@@ -223,6 +232,142 @@ fun FloatingEmoteBar(
     }
 }
 
+val ALL_REACTION_EMOJIS = listOf(
+    "🔥", "😂", "🎯", "👏", "😱", "😎", "🥳", "👍", "⚡", "🤯",
+    "💀", "🤩", "🎉", "🚀", "🥶", "😈", "🍿", "😴", "🤐", "🤫",
+    "🤝", "🙌", "🏆", "💯", "🍀", "👀", "💪", "✨", "💔", "🫡",
+    "👌", "😍", "🤙", "✌️"
+)
+
+/**
+ * Pill-shaped swipeable emoji reactions strip with quick chat trigger.
+ * Horizontally scrollable library of emojis, recent items move to front,
+ * borderless emoji buttons and quick message pills.
+ */
+@Composable
+fun EmojiReactionStripWithChat(
+    onSendEmote: (String) -> Unit,
+    customPhrases: List<String> = emptyList(),
+    onSendPhrase: (String) -> Unit = {},
+    modifier: Modifier = Modifier
+) {
+    val tokens = BingoTheme.colors
+    val haptic = LocalHapticFeedback.current
+    var emojiList by remember { mutableStateOf(ALL_REACTION_EMOJIS) }
+    var showQuickChat by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.End
+    ) {
+        // Quick chat floating selector above the strip (no borders)
+        AnimatedVisibility(
+            visible = showQuickChat,
+            enter = fadeIn(tween(150)) + scaleIn(tween(150)),
+            exit = fadeOut(tween(150)) + scaleOut(tween(150))
+        ) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = tokens.surface,
+                shadowElevation = 8.dp,
+                border = null,
+                modifier = Modifier.padding(bottom = 6.dp, end = 4.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    customPhrases.take(4).forEach { phrase ->
+                        Surface(
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                showQuickChat = false
+                                onSendPhrase(phrase)
+                            },
+                            color = tokens.backgroundSecondary,
+                            shape = RoundedCornerShape(10.dp),
+                            border = null
+                        ) {
+                            Text(
+                                text = phrase,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = tokens.cellNeutralText,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Pill-shaped row with almost no borders
+        Surface(
+            shape = RoundedCornerShape(22.dp),
+            color = tokens.surface.copy(alpha = 0.95f),
+            border = BorderStroke(0.4.dp, tokens.surfaceBorder.copy(alpha = 0.35f)),
+            shadowElevation = 2.dp,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 6.dp, vertical = 3.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Horizontal scrolling emoji strip (swipes to left, recents move to front)
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    emojiList.forEach { emoji ->
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null
+                                ) {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    // Move tapped emoji to front of the list
+                                    emojiList = listOf(emoji) + (emojiList.filter { it != emoji })
+                                    onSendEmote(emoji)
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(text = emoji, fontSize = 21.sp)
+                        }
+                    }
+                }
+
+                // Subtle vertical separator
+                Spacer(
+                    modifier = Modifier
+                        .width(1.dp)
+                        .height(18.dp)
+                        .background(tokens.cellNeutralText.copy(alpha = 0.15f))
+                )
+
+                Spacer(modifier = Modifier.width(2.dp))
+
+                // Quick chat trigger button (no border)
+                IconButton(
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        showQuickChat = !showQuickChat
+                    },
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Text(text = "💬", fontSize = 19.sp)
+                }
+            }
+        }
+    }
+}
+
 /**
  * Animated Floating Emotes Overlay.
  * Renders floating reaction emojis rising from bottom to top with harmonic sway and fade-out.
@@ -279,10 +424,10 @@ private fun SingleFloatingEmoteBubble(
     val endY = screenH * 0.18f
     val currentY = startY + (endY - startY) * p
 
-    val baseStartX = (screenW * item.startXRatio).coerceIn(40f, (screenW - 60f).coerceAtLeast(40f))
-    // Gentle natural sinusoidal sway
-    val swayX = sin(p * 3.5 * PI).toFloat() * 18f
-    val currentX = baseStartX + swayX
+    val baseStartX = (screenW * item.startXRatio).coerceIn(30f, (screenW - 54f).coerceAtLeast(30f))
+    // Highly randomized organic trajectory: every emote follows a unique path
+    val swayX = sin((p * item.swayFrequency * PI) + item.swayPhase).toFloat() * item.swayAmplitude
+    val currentX = (baseStartX + (item.driftX * p) + swayX).coerceIn(16f, (screenW - 54f).coerceAtLeast(16f))
 
     // Scale spring curve: pops to 1.35f, then settles at 1.05f
     val scale = when {
