@@ -564,20 +564,22 @@ fun LobbyScreen(
                             val effectiveTs = livePres?.timestamp?.takeIf { it > 0L } ?: player.lastSeenTimestamp
                             val rawStatus = if (isMe) "online" else com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(cleanUser, effectiveTs)
 
-                            val effectivePlayerReady = if (isMe) {
-                                if (isMyReadyState) LobbyLifecycleEngine.STATUS_READY else LobbyLifecycleEngine.STATUS_NOT_READY
+                            val effectivePlayer = if (isMe) {
+                                player.copy(lobbyReadyStatus = if (isMyReadyState) LobbyLifecycleEngine.STATUS_READY else LobbyLifecycleEngine.STATUS_NOT_READY)
                             } else {
-                                player.lobbyReadyStatus
+                                player
                             }
 
-                            val isPlayerLeft = LobbyLifecycleEngine.isPlayerLeft(player, isMe, rawStatus)
+                            val lobbyStatus = LobbyLifecycleEngine.getPlayerLobbyStatus(effectivePlayer, isMe, rawStatus)
 
-                            val (readyIcon, readyTint, readyDesc) = when {
-                                effectivePlayerReady == LobbyLifecycleEngine.STATUS_IN_GAME -> Triple(Icons.Default.HourglassBottom, Color(0xFFF59E0B), "In Game")
-                                isPlayerLeft -> Triple(Icons.Default.Cancel, Color(0xFFEF4444), "Left Lobby")
-                                player.isHost || effectivePlayerReady == LobbyLifecycleEngine.STATUS_READY -> Triple(Icons.Default.CheckCircle, Color(0xFF16A34A), if (player.isHost) "Host Ready" else "Ready")
-                                else -> Triple(Icons.Default.PauseCircle, Color(0xFFEAB308), "Not Ready")
+                            val (readyIcon, readyTint, readyDesc) = when (lobbyStatus) {
+                                LobbyLifecycleEngine.PlayerLobbyStatus.IN_GAME -> Triple(Icons.Default.HourglassBottom, Color(0xFFF59E0B), "Reviewing Board")
+                                LobbyLifecycleEngine.PlayerLobbyStatus.LEFT_LOBBY -> Triple(Icons.Default.Cancel, Color(0xFFEF4444), "Left Lobby")
+                                LobbyLifecycleEngine.PlayerLobbyStatus.READY -> Triple(Icons.Default.CheckCircle, Color(0xFF16A34A), if (player.isHost) "Host Ready" else "Ready")
+                                LobbyLifecycleEngine.PlayerLobbyStatus.NOT_READY -> Triple(Icons.Default.PauseCircle, Color(0xFFEAB308), "Not Ready")
                             }
+
+                            val isPlayerLeft = (lobbyStatus == LobbyLifecycleEngine.PlayerLobbyStatus.LEFT_LOBBY)
 
                             if (isHost && !player.isHost && isPlayerLeft) {
                                 IconButton(

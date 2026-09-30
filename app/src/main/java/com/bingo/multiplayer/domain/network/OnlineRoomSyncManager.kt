@@ -595,7 +595,7 @@ class OnlineRoomSyncManager(
 
     fun updateLocalReadyStatus(status: String) {
         val p = localPlayer ?: return
-        val updated = LobbyLifecycleEngine.onLocalToggleReady(p, status == LobbyLifecycleEngine.STATUS_READY)
+        val updated = LobbyLifecycleEngine.onLocalStatusChange(p, status)
         localPlayer = updated
         playerRegistry[p.id] = updated
         _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
@@ -621,13 +621,13 @@ class OnlineRoomSyncManager(
 
     fun updatePlayerReadyStatus(playerId: String, status: String) {
         val existing = playerRegistry[playerId] ?: return
-        val nextVersion = LobbyLifecycleEngine.nextVersion(existing.readyVersion)
-        playerRegistry[playerId] = existing.copy(lobbyReadyStatus = status, readyVersion = nextVersion)
+        val updated = LobbyLifecycleEngine.onLocalStatusChange(existing, status)
+        playerRegistry[playerId] = updated
         _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
         val code = currentRoomCode
         if (code != null) {
             scope.launch(Dispatchers.IO) {
-                OnlineRoomRegistry.updatePlayerReadyStatus(code, playerId, status, nextVersion)
+                OnlineRoomRegistry.updatePlayerReadyStatus(code, playerId, updated.lobbyReadyStatus, updated.readyVersion)
             }
         }
     }

@@ -21,6 +21,13 @@ object LobbyLifecycleEngine {
     const val STATUS_LEFT_LOBBY = "LEFT_LOBBY"
     const val STATUS_IN_GAME = "IN_GAME"
 
+    enum class PlayerLobbyStatus {
+        IN_GAME,      // ⌛ Reviewing board / Active in game
+        READY,        // ✅ Ready to start match
+        NOT_READY,    // ⏸️ In lobby but not ready
+        LEFT_LOBBY    // ❌ Left lobby / Disconnected
+    }
+
     /**
      * Generates a strictly increasing monotonic version number.
      */
@@ -30,7 +37,8 @@ object LobbyLifecycleEngine {
 
     /**
      * Reconciles two readiness states deterministically using monotonic versions.
-     * Higher version wins. In case of equal version, active presence overrides stale LEFT_LOBBY.
+     * Higher version wins. In case of equal version, active states (IN_GAME, READY, NOT_READY)
+     * take deterministic precedence over stale or default states.
      */
     fun reconcileReadyStatus(
         currentStatus: String,
@@ -38,10 +46,12 @@ object LobbyLifecycleEngine {
         incomingStatus: String,
         incomingVersion: Long
     ): Pair<String, Long> {
-        if (currentStatus == STATUS_IN_GAME || incomingStatus == STATUS_IN_GAME) {
-            return Pair(STATUS_IN_GAME, maxOf(currentVersion, incomingVersion))
-        }
-
+        // Strict monotonic versioning: newer version always supersedes older version.
+        // This ensures transitions such as:
+        // - READY -> IN_GAME (match start)
+        // - IN_GAME -> NOT_READY (player finishes reviewing and returns to lobby)
+        // - NOT_READY -> READY (player toggles ready)
+        // - LEFT_LOBBY -> NOT_READY (rejoin)
         if (incomingVersion > currentVersion && incomingStatus.isNotBlank()) {
             return Pair(incomingStatus, incomingVersion)
         }
@@ -51,8 +61,10 @@ object LobbyLifecycleEngine {
         }
 
         // Versions are identical or unversioned fallback:
-        // Active status (NOT_READY or READY) takes precedence over LEFT_LOBBY
         val effStatus = when {
+            // IN_GAME takes precedence over NOT_READY or default states if versions tie
+            incomingStatus == STATUS_IN_GAME || currentStatus == STATUS_IN_GAME -> STATUS_IN_GAME
+            // Active status (NOT_READY or READY) takes precedence over LEFT_LOBBY
             incomingStatus == STATUS_LEFT_LOBBY || currentStatus == STATUS_LEFT_LOBBY -> {
                 if (incomingStatus != STATUS_LEFT_LOBBY && incomingStatus.isNotBlank()) incomingStatus
                 else if (currentStatus != STATUS_LEFT_LOBBY && currentStatus.isNotBlank()) currentStatus
@@ -66,17 +78,43 @@ object LobbyLifecycleEngine {
     }
 
     /**
-     * Handles local player toggling "I'm Ready" / "I'm Not Ready".
+     * Handles local player status transitions explicitly:
+     * Supports STATUS_READY, STATUS_NOT_READY, STATUS_IN_GAME (reviewing board/playing), and STATUS_LEFT_LOBBY.
      */
-    fun onLocalToggleReady(player: Player, isReady: Boolean): Player {
+    fun onLocalStatusChange(player: Player, newStatus: String): Player {
         val now = System.currentTimeMillis()
         val nextVer = nextVersion(player.readyVersion)
-        val status = if (isReady) STATUS_READY else STATUS_NOT_READY
+        val validatedStatus = when (newStatus) {
+            STATUS_READY -> STATUS_READY
+            STATUS_IN_GAME -> STATUS_IN_GAME
+            STATUS_LEFT_LOBBY -> STATUS_LEFT_LOBBY
+            else -> STATUS_NOT_READY
+        }
         return player.copy(
-            lobbyReadyStatus = status,
+            lobbyReadyStatus = validatedStatus,
             readyVersion = nextVer,
             lastSeenTimestamp = now
         )
+    }
+
+    /**
+     * Handles local player toggling "I'm Ready" / "I'm Not Ready".
+     */
+    fun onLocalToggleReady(player: Player, isReady: Boolean): Player {
+        return onLocalStatusChange(player, if (isReady) STATUS_READY else STATUS_NOT_READY)
+    }
+
+    /**
+     * Resolves the high-level lobby presence status for UI presentation.
+     * Pure function isolating all icon, color, and label rules from UI components.
+     */
+    fun getPlayerLobbyStatus(player: Player, isMe: Boolean, rawPresenceStatus: String): PlayerLobbyStatus {
+        return when {
+            player.lobbyReadyStatus == STATUS_IN_GAME -> PlayerLobbyStatus.IN_GAME
+            isPlayerLeft(player, isMe, rawPresenceStatus) -> PlayerLobbyStatus.LEFT_LOBBY
+            player.isHost || player.lobbyReadyStatus == STATUS_READY -> PlayerLobbyStatus.READY
+            else -> PlayerLobbyStatus.NOT_READY
+        }
     }
 
     /**

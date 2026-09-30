@@ -314,7 +314,7 @@ class LanP2pSessionManager {
 
     fun updateLocalReadyStatus(status: String) {
         val p = localPlayer ?: return
-        val updated = LobbyLifecycleEngine.onLocalToggleReady(p, status == LobbyLifecycleEngine.STATUS_READY)
+        val updated = LobbyLifecycleEngine.onLocalStatusChange(p, status)
         localPlayer = updated
         playerRegistry[p.id] = updated
         _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
@@ -332,7 +332,8 @@ class LanP2pSessionManager {
 
     fun updatePlayerReadyStatus(playerId: String, status: String) {
         val existing = playerRegistry[playerId] ?: return
-        playerRegistry[playerId] = existing.copy(lobbyReadyStatus = status)
+        val updated = LobbyLifecycleEngine.onLocalStatusChange(existing, status)
+        playerRegistry[playerId] = updated
         _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
     }
 

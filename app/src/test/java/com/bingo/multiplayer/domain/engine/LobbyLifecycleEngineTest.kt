@@ -198,4 +198,58 @@ class LobbyLifecycleEngineTest {
         // If it's me, should not mark left just due to presence delay
         assertFalse(LobbyLifecycleEngine.isPlayerLeft(timedOutPlayer, isMe = true, rawPresenceStatus = "offline"))
     }
+
+    @Test
+    fun testLocalStatusChangeInGameAndReviewingBoard() {
+        val player = Player(
+            id = "p1",
+            displayName = "Player1",
+            lobbyReadyStatus = LobbyLifecycleEngine.STATUS_READY,
+            readyVersion = 50L
+        )
+
+        // Game starts -> player enters STATUS_IN_GAME
+        val inGamePlayer = LobbyLifecycleEngine.onLocalStatusChange(player, LobbyLifecycleEngine.STATUS_IN_GAME)
+        assertEquals(LobbyLifecycleEngine.STATUS_IN_GAME, inGamePlayer.lobbyReadyStatus)
+        assertTrue(inGamePlayer.readyVersion > player.readyVersion)
+
+        // While player is reviewing board (still in STATUS_IN_GAME), getPlayerLobbyStatus must return IN_GAME (⌛)
+        val status = LobbyLifecycleEngine.getPlayerLobbyStatus(inGamePlayer, isMe = false, rawPresenceStatus = "online")
+        assertEquals(LobbyLifecycleEngine.PlayerLobbyStatus.IN_GAME, status)
+
+        // Host cannot start match while player is still reviewing board
+        val host = Player(id = "host", displayName = "Host", isHost = true, lobbyReadyStatus = LobbyLifecycleEngine.STATUS_READY)
+        assertFalse(LobbyLifecycleEngine.canStartMatch(listOf(host, inGamePlayer)))
+        assertEquals(1, LobbyLifecycleEngine.countReadyPlayers(listOf(host, inGamePlayer)))
+
+        // Player returns to lobby -> transitions to NOT_READY (⏸️) with advanced version
+        val returnedPlayer = LobbyLifecycleEngine.onLocalStatusChange(inGamePlayer, LobbyLifecycleEngine.STATUS_NOT_READY)
+        assertEquals(LobbyLifecycleEngine.STATUS_NOT_READY, returnedPlayer.lobbyReadyStatus)
+        assertTrue(returnedPlayer.readyVersion > inGamePlayer.readyVersion)
+
+        // Remote reconciliation must accept the new NOT_READY state over previous IN_GAME
+        val (reconciledStatus, reconciledVer) = LobbyLifecycleEngine.reconcileReadyStatus(
+            currentStatus = inGamePlayer.lobbyReadyStatus,
+            currentVersion = inGamePlayer.readyVersion,
+            incomingStatus = returnedPlayer.lobbyReadyStatus,
+            incomingVersion = returnedPlayer.readyVersion
+        )
+        assertEquals(LobbyLifecycleEngine.STATUS_NOT_READY, reconciledStatus)
+        assertEquals(returnedPlayer.readyVersion, reconciledVer)
+
+        // Now in lobby, status displays NOT_READY (⏸️)
+        val postReturnStatus = LobbyLifecycleEngine.getPlayerLobbyStatus(returnedPlayer, isMe = false, rawPresenceStatus = "online")
+        assertEquals(LobbyLifecycleEngine.PlayerLobbyStatus.NOT_READY, postReturnStatus)
+    }
+
+    @Test
+    fun testReconcileReadyStatusInGameTiesWinsOverDefault() {
+        val (status, _) = LobbyLifecycleEngine.reconcileReadyStatus(
+            currentStatus = LobbyLifecycleEngine.STATUS_IN_GAME,
+            currentVersion = 500L,
+            incomingStatus = LobbyLifecycleEngine.STATUS_NOT_READY,
+            incomingVersion = 500L
+        )
+        assertEquals(LobbyLifecycleEngine.STATUS_IN_GAME, status)
+    }
 }
