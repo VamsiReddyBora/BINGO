@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -27,6 +28,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bingo.multiplayer.domain.model.Board
@@ -41,7 +43,8 @@ fun BingoBoardView(
     board: Board,
     isInteractive: Boolean,
     onCellClicked: (Int) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onBoardWidthMeasured: ((Dp) -> Unit)? = null
 ) {
     val size = board.size
     val spacing = when {
@@ -57,6 +60,9 @@ fun BingoBoardView(
         contentAlignment = Alignment.Center
     ) {
         val maxBoardWidth = maxWidth.coerceAtMost(maxHeight - 44.dp)
+        LaunchedEffect(maxBoardWidth) {
+            onBoardWidthMeasured?.invoke(maxBoardWidth)
+        }
 
         Column(
             modifier = Modifier.width(maxBoardWidth),

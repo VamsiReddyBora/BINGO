@@ -170,6 +170,8 @@ fun GameScreen(
     var chatMessages by remember { mutableStateOf(listOf<InGameChatMessage>()) }
     var customChatInput by remember { mutableStateOf("") }
     var isCustomChatFocused by remember { mutableStateOf(false) }
+    var isFullLengthChatActive by remember { mutableStateOf(false) }
+    var boardWidthDp by remember { mutableStateOf<androidx.compose.ui.unit.Dp?>(null) }
     val chatFocusRequester = remember { FocusRequester() }
     val coroutineScope = rememberCoroutineScope()
 
@@ -190,6 +192,7 @@ fun GameScreen(
             customChatInput = ""
             showQuickChat = false
             isCustomChatFocused = false
+            isFullLengthChatActive = false
 
             val opponentIsAi = opponentName.contains("ai", ignoreCase = true) ||
                     opponentUsername?.contains("ai", ignoreCase = true) == true ||
@@ -811,20 +814,28 @@ fun GameScreen(
                 BingoBoardView(
                     board = displayedBoard,
                     isInteractive = isMyTurn && !isGameOver && !isGamePaused,
-                    onCellClicked = onCellPicked
+                    onCellClicked = onCellPicked,
+                    onBoardWidthMeasured = { measuredWidth ->
+                        boardWidthDp = measuredWidth
+                    }
                 )
 
+                // Breathing room: slightly keep the messages and the board a bit far
+                Spacer(modifier = Modifier.height(14.dp))
+
                 // In-Game WhatsApp style Chat Space between number table and emoji reactions strip
+                // Width matches exact board width so the left & right edges align pixel-perfect with cell 22 and cell 17
                 InGameChatSpace(
                     messages = chatMessages,
                     onDoubleTapToChat = {
-                        showQuickChat = true
-                        isCustomChatFocused = true
+                        isFullLengthChatActive = true
                     },
                     modifier = Modifier
-                        .fillMaxWidth()
+                        .then(
+                            if (boardWidthDp != null) Modifier.width(boardWidthDp!!)
+                            else Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+                        )
                         .weight(0.24f)
-                        .padding(horizontal = 8.dp, vertical = 2.dp)
                 )
 
                 // Item 7: Pill shaped swipeable emoji reactions strip with quick chat just above bottom bar
@@ -853,7 +864,7 @@ fun GameScreen(
                 }
             )
 
-            // Item 4 & Add-on: Quick Chat Floating Toast Layer & Custom Runtime Message Text Box Row
+            // Item 4: Quick Chat Floating Toast Layer
             if (showQuickChat && !isGameOver) {
                 // Tap anywhere on the screen outside to dismiss automatically
                 Box(
@@ -878,7 +889,7 @@ fun GameScreen(
                         .align(Alignment.BottomEnd)
                         .padding(end = 12.dp, bottom = 48.dp)
                         .imePadding()
-                        .width(235.dp)
+                        .width(225.dp)
                 ) {
                     Column(
                         modifier = Modifier.padding(7.dp)
@@ -931,8 +942,12 @@ fun GameScreen(
                             modifier = Modifier.padding(vertical = 5.dp)
                         )
 
-                        // 2. Add-on: Thin text box row for custom runtime message transfer with 0/100 limit & Send button
+                        // 2. Custom Message Opener: launches full-length text box across screen
                         Surface(
+                            onClick = {
+                                showQuickChat = false
+                                isFullLengthChatActive = true
+                            },
                             shape = RoundedCornerShape(10.dp),
                             color = tokens.backgroundSecondary,
                             border = BorderStroke(0.6.dp, tokens.surfaceBorder),
@@ -940,70 +955,122 @@ fun GameScreen(
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 7.dp)
                             ) {
-                                BasicTextField(
-                                    value = customChatInput,
-                                    onValueChange = { if (it.length <= 100) customChatInput = it },
-                                    textStyle = TextStyle(
-                                        fontSize = 12.sp,
-                                        color = tokens.cellNeutralText,
-                                        fontWeight = FontWeight.Medium
-                                    ),
-                                    singleLine = true,
-                                    keyboardOptions = KeyboardOptions(
-                                        imeAction = ImeAction.Send,
-                                        keyboardType = KeyboardType.Text
-                                    ),
-                                    keyboardActions = KeyboardActions(
-                                        onSend = { submitCustomChatMessage() }
-                                    ),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .focusRequester(chatFocusRequester),
-                                    decorationBox = { innerTextField ->
-                                        if (customChatInput.isEmpty()) {
-                                            Text(
-                                                text = "Type message...",
-                                                fontSize = 11.5.sp,
-                                                color = tokens.cellNeutralText.copy(alpha = 0.45f)
-                                            )
-                                        }
-                                        innerTextField()
-                                    }
-                                )
-
                                 Text(
-                                    text = "${customChatInput.length}/100",
+                                    text = "✏️ Custom message...",
+                                    fontSize = 12.sp,
+                                    color = tokens.cellNeutralText.copy(alpha = 0.75f),
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Text(
+                                    text = "0/100",
                                     fontSize = 9.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = if (customChatInput.length == 100) tokens.accentOpponent else tokens.cellNeutralText.copy(alpha = 0.45f),
-                                    modifier = Modifier.padding(horizontal = 4.dp)
+                                    color = tokens.cellNeutralText.copy(alpha = 0.45f)
                                 )
-
-                                IconButton(
-                                    onClick = { submitCustomChatMessage() },
-                                    enabled = customChatInput.isNotBlank(),
-                                    modifier = Modifier.size(28.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Filled.Send,
-                                        contentDescription = "Send Message",
-                                        tint = if (customChatInput.isNotBlank()) tokens.accentBrand else tokens.cellNeutralText.copy(alpha = 0.3f),
-                                        modifier = Modifier.size(15.dp)
-                                    )
-                                }
                             }
                         }
                     }
                 }
+            }
 
-                LaunchedEffect(isCustomChatFocused) {
-                    if (isCustomChatFocused) {
-                        try {
-                            chatFocusRequester.requestFocus()
-                        } catch (_: Exception) {}
+            // ── Full-Length Chat Text Box (Full width of the screen above the keyboard) ──
+            if (isFullLengthChatActive && !isGameOver) {
+                // Tap outside anywhere to dismiss
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) {
+                            isFullLengthChatActive = false
+                        }
+                )
+
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = tokens.surface,
+                    border = BorderStroke(0.8.dp, tokens.surfaceBorder),
+                    shadowElevation = 10.dp,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .imePadding()
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        BasicTextField(
+                            value = customChatInput,
+                            onValueChange = { if (it.length <= 100) customChatInput = it },
+                            textStyle = TextStyle(
+                                fontSize = 14.sp,
+                                color = tokens.cellNeutralText,
+                                fontWeight = FontWeight.Normal
+                            ),
+                            maxLines = 3,
+                            keyboardOptions = KeyboardOptions(
+                                imeAction = ImeAction.Send,
+                                keyboardType = KeyboardType.Text
+                            ),
+                            keyboardActions = KeyboardActions(
+                                onSend = { submitCustomChatMessage() }
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .focusRequester(chatFocusRequester),
+                            decorationBox = { innerTextField ->
+                                if (customChatInput.isEmpty()) {
+                                    Text(
+                                        text = "Type a message...",
+                                        fontSize = 13.5.sp,
+                                        color = tokens.cellNeutralText.copy(alpha = 0.45f)
+                                    )
+                                }
+                                innerTextField()
+                            }
+                        )
+
+                        Spacer(modifier = Modifier.width(6.dp))
+
+                        // Character limit counter: 0/100
+                        Text(
+                            text = "${customChatInput.length}/100",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (customChatInput.length == 100) tokens.accentOpponent else tokens.cellNeutralText.copy(alpha = 0.45f)
+                        )
+
+                        Spacer(modifier = Modifier.width(6.dp))
+
+                        // Send Button
+                        IconButton(
+                            onClick = { submitCustomChatMessage() },
+                            enabled = customChatInput.isNotBlank(),
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(if (customChatInput.isNotBlank()) tokens.accentBrand else tokens.backgroundSecondary)
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Send,
+                                contentDescription = "Send Message",
+                                tint = if (customChatInput.isNotBlank()) Color.White else tokens.cellNeutralText.copy(alpha = 0.35f),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
+                }
+
+                LaunchedEffect(Unit) {
+                    try {
+                        chatFocusRequester.requestFocus()
+                    } catch (_: Exception) {}
                 }
             }
         }

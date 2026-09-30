@@ -8,6 +8,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -23,7 +24,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
@@ -35,11 +40,13 @@ import com.bingo.multiplayer.domain.model.InGameChatMessage
 
 /**
  * In-game WhatsApp-style chat space positioned between the 5x5 Bingo board and the emoji reactions strip.
+ * - Width matches the exact board width so the left and right edges align pixel-perfect with the board.
  * - Seamless plain background with no card or heavy border.
+ * - Smooth vertical gradient blur/fade at the top so messages dissolve gracefully when scrolling under the board.
+ * - Tightened vertical spacing between sender name and actual message to utilize space efficiently.
  * - Displays light grey "Double tap to chat" hint when empty or idle.
- * - Double tapping triggers the text box & software keyboard.
+ * - Double tapping triggers the full-length text box & software keyboard.
  * - Messages animate and bounce into position (Self on right, Opponent on left).
- * - Scrollable space so older messages move upwards beneath the board.
  */
 @Composable
 fun InGameChatSpace(
@@ -79,13 +86,34 @@ fun InGameChatSpace(
                 color = tokens.cellNeutralText.copy(alpha = 0.35f)
             )
         } else {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+            // Smooth gradient fade out at the top using offscreen compositing & DstIn blend mode
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        compositingStrategy = CompositingStrategy.Offscreen
+                    }
+                    .drawWithContent {
+                        drawContent()
+                        // Fade out the top 24dp smoothly into transparency instead of a sharp cut
+                        drawRect(
+                            brush = Brush.verticalGradient(
+                                0.0f to Color.Transparent,
+                                0.16f to Color.Black
+                            ),
+                            blendMode = BlendMode.DstIn
+                        )
+                    }
             ) {
-                items(messages, key = { it.id }) { msg ->
-                    InGameChatBubble(message = msg, tokens = tokens)
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(top = 8.dp, bottom = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    items(messages, key = { it.id }) { msg ->
+                        InGameChatBubble(message = msg, tokens = tokens)
+                    }
                 }
             }
         }
@@ -129,9 +157,10 @@ private fun InGameChatBubble(
                 Text(
                     text = message.text,
                     fontSize = 12.sp,
+                    lineHeight = 15.sp,
                     color = if (tokens.isDark) Color.White else Color(0xFF111827),
                     fontWeight = FontWeight.Medium,
-                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                 )
             }
         }
@@ -154,20 +183,22 @@ private fun InGameChatBubble(
                     .widthIn(max = 240.dp)
             ) {
                 Column(
-                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                    verticalArrangement = Arrangement.spacedBy(0.dp)
                 ) {
                     if (!message.senderName.isNullOrBlank()) {
                         Text(
                             text = message.senderName,
                             fontSize = 9.sp,
+                            lineHeight = 10.sp,
                             fontWeight = FontWeight.Bold,
-                            color = tokens.accentOpponent,
-                            modifier = Modifier.padding(bottom = 1.dp)
+                            color = tokens.accentOpponent
                         )
                     }
                     Text(
                         text = message.text,
                         fontSize = 12.sp,
+                        lineHeight = 15.sp,
                         color = tokens.cellNeutralText,
                         fontWeight = FontWeight.Medium
                     )
