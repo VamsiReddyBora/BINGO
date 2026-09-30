@@ -40,12 +40,15 @@ data class RoomMessagePacket(
     val readyStatus: String = "",
     val targetPlayerId: String = "",
     val readyVersion: Long = 0L,
-    val isManualBoard: Boolean = false
+    val isManualBoard: Boolean = false,
+    val senderInstanceId: String = ""
 )
 
 class OnlineRoomSyncManager(
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 ) {
+    val instanceId: String = UUID.randomUUID().toString()
+
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
@@ -75,6 +78,13 @@ class OnlineRoomSyncManager(
     private var heartbeatJob: Job? = null
     private var livenessJob: Job? = null
     private var pingJob: Job? = null
+
+    @Volatile private var isSubscribed: Boolean = false
+    @Volatile private var lastStartedMatchSeed: Long = 0L
+
+    fun resetMatchSession() {
+        lastStartedMatchSeed = 0L
+    }
 
     private fun getTopic(code: String): String =
         "bingo/v3/room/${code.trim().uppercase()}"
@@ -147,6 +157,7 @@ class OnlineRoomSyncManager(
                     }
 
                     override fun connectionLost(cause: Throwable?) {
+                        isSubscribed = false
                         scope.launch(Dispatchers.IO) {
                             delay(1500L)
                             val code = currentRoomCode
@@ -173,12 +184,16 @@ class OnlineRoomSyncManager(
                 val p = localPlayer ?: continue
                 val code = currentRoomCode ?: continue
 
-                // Check MQTT connection health
+                // Check MQTT connection & subscription health
                 val client = mqttClient
-                if (client != null && !client.isConnected) {
-                    try {
-                        client.reconnect()
-                    } catch (_: Exception) {}
+                if (client != null) {
+                    if (!client.isConnected) {
+                        try {
+                            client.reconnect()
+                        } catch (_: Exception) {}
+                    } else if (!isSubscribed) {
+                        subscribeToRoom(code)
+                    }
                 }
 
                 // 1. MQTT Fast Heartbeat
@@ -235,9 +250,12 @@ class OnlineRoomSyncManager(
         val client = mqttClient ?: return
         try {
             if (client.isConnected) {
-                client.subscribe(getTopic(roomCode), 1).waitForCompletion(1500L)
+                client.subscribe(getTopic(roomCode), 1).waitForCompletion(2000L)
+                isSubscribed = true
             }
-        } catch (_: Exception) { }
+        } catch (_: Exception) {
+            isSubscribed = false
+        }
     }
 
     private fun sendJoinPacket() {
@@ -264,7 +282,7 @@ class OnlineRoomSyncManager(
     /**
      * Publishes a message packet with optimized QoS routing:
      * High-speed moves (PICK_NUMBER, PING, PONG) use QoS 0 for instant, zero-ACK delivery.
-     * Room control packets (START_GAME, ROOM_STATE, SURRENDER, LEAVE) use QoS 1 for guaranteed delivery.
+     * Room control packets (START_GAME, PLAY_AGAIN, ROOM_STATE, SURRENDER, LEAVE) use QoS 1 for guaranteed delivery.
      */
     fun broadcastPacket(packet: RoomMessagePacket) {
         val code = currentRoomCode ?: return
@@ -278,10 +296,11 @@ class OnlineRoomSyncManager(
                     retryCount++
                 }
                 if (client.isConnected) {
-                    val payload = FastPacketCodec.encode(packet)
+                    val outgoing = if (packet.senderInstanceId.isBlank()) packet.copy(senderInstanceId = instanceId) else packet
+                    val payload = FastPacketCodec.encode(outgoing)
                     val qosLevel = when (packet.type) {
-                        "PICK_NUMBER", "TURN_TIMEOUT", "BOARD_READY", "PING", "PONG", "GAME_SYNC" -> 0 // Instant line-rate flight, zero ACK wait
-                        else -> 1 // Guaranteed delivery for room control & state
+                        "PICK_NUMBER", "TURN_TIMEOUT", "PING", "PONG", "GAME_SYNC" -> 0 // Instant line-rate flight, zero ACK wait
+                        else -> 1 // Guaranteed delivery for room control & state (START_GAME, PLAY_AGAIN, BOARD_READY, ROOM_STATE, etc.)
                     }
                     val message = MqttMessage(payload.toByteArray(StandardCharsets.UTF_8)).apply {
                         qos = qosLevel
@@ -365,6 +384,27 @@ class OnlineRoomSyncManager(
 
             _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
 
+            // 3. Dual-Channel Cloud Room Status Fallback:
+            // ONLY if the host has started the game ("PLAYING"), local player is a guest,
+            // guest is still in the lobby (waiting for match to start), and seed has not yet triggered start!
+            if (cloudSession.status == "PLAYING" &&
+                !localP.isHost &&
+                cloudSession.currentSeed != 0L &&
+                localP.lobbyReadyStatus != "IN_GAME" &&
+                cloudSession.currentSeed != lastStartedMatchSeed
+            ) {
+                lastStartedMatchSeed = cloudSession.currentSeed
+                _incomingPackets.tryEmit(
+                    RoomMessagePacket(
+                        type = "START_GAME",
+                        boardSize = cloudSession.boardSize,
+                        seed = cloudSession.currentSeed,
+                        playerId = cloudSession.hostId,
+                        isManualBoard = cloudSession.isManualBoard
+                    )
+                )
+            }
+
             // If host discovers a new player via cloud, broadcast ROOM_STATE over MQTT so joiner is also immediately updated
             if (localP.isHost && hasNewPlayer) {
                 broadcastPacket(
@@ -425,6 +465,10 @@ class OnlineRoomSyncManager(
     }
 
     private fun handleIncomingPacket(packet: RoomMessagePacket) {
+        if (packet.senderInstanceId.isNotBlank() && packet.senderInstanceId == instanceId && packet.type != "PING") {
+            return
+        }
+
         when (packet.type) {
             "ROOM_STATE" -> {
                 packet.players.forEach { p ->
@@ -690,6 +734,8 @@ class OnlineRoomSyncManager(
 
         currentRoomCode = null
         localPlayer = null
+        isSubscribed = false
+        lastStartedMatchSeed = 0L
         playerRegistry.clear()
         _players.value = emptyList()
     }

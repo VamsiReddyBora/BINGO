@@ -717,4 +717,58 @@ class TurnRotationAndCodecTest {
         // Status on host screen transitions to READY (✅)
         assertEquals("READY", guestOnHost.lobbyReadyStatus)
     }
+
+    @Test
+    fun testFastPacketCodec_startGameAndPlayAgain_microPayloads() {
+        val startPacketManual = RoomMessagePacket(
+            type = "START_GAME",
+            playerId = "host_user_1",
+            boardSize = 5,
+            seed = 9876543210L,
+            isManualBoard = true
+        )
+        val encodedStart = FastPacketCodec.encode(startPacketManual)
+        // Verify encoded as valid JSON containing key fields
+        assertTrue(encodedStart.startsWith("{") && encodedStart.contains("\"START_GAME\""))
+
+        val decodedStartFromJson = FastPacketCodec.decode(encodedStart)
+        assertEquals("START_GAME", decodedStartFromJson.type)
+        assertEquals("host_user_1", decodedStartFromJson.playerId)
+        assertEquals(5, decodedStartFromJson.boardSize)
+        assertEquals(9876543210L, decodedStartFromJson.seed)
+        assertTrue(decodedStartFromJson.isManualBoard)
+
+        // Verify backward compatibility decoding from legacy S| micro format
+        val decodedStartFromMicro = FastPacketCodec.decode("S|host_user_1|5|9876543210|1")
+        assertEquals("START_GAME", decodedStartFromMicro.type)
+        assertEquals("host_user_1", decodedStartFromMicro.playerId)
+        assertEquals(5, decodedStartFromMicro.boardSize)
+        assertEquals(9876543210L, decodedStartFromMicro.seed)
+        assertTrue(decodedStartFromMicro.isManualBoard)
+
+        val playAgainAuto = RoomMessagePacket(
+            type = "PLAY_AGAIN",
+            playerId = "host_user_2",
+            boardSize = 7,
+            seed = 1234567890L,
+            isManualBoard = false
+        )
+        val encodedPlayAgain = FastPacketCodec.encode(playAgainAuto)
+        assertTrue(encodedPlayAgain.startsWith("{") && encodedPlayAgain.contains("\"PLAY_AGAIN\""))
+
+        val decodedPlayAgainFromJson = FastPacketCodec.decode(encodedPlayAgain)
+        assertEquals("PLAY_AGAIN", decodedPlayAgainFromJson.type)
+        assertEquals("host_user_2", decodedPlayAgainFromJson.playerId)
+        assertEquals(7, decodedPlayAgainFromJson.boardSize)
+        assertEquals(1234567890L, decodedPlayAgainFromJson.seed)
+        assertFalse(decodedPlayAgainFromJson.isManualBoard)
+
+        // Verify backward compatibility decoding from legacy A| micro format
+        val decodedPlayAgainFromMicro = FastPacketCodec.decode("A|host_user_2|7|1234567890|0")
+        assertEquals("PLAY_AGAIN", decodedPlayAgainFromMicro.type)
+        assertEquals("host_user_2", decodedPlayAgainFromMicro.playerId)
+        assertEquals(7, decodedPlayAgainFromMicro.boardSize)
+        assertEquals(1234567890L, decodedPlayAgainFromMicro.seed)
+        assertFalse(decodedPlayAgainFromMicro.isManualBoard)
+    }
 }

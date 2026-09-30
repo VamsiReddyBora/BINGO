@@ -6,11 +6,9 @@ import java.util.concurrent.TimeUnit
 
 object NetworkConfig {
     /**
-     * Primary MQTT broker endpoint.
-     * To achieve < 25ms "nearby feel", point this to your regional cloud broker
-     * (e.g., AWS Mumbai / Bangalore / your own private Mosquitto/EMQX VPS).
+     * Primary low-latency MQTT broker endpoint with distributed global edge.
      */
-    const val BROKER_URL = "tcp://broker.hivemq.com:1883"
+    const val BROKER_URL = "tcp://broker.emqx.io:1883"
 
     /**
      * KeyValue cloud storage endpoint for user registry & backups.

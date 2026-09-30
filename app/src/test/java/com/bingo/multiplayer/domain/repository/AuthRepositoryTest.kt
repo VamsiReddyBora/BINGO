@@ -204,6 +204,7 @@ class AuthRepositoryTest {
     @Test
     fun testCloudBackupAndRestore_survivesAppUninstallAndWipe() = runBlocking {
         val googleId = "test_user_gid_${System.currentTimeMillis()}"
+        fakePrefs.edit().putString("avatar_base64", "fake_base64_avatar_string").apply()
         repository.onGoogleSignInSuccess(
             googleId = googleId,
             displayName = "Persistent Hero",
@@ -219,8 +220,8 @@ class AuthRepositoryTest {
         assertEquals(2, currentProfile.gamesPlayed)
         assertEquals(2, currentProfile.gamesWon)
 
-        // Wait briefly for in-flight async backups to settle
-        kotlinx.coroutines.delay(1200L)
+        // Wait for in-flight async backups from recordGameFinished to settle
+        kotlinx.coroutines.delay(3000L)
 
         // Force synchronous backup
         val backup = com.bingo.multiplayer.domain.model.CloudUserDataBackup(

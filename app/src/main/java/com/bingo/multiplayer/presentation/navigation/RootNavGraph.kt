@@ -448,7 +448,19 @@ fun RootNavGraph(
         isProcessingTurn = false
 
         val myUid = getLocalUid()
-        currentTurnPlayerId = firstTurnPlayerId ?: myUid
+        val firstTurnUid = if (!firstTurnPlayerId.isNullOrBlank()) {
+            firstTurnPlayerId
+        } else if (mode == GameMode.ONLINE_ROOM || mode == GameMode.NEARBY_NETWORK) {
+            val candidateUids = realTimePlayers.map { it.id }.filter { it.isNotBlank() }.distinct().sorted()
+            val effCandidates = if (candidateUids.size >= 2) candidateUids else {
+                val other = realTimePlayers.firstOrNull { it.id != myUid }?.id ?: "opponent"
+                listOf(myUid, other).sorted()
+            }
+            ManualBoardEngine.determineRandomFirstTurn(baseSeed, effCandidates)
+        } else {
+            myUid
+        }
+        currentTurnPlayerId = firstTurnUid
         isMyTurn = (currentTurnPlayerId == myUid)
 
         turnNumber = 1
@@ -604,11 +616,18 @@ fun RootNavGraph(
         }
     }
 
-    // ── Active Game Heartbeat & State Reconciliation (Runs every 2.5s during matches) ──
+    // ── Active Game Heartbeat & State Reconciliation (Runs every 2.5s strictly during active gameplay on Game screen) ──
     LaunchedEffect(currentGameMode) {
         while (isActive) {
             delay(2500L)
-            if ((currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) && !isGameOver && roomCode.isNotEmpty()) {
+            val currentRoute = navController.currentDestination?.route
+            val inActiveGameScreen = (currentRoute == Screen.Game.route)
+            if ((currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) &&
+                !isGameOver &&
+                roomCode.isNotEmpty() &&
+                currentMatchSeed != 0L &&
+                inActiveGameScreen
+            ) {
                 broadcastPacket(
                     RoomMessagePacket(
                         type = "GAME_SYNC",
@@ -616,7 +635,8 @@ fun RootNavGraph(
                         pickedHistory = pickedNumbersHistory.toList(),
                         currentTurnPlayerId = currentTurnPlayerId,
                         playerId = getLocalUid(),
-                        seed = currentMatchSeed
+                        seed = currentMatchSeed,
+                        senderInstanceId = onlineRoomSync.instanceId
                     )
                 )
             }
@@ -625,14 +645,25 @@ fun RootNavGraph(
 
     fun handleIncomingPacket(packet: RoomMessagePacket) {
         val myUid = getLocalUid()
-        if (packet.playerId.isNotBlank() && packet.playerId == myUid) {
-            return
+        if (packet.senderInstanceId.isNotBlank()) {
+            if (packet.senderInstanceId == onlineRoomSync.instanceId) {
+                // Discard echo of packet sent by this exact local app instance
+                return
+            }
+        } else if (packet.playerId.isNotBlank() && packet.playerId == myUid) {
+            // Discard echoes of packets we sent ourselves.
+            // However, if we are a guest and packet is START_GAME or PLAY_AGAIN from host,
+            // do NOT discard even if account IDs happen to match on test devices.
+            if (isHosting || (packet.type != "START_GAME" && packet.type != "PLAY_AGAIN")) {
+                return
+            }
         }
 
         when (packet.type) {
             "START_GAME" -> {
                 if (!isHosting) {
-                    val isInGame = currentRoute == Screen.Game.route || currentRoute == Screen.ManualBoardDesign.route
+                    val currentDest = navController.currentDestination?.route
+                    val isInGame = currentDest == Screen.Game.route || currentDest == Screen.ManualBoardDesign.route
                     if (!com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.shouldStartNewMatch(
                             isHost = false,
                             incomingSeed = packet.seed,
@@ -659,12 +690,25 @@ fun RootNavGraph(
                         countdownSeconds = -1
                         firstTurnPlayerName = ""
                         pickedNumbersHistory.clear()
+                        isProcessingTurn = false
+                        turnNumber = 1
+                        currentTurnPlayerId = ""
+                        isMyTurn = false
+                        turnTimer = 30
+                        isGamePaused = false
+                        pausedByPlayerName = ""
+                        recentPick = null
                         isGameOver = false
                         didPlayerWin = false
                         isDrawMatch = false
+                        wantsToPlayAgainPlayerName = null
+                        opponentDisconnectMessage = null
+                        opponentSurrenderMessage = null
                         navController.navigate(Screen.ManualBoardDesign.route)
                     } else {
                         isManualBoard = false
+                        currentMatchSeed = packet.seed
+                        boardSize = packet.boardSize
                         isLocalBoardReady = true
                         isOpponentBoardReady = true
                         countdownSeconds = -1
@@ -672,7 +716,7 @@ fun RootNavGraph(
                             mode = if (isUsingP2p) GameMode.NEARBY_NETWORK else GameMode.ONLINE_ROOM,
                             difficulty = AiDifficulty.EASY,
                             size = packet.boardSize,
-                            firstTurnPlayerId = packet.playerId,
+                            firstTurnPlayerId = null,
                             hostSeed = packet.seed
                         )
                     }
@@ -681,7 +725,8 @@ fun RootNavGraph(
 
             "PLAY_AGAIN" -> {
                 if (!isHosting && (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK)) {
-                    val isInGame = currentRoute == Screen.Game.route || currentRoute == Screen.ManualBoardDesign.route
+                    val currentDest = navController.currentDestination?.route
+                    val isInGame = currentDest == Screen.Game.route || currentDest == Screen.ManualBoardDesign.route
                     if (!com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.shouldStartNewMatch(
                             isHost = false,
                             incomingSeed = packet.seed,
@@ -701,12 +746,25 @@ fun RootNavGraph(
                         countdownSeconds = -1
                         firstTurnPlayerName = ""
                         pickedNumbersHistory.clear()
+                        isProcessingTurn = false
+                        turnNumber = 1
+                        currentTurnPlayerId = ""
+                        isMyTurn = false
+                        turnTimer = 30
+                        isGamePaused = false
+                        pausedByPlayerName = ""
+                        recentPick = null
                         isGameOver = false
                         didPlayerWin = false
                         isDrawMatch = false
+                        wantsToPlayAgainPlayerName = null
+                        opponentDisconnectMessage = null
+                        opponentSurrenderMessage = null
                         navController.navigate(Screen.ManualBoardDesign.route)
                     } else {
                         isManualBoard = false
+                        currentMatchSeed = packet.seed
+                        boardSize = packet.boardSize
                         isLocalBoardReady = true
                         isOpponentBoardReady = true
                         countdownSeconds = -1
@@ -714,7 +772,7 @@ fun RootNavGraph(
                             mode = currentGameMode,
                             difficulty = AiDifficulty.EASY,
                             size = packet.boardSize,
-                            firstTurnPlayerId = packet.playerId,
+                            firstTurnPlayerId = null,
                             hostSeed = packet.seed
                         )
                     }
@@ -1368,25 +1426,25 @@ fun RootNavGraph(
                 onManualBoardChange = { isManualBoard = it },
                 onStartGame = {
                     val dynamicSize = calculateBoardSize(realTimePlayers.size)
-                    val seed = Random.nextLong()
+                    val seed = Random.nextLong().let { if (it == 0L) 1L else it }
                     val myId = getLocalUid()
+                    val manualMode = isManualBoard
 
                     if (currentGameMode == GameMode.ONLINE_ROOM) {
                         coroutineScope.launch {
-                            com.bingo.multiplayer.domain.network.OnlineRoomRegistry.updateRoomStatus(roomCode, "PLAYING")
+                            com.bingo.multiplayer.domain.network.OnlineRoomRegistry.updateRoomStatus(
+                                roomCode = roomCode,
+                                status = "PLAYING",
+                                seed = seed,
+                                isManualBoard = manualMode,
+                                boardSize = dynamicSize
+                            )
                         }
                         onlineRoomSync.updateLocalReadyStatus("IN_GAME")
-                        realTimePlayers.filter { !it.isHost }.forEach {
-                            onlineRoomSync.updatePlayerReadyStatus(it.id, "IN_GAME")
-                        }
                     } else if (currentGameMode == GameMode.NEARBY_NETWORK) {
                         lanP2pSync.updateLocalReadyStatus("IN_GAME")
-                        realTimePlayers.filter { !it.isHost }.forEach {
-                            lanP2pSync.updatePlayerReadyStatus(it.id, "IN_GAME")
-                        }
                     }
 
-                    val manualMode = isManualBoard
                     val startPacket = RoomMessagePacket(
                         type = "START_GAME",
                         boardSize = dynamicSize,
@@ -1396,7 +1454,7 @@ fun RootNavGraph(
                     )
                     broadcastPacket(startPacket)
                     coroutineScope.launch {
-                        delay(200L)
+                        delay(150L)
                         broadcastPacket(startPacket)
                         delay(250L)
                         broadcastPacket(startPacket)
@@ -1411,6 +1469,9 @@ fun RootNavGraph(
                         firstTurnPlayerName = ""
                         pickedNumbersHistory.clear()
                         isProcessingTurn = false
+                        turnNumber = 1
+                        currentTurnPlayerId = ""
+                        isMyTurn = false
                         turnTimer = 30
                         isGamePaused = false
                         pausedByPlayerName = ""
@@ -1427,7 +1488,7 @@ fun RootNavGraph(
                             mode = if (isUsingP2p) GameMode.NEARBY_NETWORK else GameMode.ONLINE_ROOM,
                             difficulty = AiDifficulty.EASY,
                             size = dynamicSize,
-                            firstTurnPlayerId = myId,
+                            firstTurnPlayerId = null,
                             hostSeed = seed
                         )
                     }
@@ -1610,7 +1671,9 @@ fun RootNavGraph(
                     )
                     broadcastPacket(readyPacket)
                     coroutineScope.launch {
-                        delay(200L)
+                        delay(150L)
+                        broadcastPacket(readyPacket)
+                        delay(250L)
                         broadcastPacket(readyPacket)
                     }
 
@@ -1653,10 +1716,26 @@ fun RootNavGraph(
                 if (!isGameOver) {
                     showLeaveMatchDialog = true
                 } else {
+                    isGameOver = false
+                    didPlayerWin = false
+                    isDrawMatch = false
+                    currentMatchSeed = 0L
+                    pickedNumbersHistory.clear()
+                    isProcessingTurn = false
+                    isMyTurn = false
+                    turnNumber = 1
+                    turnTimer = 30
+                    isGamePaused = false
+                    pausedByPlayerName = ""
+                    recentPick = null
+                    wantsToPlayAgainPlayerName = null
+                    opponentDisconnectMessage = null
+                    opponentSurrenderMessage = null
                     isLocalBoardReady = false
                     isOpponentBoardReady = false
                     countdownSeconds = -1
                     firstTurnPlayerName = ""
+                    onlineRoomSync.resetMatchSession()
                     if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
                         val targetRoute = if (currentGameMode == GameMode.NEARBY_NETWORK) Screen.NearbyLobby.route else Screen.Lobby.route
                         if (isHosting) {
@@ -1818,7 +1897,18 @@ fun RootNavGraph(
                 onPlayAgain = {
                     if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
                         if (isHosting) {
-                            val seed = Random.nextLong()
+                            val seed = Random.nextLong().let { if (it == 0L) 1L else it }
+                            if (currentGameMode == GameMode.ONLINE_ROOM) {
+                                coroutineScope.launch {
+                                    com.bingo.multiplayer.domain.network.OnlineRoomRegistry.updateRoomStatus(
+                                        roomCode = roomCode,
+                                        status = "PLAYING",
+                                        seed = seed,
+                                        isManualBoard = isManualBoard,
+                                        boardSize = boardSize
+                                    )
+                                }
+                            }
                             val playAgainPacket = RoomMessagePacket(
                                 type = "PLAY_AGAIN",
                                 boardSize = boardSize,
@@ -1828,7 +1918,7 @@ fun RootNavGraph(
                             )
                             broadcastPacket(playAgainPacket)
                             coroutineScope.launch {
-                                delay(200L)
+                                delay(150L)
                                 broadcastPacket(playAgainPacket)
                                 delay(250L)
                                 broadcastPacket(playAgainPacket)
@@ -1841,6 +1931,9 @@ fun RootNavGraph(
                                 firstTurnPlayerName = ""
                                 pickedNumbersHistory.clear()
                                 isProcessingTurn = false
+                                turnNumber = 1
+                                currentTurnPlayerId = ""
+                                isMyTurn = false
                                 turnTimer = 30
                                 isGamePaused = false
                                 pausedByPlayerName = ""
@@ -1857,7 +1950,7 @@ fun RootNavGraph(
                                     mode = currentGameMode,
                                     difficulty = currentAiDifficulty,
                                     size = boardSize,
-                                    firstTurnPlayerId = getLocalUid(),
+                                    firstTurnPlayerId = null,
                                     hostSeed = seed
                                 )
                             }
@@ -1867,10 +1960,26 @@ fun RootNavGraph(
                     }
                 },
                 onBackToMenu = {
+                    isGameOver = false
+                    didPlayerWin = false
+                    isDrawMatch = false
+                    currentMatchSeed = 0L
+                    pickedNumbersHistory.clear()
+                    isProcessingTurn = false
+                    isMyTurn = false
+                    turnNumber = 1
+                    turnTimer = 30
+                    isGamePaused = false
+                    pausedByPlayerName = ""
+                    recentPick = null
+                    wantsToPlayAgainPlayerName = null
+                    opponentDisconnectMessage = null
+                    opponentSurrenderMessage = null
                     isLocalBoardReady = false
                     isOpponentBoardReady = false
                     countdownSeconds = -1
                     firstTurnPlayerName = ""
+                    onlineRoomSync.resetMatchSession()
                     disconnectRoom()
                     navController.navigate(Screen.MainMenu.route) {
                         popUpTo(Screen.MainMenu.route) { inclusive = true }
@@ -1878,10 +1987,26 @@ fun RootNavGraph(
                 },
                 onReturnToLobby = if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
                     {
+                        isGameOver = false
+                        didPlayerWin = false
+                        isDrawMatch = false
+                        currentMatchSeed = 0L
+                        pickedNumbersHistory.clear()
+                        isProcessingTurn = false
+                        isMyTurn = false
+                        turnNumber = 1
+                        turnTimer = 30
+                        isGamePaused = false
+                        pausedByPlayerName = ""
+                        recentPick = null
+                        wantsToPlayAgainPlayerName = null
+                        opponentDisconnectMessage = null
+                        opponentSurrenderMessage = null
                         isLocalBoardReady = false
                         isOpponentBoardReady = false
                         countdownSeconds = -1
                         firstTurnPlayerName = ""
+                        onlineRoomSync.resetMatchSession()
                         val targetRoute = if (currentGameMode == GameMode.NEARBY_NETWORK) Screen.NearbyLobby.route else Screen.Lobby.route
                         if (isHosting) {
                             if (currentGameMode == GameMode.ONLINE_ROOM) {

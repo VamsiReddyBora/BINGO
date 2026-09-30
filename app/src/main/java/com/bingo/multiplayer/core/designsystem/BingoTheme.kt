@@ -105,10 +105,10 @@ val CleanLightColors = BingoColors(
     surfaceBorder = Color(0xFFF1F5F9),
     surfaceCardShadow = Color(0x00000000),
 
-    // Unpicked Cell: Clean flat white card, hairline subtle border, dark slate text
+    // Unpicked Cell: Clean flat white card, clear subtle border, dark slate text
     cellNeutralBg = Color(0xFFFFFFFF),
     cellNeutralText = Color(0xFF1E293B),
-    cellNeutralBorder = Color(0xFFF1F5F9),
+    cellNeutralBorder = Color(0xFFCBD5E1),
     cellNeutralBevel = Color(0xFFFFFFFF),
     cellNeutralHighlight = Color(0xFFFFFFFF),
 

@@ -234,13 +234,13 @@ private fun resolveMinimalCellStyling(cell: Cell): MinimalCellVisualTokens {
             )
         }
 
-        // Unpicked Cell (Clean flat white, hairline subtle separator)
+        // Unpicked Cell (Clean flat white, clear outline)
         else -> {
             MinimalCellVisualTokens(
                 backgroundColor = tokens.cellNeutralBg,
                 textColor = tokens.cellNeutralText,
                 borderColor = tokens.cellNeutralBorder,
-                borderWidth = 0.5.dp
+                borderWidth = 1.dp
             )
         }
     }

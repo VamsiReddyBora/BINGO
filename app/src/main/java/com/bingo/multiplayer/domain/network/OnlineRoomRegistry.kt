@@ -34,7 +34,9 @@ data class OnlineRoomSession(
     val boardSize: Int = 5,
     val createdAt: Long = System.currentTimeMillis(),
     val lastHeartbeat: Long = System.currentTimeMillis(),
-    val players: List<Player> = emptyList()
+    val players: List<Player> = emptyList(),
+    val currentSeed: Long = 0L,
+    val isManualBoard: Boolean = false
 )
 
 sealed interface RoomJoinResult {
@@ -550,13 +552,36 @@ object OnlineRoomRegistry {
 
     /**
      * Updates status (e.g. "PLAYING" when game starts, "CLOSED" when host leaves).
+     * Synchronizes currentSeed, isManualBoard, and boardSize to guarantee dual-channel game start delivery.
      */
-    suspend fun updateRoomStatus(roomCode: String, status: String) = withContext(Dispatchers.IO) {
+    suspend fun updateRoomStatus(
+        roomCode: String,
+        status: String,
+        seed: Long = 0L,
+        isManualBoard: Boolean = false,
+        boardSize: Int = 5
+    ) = withContext(Dispatchers.IO) {
         val cleanCode = roomCode.trim().uppercase()
         if (cleanCode.isBlank()) return@withContext
         try {
             val current = getRoom(cleanCode) ?: return@withContext
-            val updated = current.copy(status = status, lastHeartbeat = System.currentTimeMillis())
+            val now = System.currentTimeMillis()
+            val updatedPlayers = if (status == "PLAYING") {
+                current.players.map { p ->
+                    if (p.isHost || p.id == current.hostId) {
+                        p.copy(lobbyReadyStatus = "IN_GAME", lastSeenTimestamp = now)
+                    } else p
+                }
+            } else current.players
+
+            val updated = current.copy(
+                status = status,
+                currentSeed = if (seed != 0L) seed else if (status == "WAITING") 0L else current.currentSeed,
+                isManualBoard = if (status == "PLAYING") isManualBoard else (if (status == "WAITING") false else current.isManualBoard),
+                boardSize = if (boardSize > 0) boardSize else current.boardSize,
+                lastHeartbeat = now,
+                players = updatedPlayers
+            )
             val jsonStr = json.encodeToString(updated)
             val b64 = encodeBase64Url(jsonStr)
             val encVal = URLEncoder.encode(b64, "UTF-8")

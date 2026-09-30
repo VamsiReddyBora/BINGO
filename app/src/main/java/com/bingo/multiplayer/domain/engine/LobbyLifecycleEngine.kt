@@ -296,7 +296,7 @@ object LobbyLifecycleEngine {
 
         // If guest is currently in the game screen and game is not over:
         // Reject duplicate start packets for the ongoing match (e.g. network retries or rogue starts)
-        if (isCurrentlyInGame && !isGameOver && seed == currentMatchSeed) {
+        if (isCurrentlyInGame && !isGameOver) {
             return false
         }
 
@@ -305,13 +305,17 @@ object LobbyLifecycleEngine {
 
     /**
      * Invariant: In-Game Turn and Move Isolation.
-     * Validates that in-game packets (PICK_NUMBER, TURN_TIMEOUT, GAME_SYNC) belong to the active match session.
-     * If packet carries a seed, it must match currentMatchSeed (or be backward-compatible 0L/null).
+     * Validates that in-game packets (PICK_NUMBER, TURN_TIMEOUT, GAME_SYNC, BOARD_READY)
+     * belong strictly to the active match session.
+     * Stale packets from old seeds or unseeded packets (0L/null) cannot infiltrate an active non-zero seed match.
      */
     fun isPacketForActiveMatch(
         packetSeed: Long?,
         currentMatchSeed: Long
     ): Boolean {
+        if (currentMatchSeed == 0L) {
+            return false
+        }
         if (packetSeed == null || packetSeed == 0L) {
             // Backward compatibility for legacy packets without seed
             return true

@@ -19,7 +19,9 @@ object FastPacketCodec {
         return when (packet.type) {
             "PICK_NUMBER" -> {
                 val historyStr = packet.pickedHistory.joinToString(",")
-                if (packet.seed != 0L) {
+                if (packet.senderInstanceId.isNotBlank()) {
+                    "P|${packet.number}|${packet.playerId}|${packet.turnNumber}|${packet.currentTurnPlayerId}|$historyStr|${packet.seed}|${packet.senderInstanceId}"
+                } else if (packet.seed != 0L) {
                     "P|${packet.number}|${packet.playerId}|${packet.turnNumber}|${packet.currentTurnPlayerId}|$historyStr|${packet.seed}"
                 } else {
                     "P|${packet.number}|${packet.playerId}|${packet.turnNumber}|${packet.currentTurnPlayerId}|$historyStr"
@@ -27,7 +29,9 @@ object FastPacketCodec {
             }
             "TURN_TIMEOUT" -> {
                 val historyStr = packet.pickedHistory.joinToString(",")
-                if (packet.seed != 0L) {
+                if (packet.senderInstanceId.isNotBlank()) {
+                    "T|${packet.playerId}|${packet.turnNumber}|${packet.currentTurnPlayerId}|$historyStr|${packet.seed}|${packet.senderInstanceId}"
+                } else if (packet.seed != 0L) {
                     "T|${packet.playerId}|${packet.turnNumber}|${packet.currentTurnPlayerId}|$historyStr|${packet.seed}"
                 } else {
                     "T|${packet.playerId}|${packet.turnNumber}|${packet.currentTurnPlayerId}|$historyStr"
@@ -35,12 +39,18 @@ object FastPacketCodec {
             }
             "BOARD_READY" -> {
                 val boardStr = packet.pickedHistory.joinToString(",")
-                "B|${packet.playerId}|${packet.seed}|$boardStr"
+                if (packet.senderInstanceId.isNotBlank()) {
+                    "B|${packet.playerId}|${packet.seed}|$boardStr|${packet.senderInstanceId}"
+                } else {
+                    "B|${packet.playerId}|${packet.seed}|$boardStr"
+                }
             }
             "PING" -> "G|${packet.playerId}|${packet.pingTimestamp}"
             "PONG" -> "O|${packet.playerId}|${packet.pingTimestamp}"
             "READY_STATUS" -> {
-                if (packet.readyVersion > 0L) {
+                if (packet.senderInstanceId.isNotBlank()) {
+                    "R|${packet.playerId}|${packet.readyStatus}|${packet.username}|${packet.displayName}|${packet.readyVersion}|${packet.senderInstanceId}"
+                } else if (packet.readyVersion > 0L) {
                     "R|${packet.playerId}|${packet.readyStatus}|${packet.username}|${packet.displayName}|${packet.readyVersion}"
                 } else if (packet.username.isBlank() && packet.displayName.isBlank()) {
                     "R|${packet.playerId}|${packet.readyStatus}"
@@ -49,6 +59,8 @@ object FastPacketCodec {
                 }
             }
             "KICK_PLAYER" -> "K|${packet.targetPlayerId}|${packet.playerId}"
+            "START_GAME" -> json.encodeToString(packet)
+            "PLAY_AGAIN" -> json.encodeToString(packet)
             "HEARTBEAT" -> {
                 if (packet.players.isNotEmpty()) {
                     json.encodeToString(packet)
@@ -74,6 +86,7 @@ object FastPacketCodec {
                     val currentTurnId = parts.getOrNull(4) ?: ""
                     val historyRaw = parts.getOrNull(5) ?: ""
                     val seed = parts.getOrNull(6)?.toLongOrNull() ?: 0L
+                    val senderInstanceId = parts.getOrNull(7) ?: ""
                     val history = if (historyRaw.isNotBlank()) {
                         historyRaw.split(",").mapNotNull { it.toIntOrNull() }
                     } else emptyList()
@@ -85,7 +98,8 @@ object FastPacketCodec {
                         turnNumber = turnNumber,
                         currentTurnPlayerId = currentTurnId,
                         pickedHistory = history,
-                        seed = seed
+                        seed = seed,
+                        senderInstanceId = senderInstanceId
                     )
                 }
 
@@ -96,6 +110,7 @@ object FastPacketCodec {
                     val currentTurnId = parts.getOrNull(3) ?: ""
                     val historyRaw = parts.getOrNull(4) ?: ""
                     val seed = parts.getOrNull(5)?.toLongOrNull() ?: 0L
+                    val senderInstanceId = parts.getOrNull(6) ?: ""
                     val history = if (historyRaw.isNotBlank()) {
                         historyRaw.split(",").mapNotNull { it.toIntOrNull() }
                     } else emptyList()
@@ -107,7 +122,8 @@ object FastPacketCodec {
                         turnNumber = turnNumber,
                         currentTurnPlayerId = currentTurnId,
                         pickedHistory = history,
-                        seed = seed
+                        seed = seed,
+                        senderInstanceId = senderInstanceId
                     )
                 }
 
@@ -116,6 +132,7 @@ object FastPacketCodec {
                     val playerId = parts.getOrNull(1) ?: ""
                     val seed = parts.getOrNull(2)?.toLongOrNull() ?: 0L
                     val boardRaw = parts.getOrNull(3) ?: ""
+                    val senderInstanceId = parts.getOrNull(4) ?: ""
                     val boardNumbers = if (boardRaw.isNotBlank()) {
                         boardRaw.split(",").mapNotNull { it.toIntOrNull() }
                     } else emptyList()
@@ -124,7 +141,8 @@ object FastPacketCodec {
                         type = "BOARD_READY",
                         playerId = playerId,
                         seed = seed,
-                        pickedHistory = boardNumbers
+                        pickedHistory = boardNumbers,
+                        senderInstanceId = senderInstanceId
                     )
                 }
 
@@ -148,13 +166,15 @@ object FastPacketCodec {
 
                 trimmed.startsWith("R|") -> {
                     val parts = trimmed.split("|")
+                    val senderInstanceId = parts.getOrNull(6) ?: ""
                     RoomMessagePacket(
                         type = "READY_STATUS",
                         playerId = parts.getOrNull(1) ?: "",
                         readyStatus = parts.getOrNull(2) ?: "NOT_READY",
                         username = parts.getOrNull(3) ?: "",
                         displayName = parts.getOrNull(4) ?: "",
-                        readyVersion = parts.getOrNull(5)?.toLongOrNull() ?: 0L
+                        readyVersion = parts.getOrNull(5)?.toLongOrNull() ?: 0L,
+                        senderInstanceId = senderInstanceId
                     )
                 }
 
@@ -164,6 +184,28 @@ object FastPacketCodec {
                         type = "KICK_PLAYER",
                         targetPlayerId = parts.getOrNull(1) ?: "",
                         playerId = parts.getOrNull(2) ?: ""
+                    )
+                }
+
+                trimmed.startsWith("S|") -> {
+                    val parts = trimmed.split("|")
+                    RoomMessagePacket(
+                        type = "START_GAME",
+                        playerId = parts.getOrNull(1) ?: "",
+                        boardSize = parts.getOrNull(2)?.toIntOrNull() ?: 5,
+                        seed = parts.getOrNull(3)?.toLongOrNull() ?: 0L,
+                        isManualBoard = parts.getOrNull(4) == "1"
+                    )
+                }
+
+                trimmed.startsWith("A|") -> {
+                    val parts = trimmed.split("|")
+                    RoomMessagePacket(
+                        type = "PLAY_AGAIN",
+                        playerId = parts.getOrNull(1) ?: "",
+                        boardSize = parts.getOrNull(2)?.toIntOrNull() ?: 5,
+                        seed = parts.getOrNull(3)?.toLongOrNull() ?: 0L,
+                        isManualBoard = parts.getOrNull(4) == "1"
                     )
                 }
 
