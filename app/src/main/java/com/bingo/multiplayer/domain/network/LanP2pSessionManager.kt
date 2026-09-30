@@ -1,6 +1,7 @@
 package com.bingo.multiplayer.domain.network
 
 import android.util.Log
+import com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine
 import com.bingo.multiplayer.domain.model.Player
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -274,16 +275,9 @@ class LanP2pSessionManager {
                             (packet.username.isNotBlank() && it.username.equals(packet.username, ignoreCase = true)) ||
                             (packet.displayName.isNotBlank() && it.displayName.equals(packet.displayName, ignoreCase = true))
                         }
-                    if (existing != null) {
-                        if (packet.readyVersion > 0L && packet.readyVersion < existing.readyVersion) {
-                            return
-                        }
-                        val nextVersion = maxOf(packet.readyVersion, existing.readyVersion)
-                        playerRegistry[existing.id] = existing.copy(
-                            lobbyReadyStatus = packet.readyStatus,
-                            readyVersion = nextVersion,
-                            lastSeenTimestamp = System.currentTimeMillis()
-                        )
+                    val updated = LobbyLifecycleEngine.onRemoteReadyStatusPacket(packet, existing)
+                    if (updated != null) {
+                        playerRegistry[updated.id] = updated
                         _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
                     }
                 }
@@ -304,9 +298,7 @@ class LanP2pSessionManager {
                         if (existing.isHost) {
                             playerRegistry.remove(packet.playerId)
                         } else {
-                            playerRegistry[packet.playerId] = existing.copy(
-                                lobbyReadyStatus = "LEFT_LOBBY"
-                            )
+                            playerRegistry[packet.playerId] = LobbyLifecycleEngine.onPlayerLeave(existing)
                         }
                         _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
                     }
@@ -322,8 +314,7 @@ class LanP2pSessionManager {
 
     fun updateLocalReadyStatus(status: String) {
         val p = localPlayer ?: return
-        val nextVersion = maxOf(System.currentTimeMillis(), p.readyVersion + 1L)
-        val updated = p.copy(lobbyReadyStatus = status, readyVersion = nextVersion)
+        val updated = LobbyLifecycleEngine.onLocalToggleReady(p, status == LobbyLifecycleEngine.STATUS_READY)
         localPlayer = updated
         playerRegistry[p.id] = updated
         _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
@@ -331,8 +322,8 @@ class LanP2pSessionManager {
             RoomMessagePacket(
                 type = "READY_STATUS",
                 playerId = p.id,
-                readyStatus = status,
-                readyVersion = nextVersion,
+                readyStatus = updated.lobbyReadyStatus,
+                readyVersion = updated.readyVersion,
                 username = p.username,
                 displayName = p.displayName
             )

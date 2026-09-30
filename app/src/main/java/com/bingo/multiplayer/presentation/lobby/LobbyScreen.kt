@@ -42,6 +42,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bingo.multiplayer.core.designsystem.BingoTheme
+import com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine
 import com.bingo.multiplayer.domain.model.Player
 
 import com.bingo.multiplayer.domain.network.PlayerRegistryEntry
@@ -83,12 +84,12 @@ fun LobbyScreen(
         (currentUser?.username?.isNotBlank() == true && (it.username.equals(currentUser.username, ignoreCase = true) || it.displayName.equals(currentUser.username, ignoreCase = true)))
     } ?: if (!isHost) players.firstOrNull { !it.isHost } else players.firstOrNull { it.isHost }
 
-    var isMyReadyState by remember { mutableStateOf(myPlayer?.lobbyReadyStatus == "READY") }
+    var isMyReadyState by remember { mutableStateOf(myPlayer?.lobbyReadyStatus == LobbyLifecycleEngine.STATUS_READY) }
     var hasInitializedReady by remember { mutableStateOf(false) }
 
     LaunchedEffect(myPlayer?.id) {
         if (!hasInitializedReady && myPlayer != null) {
-            isMyReadyState = myPlayer.lobbyReadyStatus == "READY"
+            isMyReadyState = myPlayer.lobbyReadyStatus == LobbyLifecycleEngine.STATUS_READY
             hasInitializedReady = true
         }
     }
@@ -564,18 +565,17 @@ fun LobbyScreen(
                             val rawStatus = if (isMe) "online" else com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(cleanUser, effectiveTs)
 
                             val effectivePlayerReady = if (isMe) {
-                                if (isMyReadyState) "READY" else "NOT_READY"
+                                if (isMyReadyState) LobbyLifecycleEngine.STATUS_READY else LobbyLifecycleEngine.STATUS_NOT_READY
                             } else {
                                 player.lobbyReadyStatus
                             }
 
-                            val isPlayerLeft = player.lobbyReadyStatus == "LEFT_LOBBY" ||
-                                               (!isMe && (System.currentTimeMillis() - player.lastSeenTimestamp) > 60_000L && rawStatus.equals("offline", ignoreCase = true))
+                            val isPlayerLeft = LobbyLifecycleEngine.isPlayerLeft(player, isMe, rawStatus)
 
                             val (readyIcon, readyTint, readyDesc) = when {
-                                effectivePlayerReady == "IN_GAME" -> Triple(Icons.Default.HourglassBottom, Color(0xFFF59E0B), "In Game")
+                                effectivePlayerReady == LobbyLifecycleEngine.STATUS_IN_GAME -> Triple(Icons.Default.HourglassBottom, Color(0xFFF59E0B), "In Game")
                                 isPlayerLeft -> Triple(Icons.Default.Cancel, Color(0xFFEF4444), "Left Lobby")
-                                player.isHost || effectivePlayerReady == "READY" -> Triple(Icons.Default.CheckCircle, Color(0xFF16A34A), if (player.isHost) "Host Ready" else "Ready")
+                                player.isHost || effectivePlayerReady == LobbyLifecycleEngine.STATUS_READY -> Triple(Icons.Default.CheckCircle, Color(0xFF16A34A), if (player.isHost) "Host Ready" else "Ready")
                                 else -> Triple(Icons.Default.PauseCircle, Color(0xFFEAB308), "Not Ready")
                             }
 
@@ -1074,26 +1074,17 @@ fun LobbyScreen(
             Spacer(modifier = Modifier.height(24.dp))
 
             // ── Action Buttons ──
-            val allReady = players.size >= 2 && players.all {
-                val isThisLocal = (localUid.isNotBlank() && it.id == localUid) ||
-                                  (currentUser?.username?.isNotBlank() == true && (it.username.equals(currentUser.username, ignoreCase = true) || it.displayName.equals(currentUser.username, ignoreCase = true)))
-                val st = if (isThisLocal) {
-                    if (isMyReadyState) "READY" else "NOT_READY"
+            val effectivePlayers = players.map { p ->
+                val isThisLocal = (localUid.isNotBlank() && p.id == localUid) ||
+                                  (currentUser?.username?.isNotBlank() == true && (p.username.equals(currentUser.username, ignoreCase = true) || p.displayName.equals(currentUser.username, ignoreCase = true)))
+                if (isThisLocal) {
+                    p.copy(lobbyReadyStatus = if (isMyReadyState) LobbyLifecycleEngine.STATUS_READY else LobbyLifecycleEngine.STATUS_NOT_READY)
                 } else {
-                    it.lobbyReadyStatus
+                    p
                 }
-                it.isHost || st == "READY"
             }
-            val readyCount = players.count {
-                val isThisLocal = (localUid.isNotBlank() && it.id == localUid) ||
-                                  (currentUser?.username?.isNotBlank() == true && (it.username.equals(currentUser.username, ignoreCase = true) || it.displayName.equals(currentUser.username, ignoreCase = true)))
-                val st = if (isThisLocal) {
-                    if (isMyReadyState) "READY" else "NOT_READY"
-                } else {
-                    it.lobbyReadyStatus
-                }
-                it.isHost || st == "READY"
-            }
+            val allReady = LobbyLifecycleEngine.canStartMatch(effectivePlayers)
+            val readyCount = LobbyLifecycleEngine.countReadyPlayers(effectivePlayers)
 
             if (isHost) {
                 Button(

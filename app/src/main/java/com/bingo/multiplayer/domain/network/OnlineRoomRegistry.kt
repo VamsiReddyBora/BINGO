@@ -3,6 +3,7 @@ package com.bingo.multiplayer.domain.network
 import android.util.Base64
 import android.util.Log
 import androidx.annotation.Keep
+import com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine
 import com.bingo.multiplayer.domain.model.Player
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -277,8 +278,7 @@ object OnlineRoomRegistry {
             val existingInSession = session.players.find {
                 it.id == joiner.id || (it.username.isNotBlank() && it.username.equals(joiner.username, ignoreCase = true))
             }
-            val joinVersion = maxOf(now, (existingInSession?.readyVersion ?: 0L) + 1L)
-            val safeJoiner = sanitizePlayer(joiner.copy(isHost = false, lastSeenTimestamp = now, lobbyReadyStatus = "NOT_READY", readyVersion = joinVersion))
+            val safeJoiner = sanitizePlayer(LobbyLifecycleEngine.onPlayerJoinSession(joiner.copy(isHost = false), existingInSession))
             val isAlreadyInRoom = existingInSession != null
 
             if (!isAlreadyInRoom && session.players.size >= 8) {
@@ -393,20 +393,16 @@ object OnlineRoomRegistry {
                         val known = knownPlayers.find {
                             it.id == existing.id || (it.username.isNotBlank() && it.username.equals(existing.username, ignoreCase = true))
                         }
-                        val effReady = when {
-                            existing.lobbyReadyStatus == "IN_GAME" || known?.lobbyReadyStatus == "IN_GAME" -> "IN_GAME"
-                            known != null && known.readyVersion > existing.readyVersion -> known.lobbyReadyStatus
-                            existing.readyVersion > (known?.readyVersion ?: 0L) -> existing.lobbyReadyStatus
-                            existing.lobbyReadyStatus == "LEFT_LOBBY" || known?.lobbyReadyStatus == "LEFT_LOBBY" -> {
-                                if (existing.lobbyReadyStatus != "LEFT_LOBBY" && existing.lobbyReadyStatus.isNotBlank()) existing.lobbyReadyStatus
-                                else if (known?.lobbyReadyStatus != "LEFT_LOBBY" && known?.lobbyReadyStatus?.isNotBlank() == true) known.lobbyReadyStatus
-                                else "LEFT_LOBBY"
-                            }
-                            known?.lobbyReadyStatus?.isNotBlank() == true -> known.lobbyReadyStatus
-                            existing.lobbyReadyStatus.isNotBlank() -> existing.lobbyReadyStatus
-                            else -> "NOT_READY"
+                        val (effReady, effVer) = if (known != null) {
+                            LobbyLifecycleEngine.reconcileReadyStatus(
+                                currentStatus = existing.lobbyReadyStatus,
+                                currentVersion = existing.readyVersion,
+                                incomingStatus = known.lobbyReadyStatus,
+                                incomingVersion = known.readyVersion
+                            )
+                        } else {
+                            Pair(existing.lobbyReadyStatus.ifBlank { LobbyLifecycleEngine.STATUS_NOT_READY }, existing.readyVersion)
                         }
-                        val effVer = maxOf(existing.readyVersion, known?.readyVersion ?: 0L)
                         existing.copy(
                             lobbyReadyStatus = effReady,
                             readyVersion = effVer,
@@ -480,13 +476,19 @@ object OnlineRoomRegistry {
             val updatedPlayers = if (session.players.any { it.id == playerId || (it.username.isNotBlank() && it.username.equals(playerId, ignoreCase = true)) }) {
                 session.players.map { p ->
                     if (p.id == playerId || (p.username.isNotBlank() && p.username.equals(playerId, ignoreCase = true))) {
-                        if (readyVersion > 0L && readyVersion < p.readyVersion) {
+                        val (effReady, effVer) = LobbyLifecycleEngine.reconcileReadyStatus(
+                            currentStatus = p.lobbyReadyStatus,
+                            currentVersion = p.readyVersion,
+                            incomingStatus = readyStatus,
+                            incomingVersion = readyVersion
+                        )
+                        if (effReady == p.lobbyReadyStatus && effVer <= p.readyVersion) {
                             p // Ignore out-of-order stale update
                         } else {
                             modified = true
                             p.copy(
-                                lobbyReadyStatus = readyStatus,
-                                readyVersion = maxOf(readyVersion, p.readyVersion),
+                                lobbyReadyStatus = effReady,
+                                readyVersion = effVer,
                                 lastSeenTimestamp = now
                             )
                         }

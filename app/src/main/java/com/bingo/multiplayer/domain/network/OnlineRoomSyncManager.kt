@@ -1,5 +1,6 @@
 package com.bingo.multiplayer.domain.network
 
+import com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine
 import com.bingo.multiplayer.domain.model.Player
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
@@ -338,25 +339,17 @@ class OnlineRoomSyncManager(
                         else -> existing?.lastSeenTimestamp ?: p.lastSeenTimestamp
                     }
 
-                    // Prevent status toggling / clobbering:
-                    // 1. Local player's own status is authoritative.
-                    // 2. Monotonic readyVersion determines the winner between in-memory MQTT and cloud session.
-                    val effReady = when {
-                        isLocal -> localP.lobbyReadyStatus
-                        p.lobbyReadyStatus == "IN_GAME" || existing?.lobbyReadyStatus == "IN_GAME" -> "IN_GAME"
-                        existing != null && existing.readyVersion > p.readyVersion -> existing.lobbyReadyStatus
-                        p.readyVersion > (existing?.readyVersion ?: 0L) && p.lobbyReadyStatus.isNotBlank() -> p.lobbyReadyStatus
-                        p.lobbyReadyStatus == "LEFT_LOBBY" || existing?.lobbyReadyStatus == "LEFT_LOBBY" -> {
-                            if (p.lobbyReadyStatus != "LEFT_LOBBY" && p.lobbyReadyStatus.isNotBlank()) p.lobbyReadyStatus
-                            else if (existing?.lobbyReadyStatus != "LEFT_LOBBY" && existing?.lobbyReadyStatus?.isNotBlank() == true) existing.lobbyReadyStatus
-                            else "LEFT_LOBBY"
-                        }
-                        p.isHost -> "READY"
-                        p.lobbyReadyStatus.isNotBlank() -> p.lobbyReadyStatus
-                        existing?.lobbyReadyStatus != null -> existing.lobbyReadyStatus
-                        else -> "NOT_READY"
+                    // Prevent status toggling / clobbering via isolated LobbyLifecycleEngine:
+                    val (effReady, effVer) = if (isLocal) {
+                        Pair(localP.lobbyReadyStatus, localP.readyVersion)
+                    } else {
+                        LobbyLifecycleEngine.reconcileReadyStatus(
+                            currentStatus = existing?.lobbyReadyStatus ?: LobbyLifecycleEngine.STATUS_NOT_READY,
+                            currentVersion = existing?.readyVersion ?: 0L,
+                            incomingStatus = p.lobbyReadyStatus,
+                            incomingVersion = p.readyVersion
+                        )
                     }
-                    val effVer = if (isLocal) localP.readyVersion else maxOf(p.readyVersion, existing?.readyVersion ?: 0L)
 
                     playerRegistry[p.id] = p.copy(
                         displayName = effDisplay,
@@ -488,55 +481,8 @@ class OnlineRoomSyncManager(
             "JOIN", "HEARTBEAT" -> {
                 if (packet.playerId.isNotEmpty()) {
                     val existing = playerRegistry[packet.playerId]
-                    val isLocal = packet.playerId == localPlayer?.id
 
-                    val effectiveAvatar = when {
-                        isLocal -> localPlayer?.avatarUrl?.takeIf { it.isNotBlank() } ?: existing?.avatarUrl
-                        !packet.avatarUrl.isNullOrBlank() -> packet.avatarUrl
-                        else -> existing?.avatarUrl
-                    }
-                    val effectiveUsername = when {
-                        isLocal -> localPlayer?.username?.takeIf { it.isNotBlank() } ?: existing?.username ?: ""
-                        packet.username.isNotBlank() -> packet.username
-                        else -> existing?.username ?: ""
-                    }
-                    val effectiveDisplayName = when {
-                        isLocal -> localPlayer?.displayName?.takeIf { it.isNotBlank() } ?: existing?.displayName ?: packet.displayName
-                        packet.displayName.isNotBlank() -> packet.displayName
-                        else -> existing?.displayName ?: "Player"
-                    }
-                    val effectiveGamesPlayed = if (packet.gamesPlayed > 0) packet.gamesPlayed else (existing?.gamesPlayed ?: 0)
-                    val effectiveGamesWon = if (packet.gamesWon > 0) packet.gamesWon else (existing?.gamesWon ?: 0)
-                    val effectiveStreak = if (packet.currentStreak > 0) packet.currentStreak else (existing?.currentStreak ?: 0)
-                    val effectiveLevel = if (packet.level > 1) packet.level else (existing?.level ?: 1)
-                    val effectiveReadyStatus = when {
-                        packet.type == "JOIN" -> packet.readyStatus.ifBlank { if (packet.isHost) "READY" else "NOT_READY" }
-                        packet.readyStatus.isNotBlank() && packet.readyVersion >= (existing?.readyVersion ?: 0L) -> packet.readyStatus
-                        existing?.lobbyReadyStatus != null -> existing.lobbyReadyStatus
-                        packet.readyStatus.isNotBlank() -> packet.readyStatus
-                        packet.isHost -> "READY"
-                        else -> "NOT_READY"
-                    }
-                    val effectiveReadyVer = if (packet.type == "JOIN") {
-                        maxOf(System.currentTimeMillis(), packet.readyVersion, (existing?.readyVersion ?: 0L) + 1L)
-                    } else {
-                        maxOf(packet.readyVersion, existing?.readyVersion ?: 0L)
-                    }
-
-                    val updated = Player(
-                        id = packet.playerId,
-                        displayName = effectiveDisplayName,
-                        username = effectiveUsername,
-                        isHost = packet.isHost,
-                        avatarUrl = effectiveAvatar,
-                        gamesPlayed = effectiveGamesPlayed,
-                        gamesWon = effectiveGamesWon,
-                        currentStreak = effectiveStreak,
-                        level = effectiveLevel,
-                        lastSeenTimestamp = System.currentTimeMillis(),
-                        lobbyReadyStatus = effectiveReadyStatus,
-                        readyVersion = effectiveReadyVer
-                    )
+                    val updated = LobbyLifecycleEngine.onRemotePlayerJoinOrHeartbeat(packet, existing)
                     playerRegistry[packet.playerId] = updated
                     _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
 
@@ -545,7 +491,7 @@ class OnlineRoomSyncManager(
                         val code = currentRoomCode
                         if (code != null) {
                             scope.launch(Dispatchers.IO) {
-                                OnlineRoomRegistry.updatePlayerReadyStatus(code, packet.playerId, effectiveReadyStatus, effectiveReadyVer)
+                                OnlineRoomRegistry.updatePlayerReadyStatus(code, packet.playerId, updated.lobbyReadyStatus, updated.readyVersion)
                             }
                         }
                         localPlayer?.let { h ->
@@ -579,36 +525,15 @@ class OnlineRoomSyncManager(
                         }
                     val targetKey = existing?.id ?: packet.playerId
 
-                    // Discard out-of-order stale packet if newer version already processed
-                    if (existing != null && packet.readyVersion > 0L && packet.readyVersion < existing.readyVersion) {
-                        return
-                    }
-
-                    val updatedVer = maxOf(packet.readyVersion, existing?.readyVersion ?: 0L)
-                    val updated = if (existing != null) {
-                        existing.copy(
-                            lobbyReadyStatus = packet.readyStatus,
-                            readyVersion = updatedVer,
-                            lastSeenTimestamp = System.currentTimeMillis()
-                        )
-                    } else {
-                        Player(
-                            id = targetKey,
-                            displayName = packet.displayName.ifBlank { "Player" },
-                            username = packet.username,
-                            isHost = packet.isHost,
-                            avatarUrl = packet.avatarUrl,
-                            lobbyReadyStatus = packet.readyStatus,
-                            readyVersion = updatedVer,
-                            lastSeenTimestamp = System.currentTimeMillis()
-                        )
-                    }
-                    playerRegistry[targetKey] = updated
-                    _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
-                    val code = currentRoomCode
-                    if (code != null && localPlayer?.isHost == true) {
-                        scope.launch(Dispatchers.IO) {
-                            OnlineRoomRegistry.updatePlayerReadyStatus(code, targetKey, packet.readyStatus, updatedVer)
+                    val updated = LobbyLifecycleEngine.onRemoteReadyStatusPacket(packet, existing)
+                    if (updated != null) {
+                        playerRegistry[targetKey] = updated
+                        _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+                        val code = currentRoomCode
+                        if (code != null && localPlayer?.isHost == true) {
+                            scope.launch(Dispatchers.IO) {
+                                OnlineRoomRegistry.updatePlayerReadyStatus(code, targetKey, updated.lobbyReadyStatus, updated.readyVersion)
+                            }
                         }
                     }
                 }
@@ -629,17 +554,12 @@ class OnlineRoomSyncManager(
                         if (existing.isHost) {
                             playerRegistry.remove(packet.playerId)
                         } else {
-                            // Non-host player left the lobby: mark as LEFT_LOBBY so other players and host see ❌
-                            // Do NOT automatically delete from the lobby registry!
-                            val leaveVer = maxOf(System.currentTimeMillis(), existing.readyVersion + 1L)
-                            playerRegistry[packet.playerId] = existing.copy(
-                                lobbyReadyStatus = "LEFT_LOBBY",
-                                readyVersion = leaveVer
-                            )
+                            val updated = LobbyLifecycleEngine.onPlayerLeave(existing)
+                            playerRegistry[packet.playerId] = updated
                             val code = currentRoomCode
                             if (code != null && localPlayer?.isHost == true) {
                                 scope.launch(Dispatchers.IO) {
-                                    OnlineRoomRegistry.updatePlayerReadyStatus(code, packet.playerId, "LEFT_LOBBY", leaveVer)
+                                    OnlineRoomRegistry.updatePlayerReadyStatus(code, packet.playerId, updated.lobbyReadyStatus, updated.readyVersion)
                                 }
                             }
                         }
@@ -675,9 +595,7 @@ class OnlineRoomSyncManager(
 
     fun updateLocalReadyStatus(status: String) {
         val p = localPlayer ?: return
-        val now = System.currentTimeMillis()
-        val nextVersion = maxOf(now, p.readyVersion + 1L)
-        val updated = p.copy(lobbyReadyStatus = status, readyVersion = nextVersion, lastSeenTimestamp = now)
+        val updated = LobbyLifecycleEngine.onLocalToggleReady(p, status == LobbyLifecycleEngine.STATUS_READY)
         localPlayer = updated
         playerRegistry[p.id] = updated
         _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
@@ -688,22 +606,22 @@ class OnlineRoomSyncManager(
             username = p.username,
             isHost = p.isHost,
             avatarUrl = p.avatarUrl,
-            readyStatus = status,
-            readyVersion = nextVersion,
-            timestamp = now
+            readyStatus = updated.lobbyReadyStatus,
+            readyVersion = updated.readyVersion,
+            timestamp = updated.lastSeenTimestamp
         )
         broadcastPacket(packet)
         val code = currentRoomCode
         if (code != null) {
             scope.launch(Dispatchers.IO) {
-                OnlineRoomRegistry.updatePlayerReadyStatus(code, p.id, status, nextVersion)
+                OnlineRoomRegistry.updatePlayerReadyStatus(code, p.id, updated.lobbyReadyStatus, updated.readyVersion)
             }
         }
     }
 
     fun updatePlayerReadyStatus(playerId: String, status: String) {
         val existing = playerRegistry[playerId] ?: return
-        val nextVersion = maxOf(System.currentTimeMillis(), existing.readyVersion + 1L)
+        val nextVersion = LobbyLifecycleEngine.nextVersion(existing.readyVersion)
         playerRegistry[playerId] = existing.copy(lobbyReadyStatus = status, readyVersion = nextVersion)
         _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
         val code = currentRoomCode
