@@ -27,7 +27,13 @@ object FastPacketCodec {
             }
             "PING" -> "G|${packet.playerId}|${packet.pingTimestamp}"
             "PONG" -> "O|${packet.playerId}|${packet.pingTimestamp}"
-            "READY_STATUS" -> "R|${packet.playerId}|${packet.readyStatus}"
+            "READY_STATUS" -> {
+                if (packet.username.isBlank() && packet.displayName.isBlank()) {
+                    "R|${packet.playerId}|${packet.readyStatus}"
+                } else {
+                    "R|${packet.playerId}|${packet.readyStatus}|${packet.username}|${packet.displayName}"
+                }
+            }
             "KICK_PLAYER" -> "K|${packet.targetPlayerId}|${packet.playerId}"
             "HEARTBEAT" -> {
                 if (packet.players.isNotEmpty()) {
@@ -110,7 +116,9 @@ object FastPacketCodec {
                     RoomMessagePacket(
                         type = "READY_STATUS",
                         playerId = parts.getOrNull(1) ?: "",
-                        readyStatus = parts.getOrNull(2) ?: "NOT_READY"
+                        readyStatus = parts.getOrNull(2) ?: "NOT_READY",
+                        username = parts.getOrNull(3) ?: "",
+                        displayName = parts.getOrNull(4) ?: ""
                     )
                 }
 

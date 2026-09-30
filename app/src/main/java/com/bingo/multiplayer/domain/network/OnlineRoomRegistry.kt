@@ -391,16 +391,18 @@ object OnlineRoomRegistry {
                         val known = knownPlayers.find {
                             it.id == existing.id || (it.username.isNotBlank() && it.username.equals(existing.username, ignoreCase = true))
                         }
-                        if (known != null && known.lobbyReadyStatus.isNotBlank()) {
-                            existing.copy(
-                                lobbyReadyStatus = known.lobbyReadyStatus,
-                                lastSeenTimestamp = maxOf(existing.lastSeenTimestamp, known.lastSeenTimestamp)
-                            )
-                        } else if (existing.isHost && isHostAlive) {
-                            existing.copy(lastSeenTimestamp = now)
-                        } else {
-                            existing
+                        val effReady = when {
+                            existing.lobbyReadyStatus == "LEFT_LOBBY" || known?.lobbyReadyStatus == "LEFT_LOBBY" -> "LEFT_LOBBY"
+                            existing.lobbyReadyStatus == "IN_GAME" || known?.lobbyReadyStatus == "IN_GAME" -> "IN_GAME"
+                            existing.lobbyReadyStatus == "READY" || known?.lobbyReadyStatus == "READY" -> "READY"
+                            existing.lobbyReadyStatus.isNotBlank() -> existing.lobbyReadyStatus
+                            known?.lobbyReadyStatus?.isNotBlank() == true -> known.lobbyReadyStatus
+                            else -> "NOT_READY"
                         }
+                        existing.copy(
+                            lobbyReadyStatus = effReady,
+                            lastSeenTimestamp = maxOf(existing.lastSeenTimestamp, known?.lastSeenTimestamp ?: 0L)
+                        )
                     } else if (existing.isHost && isHostAlive) {
                         existing.copy(lastSeenTimestamp = now)
                     } else {

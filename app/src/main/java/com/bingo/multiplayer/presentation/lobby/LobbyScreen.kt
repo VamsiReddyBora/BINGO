@@ -79,6 +79,20 @@ fun LobbyScreen(
     val localUid = currentUserId.ifBlank { currentUser?.uid ?: "" }
     var localReadyOverride by remember { mutableStateOf<Boolean?>(null) }
 
+    val myPlayer = players.find {
+        (localUid.isNotBlank() && it.id == localUid) ||
+        (currentUser?.username?.isNotBlank() == true && (it.username.equals(currentUser.username, ignoreCase = true) || it.displayName.equals(currentUser.username, ignoreCase = true)))
+    } ?: if (!isHost) players.firstOrNull { !it.isHost } else players.firstOrNull { it.isHost }
+
+    LaunchedEffect(myPlayer?.lobbyReadyStatus) {
+        val s = myPlayer?.lobbyReadyStatus
+        if (s != null && localReadyOverride != null) {
+            if (localReadyOverride == (s == "READY")) {
+                localReadyOverride = null
+            }
+        }
+    }
+
     var searchQuery by remember { mutableStateOf("") }
     var isSearching by remember { mutableStateOf(false) }
     var searchResult by remember { mutableStateOf<PlayerRegistryEntry?>(null) }
@@ -1115,11 +1129,6 @@ fun LobbyScreen(
                     )
                 }
             } else {
-                val myPlayer = players.find {
-                    (localUid.isNotBlank() && it.id == localUid) ||
-                    (currentUser?.username?.isNotBlank() == true && (it.username.equals(currentUser.username, ignoreCase = true) || it.displayName.equals(currentUser.username, ignoreCase = true)))
-                } ?: if (!isHost) players.firstOrNull { !it.isHost } else null
-
                 val isMyStatusReady = localReadyOverride ?: (myPlayer?.lobbyReadyStatus == "READY")
 
                 Column(

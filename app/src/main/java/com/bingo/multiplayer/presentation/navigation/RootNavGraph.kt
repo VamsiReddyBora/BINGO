@@ -116,7 +116,10 @@ fun RootNavGraph(
 
     fun getLocalUid(): String {
         val state = authRepository.authState.value
-        return (state as? AuthState.Authenticated)?.user?.uid ?: "local_player"
+        val user = (state as? AuthState.Authenticated)?.user
+        return user?.uid?.takeIf { it.isNotBlank() && it != "local_player" }
+            ?: user?.username?.takeIf { it.isNotBlank() }?.let { "u_$it" }
+            ?: authRepository.deviceId
     }
 
     fun getPlayerDisplayName(): String {

@@ -434,13 +434,14 @@ class TurnRotationAndCodecTest {
             val now = System.currentTimeMillis()
             val isLocal = (p.id == host.id)
             val existing = playerRegistry[p.id]
-            val isRecentMqtt = existing != null && (now - existing.lastSeenTimestamp) < 5_000L && existing.lobbyReadyStatus.isNotBlank()
             val effReady = when {
                 isLocal -> host.lobbyReadyStatus
-                isRecentMqtt -> existing!!.lobbyReadyStatus
+                p.lobbyReadyStatus == "LEFT_LOBBY" || existing?.lobbyReadyStatus == "LEFT_LOBBY" -> "LEFT_LOBBY"
+                p.lobbyReadyStatus == "IN_GAME" || existing?.lobbyReadyStatus == "IN_GAME" -> "IN_GAME"
+                p.lobbyReadyStatus == "READY" || existing?.lobbyReadyStatus == "READY" -> "READY"
+                p.isHost -> "READY"
                 p.lobbyReadyStatus.isNotBlank() -> p.lobbyReadyStatus
                 existing?.lobbyReadyStatus != null -> existing.lobbyReadyStatus
-                p.isHost -> "READY"
                 else -> "NOT_READY"
             }
             playerRegistry[p.id] = (existing ?: p).copy(lobbyReadyStatus = effReady)
@@ -484,5 +485,25 @@ class TurnRotationAndCodecTest {
         val updatedGuest = updatedPlayers.find { it.id == "guest1" }
         assertNotNull(updatedGuest)
         assertEquals("READY", updatedGuest!!.lobbyReadyStatus)
+    }
+
+    @Test
+    fun testReadyStatusCodecAndPlayerMatching() {
+        val readyPacket = RoomMessagePacket(
+            type = "READY_STATUS",
+            playerId = "guest_123",
+            readyStatus = "READY",
+            username = "guestuser",
+            displayName = "Guest Player"
+        )
+        val encoded = FastPacketCodec.encode(readyPacket)
+        assertEquals("R|guest_123|READY|guestuser|Guest Player", encoded)
+
+        val decoded = FastPacketCodec.decode(encoded)
+        assertEquals("READY_STATUS", decoded.type)
+        assertEquals("guest_123", decoded.playerId)
+        assertEquals("READY", decoded.readyStatus)
+        assertEquals("guestuser", decoded.username)
+        assertEquals("Guest Player", decoded.displayName)
     }
 }

@@ -270,8 +270,12 @@ class LanP2pSessionManager {
             "READY_STATUS" -> {
                 if (packet.playerId.isNotEmpty()) {
                     val existing = playerRegistry[packet.playerId]
+                        ?: playerRegistry.values.find {
+                            (packet.username.isNotBlank() && it.username.equals(packet.username, ignoreCase = true)) ||
+                            (packet.displayName.isNotBlank() && it.displayName.equals(packet.displayName, ignoreCase = true))
+                        }
                     if (existing != null) {
-                        playerRegistry[packet.playerId] = existing.copy(
+                        playerRegistry[existing.id] = existing.copy(
                             lobbyReadyStatus = packet.readyStatus,
                             lastSeenTimestamp = System.currentTimeMillis()
                         )
@@ -321,7 +325,9 @@ class LanP2pSessionManager {
             RoomMessagePacket(
                 type = "READY_STATUS",
                 playerId = p.id,
-                readyStatus = status
+                readyStatus = status,
+                username = p.username,
+                displayName = p.displayName
             )
         )
     }
