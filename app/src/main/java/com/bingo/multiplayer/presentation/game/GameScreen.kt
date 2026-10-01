@@ -309,19 +309,25 @@ fun GameScreen(
     var reviewingOpponentBoard by remember { mutableStateOf(false) }
     var hasRequestedPlayAgain by remember(isGameOver) { mutableStateOf(false) }
 
-    // ── Victory/Defeat Stamp Celebration State ──
+    // ── Victory/Defeat Stamp & 360° Radial Starburst Celebration State ──
     var showStampBadge by remember { mutableStateOf(false) }
+    var isEmojiBurstActive by remember { mutableStateOf(false) }
     var animateStampDrop by remember { mutableStateOf(true) }
     var hasTriggeredCelebration by remember { mutableStateOf(false) }
 
     LaunchedEffect(isGameOver) {
         if (isGameOver) {
-            showStampBadge = true
-            animateStampDrop = !hasTriggeredCelebration
-            hasTriggeredCelebration = true
+            if (!hasTriggeredCelebration) {
+                hasTriggeredCelebration = true
+                isEmojiBurstActive = true
+                animateStampDrop = true
+            } else {
+                showStampBadge = true
+            }
         } else {
             hasTriggeredCelebration = false
             showStampBadge = false
+            isEmojiBurstActive = false
             animateStampDrop = true
             reviewingOpponentBoard = false
         }
@@ -857,6 +863,26 @@ fun GameScreen(
                     activeEmotes = activeEmotes.filter { it.id != finishedId }
                 }
             )
+
+            // ── Fullscreen 360° Radial Starburst Blast Celebration Overlay ──
+            if (isEmojiBurstActive) {
+                val burstType = when {
+                    isDraw -> StampResultType.DRAW
+                    didPlayerWin -> StampResultType.WON
+                    else -> StampResultType.LOST
+                }
+                GameOverEmojiProjectileBurst(
+                    resultType = burstType,
+                    modifier = Modifier.fillMaxSize(),
+                    onApexReached = {
+                        showStampBadge = true
+                        animateStampDrop = true
+                    },
+                    onBurstFinished = {
+                        isEmojiBurstActive = false
+                    }
+                )
+            }
 
             // Item 4: Quick Chat Floating Toast Layer
             if (showQuickChat && !isGameOver) {
