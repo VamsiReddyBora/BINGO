@@ -1,11 +1,20 @@
 @import "tailwindcss";
 
 @layer base {
-  * {
+  *, *::before, *::after {
+    box-sizing: border-box;
     font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
     -webkit-tap-highlight-color: transparent;
   }
   
+  html, body {
+    overflow-x: hidden;
+    max-width: 100vw;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+  }
+
   h1, h2, h3, .font-heading {
     font-family: 'Outfit', sans-serif;
   }

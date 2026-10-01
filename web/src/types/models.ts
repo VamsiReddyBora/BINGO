@@ -14,6 +14,48 @@ export interface Player {
   lastSeenTimestamp: number;
   lobbyReadyStatus: 'READY' | 'NOT_READY' | 'IN_GAME';
   readyVersion: number;
+  email?: string | null;
+  googleId?: string | null;
+  authProvider?: 'GOOGLE' | 'GUEST' | 'PLAY_GAMES';
+  matchHistory?: MatchRecord[];
+}
+
+export interface MatchRecord {
+  id: string;
+  mode: string;
+  opponentName: string;
+  didWin: boolean;
+  boardSize: number;
+  timestamp: number;
+  matchTitle?: string;
+  isDraw?: boolean;
+}
+
+export interface UserSettings {
+  soundEnabled: boolean;
+  hapticsEnabled: boolean;
+  preferredBoardSize: number;
+  darkTheme: boolean;
+}
+
+export interface CloudUserDataBackup {
+  profile: {
+    uid: string;
+    username: string;
+    displayName: string;
+    email?: string | null;
+    avatarUrl?: string | null;
+    avatarBase64?: string | null;
+    provider?: string;
+    gamesPlayed: number;
+    gamesWon: number;
+    currentStreak: number;
+    level: number;
+    xp: number;
+  };
+  settings?: UserSettings;
+  matchHistory?: MatchRecord[];
+  lastBackupTimestamp?: number;
 }
 
 export interface RoomMessagePacket {

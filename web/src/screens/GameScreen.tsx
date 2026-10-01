@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Wifi, Flag, Volume2, VolumeX, Copy, Check } from 'lucide-react';
-import { Player, Board, FloatingEmoteItem, RoomMessagePacket } from '../types/models';
+import { Flag, Volume2, VolumeX, Copy, Check } from 'lucide-react';
+import { Player, Board, FloatingEmoteItem, RoomMessagePacket, InGameChatMessage } from '../types/models';
 import { BingoEngine } from '../engine/bingoEngine';
 import { roomSync } from '../network/mqttSync';
 import { soundEffects } from '../audio/sounds';
 import { FloatingEmotes } from '../components/FloatingEmotes';
 import { EmojiReactionStrip } from '../components/EmojiReactionStrip';
 import { QuickChatDrawer } from '../components/QuickChatDrawer';
+import { InGameChatSpace } from '../components/InGameChatSpace';
 import { WinningModal } from '../components/WinningModal';
 import { PlayerAvatar } from '../components/PlayerAvatar';
 
@@ -43,6 +44,7 @@ export const GameScreen: React.FC<Props> = ({
   const [wantsPlayAgainName, setWantsPlayAgainName] = useState<string | null>(null);
 
   const [activeEmotes, setActiveEmotes] = useState<FloatingEmoteItem[]>([]);
+  const [chatMessages, setChatMessages] = useState<InGameChatMessage[]>([]);
   const [isQuickChatOpen, setIsQuickChatOpen] = useState<boolean>(false);
   const [pingMs, setPingMs] = useState<number>(24);
   const [soundOn, setSoundOn] = useState<boolean>(true);
@@ -98,89 +100,96 @@ export const GameScreen: React.FC<Props> = ({
       turnNumber
     );
     setBoard(newBoard);
-    const newCount = newBoard.completedLines.length;
-    setMyLinesCount(newCount);
 
     if (newLinesCompleted > 0) {
       soundEffects.playLine();
     }
 
-    // 2. Check Win
-    if (newCount >= 5 && !isGameOver) {
+    const currentCompleted = newBoard.completedLines.length;
+    setMyLinesCount(currentCompleted);
+
+    // 2. Check for Bingo win (5 lines completed)
+    if (currentCompleted >= 5) {
+      soundEffects.playBingoWin();
       setIsGameOver(true);
       setIsWinner(true);
       setWinnerName(localPlayer.displayName);
+
       if (!isAiMode) {
         roomSync.sendPacket({
           type: 'BINGO_CLAIMED',
           playerId: localPlayer.id,
           displayName: localPlayer.displayName,
-          number: 5
+          number
         });
       }
+      return;
     }
 
-    // 3. Switch turn
-    const nextTurnPlayerId = opponent?.id || 'ai_opponent';
-    setCurrentTurnPlayerId(nextTurnPlayerId);
-    setTurnNumber(prev => prev + 1);
-    setTurnTimer(30);
-
-    // 4. Broadcast move
+    // 3. Send MOVE to opponent via MQTT
     if (!isAiMode) {
+      const pickedHistory = newBoard.cells
+        .filter(c => c.markState.type === 'Marked')
+        .map(c => c.number);
+
       roomSync.sendPacket({
         type: 'PICK_NUMBER',
         number,
         playerId: localPlayer.id,
         turnNumber,
-        currentTurnPlayerId: nextTurnPlayerId,
+        currentTurnPlayerId: opponent?.id || '',
+        pickedHistory,
         seed
       });
-    } else {
-      // Trigger AI turn after delay
-      setTimeout(() => {
-        handleAiTurn(newBoard);
-      }, 900);
-    }
-  }, [isMyTurn, isGameOver, board, localPlayer, turnNumber, opponent, seed, isAiMode]);
-
-  // AI Solo mode turn
-  const handleAiTurn = (currentBoard: Board) => {
-    if (isGameOver) return;
-    const aiPick = BingoEngine.pickAiMove(currentBoard);
-    if (aiPick <= 0) return;
-
-    soundEffects.playPick();
-
-    const { board: updatedBoard, newLinesCompleted } = BingoEngine.markCell(
-      currentBoard,
-      aiPick,
-      'ai_opponent',
-      false,
-      turnNumber + 1
-    );
-    setBoard(updatedBoard);
-
-    if (newLinesCompleted > 0) {
-      soundEffects.playLine();
     }
 
-    // Opponent lines simulation
-    setOpponentLinesCount(prev => {
-      const next = prev + (Math.random() < 0.28 ? 1 : 0);
-      if (next >= 5 && !isGameOver) {
-        setIsGameOver(true);
-        setIsWinner(false);
-        setWinnerName(opponent?.displayName || 'AI Bot');
-      }
-      return next;
-    });
-
-    setCurrentTurnPlayerId(localPlayer.id);
+    // 4. Switch turn
+    const nextPlayerId = opponent?.id || (isAiMode ? 'ai_opponent' : '');
+    setCurrentTurnPlayerId(nextPlayerId);
     setTurnNumber(prev => prev + 1);
     setTurnTimer(30);
-    soundEffects.playTurnAlert();
-  };
+
+    // 5. If AI Mode: Trigger AI Bot response after 1.2s delay
+    if (isAiMode) {
+      setTimeout(() => {
+        setBoard(currentBoard => {
+          const unmarkedCells = currentBoard.cells.filter(c => c.markState.type === 'Unmarked');
+          if (unmarkedCells.length === 0) return currentBoard;
+
+          const randomCell = unmarkedCells[Math.floor(Math.random() * unmarkedCells.length)];
+          const aiNumber = randomCell.number;
+
+          soundEffects.playPick();
+          const { board: aiUpdatedBoard, newLinesCompleted: aiLines } = BingoEngine.markCell(
+            currentBoard,
+            aiNumber,
+            'ai_opponent',
+            false,
+            turnNumber + 1
+          );
+
+          if (aiLines > 0) soundEffects.playLine();
+
+          const aiCompleted = aiUpdatedBoard.completedLines.length;
+          setOpponentLinesCount(aiCompleted);
+
+          if (aiCompleted >= 5) {
+            soundEffects.playGameOver();
+            setIsGameOver(true);
+            setIsWinner(false);
+            setWinnerName('AI Bot');
+          } else {
+            setCurrentTurnPlayerId(localPlayer.id);
+            setTurnNumber(prev => prev + 1);
+            setTurnTimer(30);
+            soundEffects.playTurnAlert();
+          }
+
+          return aiUpdatedBoard;
+        });
+      }, 1200);
+    }
+  }, [board, isMyTurn, isGameOver, turnNumber, localPlayer, opponent, isAiMode, seed]);
 
   // Turn timer interval
   useEffect(() => {
@@ -188,7 +197,6 @@ export const GameScreen: React.FC<Props> = ({
     const timer = setInterval(() => {
       setTurnTimer(prev => {
         if (prev <= 1) {
-          // Timeout: automatically pass turn or pick first available unmarked cell
           if (isMyTurn) {
             const firstUnmarked = board.cells.find(c => c.markState.type === 'Unmarked');
             if (firstUnmarked) {
@@ -252,18 +260,28 @@ export const GameScreen: React.FC<Props> = ({
           break;
         }
 
+        case 'CHAT_MESSAGE':
         case 'CHAT_PHRASE': {
-          if (packet.displayName) {
-            spawnEmote(packet.displayName, false, opponent?.displayName || 'Opponent', 1.0);
+          const text = packet.displayName || packet.payload || '';
+          if (text) {
+            const sender = packet.username || opponent?.displayName || 'Opponent';
+            const newMsg: InGameChatMessage = {
+              id: packet.timestamp || Date.now(),
+              text,
+              isSelf: false,
+              senderName: sender,
+              timestamp: packet.timestamp || Date.now()
+            };
+            setChatMessages(prev => [...prev.slice(-30), newMsg]);
+            spawnEmote(text, false, sender, 1.0);
+            soundEffects.playTurnAlert();
           }
           break;
         }
 
         case 'PLAY_AGAIN': {
           setWantsPlayAgainName(packet.displayName || 'Opponent');
-          // If both agreed or host triggered new seed
           if (packet.seed && packet.seed !== seed) {
-            // Restart match
             setBoard(BingoEngine.generateBoard(5, packet.seed));
             setIsGameOver(false);
             setIsWinner(false);
@@ -306,15 +324,52 @@ export const GameScreen: React.FC<Props> = ({
     }
   };
 
-  // Send quick chat phrase
-  const handleSendPhrase = (phrase: string) => {
-    spawnEmote(phrase, true, undefined, 1.0);
+  // Send in-game chat message (custom or quick phrase)
+  const handleSendMessage = (text: string) => {
+    const trimmed = text.trim().slice(0, 100);
+    if (!trimmed) return;
+
+    const newMsg: InGameChatMessage = {
+      id: Date.now(),
+      text: trimmed,
+      isSelf: true,
+      senderName: localPlayer.displayName,
+      timestamp: Date.now()
+    };
+    setChatMessages(prev => [...prev.slice(-30), newMsg]);
+    spawnEmote(trimmed, true, localPlayer.displayName, 1.0);
+
     if (!isAiMode) {
       roomSync.sendPacket({
-        type: 'CHAT_PHRASE',
+        type: 'CHAT_MESSAGE',
         playerId: localPlayer.id,
-        displayName: phrase
+        displayName: trimmed,
+        username: localPlayer.displayName,
+        timestamp: Date.now()
       });
+    } else {
+      // Friendly AI bot interactive response
+      setTimeout(() => {
+        const aiReplies = [
+          'Nice move! 🤖',
+          'Good game! 👍',
+          'Almost Bingo! ⚡',
+          'Let’s see who gets Bingo first! 🎯',
+          'Well played! 👏',
+          'GG! 🎲'
+        ];
+        const reply = aiReplies[Math.floor(Math.random() * aiReplies.length)];
+        const aiMsg: InGameChatMessage = {
+          id: Date.now(),
+          text: reply,
+          isSelf: false,
+          senderName: 'AI Bot 🤖',
+          timestamp: Date.now()
+        };
+        setChatMessages(prev => [...prev.slice(-30), aiMsg]);
+        spawnEmote(reply, false, 'AI Bot', 1.0);
+        soundEffects.playTurnAlert();
+      }, 1400);
     }
   };
 
@@ -352,12 +407,12 @@ export const GameScreen: React.FC<Props> = ({
   };
 
   return (
-    <div className="relative min-h-[100dvh] flex flex-col justify-between max-w-lg lg:max-w-5xl mx-auto p-2 sm:p-4 pb-3 sm:pb-4 select-none bg-[#FAFAFC] text-slate-800">
+    <div className="relative min-h-[100dvh] w-full max-w-md lg:max-w-4xl xl:max-w-5xl mx-auto flex flex-col justify-between p-2 sm:p-4 pb-2 sm:pb-3 select-none bg-[#FAFAFC] text-slate-800 box-border overflow-x-hidden">
       {/* Floating Emotes Layer */}
       <FloatingEmotes emotes={activeEmotes} onRemoveEmote={removeEmote} />
 
       {/* Top Header Bar */}
-      <header className="flex items-center justify-between py-1.5 sm:py-2 px-1">
+      <header className="w-full flex items-center justify-between py-1 sm:py-2 px-1 gap-1">
         <button
           type="button"
           onClick={() => {
@@ -366,7 +421,7 @@ export const GameScreen: React.FC<Props> = ({
               onLeaveGame();
             }
           }}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white border border-slate-200 text-rose-600 hover:bg-rose-50 text-xs font-bold transition-all cursor-pointer shadow-sm active:scale-95"
+          className="flex-shrink-0 flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-full bg-white border border-slate-200 text-rose-600 hover:bg-rose-50 text-[11px] sm:text-xs font-bold transition-all cursor-pointer shadow-sm active:scale-95"
         >
           <Flag className="w-3.5 h-3.5" />
           <span>Surrender</span>
@@ -377,16 +432,16 @@ export const GameScreen: React.FC<Props> = ({
           type="button"
           onClick={handleCopyCode}
           title="Click to copy room code"
-          className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-extrabold tracking-wider transition-all cursor-pointer shadow-sm active:scale-95"
+          className="flex items-center gap-1 px-2.5 sm:px-3.5 py-1.5 rounded-full bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 text-[11px] sm:text-xs font-extrabold tracking-wider transition-all cursor-pointer shadow-sm active:scale-95 truncate max-w-[130px] sm:max-w-none"
         >
-          <span>ROOM: <strong className="text-[#7C3AED]">{roomCode}</strong></span>
-          {copiedCode ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3 h-3 text-slate-400" />}
+          <span className="truncate">ROOM: <strong className="text-[#7C3AED]">{roomCode}</strong></span>
+          {copiedCode ? <Check className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" /> : <Copy className="w-3 h-3 text-slate-400 flex-shrink-0" />}
         </button>
 
-        <div className="flex items-center gap-2">
+        <div className="flex-shrink-0 flex items-center gap-1 sm:gap-2">
           {/* Ping indicator */}
           {!isAiMode && (
-            <div className="flex items-center gap-1 text-[11px] font-bold text-slate-600 bg-white px-2.5 py-1 rounded-full border border-slate-200 shadow-sm">
+            <div className="flex items-center gap-1 text-[10px] sm:text-[11px] font-bold text-slate-600 bg-white px-2 sm:px-2.5 py-1 rounded-full border border-slate-200 shadow-sm">
               <span className={`w-2 h-2 rounded-full ${pingMs < 80 ? 'bg-emerald-500' : pingMs < 180 ? 'bg-amber-500' : 'bg-rose-500'}`} />
               <span>{pingMs}ms</span>
             </div>
@@ -396,25 +451,25 @@ export const GameScreen: React.FC<Props> = ({
           <button
             type="button"
             onClick={toggleSound}
-            className="w-8 h-8 rounded-full bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50 flex items-center justify-center transition-all cursor-pointer shadow-sm active:scale-95"
+            className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50 flex items-center justify-center transition-all cursor-pointer shadow-sm active:scale-95"
           >
-            {soundOn ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4 text-slate-400" />}
+            {soundOn ? <Volume2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> : <VolumeX className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400" />}
           </button>
         </div>
       </header>
 
-      {/* Main Adaptive Game Area: Stacked on Mobile/Tablet portrait, 2 Columns on Laptop/Desktop */}
-      <div className="flex-1 flex flex-col lg:flex-row lg:items-center lg:justify-between lg:gap-8 my-1 sm:my-2">
-        {/* Left Column on Desktop / Top Section on Mobile: B-I-N-G-O Letters & Player Status */}
-        <div className="w-full lg:w-[360px] xl:w-[400px] flex flex-col justify-center space-y-2 sm:space-y-3">
+      {/* Main Adaptive Game Area: Stacked on Mobile, 2 Columns on Laptop/Desktop */}
+      <div className="w-full flex-1 flex flex-col lg:flex-row lg:items-center lg:justify-between lg:gap-8 my-0.5 sm:my-1">
+        {/* Left Column on Desktop / Top Section on Mobile: B-I-N-G-O Letters & Player Cards */}
+        <div className="w-full lg:w-[360px] xl:w-[400px] flex flex-col justify-center space-y-1.5 sm:space-y-2.5 mx-auto">
           {/* B-I-N-G-O Letters Banner */}
-          <div className="flex justify-center items-center gap-2 sm:gap-3 py-2 px-3 bg-white border border-slate-200 rounded-2xl shadow-sm">
+          <div className="w-full max-w-[320px] xs:max-w-[350px] sm:max-w-[400px] lg:max-w-[440px] mx-auto flex justify-between items-center gap-1.5 sm:gap-2 py-1.5 sm:py-2 px-2.5 bg-white border border-slate-200 rounded-2xl shadow-sm box-border">
             {BINGO_LETTERS.map((letter, idx) => {
               const isLit = myLinesCount > idx;
               return (
                 <div
                   key={letter}
-                  className={`relative flex items-center justify-center w-10 h-10 sm:w-12 sm:h-12 lg:w-13 lg:h-13 rounded-xl font-heading font-black text-xl sm:text-2xl transition-all duration-300 ${
+                  className={`relative flex items-center justify-center flex-1 max-w-[48px] aspect-square rounded-xl font-heading font-black text-lg sm:text-2xl transition-all duration-300 ${
                     isLit
                       ? 'bg-gradient-to-tr from-amber-400 to-amber-500 text-white shadow-md scale-105'
                       : 'bg-slate-50 text-slate-400 border border-slate-200'
@@ -422,9 +477,9 @@ export const GameScreen: React.FC<Props> = ({
                 >
                   {letter}
                   {isLit && (
-                    <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+                    <span className="absolute -top-1 -right-1 flex h-2 w-2 sm:h-2.5 sm:w-2.5">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
+                      <span className="relative inline-flex rounded-full h-full w-full bg-amber-500"></span>
                     </span>
                   )}
                 </div>
@@ -433,10 +488,10 @@ export const GameScreen: React.FC<Props> = ({
           </div>
 
           {/* Players Status & Turn Bar */}
-          <div className="grid grid-cols-2 lg:grid-cols-1 gap-2">
+          <div className="w-full max-w-[320px] xs:max-w-[350px] sm:max-w-[400px] lg:max-w-[440px] mx-auto grid grid-cols-2 lg:grid-cols-1 gap-1.5 sm:gap-2 box-border">
             {/* Local Player Card */}
             <div
-              className={`flex items-center gap-2.5 p-2 sm:p-2.5 rounded-2xl border transition-all ${
+              className={`flex items-center gap-1.5 sm:gap-2.5 p-1.5 sm:p-2.5 rounded-2xl border transition-all min-w-0 ${
                 isMyTurn
                   ? 'bg-[#F5EEFF] border-2 border-[#7C3AED] shadow-sm'
                   : 'bg-white border border-slate-200 shadow-sm'
@@ -445,25 +500,25 @@ export const GameScreen: React.FC<Props> = ({
               <PlayerAvatar
                 avatarUrl={localPlayer.avatarUrl}
                 displayName={localPlayer.displayName}
-                sizeClassName="w-10 h-10 text-lg"
+                sizeClassName="w-8 h-8 sm:w-10 sm:h-10 text-base sm:text-lg flex-shrink-0"
                 fallbackIcon="🧑"
-                className="border border-purple-200 bg-[#F5EEFF] shadow-sm"
+                className="border border-purple-200 bg-[#F5EEFF] shadow-sm flex-shrink-0"
               />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between gap-1">
-                  <span className="text-xs font-bold text-slate-800 truncate">{localPlayer.displayName}</span>
+                  <span className="text-[11px] sm:text-xs font-bold text-slate-800 truncate">{localPlayer.displayName}</span>
                   <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-purple-100 text-[#7C3AED] flex-shrink-0">
                     {myLinesCount}/5
                   </span>
                 </div>
                 <div className="flex items-center gap-1 mt-0.5">
                   {isMyTurn ? (
-                    <span className="text-[11px] font-extrabold text-[#7C3AED] flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-[#7C3AED] animate-ping" />
-                      Your Turn ({turnTimer}s)
+                    <span className="text-[10px] sm:text-[11px] font-extrabold text-[#7C3AED] flex items-center gap-1 truncate">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#7C3AED] animate-ping flex-shrink-0" />
+                      <span className="truncate">Your Turn ({turnTimer}s)</span>
                     </span>
                   ) : (
-                    <span className="text-[11px] font-medium text-slate-400">Waiting...</span>
+                    <span className="text-[10px] sm:text-[11px] font-medium text-slate-400 truncate">Waiting...</span>
                   )}
                 </div>
               </div>
@@ -471,7 +526,7 @@ export const GameScreen: React.FC<Props> = ({
 
             {/* Opponent Card */}
             <div
-              className={`flex items-center gap-2.5 p-2 sm:p-2.5 rounded-2xl border transition-all ${
+              className={`flex items-center gap-1.5 sm:gap-2.5 p-1.5 sm:p-2.5 rounded-2xl border transition-all min-w-0 ${
                 !isMyTurn
                   ? 'bg-sky-50 border-2 border-sky-400 shadow-sm'
                   : 'bg-white border border-slate-200 shadow-sm'
@@ -480,13 +535,13 @@ export const GameScreen: React.FC<Props> = ({
               <PlayerAvatar
                 avatarUrl={opponent?.avatarUrl}
                 displayName={opponent?.displayName}
-                sizeClassName="w-10 h-10 text-lg"
+                sizeClassName="w-8 h-8 sm:w-10 sm:h-10 text-base sm:text-lg flex-shrink-0"
                 fallbackIcon={isAiMode ? '🤖' : '👤'}
-                className="border border-sky-200 bg-sky-50 shadow-sm"
+                className="border border-sky-200 bg-sky-50 shadow-sm flex-shrink-0"
               />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between gap-1">
-                  <span className="text-xs font-bold text-slate-800 truncate">
+                  <span className="text-[11px] sm:text-xs font-bold text-slate-800 truncate">
                     {opponent?.displayName || (isAiMode ? 'AI Bot' : 'Opponent')}
                   </span>
                   <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 flex-shrink-0">
@@ -495,19 +550,19 @@ export const GameScreen: React.FC<Props> = ({
                 </div>
                 <div className="flex items-center gap-1 mt-0.5">
                   {!isMyTurn ? (
-                    <span className="text-[11px] font-extrabold text-sky-600 flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-ping" />
-                      Picking... ({turnTimer}s)
+                    <span className="text-[10px] sm:text-[11px] font-extrabold text-sky-600 flex items-center gap-1 truncate">
+                      <span className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-ping flex-shrink-0" />
+                      <span className="truncate">Picking... ({turnTimer}s)</span>
                     </span>
                   ) : (
-                    <span className="text-[11px] font-medium text-slate-400">Waiting for you</span>
+                    <span className="text-[10px] sm:text-[11px] font-medium text-slate-400 truncate">Waiting for you</span>
                   )}
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Desktop-only Game Guidance Panel */}
+          {/* Desktop-only Match Guidance Panel */}
           <div className="hidden lg:block p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs text-slate-600 space-y-1">
             <p className="font-bold text-slate-700">🎯 Match Objective:</p>
             <p className="text-[11px] text-slate-500 leading-relaxed">
@@ -517,8 +572,8 @@ export const GameScreen: React.FC<Props> = ({
         </div>
 
         {/* Right Column on Desktop / Center Section on Mobile: 5x5 Grid */}
-        <main className="flex-1 flex flex-col items-center justify-center my-auto py-1 sm:py-2">
-          <div className="aspect-square w-full max-w-[360px] sm:max-w-[420px] lg:max-w-[460px] xl:max-w-[480px] grid grid-cols-5 gap-1.5 sm:gap-2 p-2 sm:p-2.5 bg-white border border-slate-200 rounded-3xl shadow-sm">
+        <main className="w-full flex-1 flex flex-col items-center justify-center my-auto py-1 sm:py-1.5">
+          <div className="aspect-square w-full max-w-[320px] xs:max-w-[350px] sm:max-w-[400px] lg:max-w-[440px] grid grid-cols-5 gap-1 xs:gap-1.5 sm:gap-2 p-1.5 xs:p-2 sm:p-2.5 bg-white border border-slate-200 rounded-2xl sm:rounded-3xl shadow-sm mx-auto box-border">
             {board.cells.map(cell => {
               const isMarked = cell.markState.type === 'Marked';
               const isOwnPick = isMarked && (cell.markState as any).isOwnPick;
@@ -530,7 +585,7 @@ export const GameScreen: React.FC<Props> = ({
                   type="button"
                   disabled={isMarked || !isMyTurn || isGameOver}
                   onClick={() => handlePickNumber(cell.number)}
-                  className={`relative flex items-center justify-center rounded-2xl font-black text-lg sm:text-2xl lg:text-3xl transition-all duration-200 cursor-pointer ${
+                  className={`relative flex items-center justify-center rounded-xl sm:rounded-2xl font-black text-base sm:text-2xl lg:text-3xl transition-all duration-200 cursor-pointer ${
                     isMarked
                       ? isLine
                         ? 'bg-gradient-to-tr from-amber-400 to-amber-500 text-white font-black shadow-md border-2 border-amber-300 scale-95'
@@ -546,7 +601,7 @@ export const GameScreen: React.FC<Props> = ({
 
                   {/* Pick mark badge */}
                   {isMarked && (
-                    <span className="absolute bottom-1 right-1 text-[9px] font-bold opacity-80">
+                    <span className="absolute bottom-1 right-1 text-[8px] sm:text-[9px] font-bold opacity-80">
                       {isOwnPick ? '✓' : '•'}
                     </span>
                   )}
@@ -557,8 +612,14 @@ export const GameScreen: React.FC<Props> = ({
         </main>
       </div>
 
+      {/* In-Game WhatsApp style Chat Space between Board and Emoji Reactions */}
+      <InGameChatSpace
+        messages={chatMessages}
+        onOpenChatDrawer={() => setIsQuickChatOpen(true)}
+      />
+
       {/* Bottom Emoji Reaction Strip & Quick Chat */}
-      <footer className="mt-1 pb-1 sm:pb-2">
+      <footer className="w-full max-w-[320px] xs:max-w-[350px] sm:max-w-[400px] lg:max-w-[440px] mx-auto mt-0.5 pb-1 sm:pb-2 box-border">
         <EmojiReactionStrip
           onSendEmote={handleSendEmote}
           onToggleQuickChat={() => setIsQuickChatOpen(prev => !prev)}
@@ -566,11 +627,11 @@ export const GameScreen: React.FC<Props> = ({
         />
       </footer>
 
-      {/* Quick Chat Drawer Panel */}
+      {/* Quick Chat Drawer Panel with Custom Input + Phrases */}
       <QuickChatDrawer
         isOpen={isQuickChatOpen}
         onClose={() => setIsQuickChatOpen(false)}
-        onSelectPhrase={handleSendPhrase}
+        onSendMessage={handleSendMessage}
       />
 
       {/* Winning / Game Over Modal */}

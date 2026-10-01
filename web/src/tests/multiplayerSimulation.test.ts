@@ -225,4 +225,158 @@ describe('Multiplayer Lobby & Game End-to-End Simulation', () => {
     assert.strictEqual(fetchedRoom.hostId, googleUserHost.id);
     assert.strictEqual(fetchedRoom.hostDisplayName, googleUserHost.displayName);
   });
+
+  it('Live in-game chat: clients exchange CHAT_MESSAGE and CHAT_PHRASE packets in real time', async () => {
+    const chatRoom = `CHAT${Math.floor(10 + Math.random() * 90)}`;
+    const sender = new MqttRoomManager();
+    const receiver = new MqttRoomManager();
+
+    const senderPlayer: Player = {
+      id: 'sender_p1',
+      displayName: 'Sender Alex',
+      username: 'alex',
+      isHost: true,
+      avatarUrl: '🧑',
+      score: 0,
+      completedLinesCount: 0,
+      gamesPlayed: 0,
+      gamesWon: 0,
+      currentStreak: 0,
+      level: 1,
+      lastSeenTimestamp: Date.now(),
+      lobbyReadyStatus: 'READY',
+      readyVersion: 0
+    };
+
+    const receiverPlayer: Player = {
+      id: 'receiver_p2',
+      displayName: 'Receiver Bob',
+      username: 'bob',
+      isHost: false,
+      avatarUrl: '👨',
+      score: 0,
+      completedLinesCount: 0,
+      gamesPlayed: 0,
+      gamesWon: 0,
+      currentStreak: 0,
+      level: 1,
+      lastSeenTimestamp: Date.now(),
+      lobbyReadyStatus: 'READY',
+      readyVersion: 0
+    };
+
+    sender.connect(chatRoom, senderPlayer);
+    receiver.connect(chatRoom, receiverPlayer);
+
+    const receivedChatPromise = new Promise<RoomMessagePacket>((resolve) => {
+      receiver.onPacketReceived = (pkt) => {
+        if (pkt.type === 'CHAT_MESSAGE') {
+          resolve(pkt);
+        }
+      };
+    });
+
+    // Wait for connection to establish
+    await new Promise(r => setTimeout(r, 2000));
+
+    // Send custom in-game chat message
+    await sender.sendPacket({
+      type: 'CHAT_MESSAGE',
+      playerId: senderPlayer.id,
+      displayName: 'Hey Bob, nice match! 🎯',
+      username: senderPlayer.displayName,
+      timestamp: Date.now()
+    });
+
+    const received = await Promise.race([
+      receivedChatPromise,
+      new Promise<null>(r => setTimeout(() => r(null), 5000))
+    ]);
+
+    assert.ok(received !== null, 'Receiver should receive in-game CHAT_MESSAGE packet');
+    assert.strictEqual(received.type, 'CHAT_MESSAGE');
+    assert.strictEqual(received.displayName, 'Hey Bob, nice match! 🎯');
+    assert.strictEqual(received.username, senderPlayer.displayName);
+
+    sender.disconnect();
+    receiver.disconnect();
+  });
+
+  it('Google user cloud backup and friends list cross-platform sync', async () => {
+    const testGoogleId = `gid_test_${Date.now()}`;
+    const testUsername = `user_${Math.floor(1000 + Math.random() * 9000)}`;
+
+    const backupData = {
+      profile: {
+        uid: `google_${testGoogleId}`,
+        username: testUsername,
+        displayName: 'Vamsi Cloud Player',
+        email: 'vamsi.cloud@example.com',
+        avatarUrl: 'https://lh3.googleusercontent.com/a/test-avatar',
+        gamesPlayed: 25,
+        gamesWon: 18,
+        currentStreak: 6,
+        level: 5,
+        xp: 1200
+      },
+      settings: {
+        soundEnabled: true,
+        hapticsEnabled: true,
+        preferredBoardSize: 5,
+        darkTheme: false
+      },
+      matchHistory: [
+        {
+          id: 'match_1',
+          mode: 'Online',
+          opponentName: 'Android Rival',
+          didWin: true,
+          boardSize: 5,
+          timestamp: Date.now() - 3600000
+        }
+      ],
+      lastBackupTimestamp: Date.now()
+    };
+
+    // 1. Save user backup to cloud
+    const saved = await CloudRegistry.saveUserDataBackup(testGoogleId, backupData);
+    assert.strictEqual(saved, true, 'Should successfully save user data backup to cloud');
+
+    // 2. Fetch user backup by Google ID
+    const restoredByGid = await CloudRegistry.fetchUserDataBackup(testGoogleId);
+    assert.ok(restoredByGid !== null, 'Should fetch user data backup by Google ID');
+    assert.strictEqual(restoredByGid.profile.username, testUsername);
+    assert.strictEqual(restoredByGid.profile.displayName, 'Vamsi Cloud Player');
+    assert.strictEqual(restoredByGid.profile.gamesWon, 18);
+    assert.strictEqual(restoredByGid.profile.level, 5);
+    assert.strictEqual(restoredByGid.matchHistory?.length, 1);
+
+    // 3. Fetch user backup by username
+    const restoredByUser = await CloudRegistry.fetchUserBackupByUsername(testUsername);
+    assert.ok(restoredByUser !== null, 'Should fetch user data backup by username');
+    assert.strictEqual(restoredByUser.profile.username, testUsername);
+
+    // 4. Save and fetch friends list
+    const testFriends = [
+      {
+        uid: 'android_friend_1',
+        username: 'friend_rahul',
+        displayName: 'Rahul',
+        avatarUrl: '👦',
+        gamesPlayed: 10,
+        gamesWon: 7,
+        currentStreak: 2,
+        level: 3,
+        lastSeenTimestamp: Date.now()
+      }
+    ];
+
+    const friendsSaved = await CloudRegistry.saveCloudFriends(testUsername, testFriends);
+    assert.strictEqual(friendsSaved, true, 'Should save friends list to cloud');
+
+    const friendsFetched = await CloudRegistry.fetchCloudFriends(testUsername);
+    assert.strictEqual(friendsFetched.length, 1, 'Should fetch 1 friend');
+    assert.strictEqual(friendsFetched[0].username, 'friend_rahul');
+    assert.strictEqual(friendsFetched[0].displayName, 'Rahul');
+  });
 });

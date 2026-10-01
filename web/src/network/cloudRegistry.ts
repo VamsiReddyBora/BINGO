@@ -1,4 +1,4 @@
-import { Player } from '../types/models';
+import { Player, CloudUserDataBackup, MatchRecord } from '../types/models';
 import { roomSync } from './mqttSync';
 
 export const KEYVALUE_API_URL = 'https://keyvalue.immanuel.co/api/KeyVal';
@@ -505,5 +505,211 @@ export class CloudRegistry {
       }
     } catch {}
     return [];
+  }
+
+  // ── GOOGLE USER BACKUP & ACCOUNT RESTORE (MATCHING ANDROID AccountSessionManager) ──
+
+  /**
+   * Fetches user profile, match history, and stats from persistent cloud storage (ExtendsClass + KeyVal).
+   */
+  public static async fetchUserDataBackup(googleId: string): Promise<CloudUserDataBackup | null> {
+    const gid = googleId.trim();
+    if (!gid) return null;
+
+    try {
+      let binId = await this.getKeyValue(`gid_${gid}`);
+      if (!binId) return null;
+
+      // If binId contains raw JSON
+      if (binId.startsWith('{')) {
+        return JSON.parse(binId);
+      }
+
+      // Fetch from ExtendsClass JSON storage
+      const res = await fetch(`https://extendsclass.com/api/json-storage/bin/${binId}`);
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (data && data.profile) {
+        return data as CloudUserDataBackup;
+      }
+    } catch (e) {
+      console.warn('fetchUserDataBackup error for ' + gid, e);
+    }
+    return null;
+  }
+
+  /**
+   * Fetches user profile backup by unique username from persistent cloud storage.
+   */
+  public static async fetchUserBackupByUsername(username: string): Promise<CloudUserDataBackup | null> {
+    const clean = username.trim().toLowerCase().replace(/^@/, '');
+    if (!clean) return null;
+
+    try {
+      const binId = await this.getKeyValue(`user_${clean}`);
+      if (!binId) return null;
+
+      if (binId.startsWith('{')) {
+        return JSON.parse(binId);
+      }
+
+      const res = await fetch(`https://extendsclass.com/api/json-storage/bin/${binId}`);
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (data && data.profile) {
+        return data as CloudUserDataBackup;
+      }
+    } catch (e) {
+      console.warn('fetchUserBackupByUsername error for ' + clean, e);
+    }
+    return null;
+  }
+
+  /**
+   * Saves or updates full player profile, match history, and stats to ExtendsClass + KeyVal.
+   */
+  public static async saveUserDataBackup(googleId: string, backup: CloudUserDataBackup): Promise<boolean> {
+    const gid = googleId.trim();
+    if (!gid) return false;
+
+    try {
+      const cleanUser = backup.profile.username.trim().toLowerCase().replace(/^@/, '');
+      const jsonStr = JSON.stringify(backup);
+
+      let binId = await this.getKeyValue(`gid_${gid}`);
+      let success = false;
+
+      if (binId && !binId.startsWith('{') && binId.length < 50) {
+        // Update existing bin
+        const updateRes = await fetch(`https://extendsclass.com/api/json-storage/bin/${binId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: jsonStr
+        });
+        success = updateRes.ok;
+      }
+
+      if (!success) {
+        // Create new bin
+        const createRes = await fetch('https://extendsclass.com/api/json-storage/bin', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: jsonStr
+        });
+        if (createRes.ok) {
+          const respData = await createRes.json();
+          binId = respData.id;
+          if (binId) {
+            await this.setKeyValue(`gid_${gid}`, binId);
+            success = true;
+          }
+        }
+      }
+
+      if (cleanUser && binId) {
+        await this.setKeyValue(`user_${cleanUser}`, binId);
+      }
+
+      // Also register universally in reg_{username}
+      const player: Player = {
+        id: backup.profile.uid,
+        username: backup.profile.username,
+        displayName: backup.profile.displayName,
+        avatarUrl: backup.profile.avatarUrl || '🧑',
+        score: 0,
+        completedLinesCount: 0,
+        gamesPlayed: backup.profile.gamesPlayed,
+        gamesWon: backup.profile.gamesWon,
+        currentStreak: backup.profile.currentStreak,
+        level: backup.profile.level,
+        lastSeenTimestamp: Date.now(),
+        lobbyReadyStatus: 'NOT_READY',
+        readyVersion: 0,
+        isHost: false,
+        email: backup.profile.email,
+        googleId: gid
+      };
+      await this.claimAndRegisterUser(player);
+
+      return success;
+    } catch (e) {
+      console.warn('saveUserDataBackup error for ' + gid, e);
+      return false;
+    }
+  }
+
+  // ── FRIENDS LIST CLOUD SYNC (MATCHING ANDROID FriendRequestManager) ──
+
+  /**
+   * Fetches real friends list from KeyVal storage (friends_{cleanUsername}) matching Android.
+   */
+  public static async fetchCloudFriends(username: string): Promise<PlayerRegistryEntry[]> {
+    const clean = username.trim().toLowerCase().replace(/^@/, '');
+    if (!clean) return [];
+
+    try {
+      const raw = await this.getKeyValue(`friends_${clean}`);
+      if (!raw) return [];
+
+      let jsonStr = raw;
+      try {
+        jsonStr = await safeBase64DecodeAsync(raw);
+      } catch {}
+
+      if (jsonStr.startsWith('[')) {
+        const rawList = JSON.parse(jsonStr) as any[];
+        return rawList.map(item => ({
+          username: (item.username || '').toLowerCase().replace(/^@/, ''),
+          uid: item.uid || item.username || '',
+          displayName: item.displayName || item.username || 'Friend',
+          avatarUrl: item.avatarUrl || '🧑',
+          gamesPlayed: item.gamesPlayed || 0,
+          gamesWon: item.gamesWon || 0,
+          currentStreak: item.currentStreak || 0,
+          level: item.level || 1,
+          lastSeenTimestamp: item.lastSeenTimestamp || Date.now()
+        }));
+      }
+    } catch (e) {
+      console.warn('fetchCloudFriends error for ' + clean, e);
+    }
+    return [];
+  }
+
+  /**
+   * Saves real friends list to KeyVal storage (friends_{cleanUsername}) matching Android.
+   */
+  public static async saveCloudFriends(username: string, friends: PlayerRegistryEntry[]): Promise<boolean> {
+    const clean = username.trim().toLowerCase().replace(/^@/, '');
+    if (!clean) return false;
+
+    try {
+      const androidFormat = friends.map(f => ({
+        uid: f.uid,
+        username: f.username,
+        displayName: f.displayName,
+        avatarUrl: f.avatarUrl,
+        status: 'ACCEPTED'
+      }));
+
+      const jsonStr = JSON.stringify(androidFormat);
+      const b64 = await safeBase64EncodeAsync(jsonStr);
+      return await this.setKeyValue(`friends_${clean}`, b64);
+    } catch (e) {
+      console.warn('saveCloudFriends error for ' + clean, e);
+      return false;
+    }
+  }
+
+  /**
+   * Adds friend both to local and to cloud list (friends_{cleanUsername}).
+   */
+  public static async addFriendToCloudList(myUsername: string, friend: PlayerRegistryEntry): Promise<PlayerRegistryEntry[]> {
+    const clean = myUsername.trim().toLowerCase().replace(/^@/, '');
+    const current = await this.fetchCloudFriends(clean);
+    const filtered = current.filter(f => f.username !== friend.username);
+    const updated = [friend, ...filtered];
+    await this.saveCloudFriends(clean, updated);
+    return updated;
   }
 }

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Search, UserPlus, Users, Trophy, Flame, Play, Check, Clock, UserCheck } from 'lucide-react';
 import { Player } from '../types/models';
 import { CloudRegistry, PlayerRegistryEntry } from '../network/cloudRegistry';
@@ -33,6 +33,28 @@ export const DashboardAndFriendsScreen: React.FC<Props> = ({
     return [];
   });
 
+  // Automatically sync friends from Cloud Storage (matching Android friends_{username})
+  useEffect(() => {
+    let isMounted = true;
+    CloudRegistry.fetchCloudFriends(localPlayer.username).then(cloudFriends => {
+      if (isMounted && cloudFriends.length > 0) {
+        setFriendsList(prev => {
+          const merged = [...cloudFriends];
+          prev.forEach(p => {
+            if (!merged.some(m => m.username === p.username)) {
+              merged.push(p);
+            }
+          });
+          try {
+            localStorage.setItem(STORAGE_KEY_FRIENDS, JSON.stringify(merged));
+          } catch {}
+          return merged;
+        });
+      }
+    });
+    return () => { isMounted = false; };
+  }, [localPlayer.username]);
+
   const saveFriends = (newList: PlayerRegistryEntry[]) => {
     setFriendsList(newList);
     try {
@@ -60,10 +82,13 @@ export const DashboardAndFriendsScreen: React.FC<Props> = ({
     }
   };
 
-  const handleAddFriend = (entry: PlayerRegistryEntry) => {
+  const handleAddFriend = async (entry: PlayerRegistryEntry) => {
     soundEffects.playTap();
     if (friendsList.some(f => f.username === entry.username)) return;
-    saveFriends([entry, ...friendsList]);
+    const updated = [entry, ...friendsList];
+    saveFriends(updated);
+    // Sync with KeyVal cloud storage for Android cross-platform sync
+    CloudRegistry.addFriendToCloudList(localPlayer.username, entry).catch(console.warn);
   };
 
   // Win rate calculation
@@ -77,7 +102,7 @@ export const DashboardAndFriendsScreen: React.FC<Props> = ({
     localPlayer.level >= 3 ? 'Silver Competitor' : 'Bronze Player';
 
   return (
-    <div className="min-h-[100dvh] flex flex-col justify-between max-w-lg md:max-w-2xl lg:max-w-3xl mx-auto p-4 sm:p-6 select-none bg-[#FAFAFC] text-slate-800">
+    <div className="min-h-[100dvh] w-full flex flex-col justify-between max-w-lg md:max-w-2xl lg:max-w-3xl mx-auto p-3 sm:p-6 select-none bg-[#FAFAFC] text-slate-800 box-border overflow-x-hidden">
       {/* Header */}
       <header className="flex items-center gap-3 py-2">
         <button

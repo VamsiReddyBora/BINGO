@@ -158,7 +158,7 @@ export const EmojiReactionStrip: React.FC<Props> = ({
       )}
 
       {/* Main Container Pill */}
-      <div className="flex items-center gap-1.5 p-1.5 bg-white/95 border border-slate-200/90 rounded-full shadow-lg backdrop-blur-xl">
+      <div className="flex items-center gap-1.5 p-1 sm:p-1.5 bg-white/95 border border-slate-200/90 rounded-full shadow-lg backdrop-blur-xl w-full max-w-md mx-auto overflow-hidden box-border">
         {/* Quick Chat Button (Click = toggle, Long-press = scroll to start) */}
         <button
           type="button"
@@ -166,7 +166,7 @@ export const EmojiReactionStrip: React.FC<Props> = ({
           onPointerDown={handleQuickChatPointerDown}
           onPointerUp={handleQuickChatPointerUp}
           onPointerCancel={handleQuickChatPointerCancel}
-          className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-all ${
+          className={`flex-shrink-0 w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center transition-all ${
             isQuickChatOpen
               ? 'bg-purple-600 text-white shadow-md'
               : 'bg-slate-100 text-slate-700 hover:text-purple-600 hover:bg-purple-50 active:scale-95'
@@ -181,7 +181,7 @@ export const EmojiReactionStrip: React.FC<Props> = ({
         {/* Horizontally Scrollable Emoji Strip */}
         <div
           ref={stripRef}
-          className="flex items-center gap-1 overflow-x-auto no-scrollbar scroll-smooth py-0.5 px-1 touch-pan-x"
+          className="flex-1 min-w-0 flex items-center gap-1 overflow-x-auto no-scrollbar scroll-smooth py-0.5 px-1 touch-pan-x"
         >
           {EMOJI_LIST.map((emoji, idx) => (
             <button
