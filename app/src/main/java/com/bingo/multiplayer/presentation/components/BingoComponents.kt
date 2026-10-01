@@ -44,6 +44,7 @@ fun BingoBoardView(
     isInteractive: Boolean,
     onCellClicked: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    isWinningBoard: Boolean = false,
     onBoardWidthMeasured: ((Dp) -> Unit)? = null
 ) {
     val size = board.size
@@ -75,7 +76,7 @@ fun BingoBoardView(
             ) {
                 for (c in 0 until size) {
                     val letter = if (c < BINGO_LETTERS.size) BINGO_LETTERS[c] else '★'
-                    val isUnlocked = c < board.completedLinesCount || (board.isBingo && c < size)
+                    val isUnlocked = c < board.completedLinesCount || board.isBingo || (isWinningBoard && c < size)
                     val strikeProgress by animateFloatAsState(
                         targetValue = if (isUnlocked) 1f else 0f,
                         animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing),

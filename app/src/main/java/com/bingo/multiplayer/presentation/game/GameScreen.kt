@@ -309,6 +309,36 @@ fun GameScreen(
     var reviewingOpponentBoard by remember { mutableStateOf(false) }
     var hasRequestedPlayAgain by remember(isGameOver) { mutableStateOf(false) }
 
+    // ── Victory/Defeat Stamp & Emoji Projectile Celebration State ──
+    var showStampBadge by remember { mutableStateOf(false) }
+    var isEmojiBurstActive by remember { mutableStateOf(false) }
+    var animateStampDrop by remember { mutableStateOf(true) }
+    var hasTriggeredCelebration by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isGameOver) {
+        if (isGameOver) {
+            if (!hasTriggeredCelebration) {
+                hasTriggeredCelebration = true
+                isEmojiBurstActive = true
+                animateStampDrop = true
+            } else {
+                showStampBadge = true
+            }
+        } else {
+            hasTriggeredCelebration = false
+            showStampBadge = false
+            isEmojiBurstActive = false
+            animateStampDrop = true
+            reviewingOpponentBoard = false
+        }
+    }
+
+    LaunchedEffect(reviewingOpponentBoard) {
+        if (showStampBadge) {
+            animateStampDrop = false
+        }
+    }
+
     val displayedBoard = if (isGameOver && reviewingOpponentBoard && opponentBoard != null) {
         opponentBoard
     } else {
@@ -533,60 +563,7 @@ fun GameScreen(
                 }
 
                 if (isGameOver) {
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    // ── Game Over Result Banner ──
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp),
-                        shape = RoundedCornerShape(16.dp),
-                        color = when {
-                            isDraw -> Color(0xFFFEF9C3)
-                            didPlayerWin -> Color(0xFFFEF3C7)
-                            else -> tokens.surface
-                        },
-                        border = BorderStroke(
-                            1.dp,
-                            when {
-                                isDraw -> Color(0xFFEAB308)
-                                didPlayerWin -> Color(0xFFF59E0B)
-                                else -> tokens.surfaceBorder
-                            }
-                        )
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(vertical = 10.dp, horizontal = 16.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(
-                                text = when {
-                                    isDraw -> "🤝 Draw Match!"
-                                    didPlayerWin -> "🎉 B I N G O ! Victory!"
-                                    else -> "MATCH ENDED • $opponentName Won"
-                                },
-                                fontWeight = FontWeight.Black,
-                                fontSize = 15.sp,
-                                color = when {
-                                    isDraw -> Color(0xFF854D0E)
-                                    didPlayerWin -> Color(0xFF92400E)
-                                    else -> tokens.cellNeutralText
-                                }
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = when {
-                                    isDraw -> "Both players completed their lines simultaneously! 🤝 Review gameplay below."
-                                    didPlayerWin -> "You completed ${board.completedLinesCount} lines! Review gameplay below."
-                                    else -> "$opponentName completed their lines. Switch boards below to review."
-                                },
-                                fontSize = 11.5.sp,
-                                color = tokens.cellNeutralText.copy(alpha = 0.7f)
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
 
                     // ── Post-Game Board Review Switcher ──
                     Surface(
@@ -807,14 +784,37 @@ fun GameScreen(
                     .padding(horizontal = 14.dp, vertical = 6.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Reserved empty space between top bar and Bingo board
-                Spacer(modifier = Modifier.weight(0.12f))
+                // Reserved empty space between top bar and Bingo board: Stamped badge on game over
+                Box(
+                    modifier = Modifier
+                        .weight(0.12f)
+                        .fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (isGameOver && showStampBadge) {
+                        val stampType = when {
+                            isDraw -> StampResultType.DRAW
+                            !reviewingOpponentBoard -> if (didPlayerWin) StampResultType.WON else StampResultType.LOST
+                            else -> if (didPlayerWin) StampResultType.LOST else StampResultType.WON
+                        }
+                        VictoryStampBadge(
+                            resultType = stampType,
+                            animateStampDrop = animateStampDrop
+                        )
+                    }
+                }
 
                 // Item 4: 5x5 Bingo Board with B-I-N-G-O letters atop columns & diagonal strikes
+                val isWinningBoard = isGameOver && (
+                    (!reviewingOpponentBoard && didPlayerWin) ||
+                    (reviewingOpponentBoard && !didPlayerWin && !isDraw)
+                )
+
                 BingoBoardView(
                     board = displayedBoard,
                     isInteractive = isMyTurn && !isGameOver && !isGamePaused,
                     onCellClicked = onCellPicked,
+                    isWinningBoard = isWinningBoard,
                     onBoardWidthMeasured = { measuredWidth ->
                         boardWidthDp = measuredWidth
                     }
@@ -863,6 +863,27 @@ fun GameScreen(
                     activeEmotes = activeEmotes.filter { it.id != finishedId }
                 }
             )
+
+            // ── Game Over Emoji Projectile Burst (Confetti & Emotes from bottom corners to top apex, then falling) ──
+            if (isEmojiBurstActive) {
+                val burstType = when {
+                    isDraw -> StampResultType.DRAW
+                    didPlayerWin -> StampResultType.WON
+                    else -> StampResultType.LOST
+                }
+                GameOverEmojiProjectileBurst(
+                    resultType = burstType,
+                    modifier = Modifier.fillMaxSize(),
+                    onApexReached = {
+                        showStampBadge = true
+                        animateStampDrop = true
+                    },
+                    onBurstFinished = {
+                        isEmojiBurstActive = false
+                        animateStampDrop = false
+                    }
+                )
+            }
 
             // Item 4: Quick Chat Floating Toast Layer
             if (showQuickChat && !isGameOver) {

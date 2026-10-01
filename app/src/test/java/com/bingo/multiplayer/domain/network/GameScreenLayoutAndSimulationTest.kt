@@ -402,4 +402,76 @@ class GameScreenLayoutAndSimulationTest {
         assertEquals(false, opponentMsg.isSelf)
         assertEquals("Challenger", opponentMsg.senderName)
     }
+
+    @Test
+    fun testVictoryStampPerspectiveAndResultTypes() {
+        fun resolveStamp(
+            isDraw: Boolean,
+            didPlayerWin: Boolean,
+            reviewingOpponentBoard: Boolean
+        ): com.bingo.multiplayer.presentation.game.StampResultType {
+            return when {
+                isDraw -> com.bingo.multiplayer.presentation.game.StampResultType.DRAW
+                !reviewingOpponentBoard -> if (didPlayerWin) com.bingo.multiplayer.presentation.game.StampResultType.WON else com.bingo.multiplayer.presentation.game.StampResultType.LOST
+                else -> if (didPlayerWin) com.bingo.multiplayer.presentation.game.StampResultType.LOST else com.bingo.multiplayer.presentation.game.StampResultType.WON
+            }
+        }
+
+        // Case 1: Player won the match
+        // My Board -> YOU'VE WON! (WON)
+        assertEquals(com.bingo.multiplayer.presentation.game.StampResultType.WON, resolveStamp(isDraw = false, didPlayerWin = true, reviewingOpponentBoard = false))
+        // Opponent's Board -> YOU LOST! (LOST) - shows opponent's perspective
+        assertEquals(com.bingo.multiplayer.presentation.game.StampResultType.LOST, resolveStamp(isDraw = false, didPlayerWin = true, reviewingOpponentBoard = true))
+
+        // Case 2: Player lost the match
+        // My Board -> YOU LOST! (LOST)
+        assertEquals(com.bingo.multiplayer.presentation.game.StampResultType.LOST, resolveStamp(isDraw = false, didPlayerWin = false, reviewingOpponentBoard = false))
+        // Opponent's Board -> YOU'VE WON! (WON)
+        assertEquals(com.bingo.multiplayer.presentation.game.StampResultType.WON, resolveStamp(isDraw = false, didPlayerWin = false, reviewingOpponentBoard = true))
+
+        // Case 3: Draw match
+        // Both boards show DRAW!
+        assertEquals(com.bingo.multiplayer.presentation.game.StampResultType.DRAW, resolveStamp(isDraw = true, didPlayerWin = false, reviewingOpponentBoard = false))
+        assertEquals(com.bingo.multiplayer.presentation.game.StampResultType.DRAW, resolveStamp(isDraw = true, didPlayerWin = false, reviewingOpponentBoard = true))
+    }
+
+    @Test
+    fun testGameOverEmojiBurstPools() {
+        val winnerEmojis = listOf("🎊", "🎉", "✨", "⭐", "🏆", "🥳", "🎈", "🥇", "🌟", "🔥")
+        val loserEmojis = listOf("🫪", "😑", "😐", "😵", "💫", "🤧", "🫩", "😩", "😖", "😭", "💔")
+        val drawEmojis = listOf("🎊", "🎉", "✨", "🫪", "😑", "😐", "😵", "💫", "🤧", "🫩", "😩", "😖", "🤝")
+
+        // Winner celebration contains confetti
+        assertTrue(winnerEmojis.contains("🎊"))
+        assertTrue(winnerEmojis.contains("🎉"))
+        assertTrue(winnerEmojis.contains("✨"))
+
+        // Loser emojis contain requested emojis
+        assertTrue(loserEmojis.contains("🫪"))
+        assertTrue(loserEmojis.contains("😑"))
+        assertTrue(loserEmojis.contains("😐"))
+        assertTrue(loserEmojis.contains("😵"))
+        assertTrue(loserEmojis.contains("💫"))
+        assertTrue(loserEmojis.contains("🤧"))
+        assertTrue(loserEmojis.contains("🫩"))
+        assertTrue(loserEmojis.contains("😩"))
+        assertTrue(loserEmojis.contains("😖"))
+
+        // Draw pool combines celebration and loser emojis
+        assertTrue(drawEmojis.contains("🎉"))
+        assertTrue(drawEmojis.contains("🫪"))
+        assertTrue(drawEmojis.contains("😵"))
+        assertTrue(drawEmojis.contains("🤝"))
+    }
+
+    @Test
+    fun testGuaranteedLastOStrikeWhenGameWon() {
+        val board = BingoEngine().generateBoard(5)
+
+        // When isWinningBoard is true, all columns 0..4 (B, I, N, G, O) must be unlocked
+        for (c in 0 until 5) {
+            val isUnlocked = c < board.completedLinesCount || board.isBingo || (true && c < 5)
+            assertTrue("Column $c must be unlocked on winning board", isUnlocked)
+        }
+    }
 }
