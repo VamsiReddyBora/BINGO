@@ -238,34 +238,33 @@ private fun StampDustPuff(color: Color) {
 }
 
 /**
- * Projectile emoji particle data.
+ * Kinematic projectile emoji particle data.
  */
 private data class EmojiParticle(
     val emoji: String,
     val startX: Float,
     val startY: Float,
-    val controlX: Float,
-    val controlY: Float,
+    val apexX: Float,
+    val apexY: Float,
     val endX: Float,
     val endY: Float,
+    val peakRatio: Float,
     val delayNanos: Long,
     val durationNanos: Long,
     val rotationTarget: Float,
-    val fontSizeSp: Float
+    val fontSizeSp: Float,
+    val horizontalSway: Float
 )
 
 /**
  * Fullscreen Emoji Projectile Burst:
- * - Shoots from the left-center/bottom-half and right-center/bottom-half regions across the screen.
- * - Reaches upwards occupying all screen columns up to the stamp area.
- * - Falls freely and disperses across the entire bottom boundary (left corner, middle, right corner).
- *   Zero central clumping/overlap.
+ * - Staggered launch waves with small gap intervals to prevent dense clustering/bunching.
+ * - Varied launch origins across lower half of screen (left, right, and center).
+ * - High-reaching trajectories rising all the way up to the stamp area with varied random heights.
+ * - Scattered descent across the entire bottom boundary with zero central overlap.
  * - Winner: Celebration confetti emojis (🎊 🎉 ✨ etc.).
  * - Loser: Defeat & cry emojis (🫪😑😐😵💫😵🤧🫩😩😖).
  * - Draw: Combined celebration + loser emojis.
- *
- * Sequence: Emojis launch first; when they reach apex / top of screen and start falling,
- * [onApexReached] is triggered to paste the stamp badge.
  */
 @Composable
 fun GameOverEmojiProjectileBurst(
@@ -288,66 +287,84 @@ fun GameOverEmojiProjectileBurst(
         val screenWidth = constraints.maxWidth.toFloat()
         val screenHeight = constraints.maxHeight.toFloat()
 
-        // Create particles distributed across broad launch zones and landing across the full bottom width
+        // Create particles organized into sequential waves with small gap intervals
         val particles = remember(resultType) {
             val list = mutableListOf<EmojiParticle>()
-            val count = 64
+            val count = 60
+            val wavesCount = 6
+            val waveSpacingMillis = 280L
             val random = Random(42)
 
             for (i in 0 until count) {
+                val waveIndex = i / (count / wavesCount)
+                val indexInWave = i % (count / wavesCount)
                 val emoji = emojiPool[random.nextInt(emojiPool.size)]
 
-                // Zone 0: Left side (45%), Zone 1: Right side (45%), Zone 2: Mid-bottom (10%)
-                val zoneChoice = i % 10
+                // Staggered launch delay with small gap intervals between waves
+                val waveBaseDelay = waveIndex * waveSpacingMillis
+                val intraWaveJitter = indexInWave * 20L + random.nextInt(-10, 25).toLong()
+                val delayMillis = (waveBaseDelay + intraWaveJitter).coerceAtLeast(0L)
+                val durationMillis = random.nextInt(1300, 1600).toLong()
+
+                // 1. Varied launch origin: left-half, right-half, or bottom-center
+                val sideChoice = random.nextInt(10)
                 val (startX, startY) = when {
-                    zoneChoice < 5 -> {
-                        // Left-center to bottom-half screen (from left edge up to 40% width, 48% to 98% height)
-                        val x = screenWidth * (0.01f + random.nextFloat() * 0.38f)
-                        val y = screenHeight * (0.48f + random.nextFloat() * 0.50f)
+                    sideChoice < 5 -> {
+                        // Left region (from far left edge to 42% width, from middle 45% height down to 96%)
+                        val x = screenWidth * (0.01f + random.nextFloat() * 0.40f)
+                        val y = screenHeight * (0.45f + random.nextFloat() * 0.52f)
                         Pair(x, y)
                     }
-                    zoneChoice < 9 -> {
-                        // Right-center to bottom-half screen (from 60% to 99% width, 48% to 98% height)
-                        val x = screenWidth * (0.60f + random.nextFloat() * 0.39f)
-                        val y = screenHeight * (0.48f + random.nextFloat() * 0.50f)
+                    sideChoice < 9 -> {
+                        // Right region (from 58% to 99% width, from middle 45% height down to 96%)
+                        val x = screenWidth * (0.58f + random.nextFloat() * 0.41f)
+                        val y = screenHeight * (0.45f + random.nextFloat() * 0.52f)
                         Pair(x, y)
                     }
                     else -> {
-                        // Lower-mid area (30% to 70% width, 70% to 98% height)
+                        // Lower-mid region
                         val x = screenWidth * (0.30f + random.nextFloat() * 0.40f)
-                        val y = screenHeight * (0.70f + random.nextFloat() * 0.28f)
+                        val y = screenHeight * (0.65f + random.nextFloat() * 0.32f)
                         Pair(x, y)
                     }
                 }
 
-                // Apex: Occupies the entire screen width, reaching up to the stamp area (0.06 to 0.22 of screen height)
-                val apexX = screenWidth * (0.05f + random.nextFloat() * 0.90f)
-                val apexY = screenHeight * (0.06f + random.nextFloat() * 0.16f)
+                // 2. Varied apex spot and height: Shoot up to stamp area with random tiers
+                val heightTier = random.nextInt(4)
+                val apexY = when (heightTier) {
+                    0 -> screenHeight * (0.04f + random.nextFloat() * 0.05f) // Level with/beside the stamp!
+                    1 -> screenHeight * (0.09f + random.nextFloat() * 0.06f) // Just below stamp / B-I-N-G-O letters
+                    2 -> screenHeight * (0.16f + random.nextFloat() * 0.07f) // Upper board (Row 0 / Row 1)
+                    else -> screenHeight * (0.24f + random.nextFloat() * 0.08f) // Mid board (Row 2)
+                }
 
-                // Bezier control point placed above the apex to create a natural, expansive fountain arc
-                val controlX = (startX + apexX) / 2f + (random.nextFloat() - 0.5f) * screenWidth * 0.25f
-                val controlY = apexY - (screenHeight * (0.12f + random.nextFloat() * 0.18f))
+                // Apex horizontal spot distributed across the full width of the screen
+                val apexX = screenWidth * (0.04f + random.nextFloat() * 0.92f)
 
-                // Landing: Distributed randomly across the entire width of the bottom screen without central bunching
+                // Landing position distributed across the entire bottom width
                 val endX = screenWidth * (0.02f + random.nextFloat() * 0.96f)
-                val endY = screenHeight * (1.02f + random.nextFloat() * 0.10f) // Falls past the bottom
+                val endY = screenHeight * (1.02f + random.nextFloat() * 0.10f)
 
-                val delayMillis = random.nextInt(0, 380).toLong()
-                val durationMillis = random.nextInt(1500, 1950).toLong()
+                val peakRatio = 0.44f + random.nextFloat() * 0.08f
+                val rotationTarget = (random.nextFloat() - 0.5f) * 540f
+                val fontSizeSp = (22f + random.nextFloat() * 12f)
+                val horizontalSway = (random.nextFloat() - 0.5f) * screenWidth * 0.14f
 
                 list.add(
                     EmojiParticle(
                         emoji = emoji,
                         startX = startX,
                         startY = startY,
-                        controlX = controlX,
-                        controlY = controlY,
+                        apexX = apexX,
+                        apexY = apexY,
                         endX = endX,
                         endY = endY,
+                        peakRatio = peakRatio,
                         delayNanos = delayMillis * 1_000_000L,
                         durationNanos = durationMillis * 1_000_000L,
-                        rotationTarget = (random.nextFloat() - 0.5f) * 480f,
-                        fontSizeSp = (22f + random.nextFloat() * 12f)
+                        rotationTarget = rotationTarget,
+                        fontSizeSp = fontSizeSp,
+                        horizontalSway = horizontalSway
                     )
                 )
             }
@@ -365,41 +382,53 @@ fun GameOverEmojiProjectileBurst(
                 val elapsed = (currentFrame - startFrame).toFloat()
                 elapsedTimeNanos = elapsed
 
-                // Apex timing: When particles have reached top (~650ms) and begin descent
+                // Apex timing: When wave 0 reaches top (~650ms) and begins descent
                 if (!hasTriggeredApex && elapsed >= 650_000_000L) {
                     hasTriggeredApex = true
                     onApexReached()
                 }
 
-                // Check completion after ~2.3s
-                if (elapsed >= 2_300_000_000L) {
+                // Finish celebration after ~3.2s
+                if (elapsed >= 3_200_000_000L) {
                     isRunning = false
                     onBurstFinished()
                 }
             }
         }
 
-        // Render each flying emoji along its quadratic Bezier projectile path
+        // Render each flying emoji along its exact kinematic projectile path
         particles.forEach { p ->
             val particleElapsed = elapsedTimeNanos - p.delayNanos
             if (particleElapsed > 0) {
                 val progress = (particleElapsed / p.durationNanos.toFloat()).coerceIn(0f, 1f)
                 if (progress < 1f) {
-                    // Quadratic Bezier Formula: B(t) = (1-t)^2 * P0 + 2(1-t)t * P1 + t^2 * P2
-                    val invT = 1f - progress
-                    val curX = (invT * invT * p.startX) + (2f * invT * progress * p.controlX) + (progress * progress * p.endX)
-                    val curY = (invT * invT * p.startY) + (2f * invT * progress * p.controlY) + (progress * progress * p.endY)
+                    val curX: Float
+                    val curY: Float
+
+                    if (progress <= p.peakRatio) {
+                        // Rise Phase: Decelerates as it reaches the peak height (apexY)
+                        val u = (progress / p.peakRatio).coerceIn(0f, 1f)
+                        val riseFactor = sin(u * (Math.PI / 2.0).toFloat())
+                        curY = p.startY - (p.startY - p.apexY) * riseFactor
+                        curX = p.startX + (p.apexX - p.startX) * riseFactor
+                    } else {
+                        // Fall Phase: Accelerates under gravity towards the bottom (endY)
+                        val v = ((progress - p.peakRatio) / (1f - p.peakRatio)).coerceIn(0f, 1f)
+                        val fallFactor = v * v
+                        curY = p.apexY + (p.endY - p.apexY) * fallFactor
+                        curX = p.apexX + (p.endX - p.apexX) * v + sin(v * Math.PI.toFloat()) * p.horizontalSway
+                    }
 
                     // Quick fade in at start, stay vibrant, fade out as it reaches bottom
                     val alpha = when {
-                        progress < 0.07f -> progress / 0.07f
-                        progress > 0.84f -> (1f - progress) / 0.16f
+                        progress < 0.06f -> progress / 0.06f
+                        progress > 0.86f -> (1f - progress) / 0.14f
                         else -> 1f
                     }.coerceIn(0f, 1f)
 
                     val scale = when {
-                        progress < 0.10f -> 0.4f + (progress / 0.10f) * 0.6f
-                        progress > 0.88f -> 1f - (progress - 0.88f) * 2.5f
+                        progress < 0.08f -> 0.4f + (progress / 0.08f) * 0.6f
+                        progress > 0.90f -> (1f - progress) / 0.10f
                         else -> 1f
                     }.coerceAtLeast(0.1f)
 
