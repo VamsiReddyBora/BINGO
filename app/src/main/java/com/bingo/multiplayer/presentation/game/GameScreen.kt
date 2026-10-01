@@ -309,25 +309,19 @@ fun GameScreen(
     var reviewingOpponentBoard by remember { mutableStateOf(false) }
     var hasRequestedPlayAgain by remember(isGameOver) { mutableStateOf(false) }
 
-    // ── Victory/Defeat Stamp & Emoji Projectile Celebration State ──
+    // ── Victory/Defeat Stamp Celebration State ──
     var showStampBadge by remember { mutableStateOf(false) }
-    var isEmojiBurstActive by remember { mutableStateOf(false) }
     var animateStampDrop by remember { mutableStateOf(true) }
     var hasTriggeredCelebration by remember { mutableStateOf(false) }
 
     LaunchedEffect(isGameOver) {
         if (isGameOver) {
-            if (!hasTriggeredCelebration) {
-                hasTriggeredCelebration = true
-                isEmojiBurstActive = true
-                animateStampDrop = true
-            } else {
-                showStampBadge = true
-            }
+            showStampBadge = true
+            animateStampDrop = !hasTriggeredCelebration
+            hasTriggeredCelebration = true
         } else {
             hasTriggeredCelebration = false
             showStampBadge = false
-            isEmojiBurstActive = false
             animateStampDrop = true
             reviewingOpponentBoard = false
         }
@@ -863,27 +857,6 @@ fun GameScreen(
                     activeEmotes = activeEmotes.filter { it.id != finishedId }
                 }
             )
-
-            // ── Game Over Emoji Projectile Burst (Confetti & Emotes from bottom corners to top apex, then falling) ──
-            if (isEmojiBurstActive) {
-                val burstType = when {
-                    isDraw -> StampResultType.DRAW
-                    didPlayerWin -> StampResultType.WON
-                    else -> StampResultType.LOST
-                }
-                GameOverEmojiProjectileBurst(
-                    resultType = burstType,
-                    modifier = Modifier.fillMaxSize(),
-                    onApexReached = {
-                        showStampBadge = true
-                        animateStampDrop = true
-                    },
-                    onBurstFinished = {
-                        isEmojiBurstActive = false
-                        animateStampDrop = false
-                    }
-                )
-            }
 
             // Item 4: Quick Chat Floating Toast Layer
             if (showQuickChat && !isGameOver) {

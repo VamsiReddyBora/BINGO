@@ -49,6 +49,14 @@ enum class StampResultType {
     DRAW
 }
 
+enum class CelebrationAnimStyle(val id: Int, val title: String, val subtitle: String) {
+    STYLE_1(1, "Clock-Arc Crossfire", "4-8 o'clock arc, multi-directional diagonal crossfire"),
+    STYLE_2(2, "Dual Corner Cannons", "Twin bottom-corner cannons firing to top center"),
+    STYLE_3(3, "Center Vortex Geyser", "Bottom-center volcanic spiral fountain erupting upward"),
+    STYLE_4(4, "Sky Rainstorm Cascade", "Top cloud confetti fluttering and rocking downward"),
+    STYLE_5(5, "Radial Starburst Blast", "360° explosive shockwave outward from center")
+}
+
 /**
  * Rough sketch & chalk font for authentic stamped / chalkboard texture.
  */
@@ -238,7 +246,7 @@ private fun StampDustPuff(color: Color) {
 }
 
 /**
- * Kinematic projectile emoji particle data.
+ * Kinematic projectile emoji particle data supporting all 5 distinct celebration styles.
  */
 private data class EmojiParticle(
     val emoji: String,
@@ -253,30 +261,25 @@ private data class EmojiParticle(
     val durationNanos: Long,
     val rotationTarget: Float,
     val fontSizeSp: Float,
-    val horizontalSway: Float
+    val horizontalSway: Float,
+    val styleType: Int = 0, // 0: Clock-Arc Crossfire, 1: Cannons flutter, 2: Spiral geyser, 3: Cloud rainstorm, 4: Radial shockwave
+    val angleRad: Float = 0f,
+    val radiusParam: Float = 0f
 )
 
 /**
- * Fullscreen Emoji Projectile Burst:
- * - Mental model: Phone screen as a clock face.
- * - Launch Origin: Arc from 4 o'clock through 6 o'clock (bottom) to 8 o'clock.
- * - Simultaneous Launch: All emojis shoot at once (near-zero delay) across the 4-8 o'clock arc.
- * - Multi-directional Crossfire & Diverse Destinations:
- *   1. Left-to-Right diagonal crossfire (7/8 o'clock -> 2/3 o'clock).
- *   2. Right-to-Left diagonal crossfire (4/5 o'clock -> 8/9/10 o'clock).
- *   3. High skyward rockets (towards 11/12/1 o'clock - Stamp Area).
- *   4. Mid-board fountains and short pop arcs.
- * - Natural Staggering via Variable Projectile Speeds and Path Lengths:
- *   Short fast projectiles reach apex (~350ms) and descend while longer skyward projectiles
- *   are still climbing, preventing bunching or clustering even if sharing a destination!
- * - Winner: Celebration confetti emojis (🎊 🎉 ✨ etc.).
- * - Loser: Defeat & cry emojis (🫪😑😐😵💫😵🤧🫩😩😖).
- * - Draw: Combined celebration + loser emojis.
+ * Fullscreen Emoji Projectile Burst supporting 5 genuinely distinct animation styles:
+ * 1. Clock-Arc Crossfire: 4-8 o'clock lower arc, multi-directional diagonal crossfire
+ * 2. Dual Corner Cannons: Twin bottom corners firing to top center to collide and flutter down
+ * 3. Center Vortex Geyser: Bottom-center volcanic spiral fountain erupting upward
+ * 4. Sky Rainstorm Cascade: Top cloud confetti fluttering and rocking downward
+ * 5. Radial Starburst Blast: 360° explosive shockwave outward from center
  */
 @Composable
 fun GameOverEmojiProjectileBurst(
     resultType: StampResultType,
     modifier: Modifier = Modifier,
+    style: CelebrationAnimStyle = CelebrationAnimStyle.STYLE_1,
     onApexReached: () -> Unit = {},
     onBurstFinished: () -> Unit = {}
 ) {
@@ -294,124 +297,261 @@ fun GameOverEmojiProjectileBurst(
         val screenWidth = constraints.maxWidth.toFloat()
         val screenHeight = constraints.maxHeight.toFloat()
 
-        // Create particles distributed across clock arc from 4 o'clock to 8 o'clock
-        val particles = remember(resultType) {
+        // Generate particles uniquely tailored to the selected animation style
+        val particles = remember(resultType, style) {
             val list = mutableListOf<EmojiParticle>()
-            val count = 52
             val random = Random(42)
 
-            for (i in 0 until count) {
-                val emoji = emojiPool[random.nextInt(emojiPool.size)]
+            when (style) {
+                CelebrationAnimStyle.STYLE_1 -> {
+                    // Style 1: Clock-Arc Crossfire (Arc from 4 to 8 o'clock, multi-directional crossfire)
+                    val count = 52
+                    for (i in 0 until count) {
+                        val emoji = emojiPool[random.nextInt(emojiPool.size)]
+                        val archetype = i % 4
+                        val clockAngleDeg = when (archetype) {
+                            0 -> 110f + random.nextFloat() * 45f // 7 to 8 o'clock
+                            1 -> 25f + random.nextFloat() * 45f  // 4 to 5 o'clock
+                            else -> 25f + random.nextFloat() * 130f // 4 to 8 o'clock
+                        }
+                        val clockAngleRad = (clockAngleDeg * (Math.PI / 180.0)).toFloat()
+                        val clockRadiusX = screenWidth * (0.42f + random.nextFloat() * 0.08f)
+                        val clockRadiusY = screenHeight * (0.40f + random.nextFloat() * 0.08f)
+                        val clockCenterX = screenWidth * 0.50f
+                        val clockCenterY = screenHeight * 0.52f
 
-                // Multi-directional crossfire archetypes:
-                // 0: Left-to-Right cross-screen (7/8 o'clock -> 2/3 o'clock)
-                // 1: Right-to-Left cross-screen (4/5 o'clock -> 8/9/10 o'clock)
-                // 2: High Skyward Rockets (towards 11/12/1 o'clock - Stamp Area)
-                // 3: Mid-Board Fountains & Short Pop Arcs
-                val archetype = i % 4
+                        val startX = (clockCenterX + clockRadiusX * cos(clockAngleRad)).coerceIn(screenWidth * 0.02f, screenWidth * 0.98f)
+                        val startY = (clockCenterY + clockRadiusY * sin(clockAngleRad)).coerceIn(screenHeight * 0.66f, screenHeight * 0.98f)
 
-                // 1. Clock angle in degrees: 0° = 3 o'clock, 90° = 6 o'clock (bottom), 180° = 9 o'clock
-                // 4 o'clock = ~30°, 5 o'clock = ~60°, 6 o'clock = 90°, 7 o'clock = ~120°, 8 o'clock = ~150°
-                val clockAngleDeg = when (archetype) {
-                    0 -> 110f + random.nextFloat() * 45f // 7 to 8 o'clock (bottom-left to lower-left)
-                    1 -> 25f + random.nextFloat() * 45f  // 4 to 5 o'clock (lower-right to bottom-right)
-                    2 -> 25f + random.nextFloat() * 130f // Full 4 to 8 o'clock arc
-                    else -> 25f + random.nextFloat() * 130f // Full 4 to 8 o'clock arc
+                        val apexX: Float
+                        val apexY: Float
+                        val endX: Float
+                        val endY: Float
+
+                        when (archetype) {
+                            0 -> { // 7/8 to 2/3 o'clock
+                                apexX = screenWidth * (0.64f + random.nextFloat() * 0.28f)
+                                apexY = screenHeight * (0.16f + random.nextFloat() * 0.22f)
+                                endX = screenWidth * (0.76f + random.nextFloat() * 0.26f)
+                                endY = screenHeight * (0.92f + random.nextFloat() * 0.12f)
+                            }
+                            1 -> { // 4/5 to 8/9/10 o'clock
+                                apexX = screenWidth * (0.08f + random.nextFloat() * 0.28f)
+                                apexY = screenHeight * (0.16f + random.nextFloat() * 0.22f)
+                                endX = screenWidth * (-0.05f + random.nextFloat() * 0.26f)
+                                endY = screenHeight * (0.92f + random.nextFloat() * 0.12f)
+                            }
+                            2 -> { // High Skyward Rockets to Stamp
+                                apexX = screenWidth * (0.12f + random.nextFloat() * 0.76f)
+                                apexY = screenHeight * (0.04f + random.nextFloat() * 0.08f)
+                                endX = screenWidth * (0.08f + random.nextFloat() * 0.84f)
+                                endY = screenHeight * (0.95f + random.nextFloat() * 0.15f)
+                            }
+                            else -> { // Mid-Board Fountains
+                                apexX = screenWidth * (0.18f + random.nextFloat() * 0.64f)
+                                apexY = screenHeight * (0.22f + random.nextFloat() * 0.16f)
+                                endX = screenWidth * (0.08f + random.nextFloat() * 0.84f)
+                                endY = screenHeight * (0.92f + random.nextFloat() * 0.15f)
+                            }
+                        }
+
+                        val speedTier = i % 3
+                        val (durationMillis, peakRatio) = when (speedTier) {
+                            0 -> Pair(random.nextInt(920, 1150).toLong(), 0.35f + random.nextFloat() * 0.03f)
+                            1 -> Pair(random.nextInt(1220, 1460).toLong(), 0.43f + random.nextFloat() * 0.04f)
+                            else -> Pair(random.nextInt(1550, 1850).toLong(), 0.48f + random.nextFloat() * 0.04f)
+                        }
+                        val delayMillis = random.nextInt(0, 30).toLong()
+
+                        list.add(
+                            EmojiParticle(
+                                emoji = emoji,
+                                startX = startX,
+                                startY = startY,
+                                apexX = apexX,
+                                apexY = apexY,
+                                endX = endX,
+                                endY = endY,
+                                peakRatio = peakRatio,
+                                delayNanos = delayMillis * 1_000_000L,
+                                durationNanos = durationMillis * 1_000_000L,
+                                rotationTarget = (random.nextFloat() - 0.5f) * 600f,
+                                fontSizeSp = (20f + random.nextFloat() * 14f),
+                                horizontalSway = (random.nextFloat() - 0.5f) * screenWidth * 0.10f,
+                                styleType = 0
+                            )
+                        )
+                    }
                 }
+                CelebrationAnimStyle.STYLE_2 -> {
+                    // Style 2: Dual Corner Cannons (Twin bottom corners fire upward to collide at top center)
+                    val count = 50
+                    for (i in 0 until count) {
+                        val emoji = emojiPool[random.nextInt(emojiPool.size)]
+                        val isLeftCannon = (i % 2 == 0)
+                        val startX = if (isLeftCannon) {
+                            screenWidth * (0.02f + random.nextFloat() * 0.08f)
+                        } else {
+                            screenWidth * (0.90f + random.nextFloat() * 0.08f)
+                        }
+                        val startY = screenHeight * (0.92f + random.nextFloat() * 0.06f)
 
-                val clockAngleRad = (clockAngleDeg * (Math.PI / 180.0)).toFloat()
-                val clockRadiusX = screenWidth * (0.42f + random.nextFloat() * 0.08f)
-                val clockRadiusY = screenHeight * (0.40f + random.nextFloat() * 0.08f)
-                val clockCenterX = screenWidth * 0.50f
-                val clockCenterY = screenHeight * 0.52f
+                        // Both cannons aim inward and high up to collide near top center
+                        val apexX = screenWidth * (0.38f + random.nextFloat() * 0.24f)
+                        val apexY = screenHeight * (0.05f + random.nextFloat() * 0.10f)
 
-                val startX = (clockCenterX + clockRadiusX * cos(clockAngleRad))
-                    .coerceIn(screenWidth * 0.02f, screenWidth * 0.98f)
-                val startY = (clockCenterY + clockRadiusY * sin(clockAngleRad))
-                    .coerceIn(screenHeight * 0.66f, screenHeight * 0.98f)
+                        // Descent spreads out across the entire screen width
+                        val endX = screenWidth * (0.04f + random.nextFloat() * 0.92f)
+                        val endY = screenHeight * (1.02f + random.nextFloat() * 0.08f)
 
-                // 2. Destinations & Apex positions based on crossfire archetype
-                val apexX: Float
-                val apexY: Float
-                val endX: Float
-                val endY: Float
+                        // Machine-gun rapid cannon volley pairs over ~450ms
+                        val volleyIndex = i / 2
+                        val delayMillis = (volleyIndex * 18L) + random.nextInt(0, 8)
+                        val durationMillis = random.nextInt(1550, 1850).toLong()
 
-                when (archetype) {
-                    0 -> {
-                        // Left-to-Right diagonal crossfire (7/8 o'clock -> 2/3 o'clock)
-                        apexX = screenWidth * (0.64f + random.nextFloat() * 0.28f)
-                        apexY = screenHeight * (0.16f + random.nextFloat() * 0.22f)
-                        endX = screenWidth * (0.76f + random.nextFloat() * 0.26f)
-                        endY = screenHeight * (0.92f + random.nextFloat() * 0.12f)
-                    }
-                    1 -> {
-                        // Right-to-Left diagonal crossfire (4/5 o'clock -> 8/9/10 o'clock)
-                        apexX = screenWidth * (0.08f + random.nextFloat() * 0.28f)
-                        apexY = screenHeight * (0.16f + random.nextFloat() * 0.22f)
-                        endX = screenWidth * (-0.05f + random.nextFloat() * 0.26f)
-                        endY = screenHeight * (0.92f + random.nextFloat() * 0.12f)
-                    }
-                    2 -> {
-                        // High Skyward Rockets (towards 11/12/1 o'clock - Stamp Area)
-                        apexX = screenWidth * (0.12f + random.nextFloat() * 0.76f)
-                        apexY = screenHeight * (0.04f + random.nextFloat() * 0.08f) // Stamp altitude!
-                        endX = screenWidth * (0.08f + random.nextFloat() * 0.84f)
-                        endY = screenHeight * (0.95f + random.nextFloat() * 0.15f)
-                    }
-                    else -> {
-                        // Mid-Board Fountains & Short Pop Arcs
-                        apexX = screenWidth * (0.18f + random.nextFloat() * 0.64f)
-                        apexY = screenHeight * (0.22f + random.nextFloat() * 0.16f)
-                        endX = screenWidth * (0.08f + random.nextFloat() * 0.84f)
-                        endY = screenHeight * (0.92f + random.nextFloat() * 0.15f)
+                        list.add(
+                            EmojiParticle(
+                                emoji = emoji,
+                                startX = startX,
+                                startY = startY,
+                                apexX = apexX,
+                                apexY = apexY,
+                                endX = endX,
+                                endY = endY,
+                                peakRatio = 0.40f + random.nextFloat() * 0.04f,
+                                delayNanos = delayMillis * 1_000_000L,
+                                durationNanos = durationMillis * 1_000_000L,
+                                rotationTarget = (random.nextFloat() - 0.5f) * 720f,
+                                fontSizeSp = (22f + random.nextFloat() * 12f),
+                                horizontalSway = screenWidth * (0.08f + random.nextFloat() * 0.08f),
+                                styleType = 1,
+                                angleRad = (random.nextFloat() * Math.PI * 2.0).toFloat()
+                            )
+                        )
                     }
                 }
+                CelebrationAnimStyle.STYLE_3 -> {
+                    // Style 3: Center Vortex Geyser (Bottom center spiral fountain erupting upward)
+                    val count = 54
+                    for (i in 0 until count) {
+                        val emoji = emojiPool[random.nextInt(emojiPool.size)]
+                        val startX = screenWidth * (0.45f + random.nextFloat() * 0.10f)
+                        val startY = screenHeight * (0.94f + random.nextFloat() * 0.05f)
 
-                // 3. Variable projectile speeds and path lengths:
-                // Speed tier 0: Short fast path (apex ~350ms, descends early)
-                // Speed tier 1: Medium path (apex ~560ms)
-                // Speed tier 2: Long soaring path (apex ~820ms)
-                // -> Emojis arriving at the same coordinate naturally stagger in time without bunching!
-                val speedTier = i % 3
-                val (durationMillis, peakRatio) = when (speedTier) {
-                    0 -> Pair(
-                        random.nextInt(920, 1150).toLong(),
-                        0.35f + random.nextFloat() * 0.03f
-                    )
-                    1 -> Pair(
-                        random.nextInt(1220, 1460).toLong(),
-                        0.43f + random.nextFloat() * 0.04f
-                    )
-                    else -> Pair(
-                        random.nextInt(1550, 1850).toLong(),
-                        0.48f + random.nextFloat() * 0.04f
-                    )
+                        val apexX = screenWidth * (0.25f + random.nextFloat() * 0.50f)
+                        val apexY = screenHeight * (0.06f + random.nextFloat() * 0.16f)
+
+                        val endX = screenWidth * (0.05f + random.nextFloat() * 0.90f)
+                        val endY = screenHeight * (1.02f + random.nextFloat() * 0.08f)
+
+                        val delayMillis = random.nextInt(0, 160).toLong()
+                        val durationMillis = random.nextInt(1400, 1700).toLong()
+                        val angleRad = (i * 35f * (Math.PI / 180.0)).toFloat()
+                        val radiusParam = screenWidth * (0.22f + random.nextFloat() * 0.22f)
+
+                        list.add(
+                            EmojiParticle(
+                                emoji = emoji,
+                                startX = startX,
+                                startY = startY,
+                                apexX = apexX,
+                                apexY = apexY,
+                                endX = endX,
+                                endY = endY,
+                                peakRatio = 0.38f + random.nextFloat() * 0.04f,
+                                delayNanos = delayMillis * 1_000_000L,
+                                durationNanos = durationMillis * 1_000_000L,
+                                rotationTarget = (random.nextFloat() - 0.5f) * 600f,
+                                fontSizeSp = (22f + random.nextFloat() * 12f),
+                                horizontalSway = screenWidth * 0.06f,
+                                styleType = 2,
+                                angleRad = angleRad,
+                                radiusParam = radiusParam
+                            )
+                        )
+                    }
                 }
+                CelebrationAnimStyle.STYLE_4 -> {
+                    // Style 4: Sky Rainstorm Cascade (Top cloud confetti fluttering and rocking down)
+                    val count = 56
+                    for (i in 0 until count) {
+                        val emoji = emojiPool[random.nextInt(emojiPool.size)]
+                        val startX = screenWidth * (0.04f + random.nextFloat() * 0.92f)
+                        val startY = screenHeight * (-0.04f + random.nextFloat() * 0.06f)
 
-                // 4. Simultaneous launch: all emojis shoot at once (near-zero delay)
-                val delayMillis = random.nextInt(0, 30).toLong()
+                        val apexX = startX
+                        val apexY = startY
+                        val endX = (startX + (random.nextFloat() - 0.5f) * screenWidth * 0.25f).coerceIn(0f, screenWidth)
+                        val endY = screenHeight * (1.04f + random.nextFloat() * 0.08f)
 
-                val rotationTarget = (random.nextFloat() - 0.5f) * 600f
-                val fontSizeSp = (20f + random.nextFloat() * 14f)
-                val horizontalSway = (random.nextFloat() - 0.5f) * screenWidth * 0.10f
+                        // Cascading rain drop timings over ~700ms
+                        val delayMillis = (i * 14L) + random.nextInt(0, 15)
+                        val durationMillis = random.nextInt(1650, 2100).toLong()
+                        val angleRad = (random.nextFloat() * Math.PI * 2.0).toFloat()
 
-                list.add(
-                    EmojiParticle(
-                        emoji = emoji,
-                        startX = startX,
-                        startY = startY,
-                        apexX = apexX,
-                        apexY = apexY,
-                        endX = endX,
-                        endY = endY,
-                        peakRatio = peakRatio,
-                        delayNanos = delayMillis * 1_000_000L,
-                        durationNanos = durationMillis * 1_000_000L,
-                        rotationTarget = rotationTarget,
-                        fontSizeSp = fontSizeSp,
-                        horizontalSway = horizontalSway
-                    )
-                )
+                        list.add(
+                            EmojiParticle(
+                                emoji = emoji,
+                                startX = startX,
+                                startY = startY,
+                                apexX = apexX,
+                                apexY = apexY,
+                                endX = endX,
+                                endY = endY,
+                                peakRatio = 0.10f,
+                                delayNanos = delayMillis * 1_000_000L,
+                                durationNanos = durationMillis * 1_000_000L,
+                                rotationTarget = (random.nextFloat() - 0.5f) * 480f,
+                                fontSizeSp = (22f + random.nextFloat() * 12f),
+                                horizontalSway = screenWidth * (0.07f + random.nextFloat() * 0.09f),
+                                styleType = 3,
+                                angleRad = angleRad
+                            )
+                        )
+                    }
+                }
+                CelebrationAnimStyle.STYLE_5 -> {
+                    // Style 5: Radial Starburst Blast (360° explosive shockwave outward from center)
+                    val count = 52
+                    for (i in 0 until count) {
+                        val emoji = emojiPool[random.nextInt(emojiPool.size)]
+                        val startX = screenWidth * 0.50f
+                        val startY = screenHeight * 0.38f // Center / stamp epicenter
+
+                        val apexX = startX
+                        val apexY = startY
+                        val endX = startX
+                        val endY = screenHeight * (1.02f + random.nextFloat() * 0.08f)
+
+                        val angleRad = (i * (360f / count) + random.nextFloat() * 7f) * (Math.PI / 180.0).toFloat()
+                        val radiusParam = screenWidth * (0.35f + random.nextFloat() * 0.30f)
+
+                        // Instantaneous simultaneous detonation: 0ms delay!
+                        val delayMillis = 0L
+                        val durationMillis = random.nextInt(1250, 1500).toLong()
+
+                        list.add(
+                            EmojiParticle(
+                                emoji = emoji,
+                                startX = startX,
+                                startY = startY,
+                                apexX = apexX,
+                                apexY = apexY,
+                                endX = endX,
+                                endY = endY,
+                                peakRatio = 0.40f,
+                                delayNanos = delayMillis * 1_000_000L,
+                                durationNanos = durationMillis * 1_000_000L,
+                                rotationTarget = (random.nextFloat() - 0.5f) * 540f,
+                                fontSizeSp = (23f + random.nextFloat() * 13f),
+                                horizontalSway = screenWidth * 0.05f,
+                                styleType = 4,
+                                angleRad = angleRad,
+                                radiusParam = radiusParam
+                            )
+                        )
+                    }
+                }
             }
             list
         }
@@ -419,7 +559,19 @@ fun GameOverEmojiProjectileBurst(
         var elapsedTimeNanos by remember { mutableFloatStateOf(0f) }
         var hasTriggeredApex by remember { mutableStateOf(false) }
 
-        LaunchedEffect(Unit) {
+        val (apexTimeNanos, totalDurationNanos) = remember(style) {
+            when (style) {
+                CelebrationAnimStyle.STYLE_1 -> Pair(500_000_000L, 1_950_000_000L) // Clock-Arc Crossfire (~1.95s)
+                CelebrationAnimStyle.STYLE_2 -> Pair(600_000_000L, 2_250_000_000L) // Dual Corner Cannons (~2.25s)
+                CelebrationAnimStyle.STYLE_3 -> Pair(450_000_000L, 1_900_000_000L) // Center Vortex Geyser (~1.90s)
+                CelebrationAnimStyle.STYLE_4 -> Pair(200_000_000L, 2_500_000_000L) // Sky Rainstorm Cascade (~2.50s)
+                CelebrationAnimStyle.STYLE_5 -> Pair(400_000_000L, 1_600_000_000L) // Radial Starburst Blast (~1.60s)
+            }
+        }
+
+        LaunchedEffect(resultType, style) {
+            elapsedTimeNanos = 0f
+            hasTriggeredApex = false
             val startFrame = withFrameNanos { it }
             var isRunning = true
             while (isRunning) {
@@ -427,21 +579,21 @@ fun GameOverEmojiProjectileBurst(
                 val elapsed = (currentFrame - startFrame).toFloat()
                 elapsedTimeNanos = elapsed
 
-                // Apex timing: When high soaring emojis reach the stamp altitude (~500ms)
-                if (!hasTriggeredApex && elapsed >= 500_000_000L) {
+                // Style-dependent apex timing
+                if (!hasTriggeredApex && elapsed >= apexTimeNanos) {
                     hasTriggeredApex = true
                     onApexReached()
                 }
 
-                // Finish celebration when all emojis have landed (~1.95s)
-                if (elapsed >= 1_950_000_000L) {
+                // Finish celebration when all style emojis have landed
+                if (elapsed >= totalDurationNanos) {
                     isRunning = false
                     onBurstFinished()
                 }
             }
         }
 
-        // Render each flying emoji along its exact kinematic projectile path
+        // Render each flying emoji along its exact kinematic projectile path for its style
         particles.forEach { p ->
             val particleElapsed = elapsedTimeNanos - p.delayNanos
             if (particleElapsed > 0) {
@@ -450,21 +602,83 @@ fun GameOverEmojiProjectileBurst(
                     val curX: Float
                     val curY: Float
 
-                    if (progress <= p.peakRatio) {
-                        // Rise Phase: Decelerates as it reaches the peak height (apexY)
-                        val u = (progress / p.peakRatio).coerceIn(0f, 1f)
-                        val riseFactor = sin(u * (Math.PI / 2.0).toFloat())
-                        curY = p.startY - (p.startY - p.apexY) * riseFactor
-                        curX = p.startX + (p.apexX - p.startX) * riseFactor
-                    } else {
-                        // Fall Phase: Accelerates under gravity towards the bottom (endY)
-                        val v = ((progress - p.peakRatio) / (1f - p.peakRatio)).coerceIn(0f, 1f)
-                        val fallFactor = v * v
-                        curY = p.apexY + (p.endY - p.apexY) * fallFactor
-                        curX = p.apexX + (p.endX - p.apexX) * v + sin(v * Math.PI.toFloat()) * p.horizontalSway
+                    when (p.styleType) {
+                        0 -> {
+                            // Style 1: Clock-Arc Crossfire (Ballistic Rise & Fall)
+                            if (progress <= p.peakRatio) {
+                                val u = (progress / p.peakRatio).coerceIn(0f, 1f)
+                                val riseFactor = sin(u * (Math.PI / 2.0).toFloat())
+                                curY = p.startY - (p.startY - p.apexY) * riseFactor
+                                curX = p.startX + (p.apexX - p.startX) * riseFactor
+                            } else {
+                                val v = ((progress - p.peakRatio) / (1f - p.peakRatio)).coerceIn(0f, 1f)
+                                val fallFactor = v * v
+                                curY = p.apexY + (p.endY - p.apexY) * fallFactor
+                                curX = p.apexX + (p.endX - p.apexX) * v + sin(v * Math.PI.toFloat()) * p.horizontalSway
+                            }
+                        }
+                        1 -> {
+                            // Style 2: Dual Corner Cannons (Angled Cannon Volley + Flutter Sway)
+                            if (progress <= p.peakRatio) {
+                                val u = (progress / p.peakRatio).coerceIn(0f, 1f)
+                                val riseFactor = sin(u * (Math.PI / 2.0).toFloat())
+                                curY = p.startY - (p.startY - p.apexY) * riseFactor
+                                curX = p.startX + (p.apexX - p.startX) * riseFactor
+                            } else {
+                                val v = ((progress - p.peakRatio) / (1f - p.peakRatio)).coerceIn(0f, 1f)
+                                val fallFactor = v * v * 0.8f + v * 0.2f
+                                curY = p.apexY + (p.endY - p.apexY) * fallFactor
+                                curX = p.apexX + (p.endX - p.apexX) * v + sin(v * (Math.PI * 4.0).toFloat() + p.angleRad) * p.horizontalSway
+                            }
+                        }
+                        2 -> {
+                            // Style 3: Center Vortex Geyser (Bottom Center Volcanic Spiral Fountain)
+                            if (progress <= p.peakRatio) {
+                                val u = (progress / p.peakRatio).coerceIn(0f, 1f)
+                                val riseFactor = sin(u * (Math.PI / 2.0).toFloat())
+                                val baseY = p.startY - (p.startY - p.apexY) * riseFactor
+                                val spiralR = p.radiusParam * (u * u)
+                                curX = p.startX + sin(p.angleRad + u * (Math.PI * 4.0).toFloat()) * spiralR
+                                curY = baseY
+                            } else {
+                                val v = ((progress - p.peakRatio) / (1f - p.peakRatio)).coerceIn(0f, 1f)
+                                val fallFactor = v * v
+                                curY = p.apexY + (p.endY - p.apexY) * fallFactor
+                                val outwardSpread = (p.endX - p.startX) * v
+                                curX = p.apexX + outwardSpread + sin(p.angleRad + (1f + v) * (Math.PI * 2.0).toFloat()) * (p.radiusParam * (1f - v * 0.4f))
+                            }
+                        }
+                        3 -> {
+                            // Style 4: Sky Rainstorm Cascade (Top Cloud Confetti Shower Floating Down)
+                            if (progress < 0.10f) {
+                                val popProg = progress / 0.10f
+                                val popJump = sin(popProg * Math.PI.toFloat()) * 30f
+                                curY = p.startY - popJump
+                                curX = p.startX + (p.endX - p.startX) * progress
+                            } else {
+                                val v = ((progress - 0.10f) / 0.90f).coerceIn(0f, 1f)
+                                val fallFactor = 0.5f * v + 0.5f * (v * v)
+                                curY = p.startY + (p.endY - p.startY) * fallFactor
+                                curX = p.startX + (p.endX - p.startX) * v + cos(v * (Math.PI * 4.0).toFloat() + p.angleRad) * p.horizontalSway
+                            }
+                        }
+                        else -> {
+                            // Style 5: Radial Starburst Blast (360° Outward Shockwave Detonation)
+                            if (progress <= 0.40f) {
+                                val u = (progress / 0.40f).coerceIn(0f, 1f)
+                                val easeOut = 1f - (1f - u) * (1f - u) * (1f - u)
+                                curX = p.startX + cos(p.angleRad) * p.radiusParam * easeOut
+                                curY = p.startY + sin(p.angleRad) * (p.radiusParam * 0.85f) * easeOut
+                            } else {
+                                val v = ((progress - 0.40f) / 0.60f).coerceIn(0f, 1f)
+                                val gravityDrop = v * v * (p.endY - p.startY)
+                                curX = p.startX + cos(p.angleRad) * p.radiusParam + sin(v * (Math.PI * 2.0).toFloat()) * p.horizontalSway
+                                curY = p.startY + sin(p.angleRad) * (p.radiusParam * 0.85f) + gravityDrop
+                            }
+                        }
                     }
 
-                    // Quick fade in at start, stay vibrant, fade out as it reaches bottom
+                    // Quick fade in at start, stay vibrant, fade out as it reaches end
                     val alpha = when {
                         progress < 0.06f -> progress / 0.06f
                         progress > 0.86f -> (1f - progress) / 0.14f
