@@ -196,4 +196,33 @@ describe('Multiplayer Lobby & Game End-to-End Simulation', () => {
 
     assert.strictEqual(board.completedLines.length >= board.targetLines, true, 'Must have reached targetLines for BINGO');
   });
+
+  it('Handles complex Android-style Google avatar URLs and payloads gracefully without data loss', async () => {
+    const complexRoomCode = `GZ${Math.floor(1000 + Math.random() * 9000)}`;
+    const googleUserHost: Player = {
+      id: 'android_google_uid_999',
+      displayName: 'Google Player',
+      username: 'g_player',
+      isHost: true,
+      avatarUrl: 'https://lh3.googleusercontent.com/a/ACg8ocL-ih6HbPHoaQhxqV8vCkjzDyBTtqGPJnY6x81YGltV=s96-c',
+      score: 250,
+      completedLinesCount: 0,
+      gamesPlayed: 12,
+      gamesWon: 8,
+      currentStreak: 4,
+      level: 5,
+      lastSeenTimestamp: Date.now(),
+      lobbyReadyStatus: 'READY',
+      readyVersion: 0
+    };
+
+    const created = await CloudRegistry.createRoom(complexRoomCode, googleUserHost, 5);
+    assert.strictEqual(created, true, 'Should create room with Google avatar');
+
+    const fetchedRoom = await CloudRegistry.getRoom(complexRoomCode);
+    assert.ok(fetchedRoom !== null, 'Should fetch room with Google avatar');
+    assert.strictEqual(fetchedRoom.roomCode, complexRoomCode);
+    assert.strictEqual(fetchedRoom.hostId, googleUserHost.id);
+    assert.strictEqual(fetchedRoom.hostDisplayName, googleUserHost.displayName);
+  });
 });

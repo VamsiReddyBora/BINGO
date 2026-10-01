@@ -190,7 +190,7 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#FAFAFC] text-slate-800 flex flex-col justify-center">
+    <div className="min-h-[100dvh] w-full overflow-x-hidden bg-[#FAFAFC] text-slate-800 flex flex-col justify-center">
       {/* Real-time Match Invitation Dialog */}
       {pendingInvite && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-md animate-fade-in select-none">

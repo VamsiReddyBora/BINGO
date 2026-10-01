@@ -4,6 +4,7 @@ import { Player, RoomMessagePacket } from '../types/models';
 import { roomSync } from '../network/mqttSync';
 import { CloudRegistry } from '../network/cloudRegistry';
 import { soundEffects } from '../audio/sounds';
+import { PlayerAvatar } from '../components/PlayerAvatar';
 
 interface Props {
   roomCode: string;
@@ -151,7 +152,7 @@ export const LobbyScreen: React.FC<Props> = ({
   }, [isHost, localPlayer.id, roomCode]);
 
   return (
-    <div className="relative min-h-screen flex flex-col justify-between max-w-lg mx-auto p-4 select-none bg-[#FAFAFC] text-slate-800">
+    <div className="relative min-h-[100dvh] flex flex-col justify-between max-w-lg lg:max-w-xl mx-auto p-4 select-none bg-[#FAFAFC] text-slate-800">
       {/* Countdown Fullscreen Overlay */}
       {countdown !== null && (
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-white/95 backdrop-blur-md animate-fade-in">
@@ -231,9 +232,13 @@ export const LobbyScreen: React.FC<Props> = ({
           {/* Host Card */}
           <div className="flex items-center justify-between p-3.5 bg-white border border-slate-200 rounded-2xl shadow-sm">
             <div className="flex items-center gap-3">
-              <div className="w-11 h-11 rounded-full bg-[#F5EEFF] border border-purple-200 flex items-center justify-center text-xl shadow-sm">
-                {localPlayer.isHost ? (localPlayer.avatarUrl || '🧑') : (opponent?.avatarUrl || '👤')}
-              </div>
+              <PlayerAvatar
+                avatarUrl={localPlayer.isHost ? localPlayer.avatarUrl : opponent?.avatarUrl}
+                displayName={localPlayer.isHost ? localPlayer.displayName : opponent?.displayName}
+                sizeClassName="w-11 h-11 text-xl"
+                fallbackIcon={localPlayer.isHost ? '🧑' : '👤'}
+                className="border border-purple-200 bg-[#F5EEFF] shadow-sm"
+              />
               <div>
                 <div className="flex items-center gap-1.5">
                   <span className="text-sm font-bold text-slate-800">
@@ -259,9 +264,13 @@ export const LobbyScreen: React.FC<Props> = ({
           {opponent ? (
             <div className="flex items-center justify-between p-3.5 bg-white border border-slate-200 rounded-2xl shadow-sm animate-fade-in">
               <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-full bg-blue-50 border border-blue-200 flex items-center justify-center text-xl shadow-sm">
-                  {!localPlayer.isHost ? (localPlayer.avatarUrl || '🧑') : (opponent.avatarUrl || '👤')}
-                </div>
+                <PlayerAvatar
+                  avatarUrl={!localPlayer.isHost ? localPlayer.avatarUrl : opponent.avatarUrl}
+                  displayName={!localPlayer.isHost ? localPlayer.displayName : opponent.displayName}
+                  sizeClassName="w-11 h-11 text-xl"
+                  fallbackIcon={!localPlayer.isHost ? '🧑' : '👤'}
+                  className="border border-blue-200 bg-blue-50 shadow-sm"
+                />
                 <div>
                   <span className="text-sm font-bold text-slate-800">
                     {!localPlayer.isHost ? `${localPlayer.displayName} (You)` : opponent.displayName}

@@ -8,6 +8,7 @@ import { FloatingEmotes } from '../components/FloatingEmotes';
 import { EmojiReactionStrip } from '../components/EmojiReactionStrip';
 import { QuickChatDrawer } from '../components/QuickChatDrawer';
 import { WinningModal } from '../components/WinningModal';
+import { PlayerAvatar } from '../components/PlayerAvatar';
 
 interface Props {
   roomCode: string;
@@ -351,12 +352,12 @@ export const GameScreen: React.FC<Props> = ({
   };
 
   return (
-    <div className="relative min-h-screen flex flex-col justify-between max-w-lg mx-auto p-3 sm:p-4 select-none bg-[#FAFAFC] text-slate-800">
+    <div className="relative min-h-[100dvh] flex flex-col justify-between max-w-lg lg:max-w-5xl mx-auto p-2 sm:p-4 pb-3 sm:pb-4 select-none bg-[#FAFAFC] text-slate-800">
       {/* Floating Emotes Layer */}
       <FloatingEmotes emotes={activeEmotes} onRemoveEmote={removeEmote} />
 
       {/* Top Header Bar */}
-      <header className="flex items-center justify-between py-2 px-1">
+      <header className="flex items-center justify-between py-1.5 sm:py-2 px-1">
         <button
           type="button"
           onClick={() => {
@@ -365,10 +366,10 @@ export const GameScreen: React.FC<Props> = ({
               onLeaveGame();
             }
           }}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white border border-slate-200 text-rose-600 hover:bg-rose-50 text-xs font-bold transition-all cursor-pointer shadow-sm"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white border border-slate-200 text-rose-600 hover:bg-rose-50 text-xs font-bold transition-all cursor-pointer shadow-sm active:scale-95"
         >
           <Flag className="w-3.5 h-3.5" />
-          Surrender
+          <span>Surrender</span>
         </button>
 
         {/* Room Code Badge */}
@@ -376,7 +377,7 @@ export const GameScreen: React.FC<Props> = ({
           type="button"
           onClick={handleCopyCode}
           title="Click to copy room code"
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-extrabold tracking-wider transition-all cursor-pointer shadow-sm"
+          className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-extrabold tracking-wider transition-all cursor-pointer shadow-sm active:scale-95"
         >
           <span>ROOM: <strong className="text-[#7C3AED]">{roomCode}</strong></span>
           {copiedCode ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3 h-3 text-slate-400" />}
@@ -395,149 +396,169 @@ export const GameScreen: React.FC<Props> = ({
           <button
             type="button"
             onClick={toggleSound}
-            className="w-8 h-8 rounded-full bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50 flex items-center justify-center transition-all cursor-pointer shadow-sm"
+            className="w-8 h-8 rounded-full bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50 flex items-center justify-center transition-all cursor-pointer shadow-sm active:scale-95"
           >
             {soundOn ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4 text-slate-400" />}
           </button>
         </div>
       </header>
 
-      {/* B-I-N-G-O Letters Banner */}
-      <section className="my-2">
-        <div className="flex justify-center items-center gap-2 sm:gap-3 py-2 px-3 bg-white border border-slate-200 rounded-2xl shadow-sm">
-          {BINGO_LETTERS.map((letter, idx) => {
-            const isLit = myLinesCount > idx;
-            return (
-              <div
-                key={letter}
-                className={`relative flex items-center justify-center w-11 h-11 sm:w-12 sm:h-12 rounded-xl font-heading font-black text-xl sm:text-2xl transition-all duration-300 ${
-                  isLit
-                    ? 'bg-gradient-to-tr from-amber-400 to-amber-500 text-white shadow-md scale-105'
-                    : 'bg-slate-50 text-slate-400 border border-slate-200'
-                }`}
-              >
-                {letter}
-                {isLit && (
-                  <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
+      {/* Main Adaptive Game Area: Stacked on Mobile/Tablet portrait, 2 Columns on Laptop/Desktop */}
+      <div className="flex-1 flex flex-col lg:flex-row lg:items-center lg:justify-between lg:gap-8 my-1 sm:my-2">
+        {/* Left Column on Desktop / Top Section on Mobile: B-I-N-G-O Letters & Player Status */}
+        <div className="w-full lg:w-[360px] xl:w-[400px] flex flex-col justify-center space-y-2 sm:space-y-3">
+          {/* B-I-N-G-O Letters Banner */}
+          <div className="flex justify-center items-center gap-2 sm:gap-3 py-2 px-3 bg-white border border-slate-200 rounded-2xl shadow-sm">
+            {BINGO_LETTERS.map((letter, idx) => {
+              const isLit = myLinesCount > idx;
+              return (
+                <div
+                  key={letter}
+                  className={`relative flex items-center justify-center w-10 h-10 sm:w-12 sm:h-12 lg:w-13 lg:h-13 rounded-xl font-heading font-black text-xl sm:text-2xl transition-all duration-300 ${
+                    isLit
+                      ? 'bg-gradient-to-tr from-amber-400 to-amber-500 text-white shadow-md scale-105'
+                      : 'bg-slate-50 text-slate-400 border border-slate-200'
+                  }`}
+                >
+                  {letter}
+                  {isLit && (
+                    <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Players Status & Turn Bar */}
+          <div className="grid grid-cols-2 lg:grid-cols-1 gap-2">
+            {/* Local Player Card */}
+            <div
+              className={`flex items-center gap-2.5 p-2 sm:p-2.5 rounded-2xl border transition-all ${
+                isMyTurn
+                  ? 'bg-[#F5EEFF] border-2 border-[#7C3AED] shadow-sm'
+                  : 'bg-white border border-slate-200 shadow-sm'
+              }`}
+            >
+              <PlayerAvatar
+                avatarUrl={localPlayer.avatarUrl}
+                displayName={localPlayer.displayName}
+                sizeClassName="w-10 h-10 text-lg"
+                fallbackIcon="🧑"
+                className="border border-purple-200 bg-[#F5EEFF] shadow-sm"
+              />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between gap-1">
+                  <span className="text-xs font-bold text-slate-800 truncate">{localPlayer.displayName}</span>
+                  <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-purple-100 text-[#7C3AED] flex-shrink-0">
+                    {myLinesCount}/5
                   </span>
-                )}
+                </div>
+                <div className="flex items-center gap-1 mt-0.5">
+                  {isMyTurn ? (
+                    <span className="text-[11px] font-extrabold text-[#7C3AED] flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#7C3AED] animate-ping" />
+                      Your Turn ({turnTimer}s)
+                    </span>
+                  ) : (
+                    <span className="text-[11px] font-medium text-slate-400">Waiting...</span>
+                  )}
+                </div>
               </div>
-            );
-          })}
-        </div>
-      </section>
-
-      {/* Players Status & Turn Bar */}
-      <section className="grid grid-cols-2 gap-2 my-1">
-        {/* Local Player Card */}
-        <div
-          className={`flex items-center gap-2.5 p-2.5 rounded-2xl border transition-all ${
-            isMyTurn
-              ? 'bg-[#F5EEFF] border-2 border-[#7C3AED] shadow-sm'
-              : 'bg-white border border-slate-200 shadow-sm'
-          }`}
-        >
-          <div className="w-10 h-10 rounded-full bg-[#F5EEFF] border border-purple-200 flex items-center justify-center text-lg shadow-sm">
-            {localPlayer.avatarUrl || '🧑'}
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-800 truncate">{localPlayer.displayName}</span>
-              <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-purple-100 text-[#7C3AED]">
-                {myLinesCount}/5
-              </span>
             </div>
-            <div className="flex items-center gap-1 mt-0.5">
-              {isMyTurn ? (
-                <span className="text-[11px] font-extrabold text-[#7C3AED] flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#7C3AED] animate-ping" />
-                  Your Turn ({turnTimer}s)
-                </span>
-              ) : (
-                <span className="text-[11px] font-medium text-slate-400">Waiting...</span>
-              )}
-            </div>
-          </div>
-        </div>
 
-        {/* Opponent Card */}
-        <div
-          className={`flex items-center gap-2.5 p-2.5 rounded-2xl border transition-all ${
-            !isMyTurn
-              ? 'bg-sky-50 border-2 border-sky-400 shadow-sm'
-              : 'bg-white border border-slate-200 shadow-sm'
-          }`}
-        >
-          <div className="w-10 h-10 rounded-full bg-sky-50 border border-sky-200 flex items-center justify-center text-lg shadow-sm">
-            {opponent?.avatarUrl || (isAiMode ? '🤖' : '👤')}
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-800 truncate">
-                {opponent?.displayName || (isAiMode ? 'AI Bot' : 'Opponent')}
-              </span>
-              <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-sky-100 text-sky-700">
-                {opponentLinesCount}/5
-              </span>
-            </div>
-            <div className="flex items-center gap-1 mt-0.5">
-              {!isMyTurn ? (
-                <span className="text-[11px] font-extrabold text-sky-600 flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-ping" />
-                  Picking... ({turnTimer}s)
-                </span>
-              ) : (
-                <span className="text-[11px] font-medium text-slate-400">Waiting for you</span>
-              )}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* 5x5 Bingo Board Grid */}
-      <main className="my-auto py-2">
-        <div className="aspect-square w-full max-w-[420px] mx-auto grid grid-cols-5 gap-1.5 sm:gap-2 p-2 sm:p-2.5 bg-white border border-slate-200 rounded-3xl shadow-sm">
-          {board.cells.map(cell => {
-            const isMarked = cell.markState.type === 'Marked';
-            const isOwnPick = isMarked && (cell.markState as any).isOwnPick;
-            const isLine = cell.isPartOfCompletedLine;
-
-            return (
-              <button
-                key={cell.number}
-                type="button"
-                disabled={isMarked || !isMyTurn || isGameOver}
-                onClick={() => handlePickNumber(cell.number)}
-                className={`relative flex items-center justify-center rounded-2xl font-black text-lg sm:text-2xl transition-all duration-200 cursor-pointer ${
-                  isMarked
-                    ? isLine
-                      ? 'bg-gradient-to-tr from-amber-400 to-amber-500 text-white font-black shadow-md border-2 border-amber-300 scale-95'
-                      : isOwnPick
-                      ? 'bg-[#EADBFF] text-[#6B21A8] shadow-sm scale-95'
-                      : 'bg-[#D3EEFF] text-[#0369A1] shadow-sm scale-95'
-                    : isMyTurn
-                    ? 'bg-white text-slate-800 hover:border-[#7C3AED] hover:shadow-sm border-2 border-slate-300 active:scale-90 hover:scale-105'
-                    : 'bg-slate-50 text-slate-400 border border-slate-200 cursor-not-allowed opacity-90'
-                }`}
-              >
-                <span>{cell.number}</span>
-
-                {/* Pick mark badge */}
-                {isMarked && (
-                  <span className="absolute bottom-1 right-1 text-[9px] font-bold opacity-80">
-                    {isOwnPick ? '✓' : '•'}
+            {/* Opponent Card */}
+            <div
+              className={`flex items-center gap-2.5 p-2 sm:p-2.5 rounded-2xl border transition-all ${
+                !isMyTurn
+                  ? 'bg-sky-50 border-2 border-sky-400 shadow-sm'
+                  : 'bg-white border border-slate-200 shadow-sm'
+              }`}
+            >
+              <PlayerAvatar
+                avatarUrl={opponent?.avatarUrl}
+                displayName={opponent?.displayName}
+                sizeClassName="w-10 h-10 text-lg"
+                fallbackIcon={isAiMode ? '🤖' : '👤'}
+                className="border border-sky-200 bg-sky-50 shadow-sm"
+              />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between gap-1">
+                  <span className="text-xs font-bold text-slate-800 truncate">
+                    {opponent?.displayName || (isAiMode ? 'AI Bot' : 'Opponent')}
                   </span>
-                )}
-              </button>
-            );
-          })}
+                  <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 flex-shrink-0">
+                    {opponentLinesCount}/5
+                  </span>
+                </div>
+                <div className="flex items-center gap-1 mt-0.5">
+                  {!isMyTurn ? (
+                    <span className="text-[11px] font-extrabold text-sky-600 flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-ping" />
+                      Picking... ({turnTimer}s)
+                    </span>
+                  ) : (
+                    <span className="text-[11px] font-medium text-slate-400">Waiting for you</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Desktop-only Game Guidance Panel */}
+          <div className="hidden lg:block p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs text-slate-600 space-y-1">
+            <p className="font-bold text-slate-700">🎯 Match Objective:</p>
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              Complete 5 lines across rows, columns, or diagonals. First to claim 5 lines wins the game!
+            </p>
+          </div>
         </div>
-      </main>
+
+        {/* Right Column on Desktop / Center Section on Mobile: 5x5 Grid */}
+        <main className="flex-1 flex flex-col items-center justify-center my-auto py-1 sm:py-2">
+          <div className="aspect-square w-full max-w-[360px] sm:max-w-[420px] lg:max-w-[460px] xl:max-w-[480px] grid grid-cols-5 gap-1.5 sm:gap-2 p-2 sm:p-2.5 bg-white border border-slate-200 rounded-3xl shadow-sm">
+            {board.cells.map(cell => {
+              const isMarked = cell.markState.type === 'Marked';
+              const isOwnPick = isMarked && (cell.markState as any).isOwnPick;
+              const isLine = cell.isPartOfCompletedLine;
+
+              return (
+                <button
+                  key={cell.number}
+                  type="button"
+                  disabled={isMarked || !isMyTurn || isGameOver}
+                  onClick={() => handlePickNumber(cell.number)}
+                  className={`relative flex items-center justify-center rounded-2xl font-black text-lg sm:text-2xl lg:text-3xl transition-all duration-200 cursor-pointer ${
+                    isMarked
+                      ? isLine
+                        ? 'bg-gradient-to-tr from-amber-400 to-amber-500 text-white font-black shadow-md border-2 border-amber-300 scale-95'
+                        : isOwnPick
+                        ? 'bg-[#EADBFF] text-[#6B21A8] shadow-sm scale-95'
+                        : 'bg-[#D3EEFF] text-[#0369A1] shadow-sm scale-95'
+                      : isMyTurn
+                      ? 'bg-white text-slate-800 hover:border-[#7C3AED] hover:shadow-md border-2 border-slate-300 active:scale-90 hover:scale-105'
+                      : 'bg-slate-50 text-slate-400 border border-slate-200 cursor-not-allowed opacity-90'
+                  }`}
+                >
+                  <span>{cell.number}</span>
+
+                  {/* Pick mark badge */}
+                  {isMarked && (
+                    <span className="absolute bottom-1 right-1 text-[9px] font-bold opacity-80">
+                      {isOwnPick ? '✓' : '•'}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </main>
+      </div>
 
       {/* Bottom Emoji Reaction Strip & Quick Chat */}
-      <footer className="mt-2 pb-1">
+      <footer className="mt-1 pb-1 sm:pb-2">
         <EmojiReactionStrip
           onSendEmote={handleSendEmote}
           onToggleQuickChat={() => setIsQuickChatOpen(prev => !prev)}

@@ -102,7 +102,7 @@ export const LoginScreen: React.FC<Props> = ({ onLoginSuccess }) => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col justify-center items-center p-4 max-w-md mx-auto select-none bg-[#FAFAFC] text-slate-800">
+    <div className="min-h-[100dvh] flex flex-col justify-center items-center p-4 max-w-md mx-auto select-none bg-[#FAFAFC] text-slate-800">
       {/* Aesthetic App Icon & Header matching Android LoginScreen.kt */}
       <div className="flex flex-col items-center mb-6">
         <div className="w-18 h-18 rounded-[22px] bg-[#F5EEFF] flex items-center justify-center shadow-md border border-purple-200/80 p-2">

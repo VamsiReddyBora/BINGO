@@ -3,6 +3,7 @@ import { ArrowLeft, Search, UserPlus, Users, Trophy, Flame, Play, Check, Clock, 
 import { Player } from '../types/models';
 import { CloudRegistry, PlayerRegistryEntry } from '../network/cloudRegistry';
 import { soundEffects } from '../audio/sounds';
+import { PlayerAvatar } from '../components/PlayerAvatar';
 
 interface Props {
   localPlayer: Player;
@@ -76,7 +77,7 @@ export const DashboardAndFriendsScreen: React.FC<Props> = ({
     localPlayer.level >= 3 ? 'Silver Competitor' : 'Bronze Player';
 
   return (
-    <div className="min-h-screen flex flex-col justify-between max-w-lg mx-auto p-4 select-none bg-[#FAFAFC] text-slate-800">
+    <div className="min-h-[100dvh] flex flex-col justify-between max-w-lg md:max-w-2xl lg:max-w-3xl mx-auto p-4 sm:p-6 select-none bg-[#FAFAFC] text-slate-800">
       {/* Header */}
       <header className="flex items-center gap-3 py-2">
         <button
@@ -85,15 +86,15 @@ export const DashboardAndFriendsScreen: React.FC<Props> = ({
             soundEffects.playTap();
             onBack();
           }}
-          className="w-10 h-10 rounded-full bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50 flex items-center justify-center transition-all cursor-pointer shadow-sm"
+          className="w-10 h-10 rounded-full bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50 flex items-center justify-center transition-all cursor-pointer shadow-sm active:scale-95"
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
         <div>
-          <h1 className="text-xl font-black font-heading tracking-wide text-slate-800">
+          <h1 className="text-xl sm:text-2xl font-black font-heading tracking-wide text-slate-800">
             Dashboard & Friends
           </h1>
-          <p className="text-xs text-slate-500">Stats, player search & match invites</p>
+          <p className="text-xs sm:text-sm text-slate-500">Stats, player search & match invites</p>
         </div>
       </header>
 
@@ -135,9 +136,13 @@ export const DashboardAndFriendsScreen: React.FC<Props> = ({
           <div className="space-y-4 animate-fade-in">
             {/* Player Profile Card */}
             <div className="p-5 rounded-3xl bg-white border border-slate-200 shadow-sm flex items-center gap-4">
-              <div className="w-16 h-16 rounded-full bg-[#F5EEFF] border-2 border-purple-200 flex items-center justify-center text-3xl shadow-sm">
-                {localPlayer.avatarUrl || '🧑'}
-              </div>
+              <PlayerAvatar
+                avatarUrl={localPlayer.avatarUrl}
+                displayName={localPlayer.displayName}
+                sizeClassName="w-16 h-16 text-3xl"
+                fallbackIcon="🧑"
+                className="border-2 border-purple-200 bg-[#F5EEFF] shadow-sm"
+              />
               <div className="flex-1">
                 <div className="flex items-center gap-2">
                   <h2 className="text-lg font-black text-slate-800">{localPlayer.displayName}</h2>
@@ -151,7 +156,7 @@ export const DashboardAndFriendsScreen: React.FC<Props> = ({
             </div>
 
             {/* Stats Grid */}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-sm">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
                   Matches Won
@@ -221,9 +226,13 @@ export const DashboardAndFriendsScreen: React.FC<Props> = ({
               <div className="p-4 rounded-2xl bg-white border-2 border-purple-200 shadow-sm animate-fade-in">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="w-11 h-11 rounded-full bg-[#F5EEFF] border border-purple-200 flex items-center justify-center text-xl">
-                      {searchResult.avatarUrl || '🧑'}
-                    </div>
+                    <PlayerAvatar
+                      avatarUrl={searchResult.avatarUrl}
+                      displayName={searchResult.displayName}
+                      sizeClassName="w-11 h-11 text-xl"
+                      fallbackIcon="🧑"
+                      className="border border-purple-200 bg-[#F5EEFF]"
+                    />
                     <div>
                       <h3 className="text-sm font-black text-slate-800">{searchResult.displayName}</h3>
                       <p className="text-xs text-[#7C3AED] font-bold">@{searchResult.username}</p>
@@ -281,9 +290,13 @@ export const DashboardAndFriendsScreen: React.FC<Props> = ({
                     className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-sm flex items-center justify-between"
                   >
                     <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-lg">
-                        {friend.avatarUrl || '🧑'}
-                      </div>
+                      <PlayerAvatar
+                        avatarUrl={friend.avatarUrl}
+                        displayName={friend.displayName}
+                        sizeClassName="w-10 h-10 text-lg"
+                        fallbackIcon="🧑"
+                        className="bg-slate-100"
+                      />
                       <div>
                         <h4 className="text-xs font-bold text-slate-800">{friend.displayName}</h4>
                         <p className="text-[11px] text-[#7C3AED] font-semibold">@{friend.username}</p>

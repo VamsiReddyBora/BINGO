@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Cast, Wifi, Bot, Users, BarChart2, ArrowRight } from 'lucide-react';
 import { Player } from '../types/models';
 import { soundEffects } from '../audio/sounds';
+import { PlayerAvatar } from '../components/PlayerAvatar';
 
 interface Props {
   localPlayer: Player;
@@ -21,14 +22,14 @@ export const MainMenuScreen: React.FC<Props> = ({
   const [selectedDifficulty, setSelectedDifficulty] = useState<'EASY' | 'MEDIUM' | 'HARD'>('EASY');
 
   return (
-    <div className="min-h-screen flex flex-col justify-between max-w-md mx-auto p-4 select-none bg-[#FAFAFC] text-slate-800">
+    <div className="min-h-[100dvh] flex flex-col justify-between max-w-md md:max-w-2xl lg:max-w-3xl mx-auto p-4 sm:p-6 select-none bg-[#FAFAFC] text-slate-800">
       {/* ── Minimal Compact Top Bar matching Android MainMenuScreen.kt ── */}
-      <header className="flex items-center justify-between py-3">
+      <header className="flex items-center justify-between py-2 sm:py-3">
         <div>
-          <h1 className="text-2xl font-black font-heading tracking-widest text-slate-800 leading-none">
+          <h1 className="text-2xl sm:text-3xl font-black font-heading tracking-widest text-slate-800 leading-none">
             B I N G O
           </h1>
-          <span className="text-[10px] font-extrabold tracking-widest text-[#7C3AED] uppercase">
+          <span className="text-[10px] sm:text-xs font-extrabold tracking-widest text-[#7C3AED] uppercase">
             MULTIPLAYER
           </span>
         </div>
@@ -41,9 +42,9 @@ export const MainMenuScreen: React.FC<Props> = ({
               soundEffects.playTap();
               onNavigateToDashboard();
             }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold transition-all active:scale-95 cursor-pointer shadow-sm"
+            className="flex items-center gap-1.5 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs sm:text-sm font-bold transition-all active:scale-95 cursor-pointer shadow-sm"
           >
-            <BarChart2 className="w-3.5 h-3.5 text-[#7C3AED]" />
+            <BarChart2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#7C3AED]" />
             <span>Dashboard</span>
           </button>
 
@@ -55,9 +56,15 @@ export const MainMenuScreen: React.FC<Props> = ({
               onNavigateToDashboard();
             }}
             title={`Logged in as @${localPlayer.username}`}
-            className="w-8 h-8 rounded-full bg-white border-2 border-[#7C3AED] flex items-center justify-center text-sm shadow-sm cursor-pointer"
+            className="cursor-pointer transition-transform active:scale-95"
           >
-            {localPlayer.avatarUrl || '🧑'}
+            <PlayerAvatar
+              avatarUrl={localPlayer.avatarUrl}
+              displayName={localPlayer.displayName}
+              sizeClassName="w-8 h-8 sm:w-9 sm:h-9 text-sm"
+              fallbackIcon="🧑"
+              className="border-2 border-[#7C3AED] bg-white shadow-sm"
+            />
           </button>
         </div>
       </header>
@@ -69,15 +76,15 @@ export const MainMenuScreen: React.FC<Props> = ({
             soundEffects.playTap();
             onNavigateToDashboard();
           }}
-          className="flex items-center justify-between p-3.5 rounded-2xl bg-white border border-slate-200 hover:border-purple-300 hover:bg-purple-50/20 active:scale-[0.98] transition-all cursor-pointer shadow-sm"
+          className="flex items-center justify-between p-3.5 sm:p-4 rounded-2xl bg-white border border-slate-200 hover:border-purple-300 hover:bg-purple-50/20 active:scale-[0.98] transition-all cursor-pointer shadow-sm"
         >
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-[#F5EEFF] flex items-center justify-center text-[#7C3AED]">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-[#F5EEFF] flex items-center justify-center text-[#7C3AED]">
               <Users className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-xs font-bold text-slate-800">Friends & Social Hub</h2>
-              <p className="text-[11px] text-slate-500">Online status, friends list & 1-tap invites</p>
+              <h2 className="text-xs sm:text-sm font-bold text-slate-800">Friends & Social Hub</h2>
+              <p className="text-[11px] sm:text-xs text-slate-500">Online status, friends list & 1-tap invites</p>
             </div>
           </div>
           <ArrowRight className="w-4 h-4 text-slate-400" />
@@ -92,7 +99,7 @@ export const MainMenuScreen: React.FC<Props> = ({
       </div>
 
       {/* ── Game Modes List ── */}
-      <main className="space-y-3 my-auto py-1">
+      <main className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4 my-auto py-1">
         {/* 1. Play vs AI Card (Compact) matching Android */}
         <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-sm">
           <div className="flex items-center justify-between">

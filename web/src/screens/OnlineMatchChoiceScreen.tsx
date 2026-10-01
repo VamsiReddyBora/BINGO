@@ -67,7 +67,7 @@ export const OnlineMatchChoiceScreen: React.FC<Props> = ({
   };
 
   return (
-    <div className="min-h-screen flex flex-col justify-between max-w-md mx-auto p-4 select-none bg-[#FAFAFC] text-slate-800">
+    <div className="min-h-[100dvh] flex flex-col justify-between max-w-md md:max-w-2xl mx-auto p-4 sm:p-6 select-none bg-[#FAFAFC] text-slate-800">
       {/* Header */}
       <header className="flex items-center gap-3 py-3">
         <button
@@ -76,15 +76,15 @@ export const OnlineMatchChoiceScreen: React.FC<Props> = ({
             soundEffects.playTap();
             onBack();
           }}
-          className="w-10 h-10 rounded-full bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50 flex items-center justify-center transition-all cursor-pointer shadow-sm"
+          className="w-10 h-10 rounded-full bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50 flex items-center justify-center transition-all cursor-pointer shadow-sm active:scale-95"
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
         <div>
-          <h1 className="text-xl font-black font-heading tracking-wide text-slate-800">
+          <h1 className="text-xl sm:text-2xl font-black font-heading tracking-wide text-slate-800">
             Online Match
           </h1>
-          <p className="text-xs text-slate-500">Host or join a cross-platform room</p>
+          <p className="text-xs sm:text-sm text-slate-500">Host or join a cross-platform room</p>
         </div>
       </header>
 
@@ -105,7 +105,7 @@ export const OnlineMatchChoiceScreen: React.FC<Props> = ({
             </p>
           </div>
         ) : !isJoining ? (
-          <>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Host Game Card */}
             <button
               type="button"
@@ -149,7 +149,7 @@ export const OnlineMatchChoiceScreen: React.FC<Props> = ({
               </div>
               <span className="text-xl text-blue-600 font-bold group-hover:translate-x-1 transition-transform">➔</span>
             </button>
-          </>
+          </div>
         ) : (
           /* Join Room Form */
           <div className="p-6 rounded-3xl bg-white border border-slate-200 shadow-xl animate-fade-in">
