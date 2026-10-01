@@ -135,7 +135,7 @@ export const EmojiReactionStrip: React.FC<Props> = ({
         >
           <div className="relative flex flex-col items-center">
             {/* Glowing circular bubble */}
-            <div className="w-16 h-16 rounded-full bg-gradient-to-b from-slate-800 to-slate-900 border-2 border-blue-400 shadow-[0_0_20px_rgba(59,130,246,0.5)] flex items-center justify-center animate-pulse-subtle">
+            <div className="w-16 h-16 rounded-full bg-white border-2 border-purple-500 shadow-[0_4px_20px_rgba(124,58,237,0.35)] flex items-center justify-center animate-pulse-subtle">
               <span
                 style={{
                   fontSize: `${Math.round(26 * (currentScale / 1.5))}px`
@@ -147,18 +147,18 @@ export const EmojiReactionStrip: React.FC<Props> = ({
             </div>
 
             {/* Scale badge */}
-            <span className="mt-1 text-[10px] font-extrabold px-1.5 py-0.5 rounded-full bg-blue-600 text-white shadow">
+            <span className="mt-1 text-[10px] font-extrabold px-1.5 py-0.5 rounded-full bg-purple-600 text-white shadow">
               {currentScale.toFixed(1)}x
             </span>
 
             {/* Bubble arrow pointing down */}
-            <div className="w-2.5 h-2.5 bg-slate-900 border-r-2 border-b-2 border-blue-400 transform rotate-45 -mt-1" />
+            <div className="w-2.5 h-2.5 bg-white border-r-2 border-b-2 border-purple-500 transform rotate-45 -mt-1" />
           </div>
         </div>
       )}
 
       {/* Main Container Pill */}
-      <div className="flex items-center gap-1.5 p-1.5 bg-slate-900/90 border border-slate-700/70 rounded-full shadow-2xl backdrop-blur-xl">
+      <div className="flex items-center gap-1.5 p-1.5 bg-white/95 border border-slate-200/90 rounded-full shadow-lg backdrop-blur-xl">
         {/* Quick Chat Button (Click = toggle, Long-press = scroll to start) */}
         <button
           type="button"
@@ -168,15 +168,15 @@ export const EmojiReactionStrip: React.FC<Props> = ({
           onPointerCancel={handleQuickChatPointerCancel}
           className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-all ${
             isQuickChatOpen
-              ? 'bg-blue-600 text-white shadow-[0_0_12px_rgba(59,130,246,0.6)]'
-              : 'bg-slate-800/90 text-slate-300 hover:text-white hover:bg-slate-700/80 active:scale-95'
+              ? 'bg-purple-600 text-white shadow-md'
+              : 'bg-slate-100 text-slate-700 hover:text-purple-600 hover:bg-purple-50 active:scale-95'
           }`}
         >
           <MessageSquare className="w-4 h-4" />
         </button>
 
         {/* Separator */}
-        <div className="w-[1px] h-6 bg-slate-700/60 flex-shrink-0" />
+        <div className="w-[1px] h-6 bg-slate-200 flex-shrink-0" />
 
         {/* Horizontally Scrollable Emoji Strip */}
         <div
@@ -191,7 +191,7 @@ export const EmojiReactionStrip: React.FC<Props> = ({
               onPointerMove={handleEmojiPointerMove}
               onPointerUp={handleEmojiPointerUp}
               onPointerCancel={cancelHold}
-              className="flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-xl hover:bg-slate-800/80 active:bg-slate-700 transition-transform active:scale-110"
+              className="flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-xl hover:bg-slate-100 active:bg-slate-200 transition-transform active:scale-110"
             >
               {emoji}
             </button>

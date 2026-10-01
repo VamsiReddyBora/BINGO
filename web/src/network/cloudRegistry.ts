@@ -49,6 +49,23 @@ function safeBase64Encode(raw: string): string {
   return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+export async function safeBase64EncodeAsync(raw: string): Promise<string> {
+  try {
+    if (typeof CompressionStream !== 'undefined') {
+      const stream = new Blob([new TextEncoder().encode(raw)]).stream().pipeThrough(new CompressionStream('gzip'));
+      const buffer = await new Response(stream).arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      const b64 = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      return 'GZ:' + b64;
+    }
+  } catch (e) {
+    console.warn('Failed to compress with gzip:', e);
+  }
+  return safeBase64Encode(raw);
+}
+
 async function safeBase64DecodeAsync(rawStr: string): Promise<string> {
   const clean = rawStr.trim().replace(/^"|"$/g, '');
   if (clean.startsWith('GZ:')) {
@@ -91,10 +108,15 @@ export class CloudRegistry {
       const encKey = encodeURIComponent(key.trim());
       const encVal = encodeURIComponent(value.trim());
       const url = `${KEYVALUE_API_URL}/UpdateValue/${KEYVALUE_APP_KEY}/${encKey}?value=${encVal}`;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3500);
       const res = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Length': '0' }
+        headers: { 'Content-Type': 'text/plain' },
+        body: '',
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
       return res.ok;
     } catch (e) {
       console.warn('setKeyValue error:', e);
@@ -106,7 +128,10 @@ export class CloudRegistry {
     try {
       const encKey = encodeURIComponent(key.trim());
       const url = `${KEYVALUE_API_URL}/GetValue/${KEYVALUE_APP_KEY}/${encKey}`;
-      const res = await fetch(url);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3500);
+      const res = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeoutId);
       if (!res.ok) return null;
       const text = await res.text();
       const clean = text.trim().replace(/^"|"$/g, '');
@@ -154,13 +179,13 @@ export class CloudRegistry {
     };
 
     const jsonStr = JSON.stringify(session);
-    const b64 = safeBase64Encode(jsonStr);
+    const b64 = await safeBase64EncodeAsync(jsonStr);
 
     // 1. Write to KeyValue store (so Android's getRoom sees it)
     await this.setKeyValue(`room_${cleanCode}`, b64);
 
     // 2. Publish to MQTT retained room_meta topic (so Android's getRoomMqtt sees it)
-    await roomSync.sendRetainedMeta(cleanCode, jsonStr);
+    roomSync.sendRetainedMeta(cleanCode, jsonStr).catch(() => {});
 
     return true;
   }
@@ -239,13 +264,85 @@ export class CloudRegistry {
 
       // Write updated session back
       const jsonStr = JSON.stringify(updatedSession);
-      const b64 = safeBase64Encode(jsonStr);
+      const b64 = await safeBase64EncodeAsync(jsonStr);
       this.setKeyValue(`room_${cleanCode}`, b64).catch(() => {});
-      roomSync.sendRetainedMeta(cleanCode, jsonStr);
+      roomSync.sendRetainedMeta(cleanCode, jsonStr).catch(() => {});
 
       return { success: true, session: updatedSession };
     } catch (e: any) {
       return { success: false, message: e.message || 'Error validating room code.' };
+    }
+  }
+
+  /**
+   * Fetches latest room session from KeyValue cloud registry.
+   */
+  public static async getRoom(roomCode: string): Promise<OnlineRoomSession | null> {
+    const cleanCode = roomCode.trim().toUpperCase();
+    if (cleanCode.length !== 6) return null;
+    try {
+      const raw = await this.getKeyValue(`room_${cleanCode}`);
+      if (raw) {
+        const jsonStr = await safeBase64DecodeAsync(raw);
+        if (jsonStr.startsWith('{')) {
+          return JSON.parse(jsonStr) as OnlineRoomSession;
+        }
+      }
+    } catch {}
+    return null;
+  }
+
+  /**
+   * Updates player ready status in KeyValue and MQTT retained room metadata.
+   */
+  public static async updateRoomReadyStatus(
+    roomCode: string,
+    playerId: string,
+    readyStatus: 'READY' | 'NOT_READY'
+  ): Promise<boolean> {
+    const cleanCode = roomCode.trim().toUpperCase();
+    if (cleanCode.length !== 6) return false;
+    try {
+      const session = await this.getRoom(cleanCode);
+      if (!session) return false;
+      let playerFound = false;
+      const updatedPlayers = session.players.map(p => {
+        if (p.id === playerId) {
+          playerFound = true;
+          return { ...p, lobbyReadyStatus: readyStatus, lastSeenTimestamp: Date.now() };
+        }
+        return p;
+      });
+      if (!playerFound) {
+        updatedPlayers.push({
+          id: playerId,
+          displayName: 'Player',
+          username: playerId,
+          isHost: false,
+          avatarUrl: null,
+          score: 0,
+          completedLinesCount: 0,
+          gamesPlayed: 0,
+          gamesWon: 0,
+          currentStreak: 0,
+          level: 1,
+          lastSeenTimestamp: Date.now(),
+          lobbyReadyStatus: readyStatus,
+          readyVersion: 0
+        });
+      }
+      const updatedSession: OnlineRoomSession = {
+        ...session,
+        players: updatedPlayers,
+        lastHeartbeat: Date.now()
+      };
+      const jsonStr = JSON.stringify(updatedSession);
+      const b64 = await safeBase64EncodeAsync(jsonStr);
+      await this.setKeyValue(`room_${cleanCode}`, b64);
+      roomSync.sendRetainedMeta(cleanCode, jsonStr).catch(() => {});
+      return true;
+    } catch {
+      return false;
     }
   }
 
@@ -295,7 +392,7 @@ export class CloudRegistry {
     };
 
     const jsonStr = JSON.stringify(entry);
-    const b64 = safeBase64Encode(jsonStr);
+    const b64 = await safeBase64EncodeAsync(jsonStr);
 
     // 1. Write to reg_{username} in KeyValue
     await this.setKeyValue(`reg_${clean}`, b64);
@@ -386,7 +483,7 @@ export class CloudRegistry {
       filtered.unshift(invite);
 
       const jsonStr = JSON.stringify(filtered);
-      const b64 = safeBase64Encode(jsonStr);
+      const b64 = await safeBase64EncodeAsync(jsonStr);
       await this.setKeyValue(`inv_${clean}`, b64);
       return true;
     } catch {

@@ -49,6 +49,9 @@ export class MqttRoomManager {
         }
         if (this.currentRoomCode) {
           this.subscribeToRoom(this.currentRoomCode);
+          this.sendJoinPacket();
+          setTimeout(() => this.sendJoinPacket(), 500);
+          setTimeout(() => this.sendJoinPacket(), 1500);
         }
       });
 
@@ -99,6 +102,8 @@ export class MqttRoomManager {
     } else {
       this.subscribeToRoom(cleanCode);
       this.sendJoinPacket();
+      setTimeout(() => this.sendJoinPacket(), 500);
+      setTimeout(() => this.sendJoinPacket(), 1500);
     }
 
     this.startHeartbeatLoop();
@@ -302,8 +307,44 @@ export class MqttRoomManager {
     });
   }
 
+  public getPlayers(): Player[] {
+    return Array.from(this.playerRegistry.values()).sort((a, b) => (b.isHost ? 1 : 0) - (a.isHost ? 1 : 0));
+  }
+
+  public mergePlayers(players: Player[]) {
+    let changed = false;
+    const now = Date.now();
+    players.forEach(p => {
+      if (!p.id) return;
+      const isLocal = this.localPlayer && p.id === this.localPlayer.id;
+      const existing = this.playerRegistry.get(p.id);
+      if (!existing) {
+        this.playerRegistry.set(p.id, {
+          ...p,
+          lastSeenTimestamp: now
+        });
+        changed = true;
+      } else {
+        const nextStatus = isLocal ? this.localPlayer!.lobbyReadyStatus : (p.lobbyReadyStatus || existing.lobbyReadyStatus);
+        if (existing.lobbyReadyStatus !== nextStatus || existing.displayName !== p.displayName) {
+          this.playerRegistry.set(p.id, {
+            ...existing,
+            displayName: p.displayName || existing.displayName,
+            avatarUrl: p.avatarUrl || existing.avatarUrl,
+            lobbyReadyStatus: nextStatus,
+            lastSeenTimestamp: now
+          });
+          changed = true;
+        }
+      }
+    });
+    if (changed) {
+      this.notifyPlayers();
+    }
+  }
+
   private notifyPlayers() {
-    const list = Array.from(this.playerRegistry.values()).sort((a, b) => (b.isHost ? 1 : 0) - (a.isHost ? 1 : 0));
+    const list = this.getPlayers();
     this.onPlayersChanged?.(list);
   }
 
