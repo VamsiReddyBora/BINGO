@@ -15,3 +15,8 @@ captures/
 # Exclude generated / temporary APKs but track root Bingo.apk
 *.apk
 !Bingo.apk
+
+# Web build artifacts & dependencies
+web/node_modules/
+web/dist/
+
