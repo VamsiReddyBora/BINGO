@@ -14,17 +14,78 @@ export class MqttRoomManager {
   private heartbeatTimer: any = null;
   private pingTimer: any = null;
   private livenessTimer: any = null;
+  private globalPresenceTimer: any = null;
   
   public onPacketReceived: ((packet: RoomMessagePacket) => void) | null = null;
   public onPlayersChanged: ((players: Player[]) => void) | null = null;
   public onPingChanged: ((pingMs: number) => void) | null = null;
   public onConnectionChanged: ((connected: boolean) => void) | null = null;
+  public onInviteReceived: ((invite: any) => void) | null = null;
 
   private smoothedPing: number = 24;
 
+  public initGlobalClient(player: Player) {
+    if (this.client && this.client.connected) {
+      this.subscribeGlobalTopics(player.username);
+      return;
+    }
+
+    this.localPlayer = { ...player };
+    const clientId = `bingo_web_${player.id.substring(0, 8)}_${Math.random().toString(36).substring(2, 6)}`;
+
+    try {
+      this.client = mqtt.connect(MQTT_WS_URL, {
+        clientId,
+        clean: true,
+        reconnectPeriod: 2500,
+        connectTimeout: 8000,
+        keepalive: 30
+      });
+
+      this.client.on('connect', () => {
+        this.onConnectionChanged?.(true);
+        if (this.localPlayer?.username) {
+          this.subscribeGlobalTopics(this.localPlayer.username);
+        }
+        if (this.currentRoomCode) {
+          this.subscribeToRoom(this.currentRoomCode);
+        }
+      });
+
+      this.client.on('message', (topic, message) => {
+        try {
+          const payloadStr = message.toString();
+          if (topic.startsWith('bingo/v3/invites/')) {
+            const invite = JSON.parse(payloadStr);
+            this.onInviteReceived?.(invite);
+            return;
+          }
+
+          const packet = FastPacketCodec.decode(payloadStr);
+          this.handleIncomingPacket(packet);
+        } catch (e) {
+          console.warn('Failed to parse incoming packet:', e);
+        }
+      });
+
+      this.client.on('close', () => {
+        this.onConnectionChanged?.(false);
+      });
+
+      this.startGlobalPresenceLoop();
+    } catch (err) {
+      console.error('Failed to create MQTT client:', err);
+    }
+  }
+
+  private subscribeGlobalTopics(username: string) {
+    if (!this.client || !this.client.connected) return;
+    const clean = username.trim().toLowerCase().replace(/^@/, '');
+    if (!clean) return;
+    this.client.subscribe(`bingo/v3/invites/${clean}`, { qos: 1 });
+  }
+
   public connect(roomCode: string, player: Player) {
-    this.disconnect();
-    
     const cleanCode = roomCode.trim().toUpperCase();
     this.currentRoomCode = cleanCode;
     this.localPlayer = { ...player };
@@ -33,61 +94,22 @@ export class MqttRoomManager {
     this.playerRegistry.set(player.id, { ...player, lastSeenTimestamp: Date.now() });
     this.notifyPlayers();
 
-    const clientId = `bingo_web_${player.id.substring(0, 8)}_${Math.random().toString(36).substring(2, 6)}`;
-    
-    try {
-      this.client = mqtt.connect(MQTT_WS_URL, {
-        clientId,
-        clean: true,
-        reconnectPeriod: 2000,
-        connectTimeout: 8000,
-        keepalive: 30
-      });
-
-      this.client.on('connect', () => {
-        this.onConnectionChanged?.(true);
-        this.subscribeToRoom(cleanCode);
-        this.sendJoinPacket();
-      });
-
-      this.client.on('message', (_topic, message) => {
-        try {
-          const payloadStr = message.toString();
-          const packet = FastPacketCodec.decode(payloadStr);
-          this.handleIncomingPacket(packet);
-        } catch (e) {
-          console.warn('Failed to parse incoming packet:', e);
-        }
-      });
-
-      this.client.on('reconnect', () => {
-        if (this.currentRoomCode) {
-          this.subscribeToRoom(this.currentRoomCode);
-        }
-      });
-
-      this.client.on('close', () => {
-        this.onConnectionChanged?.(false);
-      });
-
-      this.client.on('error', (err) => {
-        console.warn('MQTT connection error:', err);
-      });
-
-      this.startHeartbeatLoop();
-      this.startPingLoop();
-      this.startLivenessLoop();
-    } catch (err) {
-      console.error('Failed to create MQTT client:', err);
+    if (!this.client || !this.client.connected) {
+      this.initGlobalClient(player);
+    } else {
+      this.subscribeToRoom(cleanCode);
+      this.sendJoinPacket();
     }
+
+    this.startHeartbeatLoop();
+    this.startPingLoop();
+    this.startLivenessLoop();
   }
 
   private subscribeToRoom(code: string) {
     if (!this.client || !this.client.connected) return;
     const topic = `bingo/v3/room/${code}`;
-    this.client.subscribe(topic, { qos: 1 }, (err) => {
-      if (err) console.error('Subscription error on', topic, err);
-    });
+    this.client.subscribe(topic, { qos: 1 });
   }
 
   public sendPacket(packet: RoomMessagePacket) {
@@ -101,6 +123,85 @@ export class MqttRoomManager {
     const payload = FastPacketCodec.encode(outgoing);
     const qos = (packet.type === 'PICK_NUMBER' || packet.type === 'PING' || packet.type === 'PONG') ? 0 : 1;
     this.client.publish(topic, payload, { qos });
+  }
+
+  public async ensureConnected(): Promise<mqtt.MqttClient | null> {
+    if (this.client && this.client.connected) return this.client;
+
+    return new Promise((resolve) => {
+      if (!this.client) {
+        const dummy: Player = this.localPlayer || {
+          id: `web_tmp_${Date.now()}`,
+          displayName: 'Player',
+          username: '',
+          isHost: false,
+          score: 0,
+          completedLinesCount: 0,
+          gamesPlayed: 0,
+          gamesWon: 0,
+          currentStreak: 0,
+          level: 1,
+          lastSeenTimestamp: Date.now(),
+          lobbyReadyStatus: 'NOT_READY',
+          readyVersion: 0
+        };
+        this.initGlobalClient(dummy);
+      }
+
+      if (this.client && this.client.connected) {
+        return resolve(this.client);
+      }
+
+      const timer = setTimeout(() => {
+        cleanup();
+        resolve(this.client?.connected ? this.client : null);
+      }, 3500);
+
+      const onConnect = () => {
+        cleanup();
+        resolve(this.client);
+      };
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.client?.removeListener('connect', onConnect);
+      };
+
+      this.client?.once('connect', onConnect);
+    });
+  }
+
+  // ── Retained MQTT Broadcast Helpers for Android Cross-Discovery ──
+
+  public async sendRetainedMeta(roomCode: string, jsonStr: string): Promise<void> {
+    const client = await this.ensureConnected();
+    if (!client || !client.connected) return;
+    const topic = `bingo/v3/room_meta/${roomCode.trim().toUpperCase()}`;
+    client.publish(topic, jsonStr, { qos: 1, retain: true });
+  }
+
+  public async sendRetainedUserRegistry(username: string, jsonStr: string): Promise<void> {
+    const client = await this.ensureConnected();
+    if (!client || !client.connected) return;
+    const clean = username.trim().toLowerCase().replace(/^@/, '');
+    const topic = `bingo/v3/registry/${clean}`;
+    client.publish(topic, jsonStr, { qos: 1, retain: true });
+  }
+
+  public async sendRetainedPresence(username: string, jsonStr: string): Promise<void> {
+    const client = await this.ensureConnected();
+    if (!client || !client.connected) return;
+    const clean = username.trim().toLowerCase().replace(/^@/, '');
+    const topic = `bingo/v3/presence/${clean}`;
+    client.publish(topic, jsonStr, { qos: 1, retain: true });
+  }
+
+  public async sendMqttInvite(targetUsername: string, jsonStr: string): Promise<void> {
+    const client = await this.ensureConnected();
+    if (!client || !client.connected) return;
+    const clean = targetUsername.trim().toLowerCase().replace(/^@/, '');
+    const topic = `bingo/v3/invites/${clean}`;
+    client.publish(topic, jsonStr, { qos: 1, retain: false });
   }
 
   private sendJoinPacket() {
@@ -123,18 +224,14 @@ export class MqttRoomManager {
   }
 
   private handleIncomingPacket(packet: RoomMessagePacket) {
-    // Drop self-echoed packets
-    if (packet.senderInstanceId && packet.senderInstanceId === this.instanceId) {
-      return;
-    }
+    if (packet.senderInstanceId && packet.senderInstanceId === this.instanceId) return;
     if (this.localPlayer && packet.playerId === this.localPlayer.id && !packet.senderInstanceId) {
       if (this.localPlayer.isHost || (packet.type !== 'START_GAME' && packet.type !== 'PLAY_AGAIN')) {
         return;
       }
     }
 
-    // Process Presence & Heartbeats
-    if (packet.playerId && packet.type === 'HEARTBEAT' || packet.type === 'JOIN' || packet.type === 'READY_STATUS') {
+    if (packet.playerId && (packet.type === 'HEARTBEAT' || packet.type === 'JOIN' || packet.type === 'READY_STATUS')) {
       const existing = this.playerRegistry.get(packet.playerId);
       const updated: Player = {
         id: packet.playerId,
@@ -156,7 +253,6 @@ export class MqttRoomManager {
       this.notifyPlayers();
     }
 
-    // Process Ping / Pong for latency measurement
     if (packet.type === 'PING') {
       if (this.localPlayer && packet.playerId !== this.localPlayer.id) {
         this.sendPacket({
@@ -181,7 +277,6 @@ export class MqttRoomManager {
       }
     }
 
-    // Forward to general listener
     this.onPacketReceived?.(packet);
   }
 
@@ -213,8 +308,9 @@ export class MqttRoomManager {
   }
 
   private startHeartbeatLoop() {
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     this.heartbeatTimer = setInterval(() => {
-      if (!this.client || !this.client.connected || !this.localPlayer) return;
+      if (!this.client || !this.client.connected || !this.localPlayer || !this.currentRoomCode) return;
       const p = this.localPlayer;
       this.sendPacket({
         type: 'HEARTBEAT',
@@ -235,8 +331,9 @@ export class MqttRoomManager {
   }
 
   private startPingLoop() {
+    if (this.pingTimer) clearInterval(this.pingTimer);
     this.pingTimer = setInterval(() => {
-      if (!this.client || !this.client.connected || !this.localPlayer) return;
+      if (!this.client || !this.client.connected || !this.localPlayer || !this.currentRoomCode) return;
       this.sendPacket({
         type: 'PING',
         playerId: this.localPlayer.id,
@@ -246,12 +343,12 @@ export class MqttRoomManager {
   }
 
   private startLivenessLoop() {
+    if (this.livenessTimer) clearInterval(this.livenessTimer);
     this.livenessTimer = setInterval(() => {
       const now = Date.now();
       let changed = false;
       for (const [id, player] of this.playerRegistry.entries()) {
         if (this.localPlayer && id === this.localPlayer.id) continue;
-        // If no heartbeat for > 12 seconds, remove inactive player
         if (now - player.lastSeenTimestamp > 12000) {
           this.playerRegistry.delete(id);
           changed = true;
@@ -263,23 +360,27 @@ export class MqttRoomManager {
     }, 3000);
   }
 
+  private startGlobalPresenceLoop() {
+    if (this.globalPresenceTimer) clearInterval(this.globalPresenceTimer);
+    this.globalPresenceTimer = setInterval(() => {
+      if (!this.client || !this.client.connected || !this.localPlayer?.username) return;
+      const clean = this.localPlayer.username.trim().toLowerCase().replace(/^@/, '');
+      const payload = JSON.stringify({ username: clean, status: 'ONLINE', timestamp: Date.now() });
+      this.sendRetainedPresence(clean, payload);
+    }, 6000);
+  }
+
   public disconnect() {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     if (this.pingTimer) clearInterval(this.pingTimer);
     if (this.livenessTimer) clearInterval(this.livenessTimer);
     
-    if (this.client) {
-      if (this.currentRoomCode && this.localPlayer) {
-        this.sendPacket({
-          type: 'LEAVE',
-          playerId: this.localPlayer.id,
-          displayName: this.localPlayer.displayName
-        });
-      }
-      try {
-        this.client.end(true);
-      } catch {}
-      this.client = null;
+    if (this.client && this.currentRoomCode && this.localPlayer) {
+      this.sendPacket({
+        type: 'LEAVE',
+        playerId: this.localPlayer.id,
+        displayName: this.localPlayer.displayName
+      });
     }
 
     this.currentRoomCode = null;

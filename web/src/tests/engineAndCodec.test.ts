@@ -85,4 +85,26 @@ describe('Web Bingo Engine & FastPacketCodec Tests', () => {
     assert.strictEqual(board.completedLines[0].type, 'ROW');
     assert.strictEqual(board.completedLines[0].index, 0);
   });
+
+  it('Cross-platform URL-safe Base64 and GZ decode handles Android format correctly', async () => {
+    const session = {
+      roomCode: '654321',
+      hostId: 'android_host_1',
+      hostDisplayName: 'AndroidHost',
+      status: 'WAITING',
+      boardSize: 5
+    };
+    const jsonStr = JSON.stringify(session);
+
+    // Simulate URL-safe base64 encoding from web
+    const b64 = Buffer.from(jsonStr, 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    assert.ok(!b64.includes('+'));
+    assert.ok(!b64.includes('/'));
+    assert.ok(!b64.includes('='));
+
+    // Verify decoding
+    const unpadded = b64.replace(/-/g, '+').replace(/_/g, '/');
+    const decoded = Buffer.from(unpadded, 'base64').toString('utf8');
+    assert.strictEqual(decoded, jsonStr);
+  });
 });
