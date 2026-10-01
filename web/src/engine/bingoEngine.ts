@@ -1,22 +1,84 @@
 import { Board, Cell, LineCoordinate } from '../types/models';
 
+/**
+ * Exact implementation of Kotlin stdlib Random(seed: Long) (XorWowRandom)
+ * ensuring 100% bit-for-bit identical board generation between Android and Web.
+ */
+export class KotlinRandom {
+  private x: number;
+  private y: number;
+  private z: number;
+  private w: number;
+  private v: number;
+  private addend: number;
+
+  constructor(seed: number | bigint) {
+    const seedBig = BigInt(seed);
+    const seed1 = Number(BigInt.asIntN(32, seedBig));
+    const seed2 = Number(BigInt.asIntN(32, seedBig >> 32n));
+
+    this.x = seed1 | 0;
+    this.y = seed2 | 0;
+    this.z = 0;
+    this.w = 0;
+    this.v = (~seed1) | 0;
+    this.addend = ((seed1 << 10) ^ (seed2 >>> 4)) | 0;
+
+    if ((this.x | this.y | this.z | this.w | this.v) === 0) {
+      this.w = 1;
+    }
+    for (let i = 0; i < 64; i++) {
+      this.nextInt();
+    }
+  }
+
+  public nextInt(): number {
+    let t = this.x;
+    t = (t ^ (t >>> 2)) | 0;
+    this.x = this.y;
+    this.y = this.z;
+    this.z = this.w;
+    const v0 = this.v;
+    this.w = v0;
+    t = ((t ^ (t << 1)) ^ v0 ^ (v0 << 4)) | 0;
+    this.v = t;
+    this.addend = (this.addend + 362437) | 0;
+    return (t + this.addend) | 0;
+  }
+
+  public nextBits(bitCount: number): number {
+    return ((this.nextInt() >>> (32 - bitCount)) & ((-bitCount) >> 31)) | 0;
+  }
+
+  public nextIntUntil(until: number): number {
+    const n = until | 0;
+    if ((n & -n) === n) {
+      const fastLog2 = 31 - Math.clz32(n);
+      return this.nextBits(fastLog2);
+    }
+    let v: number, bits: number;
+    do {
+      bits = this.nextInt() >>> 1;
+      v = bits % n;
+    } while (bits - v + (n - 1) < 0);
+    return v;
+  }
+}
+
 export class BingoEngine {
   /**
    * Generates a 5x5 board containing numbers 1 to 25.
+   * Matches Kotlin BingoEngine.generateBoard with exact PRNG shuffle when seed is provided.
    */
-  public static generateBoard(size: number = 5, seed?: number): Board {
+  public static generateBoard(size: number = 5, seed?: number | bigint): Board {
     const total = size * size;
     const numbers = Array.from({ length: total }, (_, i) => i + 1);
 
     // Shuffle numbers
     if (seed !== undefined && seed !== 0) {
-      let currentSeed = seed;
-      const pseudoRandom = () => {
-        currentSeed = (currentSeed * 9301 + 49297) % 233280;
-        return currentSeed / 233280;
-      };
+      const rng = new KotlinRandom(seed);
       for (let i = numbers.length - 1; i > 0; i--) {
-        const j = Math.floor(pseudoRandom() * (i + 1));
+        const j = rng.nextIntUntil(i + 1);
         [numbers[i], numbers[j]] = [numbers[j], numbers[i]];
       }
     } else {

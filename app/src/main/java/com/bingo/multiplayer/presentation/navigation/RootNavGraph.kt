@@ -619,6 +619,22 @@ fun RootNavGraph(
                         seed = currentMatchSeed
                     )
                 )
+                if (pWon) {
+                    val winPacket = RoomMessagePacket(
+                        type = "BINGO_CLAIMED",
+                        number = number,
+                        playerId = getLocalUid(),
+                        displayName = getPlayerDisplayName(),
+                        turnNumber = turnNumber,
+                        seed = currentMatchSeed,
+                        pickedHistory = pickedNumbersHistory.toList()
+                    )
+                    broadcastPacket(winPacket)
+                    coroutineScope.launch {
+                        delay(120L)
+                        broadcastPacket(winPacket)
+                    }
+                }
             }
         } finally {
             if (isOwnPick) {
@@ -1001,6 +1017,36 @@ fun RootNavGraph(
                     val requester = packet.displayName.ifBlank { "Opponent" }
                     wantsToPlayAgainPlayerName = requester
                     Toast.makeText(context, "🎮 $requester wants to play again!", Toast.LENGTH_LONG).show()
+                }
+            }
+
+            "BINGO_CLAIMED", "GAME_OVER" -> {
+                if ((currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) && !isGameOver) {
+                    if (packet.playerId.isNotBlank() && packet.playerId != myUid) {
+                        // Mark final winning number if provided
+                        if (packet.number > 0 && packet.number !in pickedNumbersHistory) {
+                            pickedNumbersHistory.add(packet.number)
+                            playerBoard = engine.markCell(
+                                board = playerBoard,
+                                number = packet.number,
+                                pickedByPlayerId = packet.playerId,
+                                isOwnPick = false,
+                                turnNumber = turnNumber
+                            )
+                            opponentBoard = engine.markCell(
+                                board = opponentBoard,
+                                number = packet.number,
+                                pickedByPlayerId = packet.playerId,
+                                isOwnPick = true,
+                                turnNumber = turnNumber
+                            )
+                            recentPick = RecentPick(packet.number, packet.playerId, turnNumber)
+                        }
+                        isGameOver = true
+                        didPlayerWin = false
+                        isDrawMatch = false
+                        recordFinishedMatch(won = false, isDraw = false)
+                    }
                 }
             }
 

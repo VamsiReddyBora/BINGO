@@ -118,6 +118,8 @@ export const WinningModal: React.FC<Props> = ({
       return () => {
         cancelAnimationFrame(animationFrameId);
       };
+    } else {
+      soundEffects.playGameOver();
     }
   }, [isWinner]);
 
@@ -131,20 +133,29 @@ export const WinningModal: React.FC<Props> = ({
 
       <div className="relative z-20 w-full max-w-sm bg-white border border-slate-200/90 rounded-3xl p-6 shadow-2xl text-center">
         {/* Glow backdrop badge */}
-        <div className="mx-auto -mt-12 w-20 h-20 rounded-full bg-gradient-to-tr from-amber-400 to-amber-500 p-1 shadow-[0_4px_25px_rgba(245,158,11,0.35)] flex items-center justify-center animate-bounce">
+        <div className={`mx-auto -mt-12 w-20 h-20 rounded-full p-1 shadow-[0_4px_25px_rgba(245,158,11,0.35)] flex items-center justify-center animate-bounce ${
+          isWinner ? 'bg-gradient-to-tr from-amber-400 to-amber-500' : 'bg-gradient-to-tr from-rose-400 to-rose-600'
+        }`}>
           {isWinner ? (
             <Trophy className="w-10 h-10 text-white" />
           ) : (
-            <Sparkles className="w-10 h-10 text-white" />
+            <span className="text-3xl">💔</span>
           )}
         </div>
 
-        <h2 className="mt-4 text-3xl font-extrabold tracking-wide font-heading bg-gradient-to-r from-amber-500 via-amber-600 to-amber-500 bg-clip-text text-transparent">
-          B - I - N - G - O !
+        <h2 className={`mt-4 text-3xl font-extrabold tracking-wide font-heading ${
+          isWinner 
+            ? 'bg-gradient-to-r from-amber-500 via-amber-600 to-amber-500 bg-clip-text text-transparent'
+            : 'text-rose-600'
+        }`}>
+          {isWinner ? 'B - I - N - G - O !' : 'GAME OVER'}
         </h2>
 
         <p className="mt-2 text-lg font-bold text-slate-800">
-          {isWinner ? '🎉 Victory! You Won!' : `👏 ${winnerName} Won the Game!`}
+          {isWinner ? '🎉 Victory! You Won!' : `😔 You Lost! ${winnerName || 'Opponent'} Won`}
+        </p>
+        <p className="mt-0.5 text-xs text-slate-500 font-medium">
+          {isWinner ? 'You completed 5 lines first!' : `${winnerName || 'Opponent'} reached 5 lines first.`}
         </p>
 
         {/* Lines completed scoreboard */}

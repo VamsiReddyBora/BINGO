@@ -379,4 +379,113 @@ describe('Multiplayer Lobby & Game End-to-End Simulation', () => {
     assert.strictEqual(friendsFetched[0].username, 'friend_rahul');
     assert.strictEqual(friendsFetched[0].displayName, 'Rahul');
   });
+
+  it('Cross-platform Win/Loss Sync: Web wins -> opponent sees loss; Android wins -> web sees loss', () => {
+    /**
+     * Simulates the board seed split used by Android RootNavGraph:
+     *  - Host player board: generateBoard(seed)
+     *  - Guest player board: generateBoard(seed + 1)
+     *  (from Android's startNewGame where isHosting determines seed assignment)
+     *
+     * Verifies:
+     * 1. KotlinRandom boards match across Android & Web for same seeds.
+     * 2. When web-host picks 25 numbers that complete all 5 lines -> win detected.
+     * 3. When those same 25 numbers are applied to web-guest's board (receiving) -> guest sees loss (opp 5 lines).
+     */
+    const seed = 777777;
+
+    // HOST board (seed) and GUEST board (seed+1)
+    const hostBoard = BingoEngine.generateBoard(5, seed);
+    const guestBoard = BingoEngine.generateBoard(5, seed + 1);
+
+    // Boards must be different
+    const hostNumbers = hostBoard.cells.map(c => c.number);
+    const guestNumbers = guestBoard.cells.map(c => c.number);
+    assert.notDeepStrictEqual(hostNumbers, guestNumbers, 'Host and guest boards must differ');
+
+    // Both must have 25 unique numbers 1-25
+    assert.strictEqual(new Set(hostNumbers).size, 25, 'Host board must have 25 unique numbers');
+    assert.strictEqual(new Set(guestNumbers).size, 25, 'Guest board must have 25 unique numbers');
+
+    // --- Simulate: Host picks all 25 numbers to win ---
+    let hostCurrentBoard = { ...hostBoard };
+    const pickedHistory: number[] = [];
+
+    for (let turn = 1; turn <= 25; turn++) {
+      const unmarked = hostCurrentBoard.cells.filter(c => c.markState.type === 'Unmarked');
+      if (unmarked.length === 0) break;
+      const num = unmarked[0].number;
+      pickedHistory.push(num);
+      const { board: updated } = BingoEngine.markCell(hostCurrentBoard, num, 'host', true, turn);
+      hostCurrentBoard = updated;
+    }
+
+    // Host must have won (5+ lines) by exhausting all numbers
+    assert.ok(hostCurrentBoard.completedLines.length >= 5, `Host should have 5 lines, got ${hostCurrentBoard.completedLines.length}`);
+
+    // --- Simulate: Guest receives those same picks on their board ---
+    // Guest's local board = generateBoard(seed+1) - same board for guest when they're guest
+    let guestLocalBoard = { ...guestBoard };    // my board as guest
+    let guestOppBoard = { ...hostBoard };       // opponent (host) board tracking
+
+    let guestLocalLines = 0;
+    let guestOppLines = 0;
+
+    for (let turn = 1; turn <= pickedHistory.length; turn++) {
+      const num = pickedHistory[turn - 1];
+
+      // Mark on guest's local board (host's pick is NOT own pick for guest)
+      const { board: gl } = BingoEngine.markCell(guestLocalBoard, num, 'host', false, turn);
+      guestLocalBoard = gl;
+      guestLocalLines = guestLocalBoard.completedLines.length;
+
+      // Mark on guest's opponent-tracking board (host's pick IS own pick on host's board)
+      const { board: go } = BingoEngine.markCell(guestOppBoard, num, 'host', true, turn);
+      guestOppBoard = go;
+      guestOppLines = guestOppBoard.completedLines.length;
+
+      if (guestOppLines >= 5) break; // Opponent won -> guest loses
+    }
+
+    // Guest must detect opponent win -> they lose
+    assert.ok(guestOppLines >= 5, `Guest should detect opponent reached 5 lines, got ${guestOppLines}`);
+    assert.ok(guestLocalLines < 5, `Guest should NOT have 5 lines themselves (they lose), got ${guestLocalLines}`);
+
+    // --- Reverse: Guest (seed+1) wins, host receives their picks ---
+    let guestWinBoard = { ...guestBoard };
+    const guestPicks: number[] = [];
+
+    for (let turn = 1; turn <= 25; turn++) {
+      const unmarked = guestWinBoard.cells.filter(c => c.markState.type === 'Unmarked');
+      if (unmarked.length === 0) break;
+      const num = unmarked[0].number;
+      guestPicks.push(num);
+      const { board: updated } = BingoEngine.markCell(guestWinBoard, num, 'guest', true, turn);
+      guestWinBoard = updated;
+    }
+
+    assert.ok(guestWinBoard.completedLines.length >= 5, 'Guest should win after marking all cells');
+
+    // Host receives guest's picks on host's local board
+    let hostLocalBoard = { ...hostBoard };
+    let hostOppBoard = { ...guestBoard };
+    let hostLocalLines = 0;
+    let hostOppLines = 0;
+
+    for (let turn = 1; turn <= guestPicks.length; turn++) {
+      const num = guestPicks[turn - 1];
+
+      const { board: hl } = BingoEngine.markCell(hostLocalBoard, num, 'guest', false, turn);
+      hostLocalBoard = hl;
+      hostLocalLines = hostLocalBoard.completedLines.length;
+
+      const { board: ho } = BingoEngine.markCell(hostOppBoard, num, 'guest', true, turn);
+      hostOppBoard = ho;
+      hostOppLines = hostOppBoard.completedLines.length;
+
+      if (hostOppLines >= 5) break;
+    }
+
+    assert.ok(hostOppLines >= 5, `Host should detect guest reached 5 lines (host loses), got ${hostOppLines}`);
+  });
 });

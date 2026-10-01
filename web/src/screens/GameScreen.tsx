@@ -32,7 +32,11 @@ export const GameScreen: React.FC<Props> = ({
   isAiMode = false,
   onLeaveGame
 }) => {
-  const [board, setBoard] = useState<Board>(() => BingoEngine.generateBoard(5, seed));
+  const mySeed = (localPlayer.isHost || isAiMode) ? seed : seed + 1;
+  const oppSeed = (localPlayer.isHost || isAiMode) ? seed + 1 : seed;
+
+  const [board, setBoard] = useState<Board>(() => BingoEngine.generateBoard(5, mySeed));
+  const [opponentBoard, setOpponentBoard] = useState<Board>(() => BingoEngine.generateBoard(5, oppSeed));
   const [currentTurnPlayerId, setCurrentTurnPlayerId] = useState<string>(initialTurnPlayerId);
   const [turnNumber, setTurnNumber] = useState<number>(1);
   const [turnTimer, setTurnTimer] = useState<number>(30);
@@ -101,6 +105,16 @@ export const GameScreen: React.FC<Props> = ({
     );
     setBoard(newBoard);
 
+    // 2. Mark on opponent board
+    const { board: newOppBoard } = BingoEngine.markCell(
+      opponentBoard,
+      number,
+      localPlayer.id,
+      false,
+      turnNumber
+    );
+    setOpponentBoard(newOppBoard);
+
     if (newLinesCompleted > 0) {
       soundEffects.playLine();
     }
@@ -108,30 +122,16 @@ export const GameScreen: React.FC<Props> = ({
     const currentCompleted = newBoard.completedLines.length;
     setMyLinesCount(currentCompleted);
 
-    // 2. Check for Bingo win (5 lines completed)
-    if (currentCompleted >= 5) {
-      soundEffects.playBingoWin();
-      setIsGameOver(true);
-      setIsWinner(true);
-      setWinnerName(localPlayer.displayName);
+    const oppCompleted = newOppBoard.completedLines.length;
+    setOpponentLinesCount(oppCompleted);
 
-      if (!isAiMode) {
-        roomSync.sendPacket({
-          type: 'BINGO_CLAIMED',
-          playerId: localPlayer.id,
-          displayName: localPlayer.displayName,
-          number
-        });
-      }
-      return;
-    }
+    // 3. Build picked history
+    const pickedHistory = newBoard.cells
+      .filter(c => c.markState.type === 'Marked')
+      .map(c => c.number);
 
-    // 3. Send MOVE to opponent via MQTT
+    // 4. ALWAYS broadcast PICK_NUMBER first so peer receives the winning move and history!
     if (!isAiMode) {
-      const pickedHistory = newBoard.cells
-        .filter(c => c.markState.type === 'Marked')
-        .map(c => c.number);
-
       roomSync.sendPacket({
         type: 'PICK_NUMBER',
         number,
@@ -143,26 +143,62 @@ export const GameScreen: React.FC<Props> = ({
       });
     }
 
-    // 4. Switch turn
+    // 5. Check if local player won (5 lines)
+    if (currentCompleted >= 5) {
+      soundEffects.playBingoWin();
+      setIsGameOver(true);
+      setIsWinner(true);
+      setWinnerName(localPlayer.displayName);
+
+      if (!isAiMode) {
+        const winPacket: RoomMessagePacket = {
+          type: 'BINGO_CLAIMED',
+          playerId: localPlayer.id,
+          displayName: localPlayer.displayName,
+          number,
+          turnNumber,
+          seed,
+          pickedHistory
+        };
+        roomSync.sendPacket(winPacket);
+        setTimeout(() => roomSync.sendPacket(winPacket), 120);
+        setTimeout(() => roomSync.sendPacket(winPacket), 250);
+      }
+      return;
+    }
+
+    // 6. Check if this pick gave opponent 5 lines
+    if (oppCompleted >= 5) {
+      soundEffects.playGameOver();
+      setIsGameOver(true);
+      setIsWinner(false);
+      setWinnerName(opponent?.displayName || 'Opponent');
+      return;
+    }
+
+    // 7. Switch turn
     const nextPlayerId = opponent?.id || (isAiMode ? 'ai_opponent' : '');
     setCurrentTurnPlayerId(nextPlayerId);
     setTurnNumber(prev => prev + 1);
     setTurnTimer(30);
 
-    // 5. If AI Mode: Trigger AI Bot response after 1.2s delay
+    // 8. If AI Mode: Trigger AI Bot response after 1.2s delay
     if (isAiMode) {
       setTimeout(() => {
+        let aiNum = 0;
+        let aiCompleted = 0;
+
         setBoard(currentBoard => {
           const unmarkedCells = currentBoard.cells.filter(c => c.markState.type === 'Unmarked');
           if (unmarkedCells.length === 0) return currentBoard;
 
           const randomCell = unmarkedCells[Math.floor(Math.random() * unmarkedCells.length)];
-          const aiNumber = randomCell.number;
+          aiNum = randomCell.number;
 
           soundEffects.playPick();
           const { board: aiUpdatedBoard, newLinesCompleted: aiLines } = BingoEngine.markCell(
             currentBoard,
-            aiNumber,
+            aiNum,
             'ai_opponent',
             false,
             turnNumber + 1
@@ -170,26 +206,49 @@ export const GameScreen: React.FC<Props> = ({
 
           if (aiLines > 0) soundEffects.playLine();
 
-          const aiCompleted = aiUpdatedBoard.completedLines.length;
-          setOpponentLinesCount(aiCompleted);
+          const myUpdated = aiUpdatedBoard.completedLines.length;
+          setMyLinesCount(myUpdated);
 
-          if (aiCompleted >= 5) {
-            soundEffects.playGameOver();
+          if (myUpdated >= 5) {
+            soundEffects.playBingoWin();
             setIsGameOver(true);
-            setIsWinner(false);
-            setWinnerName('AI Bot');
-          } else {
-            setCurrentTurnPlayerId(localPlayer.id);
-            setTurnNumber(prev => prev + 1);
-            setTurnTimer(30);
-            soundEffects.playTurnAlert();
+            setIsWinner(true);
+            setWinnerName(localPlayer.displayName);
           }
 
           return aiUpdatedBoard;
         });
+
+        if (aiNum > 0) {
+          setOpponentBoard(prevOpp => {
+            const { board: oppUpdated } = BingoEngine.markCell(
+              prevOpp,
+              aiNum,
+              'ai_opponent',
+              true,
+              turnNumber + 1
+            );
+            aiCompleted = oppUpdated.completedLines.length;
+            setOpponentLinesCount(aiCompleted);
+
+            if (aiCompleted >= 5) {
+              soundEffects.playGameOver();
+              setIsGameOver(true);
+              setIsWinner(false);
+              setWinnerName('AI Bot 🤖');
+            } else {
+              setCurrentTurnPlayerId(localPlayer.id);
+              setTurnNumber(prev => prev + 1);
+              setTurnTimer(30);
+              soundEffects.playTurnAlert();
+            }
+
+            return oppUpdated;
+          });
+        }
       }, 1200);
     }
-  }, [board, isMyTurn, isGameOver, turnNumber, localPlayer, opponent, isAiMode, seed]);
+  }, [board, opponentBoard, isMyTurn, isGameOver, turnNumber, localPlayer, opponent, isAiMode, seed]);
 
   // Turn timer interval
   useEffect(() => {
@@ -222,6 +281,11 @@ export const GameScreen: React.FC<Props> = ({
         case 'PICK_NUMBER': {
           if (packet.number && packet.number > 0) {
             soundEffects.playPick();
+
+            let newMyLines = myLinesCount;
+            let newOppLines = opponentLinesCount;
+
+            // 1. Mark on local board
             setBoard(prevBoard => {
               const { board: updated, newLinesCompleted } = BingoEngine.markCell(
                 prevBoard,
@@ -231,11 +295,41 @@ export const GameScreen: React.FC<Props> = ({
                 packet.turnNumber || turnNumber
               );
               if (newLinesCompleted > 0) soundEffects.playLine();
-              setMyLinesCount(updated.completedLines.length);
+              newMyLines = updated.completedLines.length;
+              setMyLinesCount(newMyLines);
               return updated;
             });
 
-            // Opponent finished turn -> switch to me
+            // 2. Mark on opponent board
+            setOpponentBoard(prevOpp => {
+              const { board: updatedOpp } = BingoEngine.markCell(
+                prevOpp,
+                packet.number!,
+                packet.playerId,
+                true,
+                packet.turnNumber || turnNumber
+              );
+              newOppLines = updatedOpp.completedLines.length;
+              setOpponentLinesCount(newOppLines);
+              return updatedOpp;
+            });
+
+            // 3. Evaluate win conditions immediately!
+            if (newOppLines >= 5) {
+              soundEffects.playGameOver();
+              setIsGameOver(true);
+              setIsWinner(false);
+              setWinnerName(packet.displayName || opponent?.displayName || 'Opponent');
+              return;
+            } else if (newMyLines >= 5) {
+              soundEffects.playBingoWin();
+              setIsGameOver(true);
+              setIsWinner(true);
+              setWinnerName(localPlayer.displayName);
+              return;
+            }
+
+            // 4. Opponent finished turn -> switch to me
             setCurrentTurnPlayerId(localPlayer.id);
             setTurnNumber(prev => (packet.turnNumber ? packet.turnNumber + 1 : prev + 1));
             setTurnTimer(30);
@@ -244,11 +338,18 @@ export const GameScreen: React.FC<Props> = ({
           break;
         }
 
-        case 'BINGO_CLAIMED': {
+        case 'BINGO_CLAIMED':
+        case 'GAME_OVER': {
+          const isMe = packet.playerId === localPlayer.id;
           setIsGameOver(true);
-          setIsWinner(packet.playerId === localPlayer.id);
-          setWinnerName(packet.displayName || 'Opponent');
-          setOpponentLinesCount(5);
+          setIsWinner(isMe);
+          setWinnerName(isMe ? localPlayer.displayName : (packet.displayName || opponent?.displayName || 'Opponent'));
+          if (isMe) {
+            soundEffects.playBingoWin();
+          } else {
+            soundEffects.playGameOver();
+            setOpponentLinesCount(5);
+          }
           break;
         }
 
@@ -282,7 +383,11 @@ export const GameScreen: React.FC<Props> = ({
         case 'PLAY_AGAIN': {
           setWantsPlayAgainName(packet.displayName || 'Opponent');
           if (packet.seed && packet.seed !== seed) {
-            setBoard(BingoEngine.generateBoard(5, packet.seed));
+            const myNewSeed = localPlayer.isHost ? packet.seed : packet.seed + 1;
+            const oppNewSeed = localPlayer.isHost ? packet.seed + 1 : packet.seed;
+
+            setBoard(BingoEngine.generateBoard(5, myNewSeed));
+            setOpponentBoard(BingoEngine.generateBoard(5, oppNewSeed));
             setIsGameOver(false);
             setIsWinner(false);
             setMyLinesCount(0);
@@ -377,6 +482,7 @@ export const GameScreen: React.FC<Props> = ({
   const handlePlayAgain = () => {
     if (isAiMode) {
       setBoard(BingoEngine.generateBoard(5));
+      setOpponentBoard(BingoEngine.generateBoard(5));
       setIsGameOver(false);
       setIsWinner(false);
       setMyLinesCount(0);
@@ -388,6 +494,9 @@ export const GameScreen: React.FC<Props> = ({
     }
 
     const newSeed = Date.now();
+    const myNewSeed = localPlayer.isHost ? newSeed : newSeed + 1;
+    const oppNewSeed = localPlayer.isHost ? newSeed + 1 : newSeed;
+
     roomSync.sendPacket({
       type: 'PLAY_AGAIN',
       playerId: localPlayer.id,
@@ -395,7 +504,8 @@ export const GameScreen: React.FC<Props> = ({
       seed: newSeed
     });
 
-    setBoard(BingoEngine.generateBoard(5, newSeed));
+    setBoard(BingoEngine.generateBoard(5, myNewSeed));
+    setOpponentBoard(BingoEngine.generateBoard(5, oppNewSeed));
     setIsGameOver(false);
     setIsWinner(false);
     setMyLinesCount(0);
