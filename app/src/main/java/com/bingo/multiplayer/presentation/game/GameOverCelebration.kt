@@ -27,19 +27,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.delay
+import com.bingo.multiplayer.R
 import kotlinx.coroutines.launch
 import kotlin.math.cos
 import kotlin.math.sin
@@ -52,8 +50,16 @@ enum class StampResultType {
 }
 
 /**
+ * Rough sketch & chalk font for authentic stamped / chalkboard texture.
+ */
+private val ChalkSketchFont = FontFamily(
+    Font(R.font.cabin_sketch_bold, FontWeight.Bold)
+)
+
+/**
  * Authentic rubber-stamp style badge pasted with force from height into the empty space
  * between the top bar and the 5x5 board.
+ * - Styled with rough chalk/sketch typography
  * - YOU'VE WON! in Stamped Green
  * - YOU LOST! in Stamped Red
  * - DRAW! in Stamped Yellow / Amber
@@ -138,7 +144,7 @@ fun VictoryStampBadge(
             },
         contentAlignment = Alignment.Center
     ) {
-        // Outer Rubber Stamp Border (Thickness 3dp)
+        // Outer Rubber Stamp Border (Thickness ~2.8dp)
         Box(
             modifier = Modifier
                 .border(
@@ -152,22 +158,22 @@ fun VictoryStampBadge(
                 )
                 .padding(3.dp) // Gap between outer and inner border
         ) {
-            // Inner Rubber Stamp Border (Thickness 1.2dp)
+            // Inner Rubber Stamp Border (Thickness ~1.4dp)
             Box(
                 modifier = Modifier
                     .border(
-                        width = 1.2.dp,
+                        width = 1.4.dp,
                         color = mainColor,
                         shape = RoundedCornerShape(2.dp)
                     )
-                    .padding(horizontal = 14.dp, vertical = 4.dp),
+                    .padding(horizontal = 14.dp, vertical = 5.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = text,
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.Black,
-                    fontFamily = FontFamily.SansSerif,
+                    fontSize = 21.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = ChalkSketchFont,
                     letterSpacing = 2.2.sp,
                     color = mainColor
                 )
@@ -250,9 +256,12 @@ private data class EmojiParticle(
 
 /**
  * Fullscreen Emoji Projectile Burst:
- * - Winner: Celebration confetti emojis (🎊 🎉 ✨ etc.) burst from bottom-left & bottom-right,
- *   arcing all the way up to top of screen and falling in a projectile gravity arc to bottom middle.
- * - Loser: Defeat & cry emojis (🫪😑😐😵💫😵🤧🫩😩😖) bursting from bottom corners and falling.
+ * - Shoots from the left-center/bottom-half and right-center/bottom-half regions across the screen.
+ * - Reaches upwards occupying all screen columns up to the stamp area.
+ * - Falls freely and disperses across the entire bottom boundary (left corner, middle, right corner).
+ *   Zero central clumping/overlap.
+ * - Winner: Celebration confetti emojis (🎊 🎉 ✨ etc.).
+ * - Loser: Defeat & cry emojis (🫪😑😐😵💫😵🤧🫩😩😖).
  * - Draw: Combined celebration + loser emojis.
  *
  * Sequence: Emojis launch first; when they reach apex / top of screen and start falling,
@@ -279,42 +288,52 @@ fun GameOverEmojiProjectileBurst(
         val screenWidth = constraints.maxWidth.toFloat()
         val screenHeight = constraints.maxHeight.toFloat()
 
-        // Create particles from bottom-left and bottom-right corners
+        // Create particles distributed across broad launch zones and landing across the full bottom width
         val particles = remember(resultType) {
             val list = mutableListOf<EmojiParticle>()
-            val count = 48 // 24 from left, 24 from right
+            val count = 64
             val random = Random(42)
 
             for (i in 0 until count) {
-                val isLeft = i % 2 == 0
                 val emoji = emojiPool[random.nextInt(emojiPool.size)]
 
-                // Origin at bottom corner
-                val startX = if (isLeft) {
-                    screenWidth * (0.02f + random.nextFloat() * 0.14f)
-                } else {
-                    screenWidth * (0.84f + random.nextFloat() * 0.14f)
+                // Zone 0: Left side (45%), Zone 1: Right side (45%), Zone 2: Mid-bottom (10%)
+                val zoneChoice = i % 10
+                val (startX, startY) = when {
+                    zoneChoice < 5 -> {
+                        // Left-center to bottom-half screen (from left edge up to 40% width, 48% to 98% height)
+                        val x = screenWidth * (0.01f + random.nextFloat() * 0.38f)
+                        val y = screenHeight * (0.48f + random.nextFloat() * 0.50f)
+                        Pair(x, y)
+                    }
+                    zoneChoice < 9 -> {
+                        // Right-center to bottom-half screen (from 60% to 99% width, 48% to 98% height)
+                        val x = screenWidth * (0.60f + random.nextFloat() * 0.39f)
+                        val y = screenHeight * (0.48f + random.nextFloat() * 0.50f)
+                        Pair(x, y)
+                    }
+                    else -> {
+                        // Lower-mid area (30% to 70% width, 70% to 98% height)
+                        val x = screenWidth * (0.30f + random.nextFloat() * 0.40f)
+                        val y = screenHeight * (0.70f + random.nextFloat() * 0.28f)
+                        Pair(x, y)
+                    }
                 }
-                val startY = screenHeight * (0.96f + random.nextFloat() * 0.06f)
 
-                // Apex near top of the screen (projectile peak)
-                val apexX = if (isLeft) {
-                    screenWidth * (0.24f + random.nextFloat() * 0.42f)
-                } else {
-                    screenWidth * (0.34f + random.nextFloat() * 0.42f)
-                }
-                val apexY = screenHeight * (0.04f + random.nextFloat() * 0.18f)
+                // Apex: Occupies the entire screen width, reaching up to the stamp area (0.06 to 0.22 of screen height)
+                val apexX = screenWidth * (0.05f + random.nextFloat() * 0.90f)
+                val apexY = screenHeight * (0.06f + random.nextFloat() * 0.16f)
 
-                // Bezier control point pulled above apex to create a natural curved arc
-                val controlX = apexX
-                val controlY = apexY - (screenHeight * 0.22f)
+                // Bezier control point placed above the apex to create a natural, expansive fountain arc
+                val controlX = (startX + apexX) / 2f + (random.nextFloat() - 0.5f) * screenWidth * 0.25f
+                val controlY = apexY - (screenHeight * (0.12f + random.nextFloat() * 0.18f))
 
-                // Landing at bottom center
-                val endX = screenWidth * (0.35f + random.nextFloat() * 0.30f)
-                val endY = screenHeight * 1.08f // Falls off bottom
+                // Landing: Distributed randomly across the entire width of the bottom screen without central bunching
+                val endX = screenWidth * (0.02f + random.nextFloat() * 0.96f)
+                val endY = screenHeight * (1.02f + random.nextFloat() * 0.10f) // Falls past the bottom
 
-                val delayMillis = random.nextInt(0, 320).toLong()
-                val durationMillis = random.nextInt(1400, 1850).toLong()
+                val delayMillis = random.nextInt(0, 380).toLong()
+                val durationMillis = random.nextInt(1500, 1950).toLong()
 
                 list.add(
                     EmojiParticle(
@@ -327,7 +346,7 @@ fun GameOverEmojiProjectileBurst(
                         endY = endY,
                         delayNanos = delayMillis * 1_000_000L,
                         durationNanos = durationMillis * 1_000_000L,
-                        rotationTarget = if (isLeft) random.nextFloat() * 320f else -random.nextFloat() * 320f,
+                        rotationTarget = (random.nextFloat() - 0.5f) * 480f,
                         fontSizeSp = (22f + random.nextFloat() * 12f)
                     )
                 )
@@ -352,8 +371,8 @@ fun GameOverEmojiProjectileBurst(
                     onApexReached()
                 }
 
-                // Check completion after ~2.2s
-                if (elapsed >= 2_200_000_000L) {
+                // Check completion after ~2.3s
+                if (elapsed >= 2_300_000_000L) {
                     isRunning = false
                     onBurstFinished()
                 }
@@ -373,14 +392,14 @@ fun GameOverEmojiProjectileBurst(
 
                     // Quick fade in at start, stay vibrant, fade out as it reaches bottom
                     val alpha = when {
-                        progress < 0.08f -> progress / 0.08f
-                        progress > 0.82f -> (1f - progress) / 0.18f
+                        progress < 0.07f -> progress / 0.07f
+                        progress > 0.84f -> (1f - progress) / 0.16f
                         else -> 1f
                     }.coerceIn(0f, 1f)
 
                     val scale = when {
-                        progress < 0.12f -> 0.4f + (progress / 0.12f) * 0.6f
-                        progress > 0.85f -> 1f - (progress - 0.85f) * 2f
+                        progress < 0.10f -> 0.4f + (progress / 0.10f) * 0.6f
+                        progress > 0.88f -> 1f - (progress - 0.88f) * 2.5f
                         else -> 1f
                     }.coerceAtLeast(0.1f)
 
