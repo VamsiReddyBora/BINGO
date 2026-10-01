@@ -258,10 +258,17 @@ private data class EmojiParticle(
 
 /**
  * Fullscreen Emoji Projectile Burst:
- * - Staggered launch waves with small gap intervals to prevent dense clustering/bunching.
- * - Varied launch origins across lower half of screen (left, right, and center).
- * - High-reaching trajectories rising all the way up to the stamp area with varied random heights.
- * - Scattered descent across the entire bottom boundary with zero central overlap.
+ * - Mental model: Phone screen as a clock face.
+ * - Launch Origin: Arc from 4 o'clock through 6 o'clock (bottom) to 8 o'clock.
+ * - Simultaneous Launch: All emojis shoot at once (near-zero delay) across the 4-8 o'clock arc.
+ * - Multi-directional Crossfire & Diverse Destinations:
+ *   1. Left-to-Right diagonal crossfire (7/8 o'clock -> 2/3 o'clock).
+ *   2. Right-to-Left diagonal crossfire (4/5 o'clock -> 8/9/10 o'clock).
+ *   3. High skyward rockets (towards 11/12/1 o'clock - Stamp Area).
+ *   4. Mid-board fountains and short pop arcs.
+ * - Natural Staggering via Variable Projectile Speeds and Path Lengths:
+ *   Short fast projectiles reach apex (~350ms) and descend while longer skyward projectiles
+ *   are still climbing, preventing bunching or clustering even if sharing a destination!
  * - Winner: Celebration confetti emojis (🎊 🎉 ✨ etc.).
  * - Loser: Defeat & cry emojis (🫪😑😐😵💫😵🤧🫩😩😖).
  * - Draw: Combined celebration + loser emojis.
@@ -287,68 +294,106 @@ fun GameOverEmojiProjectileBurst(
         val screenWidth = constraints.maxWidth.toFloat()
         val screenHeight = constraints.maxHeight.toFloat()
 
-        // Create particles organized into sequential waves with small gap intervals
+        // Create particles distributed across clock arc from 4 o'clock to 8 o'clock
         val particles = remember(resultType) {
             val list = mutableListOf<EmojiParticle>()
-            val count = 60
-            val wavesCount = 6
-            val waveSpacingMillis = 280L
+            val count = 52
             val random = Random(42)
 
             for (i in 0 until count) {
-                val waveIndex = i / (count / wavesCount)
-                val indexInWave = i % (count / wavesCount)
                 val emoji = emojiPool[random.nextInt(emojiPool.size)]
 
-                // Staggered launch delay with small gap intervals between waves
-                val waveBaseDelay = waveIndex * waveSpacingMillis
-                val intraWaveJitter = indexInWave * 20L + random.nextInt(-10, 25).toLong()
-                val delayMillis = (waveBaseDelay + intraWaveJitter).coerceAtLeast(0L)
-                val durationMillis = random.nextInt(1300, 1600).toLong()
+                // Multi-directional crossfire archetypes:
+                // 0: Left-to-Right cross-screen (7/8 o'clock -> 2/3 o'clock)
+                // 1: Right-to-Left cross-screen (4/5 o'clock -> 8/9/10 o'clock)
+                // 2: High Skyward Rockets (towards 11/12/1 o'clock - Stamp Area)
+                // 3: Mid-Board Fountains & Short Pop Arcs
+                val archetype = i % 4
 
-                // 1. Varied launch origin: left-half, right-half, or bottom-center
-                val sideChoice = random.nextInt(10)
-                val (startX, startY) = when {
-                    sideChoice < 5 -> {
-                        // Left region (from far left edge to 42% width, from middle 45% height down to 96%)
-                        val x = screenWidth * (0.01f + random.nextFloat() * 0.40f)
-                        val y = screenHeight * (0.45f + random.nextFloat() * 0.52f)
-                        Pair(x, y)
+                // 1. Clock angle in degrees: 0° = 3 o'clock, 90° = 6 o'clock (bottom), 180° = 9 o'clock
+                // 4 o'clock = ~30°, 5 o'clock = ~60°, 6 o'clock = 90°, 7 o'clock = ~120°, 8 o'clock = ~150°
+                val clockAngleDeg = when (archetype) {
+                    0 -> 110f + random.nextFloat() * 45f // 7 to 8 o'clock (bottom-left to lower-left)
+                    1 -> 25f + random.nextFloat() * 45f  // 4 to 5 o'clock (lower-right to bottom-right)
+                    2 -> 25f + random.nextFloat() * 130f // Full 4 to 8 o'clock arc
+                    else -> 25f + random.nextFloat() * 130f // Full 4 to 8 o'clock arc
+                }
+
+                val clockAngleRad = (clockAngleDeg * (Math.PI / 180.0)).toFloat()
+                val clockRadiusX = screenWidth * (0.42f + random.nextFloat() * 0.08f)
+                val clockRadiusY = screenHeight * (0.40f + random.nextFloat() * 0.08f)
+                val clockCenterX = screenWidth * 0.50f
+                val clockCenterY = screenHeight * 0.52f
+
+                val startX = (clockCenterX + clockRadiusX * cos(clockAngleRad))
+                    .coerceIn(screenWidth * 0.02f, screenWidth * 0.98f)
+                val startY = (clockCenterY + clockRadiusY * sin(clockAngleRad))
+                    .coerceIn(screenHeight * 0.66f, screenHeight * 0.98f)
+
+                // 2. Destinations & Apex positions based on crossfire archetype
+                val apexX: Float
+                val apexY: Float
+                val endX: Float
+                val endY: Float
+
+                when (archetype) {
+                    0 -> {
+                        // Left-to-Right diagonal crossfire (7/8 o'clock -> 2/3 o'clock)
+                        apexX = screenWidth * (0.64f + random.nextFloat() * 0.28f)
+                        apexY = screenHeight * (0.16f + random.nextFloat() * 0.22f)
+                        endX = screenWidth * (0.76f + random.nextFloat() * 0.26f)
+                        endY = screenHeight * (0.92f + random.nextFloat() * 0.12f)
                     }
-                    sideChoice < 9 -> {
-                        // Right region (from 58% to 99% width, from middle 45% height down to 96%)
-                        val x = screenWidth * (0.58f + random.nextFloat() * 0.41f)
-                        val y = screenHeight * (0.45f + random.nextFloat() * 0.52f)
-                        Pair(x, y)
+                    1 -> {
+                        // Right-to-Left diagonal crossfire (4/5 o'clock -> 8/9/10 o'clock)
+                        apexX = screenWidth * (0.08f + random.nextFloat() * 0.28f)
+                        apexY = screenHeight * (0.16f + random.nextFloat() * 0.22f)
+                        endX = screenWidth * (-0.05f + random.nextFloat() * 0.26f)
+                        endY = screenHeight * (0.92f + random.nextFloat() * 0.12f)
+                    }
+                    2 -> {
+                        // High Skyward Rockets (towards 11/12/1 o'clock - Stamp Area)
+                        apexX = screenWidth * (0.12f + random.nextFloat() * 0.76f)
+                        apexY = screenHeight * (0.04f + random.nextFloat() * 0.08f) // Stamp altitude!
+                        endX = screenWidth * (0.08f + random.nextFloat() * 0.84f)
+                        endY = screenHeight * (0.95f + random.nextFloat() * 0.15f)
                     }
                     else -> {
-                        // Lower-mid region
-                        val x = screenWidth * (0.30f + random.nextFloat() * 0.40f)
-                        val y = screenHeight * (0.65f + random.nextFloat() * 0.32f)
-                        Pair(x, y)
+                        // Mid-Board Fountains & Short Pop Arcs
+                        apexX = screenWidth * (0.18f + random.nextFloat() * 0.64f)
+                        apexY = screenHeight * (0.22f + random.nextFloat() * 0.16f)
+                        endX = screenWidth * (0.08f + random.nextFloat() * 0.84f)
+                        endY = screenHeight * (0.92f + random.nextFloat() * 0.15f)
                     }
                 }
 
-                // 2. Varied apex spot and height: Shoot up to stamp area with random tiers
-                val heightTier = random.nextInt(4)
-                val apexY = when (heightTier) {
-                    0 -> screenHeight * (0.04f + random.nextFloat() * 0.05f) // Level with/beside the stamp!
-                    1 -> screenHeight * (0.09f + random.nextFloat() * 0.06f) // Just below stamp / B-I-N-G-O letters
-                    2 -> screenHeight * (0.16f + random.nextFloat() * 0.07f) // Upper board (Row 0 / Row 1)
-                    else -> screenHeight * (0.24f + random.nextFloat() * 0.08f) // Mid board (Row 2)
+                // 3. Variable projectile speeds and path lengths:
+                // Speed tier 0: Short fast path (apex ~350ms, descends early)
+                // Speed tier 1: Medium path (apex ~560ms)
+                // Speed tier 2: Long soaring path (apex ~820ms)
+                // -> Emojis arriving at the same coordinate naturally stagger in time without bunching!
+                val speedTier = i % 3
+                val (durationMillis, peakRatio) = when (speedTier) {
+                    0 -> Pair(
+                        random.nextInt(920, 1150).toLong(),
+                        0.35f + random.nextFloat() * 0.03f
+                    )
+                    1 -> Pair(
+                        random.nextInt(1220, 1460).toLong(),
+                        0.43f + random.nextFloat() * 0.04f
+                    )
+                    else -> Pair(
+                        random.nextInt(1550, 1850).toLong(),
+                        0.48f + random.nextFloat() * 0.04f
+                    )
                 }
 
-                // Apex horizontal spot distributed across the full width of the screen
-                val apexX = screenWidth * (0.04f + random.nextFloat() * 0.92f)
+                // 4. Simultaneous launch: all emojis shoot at once (near-zero delay)
+                val delayMillis = random.nextInt(0, 30).toLong()
 
-                // Landing position distributed across the entire bottom width
-                val endX = screenWidth * (0.02f + random.nextFloat() * 0.96f)
-                val endY = screenHeight * (1.02f + random.nextFloat() * 0.10f)
-
-                val peakRatio = 0.44f + random.nextFloat() * 0.08f
-                val rotationTarget = (random.nextFloat() - 0.5f) * 540f
-                val fontSizeSp = (22f + random.nextFloat() * 12f)
-                val horizontalSway = (random.nextFloat() - 0.5f) * screenWidth * 0.14f
+                val rotationTarget = (random.nextFloat() - 0.5f) * 600f
+                val fontSizeSp = (20f + random.nextFloat() * 14f)
+                val horizontalSway = (random.nextFloat() - 0.5f) * screenWidth * 0.10f
 
                 list.add(
                     EmojiParticle(
@@ -382,14 +427,14 @@ fun GameOverEmojiProjectileBurst(
                 val elapsed = (currentFrame - startFrame).toFloat()
                 elapsedTimeNanos = elapsed
 
-                // Apex timing: When wave 0 reaches top (~650ms) and begins descent
-                if (!hasTriggeredApex && elapsed >= 650_000_000L) {
+                // Apex timing: When high soaring emojis reach the stamp altitude (~500ms)
+                if (!hasTriggeredApex && elapsed >= 500_000_000L) {
                     hasTriggeredApex = true
                     onApexReached()
                 }
 
-                // Finish celebration after ~3.2s
-                if (elapsed >= 3_200_000_000L) {
+                // Finish celebration when all emojis have landed (~1.95s)
+                if (elapsed >= 1_950_000_000L) {
                     isRunning = false
                     onBurstFinished()
                 }
