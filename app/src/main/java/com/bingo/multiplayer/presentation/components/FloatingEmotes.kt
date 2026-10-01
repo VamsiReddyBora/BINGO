@@ -17,6 +17,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.horizontalScroll
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -47,6 +50,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -77,7 +81,8 @@ data class FloatingEmoteItem(
     val swayAmplitude: Float = (14f + (0..28).random().toFloat()),
     val swayFrequency: Float = (2.0f + (0..25).random().toFloat() / 10f),
     val driftX: Float = (-35f + (0..70).random().toFloat()),
-    val swayPhase: Float = ((0..60).random().toFloat() / 10f)
+    val swayPhase: Float = ((0..60).random().toFloat() / 10f),
+    val scaleMultiplier: Float = 1.0f
 )
 
 /**
@@ -287,74 +292,191 @@ val ALL_REACTION_EMOJIS = listOf(
  */
 @Composable
 fun EmojiReactionStripWithChat(
-    onSendEmote: (String) -> Unit,
+    onSendEmote: (String, Float) -> Unit,
     onToggleQuickChat: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val tokens = BingoTheme.colors
     val haptic = LocalHapticFeedback.current
+    val coroutineScope = rememberCoroutineScope()
+    val scrollState = rememberScrollState()
     var emojiList by remember { mutableStateOf(ALL_REACTION_EMOJIS) }
 
-    Surface(
-        shape = RoundedCornerShape(22.dp),
-        color = tokens.surface.copy(alpha = 0.95f),
-        border = BorderStroke(0.4.dp, tokens.surfaceBorder.copy(alpha = 0.35f)),
-        shadowElevation = 2.dp,
-        modifier = modifier
+    var pressingEmoji by remember { mutableStateOf<String?>(null) }
+    var pressingScale by remember { mutableFloatStateOf(1.0f) }
+
+    Box(
+        modifier = modifier,
+        contentAlignment = Alignment.Center
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 6.dp, vertical = 3.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Surface(
+            shape = RoundedCornerShape(22.dp),
+            color = tokens.surface.copy(alpha = 0.95f),
+            border = BorderStroke(0.4.dp, tokens.surfaceBorder.copy(alpha = 0.35f)),
+            shadowElevation = 2.dp,
+            modifier = Modifier.fillMaxWidth()
         ) {
-            // Horizontal scrolling emoji strip (swipes to left, recents move to front)
             Row(
                 modifier = Modifier
-                    .weight(1f)
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    .fillMaxWidth()
+                    .padding(horizontal = 6.dp, vertical = 3.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                emojiList.forEach { emoji ->
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null
-                            ) {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                // Move tapped emoji to front of the list
-                                emojiList = listOf(emoji) + (emojiList.filter { it != emoji })
-                                onSendEmote(emoji)
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(text = emoji, fontSize = 21.sp)
+                // Horizontal scrolling emoji strip (swipes to left, recents move to front)
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .horizontalScroll(scrollState),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    emojiList.forEach { emoji ->
+                        val isBeingPressed = pressingEmoji == emoji
+                        val localScale = if (isBeingPressed) (pressingScale * 0.40f + 0.60f).coerceIn(1.0f, 1.45f) else 1.0f
+
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .pointerInput(emoji) {
+                                    detectTapGestures(
+                                        onPress = {
+                                            var currentScale = 1.0f
+                                            var isLongPress = false
+                                            var lastHapticTier = 0
+
+                                            val growJob = coroutineScope.launch {
+                                                delay(160) // Tap grace period: taps shorter than this are immediate standard taps
+                                                isLongPress = true
+                                                val holdStart = System.currentTimeMillis()
+                                                while (isActive) {
+                                                    val elapsed = System.currentTimeMillis() - holdStart
+                                                    // Smooth growth from 1.0f to 2.85f over 1400ms
+                                                    val progress = (elapsed / 1400f).coerceIn(0f, 1f)
+                                                    currentScale = 1.0f + 1.85f * progress
+
+                                                    pressingEmoji = emoji
+                                                    pressingScale = currentScale
+
+                                                    // Haptic pulses as the emoji scales through milestone tiers
+                                                    val tier = when {
+                                                        currentScale >= 2.8f -> 3
+                                                        currentScale >= 2.0f -> 2
+                                                        currentScale >= 1.5f -> 1
+                                                        else -> 0
+                                                    }
+                                                    if (tier > lastHapticTier) {
+                                                        lastHapticTier = tier
+                                                        try {
+                                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                        } catch (_: Exception) {}
+                                                    }
+                                                    delay(16) // ~60fps
+                                                }
+                                            }
+
+                                            // Wait for pointer release or cancellation (e.g. scroll drag)
+                                            val released = tryAwaitRelease()
+                                            growJob.cancel()
+                                            pressingEmoji = null
+                                            pressingScale = 1.0f
+
+                                            if (released) {
+                                                try {
+                                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                } catch (_: Exception) {}
+
+                                                // Move tapped/held emoji to front of the list
+                                                emojiList = listOf(emoji) + (emojiList.filter { it != emoji })
+
+                                                val finalScale = if (isLongPress) currentScale else 1.0f
+                                                onSendEmote(emoji, finalScale)
+                                            }
+                                        }
+                                    )
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = emoji,
+                                fontSize = 21.sp,
+                                modifier = Modifier.graphicsLayer {
+                                    scaleX = localScale
+                                    scaleY = localScale
+                                }
+                            )
+                        }
                     }
                 }
+
+                // Subtle vertical separator
+                Spacer(
+                    modifier = Modifier
+                        .width(1.dp)
+                        .height(18.dp)
+                        .background(tokens.cellNeutralText.copy(alpha = 0.15f))
+                )
+
+                Spacer(modifier = Modifier.width(2.dp))
+
+                // Quick chat trigger button (no border)
+                // Tap: toggle quick chat; Long press: smoothly scroll emoji strip back to start!
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .pointerInput(Unit) {
+                            detectTapGestures(
+                                onTap = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    onToggleQuickChat()
+                                },
+                                onLongPress = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    coroutineScope.launch {
+                                        scrollState.animateScrollTo(
+                                            value = 0,
+                                            animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing)
+                                        )
+                                    }
+                                }
+                            )
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(text = "💬", fontSize = 19.sp)
+                }
             }
+        }
 
-            // Subtle vertical separator
-            Spacer(
-                modifier = Modifier
-                    .width(1.dp)
-                    .height(18.dp)
-                    .background(tokens.cellNeutralText.copy(alpha = 0.15f))
-            )
-
-            Spacer(modifier = Modifier.width(2.dp))
-
-            // Quick chat trigger button (no border)
-            IconButton(
-                onClick = {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    onToggleQuickChat()
-                },
-                modifier = Modifier.size(36.dp)
-            ) {
-                Text(text = "💬", fontSize = 19.sp)
+        // Live Magnification Preview Bubble showing the growing emoji in real-time
+        AnimatedVisibility(
+            visible = pressingEmoji != null && pressingScale > 1.08f,
+            enter = fadeIn(tween(90)) + scaleIn(tween(110)),
+            exit = fadeOut(tween(90)) + scaleOut(tween(110)),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .offset(y = (-68).dp)
+        ) {
+            if (pressingEmoji != null) {
+                val previewScale = (pressingScale * 0.72f).coerceIn(1.0f, 2.1f)
+                Surface(
+                    shape = CircleShape,
+                    color = tokens.surface.copy(alpha = 0.98f),
+                    border = BorderStroke(1.5.dp, Color(0xFF3B82F6).copy(alpha = 0.85f)),
+                    shadowElevation = 10.dp,
+                    modifier = Modifier
+                        .size(68.dp)
+                        .graphicsLayer {
+                            scaleX = previewScale
+                            scaleY = previewScale
+                        }
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = pressingEmoji!!,
+                            fontSize = (26 * previewScale).sp
+                        )
+                    }
+                }
             }
         }
     }
@@ -419,14 +541,16 @@ private fun SingleFloatingEmoteBubble(
     val baseStartX = (screenW * item.startXRatio).coerceIn(30f, (screenW - 54f).coerceAtLeast(30f))
     // Highly randomized organic trajectory: every emote follows a unique path
     val swayX = sin((p * item.swayFrequency * PI) + item.swayPhase).toFloat() * item.swayAmplitude
-    val currentX = (baseStartX + (item.driftX * p) + swayX).coerceIn(16f, (screenW - 54f).coerceAtLeast(16f))
+    val boundPad = (18f * item.scaleMultiplier).coerceIn(16f, 48f)
+    val currentX = (baseStartX + (item.driftX * p) + swayX).coerceIn(boundPad, (screenW - boundPad).coerceAtLeast(boundPad))
 
-    // Scale spring curve: pops to 1.35f, then settles at 1.05f
-    val scale = when {
+    // Scale spring curve: pops to 1.35f, then settles at 1.05f * scaleMultiplier
+    val baseScale = when {
         p < 0.18f -> (p / 0.18f) * 1.35f
         p < 0.32f -> 1.35f - ((p - 0.18f) / 0.14f) * 0.30f
         else -> 1.05f
     }
+    val scale = baseScale * item.scaleMultiplier
 
     // Alpha: Solid up to 70%, then fades out
     val alpha = when {

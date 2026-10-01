@@ -110,6 +110,7 @@ fun RootNavGraph(
     var countdownSeconds by remember { mutableIntStateOf(-1) }
     var firstTurnPlayerName by remember { mutableStateOf("") }
     var latestIncomingEmote by remember { mutableStateOf<String?>(null) }
+    var latestIncomingEmoteScale by remember { mutableFloatStateOf(1.0f) }
     var latestIncomingEmoteTimestamp by remember { androidx.compose.runtime.mutableLongStateOf(0L) }
     var latestIncomingChatMessage by remember { mutableStateOf<InGameChatMessage?>(null) }
     var opponentPlayerId by remember { mutableStateOf("") }
@@ -914,6 +915,7 @@ fun RootNavGraph(
 
             "EMOTE", "CHAT_PHRASE" -> {
                 latestIncomingEmote = packet.displayName
+                latestIncomingEmoteScale = if (packet.number > 0) packet.number / 100f else 1.0f
                 latestIncomingEmoteTimestamp = packet.timestamp
             }
 
@@ -1983,14 +1985,16 @@ fun RootNavGraph(
                 pingMs = currentPing,
                 wantsToPlayAgainName = wantsToPlayAgainPlayerName,
                 incomingEmote = latestIncomingEmote,
+                incomingEmoteScale = latestIncomingEmoteScale,
                 incomingEmoteTimestamp = latestIncomingEmoteTimestamp,
-                onSendEmote = { emoji ->
+                onSendEmote = { emoji, scaleMultiplier ->
                     if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
                         broadcastPacket(
                             RoomMessagePacket(
                                 type = "EMOTE",
                                 playerId = getLocalUid(),
                                 displayName = emoji,
+                                number = (scaleMultiplier * 100).toInt(),
                                 timestamp = System.currentTimeMillis()
                             )
                         )

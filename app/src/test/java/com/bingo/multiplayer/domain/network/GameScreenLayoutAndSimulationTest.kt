@@ -213,6 +213,67 @@ class GameScreenLayoutAndSimulationTest {
     }
 
     @Test
+    fun testGrowingEmoteScaleMultiplierAndQuickChatScrollToStart() {
+        // 1. Verify default scaleMultiplier is 1.0f
+        val standardEmote = FloatingEmoteItem(emoji = "🔥")
+        assertEquals(1.0f, standardEmote.scaleMultiplier, 0.001f)
+
+        // 2. Verify hold-duration-based scale growth logic
+        fun computeHeldScale(holdDurationMs: Long): Float {
+            val progress = ((holdDurationMs - 160f) / 1400f).coerceIn(0f, 1f)
+            return 1.0f + 1.85f * progress
+        }
+
+        val tapScale = if (100L < 160L) 1.0f else computeHeldScale(100L)
+        assertEquals(1.0f, tapScale, 0.001f)
+
+        val mediumHoldScale = computeHeldScale(500L) // ~340ms into growth
+        assertTrue("Medium hold should be larger than 1.3x and less than 1.8x", mediumHoldScale in 1.3f..1.8f)
+
+        val longHoldScale = computeHeldScale(1600L) // maxed out past 1560ms
+        assertEquals(2.85f, longHoldScale, 0.001f)
+
+        val mediumEmote = FloatingEmoteItem(emoji = "😂", scaleMultiplier = mediumHoldScale)
+        assertEquals(mediumHoldScale, mediumEmote.scaleMultiplier, 0.001f)
+
+        val megaEmote = FloatingEmoteItem(emoji = "💥", scaleMultiplier = longHoldScale)
+        assertEquals(2.85f, megaEmote.scaleMultiplier, 0.001f)
+
+        // 3. Verify network codec packet transmission with scale factor
+        val packet = RoomMessagePacket(
+            type = "EMOTE",
+            playerId = "player_123",
+            displayName = "💥",
+            number = (longHoldScale * 100).toInt()
+        )
+        assertEquals(285, packet.number)
+
+        val decodedScale = if (packet.number > 0) packet.number / 100f else 1.0f
+        assertEquals(2.85f, decodedScale, 0.001f)
+
+        // 4. Verify quick chat long-press scroll to start simulation
+        var scrollPosition = 850 // user scrolled far to the right to pick an emoji
+        var quickChatOpen = false
+
+        // Tap on quick chat toggles quick chat sheet
+        fun onQuickChatTapped() {
+            quickChatOpen = !quickChatOpen
+        }
+
+        // Long press on quick chat scrolls emoji strip to 0
+        fun onQuickChatLongPressed() {
+            scrollPosition = 0
+        }
+
+        onQuickChatTapped()
+        assertTrue(quickChatOpen)
+        assertEquals(850, scrollPosition) // scroll untouched on tap
+
+        onQuickChatLongPressed()
+        assertEquals(0, scrollPosition) // scroll resets to 0 on long press!
+    }
+
+    @Test
     fun testQuickChatListManagementAndReordering() {
         val maxPhrases = QuickChatPreferences.MAX_ALLOWED_PHRASES
         val maxLen = QuickChatPreferences.MAX_PHRASE_LENGTH

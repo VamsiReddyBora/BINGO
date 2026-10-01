@@ -152,8 +152,9 @@ fun GameScreen(
     myUsername: String? = null,
     myDisplayName: String? = null,
     incomingEmote: String? = null,
+    incomingEmoteScale: Float = 1.0f,
     incomingEmoteTimestamp: Long = 0L,
-    onSendEmote: (String) -> Unit = {},
+    onSendEmote: (String, Float) -> Unit = { _, _ -> },
     incomingChatMessage: InGameChatMessage? = null,
     onSendChatMessage: (String) -> Unit = {},
     pickedNumbersHistory: List<Int> = emptyList()
@@ -223,20 +224,21 @@ fun GameScreen(
     // ── Floating Emotes State ──
     var activeEmotes by remember { mutableStateOf(listOf<FloatingEmoteItem>()) }
 
-    fun spawnEmote(emoji: String, isSelf: Boolean, senderName: String? = null) {
+    fun spawnEmote(emoji: String, isSelf: Boolean, senderName: String? = null, scaleMultiplier: Float = 1.0f) {
         // Uniform random distribution from left (8%) to right (86%) across the whole screen width
         val randomX = (8..86).random() / 100f
         activeEmotes = activeEmotes + FloatingEmoteItem(
             emoji = emoji,
             startXRatio = randomX,
             isSelf = isSelf,
-            senderName = senderName
+            senderName = senderName,
+            scaleMultiplier = scaleMultiplier
         )
     }
 
     LaunchedEffect(incomingEmote, incomingEmoteTimestamp) {
         if (!incomingEmote.isNullOrBlank()) {
-            spawnEmote(incomingEmote, isSelf = false, senderName = opponentName)
+            spawnEmote(incomingEmote, isSelf = false, senderName = opponentName, scaleMultiplier = incomingEmoteScale)
         }
     }
 
@@ -841,9 +843,9 @@ fun GameScreen(
                 // Item 7: Pill shaped swipeable emoji reactions strip with quick chat just above bottom bar
                 if (!isGameOver) {
                     EmojiReactionStripWithChat(
-                        onSendEmote = { emote ->
-                            spawnEmote(emote, isSelf = true)
-                            onSendEmote(emote)
+                        onSendEmote = { emote, scale ->
+                            spawnEmote(emote, isSelf = true, scaleMultiplier = scale)
+                            onSendEmote(emote, scale)
                         },
                         onToggleQuickChat = {
                             showQuickChat = !showQuickChat
@@ -931,8 +933,8 @@ fun GameScreen(
                                         // Move tapped phrase to front (recent like emojis)
                                         currentPhrases = listOf(phrase) + currentPhrases.filter { it != phrase }
                                         QuickChatPreferences.recordUsedPhrase(context, phrase)
-                                        spawnEmote(phrase, isSelf = true)
-                                        onSendEmote(phrase)
+                                        spawnEmote(phrase, isSelf = true, scaleMultiplier = 1.0f)
+                                        onSendEmote(phrase, 1.0f)
                                     },
                                     color = tokens.backgroundSecondary,
                                     shape = RoundedCornerShape(10.dp),
