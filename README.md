@@ -1,6 +1,11 @@
 # 🎱 BINGO — Real-Time Multiplayer
 
-A fast, modern Android Bingo game built with Jetpack Compose. Play online with friends via room codes, connect locally over Wi-Fi/Hotspot without internet, or challenge the adaptive AI.
+[![Play Online](https://img.shields.io/badge/Play%20Online-Web%20App-blue?style=for-the-badge&logo=googlechrome)](https://vamsireddybora.github.io/BINGO/)
+[![Download APK](https://img.shields.io/badge/Download-Android%20APK-emerald?style=for-the-badge&logo=android)](https://github.com/VamsiReddyBora/BINGO/releases/tag/v1.0.1)
+
+A fast, modern cross-platform Bingo game. Play directly in your browser on PC/iPhone or download the Android APK. Full real-time cross-play via shared 6-digit room codes!
+
+👉 **Play Instantly in Browser:** **[https://vamsireddybora.github.io/BINGO/](https://vamsireddybora.github.io/BINGO/)**
 
 ---
 
