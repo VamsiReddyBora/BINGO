@@ -11,7 +11,7 @@ captures/
 *.hprof
 *.Zone.Identifier
 *.sh
-TestP2p.kt
 
-# User requested release apk to be tracked in repository
+# Exclude generated / temporary APKs but track root Bingo.apk
+*.apk
 !Bingo.apk
