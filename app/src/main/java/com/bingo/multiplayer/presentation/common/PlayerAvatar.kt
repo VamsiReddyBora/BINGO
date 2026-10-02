@@ -192,7 +192,7 @@ fun PlayerAvatar(
         modifier = modifier
             .size(size)
             .clip(CircleShape)
-            .background(tokens.cellPlayerPickBg)
+            .background(if (tokens.isDark) Color(0xFF222222) else tokens.cellPlayerPickBg)
             .border(borderWidth, finalBorderColor, CircleShape),
         contentAlignment = Alignment.Center
     ) {
@@ -209,7 +209,7 @@ fun PlayerAvatar(
                 text = initial,
                 fontSize = (size.value * 0.44f).sp,
                 fontWeight = FontWeight.Bold,
-                color = tokens.accentBrand
+                color = if (tokens.isDark) Color.White else tokens.accentBrand
             )
         }
     }

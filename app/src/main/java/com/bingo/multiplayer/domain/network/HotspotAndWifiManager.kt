@@ -1,0 +1,298 @@
+package com.bingo.multiplayer.domain.network
+
+import android.content.Context
+import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
+import android.net.wifi.WifiConfiguration
+import android.net.wifi.WifiManager
+import android.net.wifi.WifiNetworkSpecifier
+import android.os.Build
+import android.provider.Settings
+import android.util.Log
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+
+/**
+ * Manages Wi-Fi, Hotspot states, and automated Wi-Fi connection
+ * for Nearby Network (LAN) peer-to-peer gameplay.
+ */
+object HotspotAndWifiManager {
+
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    // ── Wi-Fi State & Control ──
+
+    fun isWifiEnabled(context: Context): Boolean {
+        return try {
+            val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            wifi?.isWifiEnabled == true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Prompts the user to turn on Wi-Fi.
+     * Uses Android 10+ (API 29+) native Wi-Fi settings panel for a clean in-app sheet.
+     */
+    fun promptEnableWifi(context: Context) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val panelIntent = Intent(Settings.Panel.ACTION_WIFI).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(panelIntent)
+            } else {
+                val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+                val handled = wifi?.setWifiEnabled(true) == true
+                if (!handled) {
+                    val intent = Intent(Settings.ACTION_WIFI_SETTINGS).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    context.startActivity(intent)
+                }
+            }
+        } catch (_: Exception) {
+            try {
+                val intent = Intent(Settings.ACTION_WIFI_SETTINGS).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(intent)
+            } catch (_: Exception) {}
+        }
+    }
+
+    // ── Hotspot State & Control ──
+
+    private const val PREFS_HOTSPOT = "bingo_hotspot_prefs"
+    private const val KEY_HOTSPOT_SSID = "saved_hotspot_ssid"
+    private const val KEY_HOTSPOT_PASS = "saved_hotspot_password"
+
+    /**
+     * Checks if the phone's mobile hotspot / tethering is currently active.
+     * Uses reflection on hidden API + kernel network interface discovery.
+     */
+    fun isHotspotEnabled(context: Context): Boolean {
+        // 1. WifiManager.isWifiApEnabled
+        try {
+            val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            val method = wifi?.javaClass?.getDeclaredMethod("isWifiApEnabled")
+            method?.isAccessible = true
+            val enabled = method?.invoke(wifi) as? Boolean
+            if (enabled == true) return true
+        } catch (_: Exception) {}
+
+        // 2. WifiManager.getWifiApState (12 = ENABLING, 13 = ENABLED)
+        try {
+            val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            val method = wifi?.javaClass?.getDeclaredMethod("getWifiApState")
+            method?.isAccessible = true
+            val state = method?.invoke(wifi) as? Int
+            if (state == 12 || state == 13) return true
+        } catch (_: Exception) {}
+
+        // 3. Kernel socket network interface heuristic
+        try {
+            val interfaces = java.net.NetworkInterface.getNetworkInterfaces()
+            while (interfaces.hasMoreElements()) {
+                val iface = interfaces.nextElement()
+                val name = iface.name.lowercase()
+                if (!iface.isUp || iface.isLoopback) continue
+
+                if (name.contains("ap") || name.contains("swlan") || name.contains("softap") || name.contains("tether")) {
+                    return true
+                }
+
+                val addrs = iface.inetAddresses
+                while (addrs.hasMoreElements()) {
+                    val addr = addrs.nextElement()
+                    val host = addr.hostAddress ?: ""
+                    if (host.startsWith("192.168.43.") || host.startsWith("192.168.44.") || host.startsWith("192.168.49.") || host.startsWith("192.168.50.")) {
+                        return true
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        return false
+    }
+
+    /**
+     * Opens Hotspot / Tethering settings on the device.
+     */
+    fun openHotspotSettings(context: Context) {
+        val intents = listOf(
+            Intent("android.settings.TETHER_SETTINGS"),
+            Intent("android.settings.WIFI_AP_SETTINGS"),
+            Intent(Settings.ACTION_WIRELESS_SETTINGS)
+        )
+        for (intent in intents) {
+            try {
+                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                context.startActivity(intent)
+                return
+            } catch (_: Exception) {}
+        }
+    }
+
+    /**
+     * Retrieves the device's Hotspot SSID name if detectable, or saved preference.
+     */
+    fun getHotspotName(context: Context): String {
+        val saved = context.getSharedPreferences(PREFS_HOTSPOT, Context.MODE_PRIVATE).getString(KEY_HOTSPOT_SSID, null)
+        if (!saved.isNullOrBlank()) return saved
+
+        val fallbackDeviceName = try {
+            val devName = Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME)
+            if (!devName.isNullOrBlank()) devName else Build.MODEL
+        } catch (_: Exception) {
+            Build.MODEL
+        }.ifBlank { "Android Hotspot" }
+
+        return try {
+            val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            val method = wifi?.javaClass?.getDeclaredMethod("getWifiApConfiguration")
+            method?.isAccessible = true
+            val config = method?.invoke(wifi) as? WifiConfiguration
+            val detected = config?.SSID?.replace("\"", "")
+            if (!detected.isNullOrBlank()) detected else fallbackDeviceName
+        } catch (_: Exception) {
+            fallbackDeviceName
+        }
+    }
+
+    fun getSavedHotspotPassword(context: Context): String {
+        return context.getSharedPreferences(PREFS_HOTSPOT, Context.MODE_PRIVATE).getString(KEY_HOTSPOT_PASS, "") ?: ""
+    }
+
+    fun saveHotspotCredentials(context: Context, ssid: String, password: String) {
+        context.getSharedPreferences(PREFS_HOTSPOT, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_HOTSPOT_SSID, ssid.trim())
+            .putString(KEY_HOTSPOT_PASS, password.trim())
+            .apply()
+    }
+
+    /**
+     * Checks if the player's device is currently connected to the host's Wi-Fi / hotspot.
+     */
+    fun isConnectedToHost(context: Context, hostIp: String, hostSsid: String): Boolean {
+        try {
+            val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            val info = wifi?.connectionInfo
+            val currentSsid = info?.ssid?.replace("\"", "") ?: ""
+            if (currentSsid.isNotBlank() && hostSsid.isNotBlank() &&
+                (currentSsid.equals(hostSsid, ignoreCase = true) || hostSsid.contains(currentSsid, ignoreCase = true) || currentSsid.contains(hostSsid, ignoreCase = true))) {
+                return true
+            }
+        } catch (_: Exception) {}
+
+        // Check if host IP is reachable over TCP P2P port 8999
+        if (hostIp.isNotBlank()) {
+            try {
+                val socket = java.net.Socket()
+                socket.connect(java.net.InetSocketAddress(hostIp, 8999), 500)
+                socket.close()
+                return true
+            } catch (_: Exception) {}
+        }
+        return false
+    }
+
+    /**
+     * Programmatically connects the joiner's device to the host's Wi-Fi hotspot.
+     * On Android 10+ uses WifiNetworkSpecifier with ConnectivityManager.
+     */
+    fun connectToHostWifi(
+        context: Context,
+        ssid: String,
+        password: String,
+        onConnected: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        val cleanSsid = ssid.trim().removeSurrounding("\"")
+        val cleanPass = password.trim().removeSurrounding("\"")
+
+        if (cleanSsid.isBlank()) {
+            onError("SSID cannot be blank")
+            return
+        }
+
+        val cm = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        if (cm == null) {
+            onError("ConnectivityManager unavailable")
+            return
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                val specifierBuilder = WifiNetworkSpecifier.Builder()
+                    .setSsid(cleanSsid)
+
+                if (cleanPass.isNotBlank()) {
+                    specifierBuilder.setWpa2Passphrase(cleanPass)
+                }
+
+                val specifier = specifierBuilder.build()
+                val request = NetworkRequest.Builder()
+                    .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+                    .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                    .setNetworkSpecifier(specifier)
+                    .build()
+
+                cm.requestNetwork(request, object : ConnectivityManager.NetworkCallback() {
+                    override fun onAvailable(network: Network) {
+                        super.onAvailable(network)
+                        try {
+                            cm.bindProcessToNetwork(network)
+                        } catch (_: Exception) {}
+                        scope.launch(Dispatchers.Main) {
+                            onConnected()
+                        }
+                    }
+
+                    override fun onUnavailable() {
+                        super.onUnavailable()
+                        scope.launch(Dispatchers.Main) {
+                            onError("Connection request cancelled or timed out")
+                        }
+                    }
+                })
+            } catch (e: Exception) {
+                Log.w("HotspotWifi", "WifiNetworkSpecifier failed: ${e.message}")
+                onError(e.message ?: "Could not connect to network")
+            }
+        } else {
+            // Legacy Wi-Fi connection
+            try {
+                val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+                val conf = WifiConfiguration().apply {
+                    SSID = "\"$cleanSsid\""
+                    if (cleanPass.isNotBlank()) {
+                        preSharedKey = "\"$cleanPass\""
+                    } else {
+                        allowedKeyManagement.set(WifiConfiguration.KeyMgmt.NONE)
+                    }
+                }
+                val netId = wifi?.addNetwork(conf) ?: -1
+                if (netId != -1) {
+                    wifi?.disconnect()
+                    wifi?.enableNetwork(netId, true)
+                    wifi?.reconnect()
+                    scope.launch(Dispatchers.Main) {
+                        onConnected()
+                    }
+                } else {
+                    onError("Failed to add Wi-Fi configuration")
+                }
+            } catch (e: Exception) {
+                onError(e.message ?: "Connection failed")
+            }
+        }
+    }
+}

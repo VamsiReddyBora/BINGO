@@ -265,6 +265,61 @@ class AuthRepositoryTest {
         assertEquals("super_hero", freshRepository.getSavedGoogleUsername(googleId))
     }
 
+    @Test
+    fun testDualWinStreakTracking_activeAndBestStreak() = runBlocking {
+        repository.onGoogleSignInSuccess(
+            googleId = "streak_tester",
+            displayName = "Streak Master",
+            email = "streak@example.com",
+            customUsername = "streak_master"
+        )
+
+        val initialUser = (repository.authState.value as AuthState.Authenticated).user
+        assertEquals(0, initialUser.currentStreak)
+        assertEquals(0, initialUser.bestStreak)
+        assertEquals(0, initialUser.activeStreak)
+
+        // Win 1st match: streak = 1, best = 1
+        repository.recordGameFinished(didWin = true)
+        val s1 = (repository.authState.value as AuthState.Authenticated).user
+        assertEquals(1, s1.currentStreak)
+        assertEquals(1, s1.bestStreak)
+        assertEquals(1, s1.activeStreak)
+
+        // Win 2nd match: streak = 2, best = 2
+        repository.recordGameFinished(didWin = true)
+        val s2 = (repository.authState.value as AuthState.Authenticated).user
+        assertEquals(2, s2.currentStreak)
+        assertEquals(2, s2.bestStreak)
+
+        // Win 3rd match: streak = 3, best = 3
+        repository.recordGameFinished(didWin = true)
+        val s3 = (repository.authState.value as AuthState.Authenticated).user
+        assertEquals(3, s3.currentStreak)
+        assertEquals(3, s3.bestStreak)
+
+        // Loss on 4th match: active streak resets to 0, best streak remains 3!
+        repository.recordGameFinished(didWin = false)
+        val s4 = (repository.authState.value as AuthState.Authenticated).user
+        assertEquals(0, s4.currentStreak)
+        assertEquals(0, s4.activeStreak)
+        assertEquals(3, s4.bestStreak)
+
+        // Win again: active streak = 1, best streak remains 3!
+        repository.recordGameFinished(didWin = true)
+        val s5 = (repository.authState.value as AuthState.Authenticated).user
+        assertEquals(1, s5.currentStreak)
+        assertEquals(3, s5.bestStreak)
+
+        // Win up to 4 consecutive wins: active streak = 4, best streak becomes 4!
+        repository.recordGameFinished(didWin = true) // 2
+        repository.recordGameFinished(didWin = true) // 3
+        repository.recordGameFinished(didWin = true) // 4
+        val s6 = (repository.authState.value as AuthState.Authenticated).user
+        assertEquals(4, s6.currentStreak)
+        assertEquals(4, s6.bestStreak)
+    }
+
     // ── Test Doubles & In-Memory SharedPreferences ──
 
     class MockFirebaseAuthProvider : FirebaseAuthProvider {

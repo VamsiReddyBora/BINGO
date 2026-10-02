@@ -40,12 +40,17 @@ class LanP2pSessionManager {
     private var outWriter: PrintWriter? = null
     private var inReader: BufferedReader? = null
 
+    private val clientWriters = java.util.concurrent.CopyOnWriteArrayList<PrintWriter>()
+    private val clientSockets = java.util.concurrent.CopyOnWriteArrayList<Socket>()
+    private val clientJobs = java.util.concurrent.CopyOnWriteArrayList<Job>()
+
     private var serverJob: Job? = null
     private var clientReadJob: Job? = null
     private var heartbeatJob: Job? = null
     private var livenessJob: Job? = null
 
     var localPlayer: Player? = null
+    var isHostInLobby = false
 
     private val playerRegistry = mutableMapOf<String, Player>()
     private val _players = MutableStateFlow<List<Player>>(emptyList())
@@ -57,6 +62,7 @@ class LanP2pSessionManager {
     fun connectAsHost(hostPlayer: Player, port: Int = 8999) {
         disconnect()
         localPlayer = hostPlayer
+        isHostInLobby = false
         playerRegistry[hostPlayer.id] = hostPlayer
         _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
 
@@ -65,11 +71,47 @@ class LanP2pSessionManager {
                 serverSocket = ServerSocket(port)
                 while (isActive) {
                     val socket = serverSocket?.accept() ?: break
-                    clientSocket?.close()
-                    clientSocket = socket
                     socket.tcpNoDelay = true
                     try { socket.trafficClass = 0x10 } catch (_: Exception) {}
-                    setupSocketStreams(socket)
+                    clientSockets.add(socket)
+                    val writer = PrintWriter(socket.getOutputStream(), true)
+                    clientWriters.add(writer)
+
+                    if (isHostInLobby) {
+                        try {
+                            val goToLobbyPacket = RoomMessagePacket(
+                                type = "GO_TO_LOBBY",
+                                playerId = hostPlayer.id
+                            )
+                            writer.println(json.encodeToString(goToLobbyPacket))
+                        } catch (_: Exception) {}
+                    }
+
+                    val job = scope.launch(Dispatchers.IO) {
+                        try {
+                            val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
+                            while (isActive) {
+                                val line = reader.readLine() ?: break
+                                val packet = json.decodeFromString<RoomMessagePacket>(line)
+                                handleIncomingPacket(packet)
+
+                                // Host relays to all other connected clients
+                                val payload = json.encodeToString(packet)
+                                for (otherWriter in clientWriters) {
+                                    if (otherWriter !== writer) {
+                                        try { otherWriter.println(payload) } catch (_: Exception) {}
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.w("LanP2p", "Client socket disconnected: ${e.message}")
+                        } finally {
+                            clientWriters.remove(writer)
+                            clientSockets.remove(socket)
+                            try { socket.close() } catch (_: Exception) {}
+                        }
+                    }
+                    clientJobs.add(job)
                 }
             } catch (e: Exception) {
                 Log.e("LanP2p", "Host server error", e)
@@ -81,6 +123,7 @@ class LanP2pSessionManager {
     fun connectAsClient(hostIp: String, clientPlayer: Player, port: Int = 8999) {
         disconnect()
         localPlayer = clientPlayer
+        isHostInLobby = false
         playerRegistry[clientPlayer.id] = clientPlayer
         _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
 
@@ -185,6 +228,9 @@ class LanP2pSessionManager {
             try {
                 val payload = json.encodeToString(packet)
                 outWriter?.println(payload)
+                for (writer in clientWriters) {
+                    try { writer.println(payload) } catch (_: Exception) {}
+                }
 
                 // If sender is broadcasting, simulate receiving own packet for local updates
                 if (packet.type == "GAME_SYNC" || packet.type == "HEARTBEAT" || packet.type == "JOIN" || packet.type == "LEAVE") {
@@ -261,6 +307,15 @@ class LanP2pSessionManager {
                                     level = h.level,
                                     readyStatus = h.lobbyReadyStatus,
                                     timestamp = System.currentTimeMillis()
+                                )
+                            )
+                        }
+                        // If host is already in lobby, immediately inform the new client
+                        if (isHostInLobby) {
+                            broadcastPacket(
+                                RoomMessagePacket(
+                                    type = "GO_TO_LOBBY",
+                                    playerId = localPlayer?.id ?: ""
                                 )
                             )
                         }
@@ -364,6 +419,8 @@ class LanP2pSessionManager {
         livenessJob?.cancel()
         clientReadJob?.cancel()
         serverJob?.cancel()
+        clientJobs.forEach { it.cancel() }
+        clientJobs.clear()
 
         heartbeatJob = null
         livenessJob = null
@@ -375,11 +432,22 @@ class LanP2pSessionManager {
         try { clientSocket?.close() } catch (_: Exception) {}
         try { serverSocket?.close() } catch (_: Exception) {}
 
+        for (w in clientWriters) {
+            try { w.close() } catch (_: Exception) {}
+        }
+        clientWriters.clear()
+
+        for (s in clientSockets) {
+            try { s.close() } catch (_: Exception) {}
+        }
+        clientSockets.clear()
+
         outWriter = null
         inReader = null
         clientSocket = null
         serverSocket = null
 
+        isHostInLobby = false
         localPlayer = null
         playerRegistry.clear()
         _players.value = emptyList()

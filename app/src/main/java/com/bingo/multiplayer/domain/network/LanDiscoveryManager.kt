@@ -34,10 +34,13 @@ data class LanDiscoveredGame(
     val boardSize: Int = 5,
     val roomCode: String, // Internal room session identifier, completely invisible to the user
     val hostIp: String = "",
+    val ssid: String = "",
+    val isInLobby: Boolean = false,
+    val broadcastTimestamp: Long = System.currentTimeMillis(),
     val lastSeenTimestamp: Long = System.currentTimeMillis()
 ) {
     val isAlive: Boolean
-        get() = (System.currentTimeMillis() - lastSeenTimestamp) < 8000L
+        get() = (System.currentTimeMillis() - lastSeenTimestamp) < 4000L
 }
 
 /**
@@ -70,6 +73,7 @@ class LanDiscoveryManager(
     private var isDiscovering = false
     private var localPlayerId: String? = null
     private var currentBroadcastingRoomCode: String? = null
+    private var currentBroadcastGameInfo: LanDiscoveredGame? = null
 
     /**
      * Starts broadcasting a local game on the Wi-Fi / Hotspot network.
@@ -77,7 +81,8 @@ class LanDiscoveryManager(
     fun startBroadcasting(
         host: Player,
         boardSize: Int,
-        internalRoomCode: String
+        internalRoomCode: String,
+        ssid: String = ""
     ) {
         stopBroadcasting()
         isBroadcasting = true
@@ -91,10 +96,12 @@ class LanDiscoveryManager(
             avatarUrl = host.avatarUrl,
             boardSize = boardSize,
             roomCode = internalRoomCode,
-            hostIp = getLocalIpAddress()
+            hostIp = getLocalIpAddress(),
+            ssid = ssid,
+            isInLobby = false,
+            broadcastTimestamp = System.currentTimeMillis()
         )
-
-        val payload = json.encodeToString(gameInfo)
+        currentBroadcastGameInfo = gameInfo
 
         broadcastJob = scope.launch(Dispatchers.IO) {
             var udpSocket: DatagramSocket? = null
@@ -118,6 +125,9 @@ class LanDiscoveryManager(
             }
 
             while (isActive && isBroadcasting) {
+                val currentInfo = currentBroadcastGameInfo?.copy(broadcastTimestamp = System.currentTimeMillis()) ?: gameInfo
+                val payload = json.encodeToString(currentInfo)
+
                 // 1. Broadcast over UDP on LAN
                 try {
                     val bytes = payload.toByteArray(StandardCharsets.UTF_8)
@@ -128,18 +138,27 @@ class LanDiscoveryManager(
                         udpPort
                     )
                     udpSocket?.send(packet)
-                    Log.d("LanDiscovery", "Broadcast packet sent to ${broadcastAddr.hostAddress}")
                 } catch (ex: Exception) {
                     Log.w("LanDiscovery", "Failed to send broadcast packet: ${ex.message}")
                 }
 
-                delay(1500L)
+                delay(1200L)
             }
 
             try {
                 udpSocket?.close()
             } catch (_: Exception) {}
         }
+    }
+
+    /**
+     * Updates ongoing broadcast to indicate whether the host has moved to the lobby.
+     */
+    fun updateLobbyState(isInLobby: Boolean) {
+        currentBroadcastGameInfo = currentBroadcastGameInfo?.copy(
+            isInLobby = isInLobby,
+            broadcastTimestamp = System.currentTimeMillis()
+        )
     }
 
     /**
@@ -155,10 +174,10 @@ class LanDiscoveryManager(
         scope.launch(Dispatchers.IO) {
             try {
                 if (codeToClear != null && mqttClient?.isConnected == true) {
-                    val topic = "bingo/v3/lan_hosts/$codeToClear"
+                    val topic = "bingo/v4/lan_hosts/$codeToClear"
                     val emptyMsg = MqttMessage(ByteArray(0)).apply {
                         qos = 1
-                        isRetained = true
+                        isRetained = false
                     }
                     mqttClient?.publish(topic, emptyMsg)?.waitForCompletion(1000L)
                 }
@@ -214,12 +233,13 @@ class LanDiscoveryManager(
         // 2. Also listen for games advertised via the fallback LAN bridge
         startMqttSubscriber()
 
-        // 3. Cleanup stale games every 2 seconds
+        // 3. Cleanup stale games every 1 second
         scope.launch(Dispatchers.IO) {
             while (isActive && isDiscovering) {
-                delay(2000L)
-                val alive = gamesCache.values.filter { it.isAlive }.sortedByDescending { it.lastSeenTimestamp }
-                _discoveredGames.value = alive
+                delay(1000L)
+                val now = System.currentTimeMillis()
+                gamesCache.entries.removeIf { (_, g) -> (now - g.lastSeenTimestamp) > 4000L }
+                _discoveredGames.value = gamesCache.values.sortedByDescending { it.lastSeenTimestamp }
             }
         }
     }
@@ -249,8 +269,14 @@ class LanDiscoveryManager(
             // Ignore own game
             return
         }
-        gamesCache[game.roomCode] = game.copy(lastSeenTimestamp = System.currentTimeMillis())
-        _discoveredGames.value = gamesCache.values.filter { it.isAlive }.sortedByDescending { it.lastSeenTimestamp }
+        val now = System.currentTimeMillis()
+        // Discard any stale packets from past sessions or invalid timestamps
+        if (game.broadcastTimestamp <= 0L || (now - game.broadcastTimestamp) > 3000L) {
+            return
+        }
+        gamesCache[game.roomCode] = game.copy(lastSeenTimestamp = now)
+        gamesCache.entries.removeIf { (_, g) -> (now - g.lastSeenTimestamp) > 4000L }
+        _discoveredGames.value = gamesCache.values.sortedByDescending { it.lastSeenTimestamp }
     }
 
     // Original MQTT publisher removed (duplicate)
@@ -333,11 +359,11 @@ class LanDiscoveryManager(
                 client.connect(options).waitForCompletion(2000L)
                 Log.d("LanDiscovery", "MQTT publisher connected for room ${game.roomCode}")
 
-                val topic = "bingo/v3/lan_hosts/${game.roomCode}"
+                val topic = "bingo/v4/lan_hosts/${game.roomCode}"
                 val payload = json.encodeToString(game)
                 val msg = MqttMessage(payload.toByteArray(StandardCharsets.UTF_8)).apply {
                     qos = 1
-                    isRetained = true
+                    isRetained = false
                 }
                 client.publish(topic, msg)
                 Log.d("LanDiscovery", "Published MQTT for room ${game.roomCode} to $topic")
@@ -361,8 +387,12 @@ class LanDiscoveryManager(
                 }
                 client.connect(options).waitForCompletion(2000L)
                 Log.d("LanDiscovery", "MQTT subscriber connected")
-                client.subscribe("bingo/v3/lan_hosts/+", 1) { topic, message ->
+                client.subscribe("bingo/v4/lan_hosts/+", 1) { topic, message ->
                     try {
+                        if (message.isRetained) {
+                            Log.d("LanDiscovery", "Ignoring retained broker message on $topic")
+                            return@subscribe
+                        }
                         Log.d("LanDiscovery", "MQTT message received on $topic")
                         if (message.payload == null || message.payload.isEmpty()) {
                             val rCode = topic.substringAfterLast("/")

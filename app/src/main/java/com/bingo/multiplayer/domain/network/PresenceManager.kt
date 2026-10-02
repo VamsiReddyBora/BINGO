@@ -21,21 +21,36 @@ import org.eclipse.paho.client.mqttv3.MqttMessage
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import androidx.compose.ui.graphics.Color
+
+@Keep
+enum class AppActivityState {
+    ONLINE,     // Active in app (menu, settings, dashboard, room list)
+    IN_LOBBY,   // In a waiting room / lobby
+    PLAYING     // Actively playing in a match
+}
 
 @Keep
 @Serializable
 data class PlayerPresence(
     val username: String = "",
-    val status: String = "OFFLINE", // "ONLINE" or "OFFLINE"
+    val status: String = "OFFLINE", // "ONLINE", "IN_LOBBY", "PLAYING", or "OFFLINE"
     val timestamp: Long = System.currentTimeMillis()
 ) {
     /**
-     * A player is "online" if their status is "ONLINE" and the timestamp is within 10 seconds.
+     * A player is considered active in the app if their status is ONLINE, IN_LOBBY, or PLAYING,
+     * and the timestamp is within 12 seconds.
      */
     val isOnline: Boolean
-        get() = status.equals("ONLINE", ignoreCase = true) && (System.currentTimeMillis() - timestamp) < 10_000L
+        get() = (status.equals("ONLINE", ignoreCase = true) ||
+                 status.equals("IN_LOBBY", ignoreCase = true) ||
+                 status.equals("PLAYING", ignoreCase = true)) &&
+                (System.currentTimeMillis() - timestamp) < 12_000L
 }
 
 /**
@@ -61,6 +76,26 @@ object PresenceManager {
     private var presenceClient: MqttAsyncClient? = null
     private var heartbeatJob: Job? = null
     private var currentActiveUsername: String? = null
+
+    var currentActivityState: AppActivityState = AppActivityState.ONLINE
+        private set
+
+    /**
+     * Updates local activity state and immediately publishes it via MQTT and Cloud Key-Value store.
+     */
+    fun setActivityState(state: AppActivityState) {
+        if (currentActivityState == state) return
+        currentActivityState = state
+        val clean = currentActiveUsername ?: return
+        val now = System.currentTimeMillis()
+        presenceMap[clean] = PlayerPresence(clean, state.name, now)
+        _presenceFlow.value = HashMap(presenceMap)
+
+        scope.launch {
+            publishStatus(clean, state.name)
+            setCloudPresence(clean, state.name, now)
+        }
+    }
 
     private val presenceMap = ConcurrentHashMap<String, PlayerPresence>()
     private val _presenceFlow = MutableStateFlow<Map<String, PlayerPresence>>(emptyMap())
@@ -196,20 +231,22 @@ object PresenceManager {
         if (clean.isBlank()) return
         setCurrentUser(clean)
 
+        val currentStatus = currentActivityState.name
+
         if (presenceClient?.isConnected == true) {
-            publishOnline(clean)
+            publishStatus(clean, currentStatus)
             return
         }
 
         disconnectPresenceClient()
 
         val now = System.currentTimeMillis()
-        presenceMap[clean] = PlayerPresence(clean, "ONLINE", now)
+        presenceMap[clean] = PlayerPresence(clean, currentStatus, now)
         _presenceFlow.value = HashMap(presenceMap)
 
-        // Write initial ONLINE status to cloud immediately
+        // Write initial status to cloud immediately
         scope.launch {
-            setCloudPresence(clean, "ONLINE", now)
+            setCloudPresence(clean, currentStatus, now)
         }
 
         scope.launch {
@@ -243,8 +280,8 @@ object PresenceManager {
 
                 client.setCallback(object : MqttCallbackExtended {
                     override fun connectComplete(reconnect: Boolean, serverURI: String?) {
-                        Log.d(TAG, "Presence connected for @$clean (reconnect=$reconnect). Publishing ONLINE.")
-                        publishOnline(clean)
+                        Log.d(TAG, "Presence connected for @$clean (reconnect=$reconnect). Publishing ${currentActivityState.name}.")
+                        publishStatus(clean, currentActivityState.name)
                     }
 
                     override fun connectionLost(cause: Throwable?) {
@@ -260,7 +297,7 @@ object PresenceManager {
                 } catch (e: Exception) {
                     Log.w(TAG, "Presence connect initial: ${e.message}")
                 }
-                publishOnline(clean)
+                publishStatus(clean, currentActivityState.name)
 
                 // Start periodic heartbeat
                 startHeartbeat(clean)
@@ -278,14 +315,15 @@ object PresenceManager {
         heartbeatJob = scope.launch {
             while (isActive) {
                 delay(2500L)
-                publishOnline(cleanUsername)
+                val status = currentActivityState.name
+                publishStatus(cleanUsername, status)
                 val now = System.currentTimeMillis()
-                setCloudPresence(cleanUsername, "ONLINE", now)
+                setCloudPresence(cleanUsername, status, now)
             }
         }
     }
 
-    private fun publishOnline(cleanUsername: String) {
+    private fun publishStatus(cleanUsername: String, status: String) {
         val client = presenceClient ?: return
         if (!client.isConnected) return
         try {
@@ -294,7 +332,7 @@ object PresenceManager {
             val payload = json.encodeToString(
                 PlayerPresence(
                     username = cleanUsername,
-                    status = "ONLINE",
+                    status = status,
                     timestamp = now
                 )
             )
@@ -305,38 +343,19 @@ object PresenceManager {
             client.publish(topic, message)
 
             // Update local map as well
-            presenceMap[cleanUsername] = PlayerPresence(cleanUsername, "ONLINE", now)
+            presenceMap[cleanUsername] = PlayerPresence(cleanUsername, status, now)
             _presenceFlow.value = HashMap(presenceMap)
         } catch (e: Exception) {
-            Log.w(TAG, "Error publishing online presence: ${e.message}")
+            Log.w(TAG, "Error publishing status $status: ${e.message}")
         }
     }
 
-    private fun publishOffline(cleanUsername: String) {
-        val client = presenceClient ?: return
-        if (!client.isConnected) return
-        try {
-            val topic = "bingo/v3/presence/$cleanUsername"
-            val now = System.currentTimeMillis()
-            val payload = json.encodeToString(
-                PlayerPresence(
-                    username = cleanUsername,
-                    status = "OFFLINE",
-                    timestamp = now
-                )
-            )
-            val message = MqttMessage(payload.toByteArray(StandardCharsets.UTF_8)).apply {
-                qos = 1
-                isRetained = true
-            }
-            client.publish(topic, message)
+    private fun publishOnline(cleanUsername: String) {
+        publishStatus(cleanUsername, currentActivityState.name)
+    }
 
-            // Update local map
-            presenceMap[cleanUsername] = PlayerPresence(cleanUsername, "OFFLINE", now)
-            _presenceFlow.value = HashMap(presenceMap)
-        } catch (e: Exception) {
-            Log.w(TAG, "Error publishing offline presence: ${e.message}")
-        }
+    private fun publishOffline(cleanUsername: String) {
+        publishStatus(cleanUsername, "OFFLINE")
     }
 
     /**
@@ -360,14 +379,15 @@ object PresenceManager {
      */
     fun onAppForeground() {
         val clean = currentActiveUsername ?: return
-        Log.d(TAG, "App foregrounded — publishing ONLINE for @$clean")
+        val currentStatus = currentActivityState.name
+        Log.d(TAG, "App foregrounded — publishing $currentStatus for @$clean")
         val now = System.currentTimeMillis()
-        presenceMap[clean] = PlayerPresence(clean, "ONLINE", now)
+        presenceMap[clean] = PlayerPresence(clean, currentStatus, now)
         _presenceFlow.value = HashMap(presenceMap)
 
         scope.launch {
-            publishOnline(clean)
-            setCloudPresence(clean, "ONLINE", now)
+            publishStatus(clean, currentStatus)
+            setCloudPresence(clean, currentStatus, now)
         }
         startHeartbeat(clean)
         startPresenceWatcher(forceReconnect = true)
@@ -446,15 +466,7 @@ object PresenceManager {
                                     val cleanUser = presence.username.ifBlank {
                                         topic.substringAfterLast("/")
                                     }.lowercase()
-                                    if (cleanUser.isNotBlank()) {
-                                        val effectiveTimestamp = if (presence.status.equals("OFFLINE", ignoreCase = true) && presence.timestamp <= 0L) {
-                                            System.currentTimeMillis()
-                                        } else {
-                                            presence.timestamp
-                                        }
-                                        presenceMap[cleanUser] = presence.copy(username = cleanUser, timestamp = effectiveTimestamp)
-                                        _presenceFlow.value = HashMap(presenceMap)
-                                    }
+                                    onPresenceReceived(presence.copy(username = cleanUser))
                                 } catch (e: Exception) {
                                     Log.w(TAG, "Error parsing presence message: ${e.message}")
                                 }
@@ -476,6 +488,19 @@ object PresenceManager {
         }
     }
 
+    fun onPresenceReceived(presence: PlayerPresence) {
+        val cleanUser = presence.username.trim().lowercase().removePrefix("@")
+        if (cleanUser.isNotBlank()) {
+            val effectiveTimestamp = if (presence.status.equals("OFFLINE", ignoreCase = true) && presence.timestamp <= 0L) {
+                System.currentTimeMillis()
+            } else {
+                presence.timestamp
+            }
+            presenceMap[cleanUser] = presence.copy(username = cleanUser, timestamp = effectiveTimestamp)
+            _presenceFlow.value = HashMap(presenceMap)
+        }
+    }
+
     fun isUserOnline(username: String): Boolean {
         val clean = username.trim().lowercase().removePrefix("@")
         val p = presenceMap[clean] ?: return false
@@ -484,9 +509,12 @@ object PresenceManager {
 
     /**
      * Formats player status cleanly:
-     * - "online" — player is currently active in the app (within 15s)
+     * - "online" — player is currently active in the app (not in lobby, not in game)
+     * - "in-lobby" — player is in a waiting room / lobby
+     * - "playing" — player is actively playing a game match
      * - "last seen just now" — within 60 seconds of leaving
-     * - "last seen Xm ago" / "last seen Xh ago" / "last seen Xh Xm ago" — between 1 minute and 24 hours
+     * - "last seen Xm ago" — up to 1 hour (e.g. "last seen 48m ago")
+     * - "last seen 5:38pm" — exceeds 1 hour (up to 24 hours) formatted with 12-hour am/pm
      * - "offline" — inactive for > 24 hours or unknown
      */
     fun getDisplayStatus(username: String, fallbackLastSeen: Long? = null): String {
@@ -500,11 +528,17 @@ object PresenceManager {
             return formatLastSeen(ts, now)
         }
 
-        // 2. ONLINE status — check if within 10-second heartbeat window
-        if (p != null && p.status.equals("ONLINE", ignoreCase = true)) {
+        // 2. Active status: IN_LOBBY, PLAYING, or ONLINE
+        if (p != null && (p.status.equals("ONLINE", ignoreCase = true) ||
+                          p.status.equals("IN_LOBBY", ignoreCase = true) ||
+                          p.status.equals("PLAYING", ignoreCase = true))) {
             val diffSec = ((now - p.timestamp) / 1000).coerceAtLeast(0)
-            if (diffSec < 10) {
-                return "online"
+            if (diffSec < 12) {
+                return when {
+                    p.status.equals("IN_LOBBY", ignoreCase = true) -> "in-lobby"
+                    p.status.equals("PLAYING", ignoreCase = true) -> "playing"
+                    else -> "online"
+                }
             } else {
                 // Heartbeat stopped (app closed/swiped/killed) -> user departed at p.timestamp
                 return formatLastSeen(p.timestamp, now)
@@ -515,30 +549,48 @@ object PresenceManager {
         val fbTs = fallbackLastSeen ?: 0L
         if (fbTs <= 0L) return "offline"
         val diffSec = ((now - fbTs) / 1000).coerceAtLeast(0)
-        if (diffSec < 10) {
+        if (diffSec < 12) {
             return "online"
         }
         return formatLastSeen(fbTs, now)
     }
 
-    private fun formatLastSeen(timestamp: Long, now: Long): String {
+    fun formatLastSeen(timestamp: Long, now: Long = System.currentTimeMillis()): String {
         if (timestamp <= 0L) return "offline"
         val diffSec = ((now - timestamp) / 1000).coerceAtLeast(0)
 
-        // If very recent (< 60s), show "last seen just now"
+        // Under 60 seconds
         if (diffSec < 60) return "last seen just now"
 
-        // If last seen > 24 hours (86400s), show "offline"
-        if (diffSec >= 86400) return "offline"
+        // Up to 1 hour (60s to 3599s) -> "last seen 48m ago"
+        if (diffSec < 3600) {
+            val mins = (diffSec / 60).coerceAtLeast(1)
+            return "last seen ${mins}m ago"
+        }
 
-        val hours = diffSec / 3600
-        val minutes = (diffSec % 3600) / 60
+        // Exceeds 1 hour, up to 24 hours -> "last seen 5:38pm"
+        if (diffSec <= 86400) {
+            val timeFormat = SimpleDateFormat("h:mma", Locale.US)
+            val timeStr = timeFormat.format(Date(timestamp)).lowercase()
+            return "last seen $timeStr"
+        }
 
+        // Exceeds 24 hours
+        return "offline"
+    }
+
+    fun isStatusOnline(statusText: String): Boolean {
+        return statusText.equals("online", ignoreCase = true) ||
+               statusText.equals("in-lobby", ignoreCase = true) ||
+               statusText.equals("playing", ignoreCase = true)
+    }
+
+    fun getStatusColor(statusText: String): Color {
         return when {
-            hours > 0 && minutes > 0 -> "last seen ${hours}h ${minutes}m ago"
-            hours > 0 -> "last seen ${hours}h ago"
-            minutes > 0 -> "last seen ${minutes}m ago"
-            else -> "last seen just now"
+            statusText.equals("online", ignoreCase = true) -> Color(0xFF16A34A) // Vibrant Green
+            statusText.equals("in-lobby", ignoreCase = true) -> Color(0xFFEAB308) // Amber Gold
+            statusText.equals("playing", ignoreCase = true) -> Color(0xFF8B5CF6) // Royal Violet
+            else -> Color(0xFF94A3B8) // Slate Grey
         }
     }
 }

@@ -34,6 +34,7 @@ data class Player(
     val gamesPlayed: Int = 0,
     val gamesWon: Int = 0,
     val currentStreak: Int = 0,
+    val bestStreak: Int = 0,
     val level: Int = 1,
     val lastSeenTimestamp: Long = System.currentTimeMillis(),
     val lobbyReadyStatus: String = if (isHost) "READY" else "NOT_READY",

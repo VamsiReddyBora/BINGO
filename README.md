@@ -1,86 +1,57 @@
 # 🎱 BINGO — Real-Time Multiplayer
 
 [![Play Online](https://img.shields.io/badge/Play%20Online-Web%20App-blue?style=for-the-badge&logo=googlechrome)](https://vamsireddybora.github.io/BINGO/)
-[![Download APK](https://img.shields.io/badge/Download-Android%20APK-emerald?style=for-the-badge&logo=android)](https://github.com/VamsiReddyBora/BINGO/releases/tag/v1.0.1)
+[![Download APK](https://img.shields.io/badge/Download-Android%20APK-emerald?style=for-the-badge&logo=android)](https://github.com/VamsiReddyBora/BINGO/releases/tag/v1.0)
 
-A fast, modern cross-platform Bingo game. Play directly in your browser on PC/iPhone or download the Android APK. Full real-time cross-play via shared 6-digit room codes!
+A fast, aesthetic cross-platform real-time Bingo multiplayer game. Play directly in your web browser or download the native Android APK.
 
 👉 **Play Instantly in Browser:** **[https://vamsireddybora.github.io/BINGO/](https://vamsireddybora.github.io/BINGO/)**
 
 ---
 
-## 📥 Download
+## 📥 Download Android App
 
-Get the latest signed release APK directly from this repository:
+- **[Download Bingo.apk (Release v1.0)](./Bingo.apk)**
+- Or download from [**GitHub Releases v1.0**](https://github.com/VamsiReddyBora/BINGO/releases/tag/v1.0)
 
-- **[Download Bingo.apk (Latest v1.0.1)](./Bingo.apk)**
-- Or download from [**GitHub Releases**](https://github.com/VamsiReddyBora/BINGO/releases/tag/v1.0.1)
-
-> Requires Android 7.0 (API 24) or higher. Verified with Android Signature Schemes v2 & v3.
+> Compatible with Android 7.0 (API 24) and higher.
 
 ---
 
-## 🌐 Web Application (Cross-Platform Play)
+## ⚠️ Important Note: Nearby Network Gameplay
 
-Play directly in your browser on PC, Mac, Linux, or iPhone with **full real-time cross-play against Android app players**:
+> **Under Active Improvement:**
+> The **Nearby Network (LAN / Hotspot)** gameplay feature is currently under active development and refinement. You may encounter connectivity or stability issues during local hotspot sessions. We are actively working on improvements for upcoming updates.
+> 
+> For the best and most seamless experience, **Online Multiplayer** (via 6-digit room codes) and **Single Player (AI)** modes are fully stable and recommended!
+
+---
+
+## 🌟 Key Features
+
+- **🌐 Real-Time Online Multiplayer**: 6-character room codes, live turn timers, turn rotation, and rematch lobbies.
+- **🖤 True AMOLED Dark & Clean Light Themes**: 100% pitch-black OLED background with curated palettes and quick theme toggle on the home screen.
+- **🎨 Custom Board Cell Palettes**: Fully customize colors for My Pick, Opponent Pick, Recent Pick, and Line Completion with live previews and custom cell border styling.
+- **👥 Social Hub & Profile**: Global account system, friend list, live presence status (online, in-lobby, playing, last seen), friend invites with 15s cooldowns, and match stats (win streaks, strike rates).
+- **📡 Nearby Network (LAN / Hotspot)**: Local multiplayer without room codes *(under active improvement)*.
+- **💬 Interactive Chat & Reactions**: Multi-emoji hold-to-grow particle system, quick chat phrases, and in-game chat board.
+- **🤖 Smart AI Player**: Offline single-player mode with adaptive difficulties.
+- **🎆 Radial Starburst Celebrations**: Hardware-accelerated winning particle effects.
+
+---
+
+## 🏗️ Build from Source
 
 ```bash
-# Run web version locally
-cd web
-npm install
-npm run dev
-```
-
-- **Shared MQTT Broker**: Connects to the same EMQX edge broker via secure WebSockets (`wss://broker.emqx.io:8084/mqtt`).
-- **Identical Features**: 5x5 board, B-I-N-G-O letters banner, hold-to-grow big reaction emojis, quick-chat drawer, turn timers, and 360-degree radial starburst celebration!
-- **Zero Friction**: Friends can join a match on PC or mobile browser via 6-digit room code or direct link (`?room=123456`).
-
----
-
-## 🎮 Game Modes
-
-- **🌐 Online Multiplayer**: 6-character room codes, live turn timer, turn rotation, and synchronized rematch lobby.
-- **📡 Nearby Network (LAN / Hotspot)**: Zero-config local multiplayer over Wi-Fi or mobile hotspot (Android).
-- **🤖 Single Player**: Offline play against an adaptive AI.
-- **💬 In-Game Chat & Emotes**: Floating emojis, hold-to-grow big emojis, quick chat, and in-game message board.
-- **🏆 Custom Boards & Celebrations**: 360-degree radial starburst celebration on win.
-
----
-
-## 🛠️ Tech Stack
-
-- **Android Mobile App**:
-  - **UI**: Jetpack Compose & Material 3
-  - **Language**: Kotlin 1.9 & Coroutines / Flow
-  - **Networking**: Eclipse Paho MQTT (TCP port 1883) & OkHttp
-  - **Serialization**: Kotlinx Serialization Micro-Codec & JSON
-- **Web Application**:
-  - **UI**: React 19, TypeScript, Tailwind CSS v4 & Lucide Icons
-  - **Bundler**: Vite
-  - **Networking**: MQTT.js over Secure WebSockets (TLS port 8084)
-  - **Audio**: Procedural Web Audio API sound synthesizer
-  - **Celebration**: Canvas-accelerated 360-degree radial starburst & Confetti
-
----
-
-## 🏗️ Build
-
-### Android APK
-```bash
+# Build Android Release APK
 ./gradlew assembleRelease
-```
-The signed release APK will be generated at `app/build/outputs/apk/release/Bingo.apk`.
 
-### Web Application
-```bash
-cd web
-npm run build
+# Output location:
+# app/build/outputs/apk/release/Bingo.apk
 ```
-The production web assets will be generated in `web/dist/`.
 
 ---
 
 ## 📄 License
 
-Developed by Vamsi Reddy Bora.
-
+Developed by **Vamsi Reddy Bora**.

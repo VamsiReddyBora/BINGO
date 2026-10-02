@@ -12,14 +12,9 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.horizontalScroll
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -40,7 +35,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -56,17 +50,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bingo.multiplayer.core.designsystem.BingoTheme
+import com.bingo.multiplayer.domain.network.EmojiPreferences
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlin.math.PI
 import kotlin.math.sin
 
@@ -150,7 +148,7 @@ fun FloatingEmoteBar(
                                     },
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(text = emoji, fontSize = 20.sp)
+                                AnimatedEmoji(emoji = emoji, fontSize = 20.sp)
                             }
                         }
 
@@ -159,51 +157,47 @@ fun FloatingEmoteBar(
                             modifier = Modifier
                                 .size(32.dp)
                                 .clip(CircleShape)
+                                .background(tokens.backgroundSecondary)
                                 .clickable { isExpanded = false },
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Close,
-                                contentDescription = "Close Emotes",
-                                tint = tokens.cellNeutralText.copy(alpha = 0.5f),
+                                contentDescription = "Close",
+                                tint = tokens.cellNeutralText,
                                 modifier = Modifier.size(16.dp)
                             )
                         }
                     }
 
-                    // Quick Chat Phrases (Option E)
+                    // Optional Quick-Chat Messages inside Floating Emote Bar
                     if (customPhrases.isNotEmpty()) {
                         Spacer(modifier = Modifier.height(8.dp))
                         Column(
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.padding(horizontal = 2.dp)
                         ) {
-                            customPhrases.take(4).chunked(2).forEach { rowPhrases ->
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    rowPhrases.forEach { phrase ->
-                                        Surface(
-                                            onClick = {
-                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                onPhraseSelected(phrase)
-                                                isExpanded = false
-                                            },
-                                            shape = RoundedCornerShape(12.dp),
-                                            color = tokens.backgroundSecondary,
-                                            border = BorderStroke(0.5.dp, tokens.surfaceBorder)
-                                        ) {
-                                            Text(
-                                                text = phrase,
-                                                fontSize = 11.5.sp,
-                                                fontWeight = FontWeight.SemiBold,
-                                                color = tokens.cellNeutralText,
-                                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
+                            customPhrases.take(4).forEach { phrase ->
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = tokens.backgroundSecondary,
+                                    border = BorderStroke(0.5.dp, tokens.surfaceBorder),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            onPhraseSelected(phrase)
+                                            isExpanded = false
                                         }
-                                    }
+                                ) {
+                                    Text(
+                                        text = phrase,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = tokens.cellNeutralText,
+                                        maxLines = 1,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    )
                                 }
                             }
                         }
@@ -211,26 +205,24 @@ fun FloatingEmoteBar(
                 }
             }
         } else {
-            // Collapsed Floating Button
+            // Collapsed Floating Button (Shows a reaction emoji)
             Surface(
-                onClick = {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    isExpanded = true
-                },
                 shape = CircleShape,
                 color = tokens.surface,
-                border = BorderStroke(1.dp, tokens.surfaceBorder),
-                shadowElevation = 4.dp,
-                modifier = Modifier.size(42.dp)
+                border = BorderStroke(1.5.dp, tokens.accentBrand),
+                shadowElevation = 6.dp,
+                modifier = Modifier
+                    .size(44.dp)
+                    .clickable {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        isExpanded = true
+                    }
             ) {
                 Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.fillMaxSize()
                 ) {
-                    Text(
-                        text = "💬",
-                        fontSize = 19.sp
-                    )
+                    AnimatedEmoji(emoji = "🔥", fontSize = 22.sp)
                 }
             }
         }
@@ -287,8 +279,10 @@ val ALL_REACTION_EMOJIS = listOf(
 
 /**
  * Pill-shaped swipeable emoji reactions strip with quick chat trigger.
- * Horizontally scrollable library of emojis, recent items move to front,
- * borderless emoji buttons.
+ * - FAVORITES ALWAYS SHOW FIRST: configured in Settings, pinned at the very start of the strip.
+ * - RECENTLY PICKED EMOJIS follow immediately after favorites.
+ * - ANIMATED EMOJIS EVERYWHERE: WhatsApp / Telegram dynamic animated emoji stickers.
+ * - Interactive long-press scaling from 1.0x to 2.85x with haptic milestone notches.
  */
 @Composable
 fun EmojiReactionStripWithChat(
@@ -296,11 +290,13 @@ fun EmojiReactionStripWithChat(
     onToggleQuickChat: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val tokens = BingoTheme.colors
     val haptic = LocalHapticFeedback.current
     val coroutineScope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
-    var emojiList by remember { mutableStateOf(ALL_REACTION_EMOJIS) }
+
+    var emojiList by remember { mutableStateOf(EmojiPreferences.getComposedReactionStrip(context)) }
 
     var pressingEmoji by remember { mutableStateOf<String?>(null) }
     var pressingScale by remember { mutableFloatStateOf(1.0f) }
@@ -322,7 +318,7 @@ fun EmojiReactionStripWithChat(
                     .padding(horizontal = 6.dp, vertical = 3.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Horizontal scrolling emoji strip (swipes to left, recents move to front)
+                // Horizontal scrolling emoji strip
                 Row(
                     modifier = Modifier
                         .weight(1f)
@@ -345,19 +341,17 @@ fun EmojiReactionStripWithChat(
                                             var lastHapticTier = 0
 
                                             val growJob = coroutineScope.launch {
-                                                delay(160) // Tap grace period: taps shorter than this are immediate standard taps
+                                                delay(160)
                                                 isLongPress = true
                                                 val holdStart = System.currentTimeMillis()
                                                 while (isActive) {
                                                     val elapsed = System.currentTimeMillis() - holdStart
-                                                    // Smooth growth from 1.0f to 2.85f over 1400ms
                                                     val progress = (elapsed / 1400f).coerceIn(0f, 1f)
                                                     currentScale = 1.0f + 1.85f * progress
 
                                                     pressingEmoji = emoji
                                                     pressingScale = currentScale
 
-                                                    // Haptic pulses as the emoji scales through milestone tiers
                                                     val tier = when {
                                                         currentScale >= 2.8f -> 3
                                                         currentScale >= 2.0f -> 2
@@ -370,11 +364,10 @@ fun EmojiReactionStripWithChat(
                                                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                                         } catch (_: Exception) {}
                                                     }
-                                                    delay(16) // ~60fps
+                                                    delay(16)
                                                 }
                                             }
 
-                                            // Wait for pointer release or cancellation (e.g. scroll drag)
                                             val released = tryAwaitRelease()
                                             growJob.cancel()
                                             pressingEmoji = null
@@ -385,19 +378,20 @@ fun EmojiReactionStripWithChat(
                                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                                 } catch (_: Exception) {}
 
-                                                // Move tapped/held emoji to front of the list
-                                                emojiList = listOf(emoji) + (emojiList.filter { it != emoji })
-
                                                 val finalScale = if (isLongPress) currentScale else 1.0f
                                                 onSendEmote(emoji, finalScale)
+
+                                                // Record used emoji: favorites stay pinned at front, recents update right behind favorites
+                                                EmojiPreferences.recordUsedEmoji(context, emoji)
+                                                emojiList = EmojiPreferences.getComposedReactionStrip(context)
                                             }
                                         }
                                     )
                                 },
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                text = emoji,
+                            AnimatedEmoji(
+                                emoji = emoji,
                                 fontSize = 21.sp,
                                 modifier = Modifier.graphicsLayer {
                                     scaleX = localScale
@@ -418,8 +412,7 @@ fun EmojiReactionStripWithChat(
 
                 Spacer(modifier = Modifier.width(2.dp))
 
-                // Quick chat trigger button (no border)
-                // Tap: toggle quick chat; Long press: smoothly scroll emoji strip back to start!
+                // Quick chat trigger button
                 Box(
                     modifier = Modifier
                         .size(36.dp)
@@ -447,7 +440,7 @@ fun EmojiReactionStripWithChat(
             }
         }
 
-        // Live Magnification Preview Bubble showing the growing emoji in real-time
+        // Live Magnification Preview Bubble showing the growing animated emoji in real-time
         AnimatedVisibility(
             visible = pressingEmoji != null && pressingScale > 1.08f,
             enter = fadeIn(tween(90)) + scaleIn(tween(110)),
@@ -458,11 +451,8 @@ fun EmojiReactionStripWithChat(
         ) {
             if (pressingEmoji != null) {
                 val previewScale = (pressingScale * 0.72f).coerceIn(1.0f, 2.1f)
-                Surface(
-                    shape = CircleShape,
-                    color = tokens.surface.copy(alpha = 0.98f),
-                    border = BorderStroke(1.5.dp, Color(0xFF3B82F6).copy(alpha = 0.85f)),
-                    shadowElevation = 10.dp,
+                Box(
+                    contentAlignment = Alignment.Center,
                     modifier = Modifier
                         .size(68.dp)
                         .graphicsLayer {
@@ -470,12 +460,10 @@ fun EmojiReactionStripWithChat(
                             scaleY = previewScale
                         }
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(
-                            text = pressingEmoji!!,
-                            fontSize = (26 * previewScale).sp
-                        )
-                    }
+                    AnimatedEmoji(
+                        emoji = pressingEmoji!!,
+                        fontSize = (32 * previewScale).sp
+                    )
                 }
             }
         }
@@ -483,8 +471,7 @@ fun EmojiReactionStripWithChat(
 }
 
 /**
- * Animated Floating Emotes Overlay.
- * Renders floating reaction emojis rising from bottom to top with harmonic sway and fade-out.
+ * Fullscreen overlay that renders all currently floating reaction emotes.
  */
 @Composable
 fun FloatingEmotesOverlay(
@@ -494,18 +481,16 @@ fun FloatingEmotesOverlay(
 ) {
     if (activeEmotes.isEmpty()) return
 
-    BoxWithConstraints(
-        modifier = modifier.fillMaxSize()
-    ) {
-        val screenW = maxWidth
-        val screenH = maxHeight
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val screenW = maxWidth.value
+        val screenH = maxHeight.value
 
         activeEmotes.forEach { emoteItem ->
             key(emoteItem.id) {
                 SingleFloatingEmoteBubble(
                     item = emoteItem,
-                    screenW = screenW.value,
-                    screenH = screenH.value,
+                    screenW = screenW,
+                    screenH = screenH,
                     onFinished = { onEmoteFinished(emoteItem.id) }
                 )
             }
@@ -526,25 +511,22 @@ private fun SingleFloatingEmoteBubble(
     LaunchedEffect(item.id) {
         progress.animateTo(
             targetValue = 1f,
-            animationSpec = tween(durationMillis = 1800, easing = LinearEasing)
+            animationSpec = tween(durationMillis = 2000, easing = LinearEasing)
         )
         onFinished()
     }
 
     val p = progress.value
 
-    // Physics calculations
-    val startY = screenH * 0.78f
+    val startY = screenH * 0.82f
     val endY = screenH * 0.18f
     val currentY = startY + (endY - startY) * p
 
     val baseStartX = (screenW * item.startXRatio).coerceIn(30f, (screenW - 54f).coerceAtLeast(30f))
-    // Highly randomized organic trajectory: every emote follows a unique path
     val swayX = sin((p * item.swayFrequency * PI) + item.swayPhase).toFloat() * item.swayAmplitude
     val boundPad = (18f * item.scaleMultiplier).coerceIn(16f, 48f)
     val currentX = (baseStartX + (item.driftX * p) + swayX).coerceIn(boundPad, (screenW - boundPad).coerceAtLeast(boundPad))
 
-    // Scale spring curve: pops to 1.35f, then settles at 1.05f * scaleMultiplier
     val baseScale = when {
         p < 0.18f -> (p / 0.18f) * 1.35f
         p < 0.32f -> 1.35f - ((p - 0.18f) / 0.14f) * 0.30f
@@ -552,7 +534,6 @@ private fun SingleFloatingEmoteBubble(
     }
     val scale = baseScale * item.scaleMultiplier
 
-    // Alpha: Solid up to 70%, then fades out
     val alpha = when {
         p < 0.08f -> p / 0.08f
         p > 0.70f -> (1f - (p - 0.70f) / 0.30f).coerceIn(0f, 1f)
@@ -571,20 +552,18 @@ private fun SingleFloatingEmoteBubble(
     ) {
         val isPhrase = item.emoji.length > 3
         if (!isPhrase) {
-            // Plain emoji with NO border!
             Text(
                 text = item.emoji,
                 fontSize = 32.sp
             )
         } else {
-            // For text use a thin black border (no purple outline!)
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Surface(
                     shape = RoundedCornerShape(14.dp),
                     color = tokens.surface.copy(alpha = 0.96f),
-                    border = BorderStroke(0.6.dp, Color.Black.copy(alpha = 0.85f)),
+                    border = BorderStroke(0.6.dp, tokens.surfaceBorder),
                     shadowElevation = 3.dp,
                     modifier = Modifier.wrapContentSize()
                 ) {
@@ -592,7 +571,7 @@ private fun SingleFloatingEmoteBubble(
                         text = "💬 ${item.emoji}",
                         fontSize = 12.5.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = Color.Black,
+                        color = tokens.cellNeutralText,
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                     )
                 }
@@ -601,14 +580,14 @@ private fun SingleFloatingEmoteBubble(
                     Surface(
                         shape = RoundedCornerShape(6.dp),
                         color = tokens.surface.copy(alpha = 0.85f),
-                        border = BorderStroke(0.5.dp, Color.Black.copy(alpha = 0.4f)),
+                        border = BorderStroke(0.5.dp, tokens.surfaceBorder),
                         modifier = Modifier.padding(top = 2.dp)
                     ) {
                         Text(
                             text = item.senderName,
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color.Black,
+                            color = tokens.cellNeutralText,
                             modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                         )
                     }

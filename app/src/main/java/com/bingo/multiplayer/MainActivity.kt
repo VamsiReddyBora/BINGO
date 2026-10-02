@@ -1,13 +1,13 @@
 package com.bingo.multiplayer
 
 import android.os.Bundle
-import androidx.core.view.WindowCompat
-import androidx.compose.ui.graphics.Color
-import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.runtime.SideEffect
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.remember
+import androidx.core.view.WindowCompat
 import com.bingo.multiplayer.core.designsystem.BingoAppTheme
+import com.bingo.multiplayer.core.designsystem.ThemePreferences
 import com.bingo.multiplayer.domain.network.AppLifecycleObserver
 import com.bingo.multiplayer.domain.network.PresenceManager
 import com.bingo.multiplayer.domain.repository.AuthRepository
@@ -22,8 +22,14 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, true)
-        WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars = true
-        window.statusBarColor = android.graphics.Color.WHITE
+
+        // Initialize ThemePreferences with saved theme and accent
+        ThemePreferences.init(applicationContext)
+
+        val initialIsDark = ThemePreferences.isDarkTheme.value
+        val initialBg = if (initialIsDark) android.graphics.Color.BLACK else android.graphics.Color.parseColor("#FAFAFC")
+        window.decorView.setBackgroundColor(initialBg)
+        window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(initialBg))
 
         // Initialize presence manager with application context for persistent active user tracking
         PresenceManager.init(applicationContext)
@@ -34,8 +40,41 @@ class MainActivity : ComponentActivity() {
         friendsRepository = FriendsRepository(applicationContext)
 
         setContent {
-            // Default colour mode is Light only as instructed
-            BingoAppTheme(darkTheme = false) {
+            val isDark = ThemePreferences.isDarkTheme.value
+            val accentId = ThemePreferences.accentColorId.value
+
+            val insetsController = remember(isDark) {
+                WindowCompat.getInsetsController(window, window.decorView)
+            }
+
+            SideEffect {
+                // Status and navigation bar icons compatible with active theme (Light vs Pure Black)
+                insetsController.isAppearanceLightStatusBars = !isDark
+                insetsController.isAppearanceLightNavigationBars = !isDark
+                val effectiveBg = if (isDark) android.graphics.Color.BLACK else android.graphics.Color.parseColor("#FAFAFC")
+                window.statusBarColor = effectiveBg
+                window.navigationBarColor = effectiveBg
+                window.decorView.setBackgroundColor(effectiveBg)
+                window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(effectiveBg))
+            }
+
+            val customMyPick = ThemePreferences.customMyPickHex.value
+            val customOpponentPick = ThemePreferences.customOpponentPickHex.value
+            val customRecentPick = ThemePreferences.customRecentPickHex.value
+            val customCompletedLine = ThemePreferences.customCompletedLineHex.value
+            val cellBorderEnabled = ThemePreferences.cellBorderEnabled.value
+            val cellBorderColorHex = ThemePreferences.cellBorderColorHex.value
+
+            BingoAppTheme(
+                darkTheme = isDark,
+                accentColorId = accentId,
+                customMyPickHex = customMyPick,
+                customOpponentPickHex = customOpponentPick,
+                customRecentPickHex = customRecentPick,
+                customCompletedLineHex = customCompletedLine,
+                cellBorderEnabled = cellBorderEnabled,
+                cellBorderColorHex = cellBorderColorHex
+            ) {
                 RootNavGraph(
                     authRepository = authRepository,
                     friendsRepository = friendsRepository

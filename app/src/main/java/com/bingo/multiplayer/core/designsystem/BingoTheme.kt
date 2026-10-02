@@ -19,7 +19,8 @@ import androidx.compose.ui.unit.sp
 
 /**
  * Minimal, clean design tokens for Bingo.
- * Defaults strictly to clean Light mode with limited curated colors.
+ * Supports both Clean Light mode and AMOLED Pure Black mode with curated or custom palettes.
+ * Board colors are strictly decoupled from the app theme accent.
  */
 data class BingoColors(
     val isDark: Boolean,
@@ -38,13 +39,13 @@ data class BingoColors(
     val cellNeutralBevel: Color,
     val cellNeutralHighlight: Color,
 
-    // Cells - Player Choice (Soft Lavender)
+    // Cells - Player Choice
     val cellPlayerPickBg: Color,
     val cellPlayerPickText: Color,
     val cellPlayerPickBorder: Color,
     val cellPlayerPickBevel: Color,
 
-    // Cells - Opponent Choice (Soft Amber)
+    // Cells - Opponent Choice
     val cellOpponentPickBg: Color,
     val cellOpponentPickText: Color,
     val cellOpponentPickBorder: Color,
@@ -55,6 +56,10 @@ data class BingoColors(
     val recentPickBorder: Color,
     val recentPickText: Color,
     val recentPickGlow: Color,
+
+    // Cells - Completed Winning Line
+    val completedLineBg: Color,
+    val completedLineText: Color,
 
     // Completed B-I-N-G-O letters
     val completedLetterGradientStart: Color,
@@ -80,6 +85,18 @@ data class BingoColors(
     val winningCellBorder: Color get() = completedLetterBorder
     val bingoGold: Color get() = completedLetterGradientEnd
 
+    // High-visibility monochrome text hierarchy (never dull or hidden)
+    val textPrimary: Color get() = if (isDark) Color(0xFFFFFFFF) else Color(0xFF1E293B)
+    val textSecondary: Color get() = if (isDark) Color(0xFFD4D4D8) else Color(0xFF475569)
+    val textMuted: Color get() = if (isDark) Color(0xFFA1A1AA) else Color(0xFF64748B)
+
+    // Monochrome Card, Badge & Button helpers
+    val badgeSurface: Color get() = if (isDark) Color(0xFF1C1C1E) else Color(0xFFF1F5F9)
+    val badgeOutline: Color get() = if (isDark) Color(0xFF2E2E32) else Color(0xFFE2E8F0)
+    val badgeContent: Color get() = if (isDark) Color(0xFFFFFFFF) else Color(0xFF0F172A)
+    val primaryButtonBg: Color get() = if (isDark) Color(0xFFFFFFFF) else accentBrand
+    val primaryButtonText: Color get() = if (isDark) Color(0xFF000000) else Color(0xFFFFFFFF)
+
     val completedLetterBrush: Brush
         get() = Brush.verticalGradient(
             listOf(completedLetterGradientStart, completedLetterGradientEnd)
@@ -96,8 +113,12 @@ data class BingoColors(
         )
 }
 
-// Minimal Clean Light Theme (DEFAULT)
-val CleanLightColors = BingoColors(
+/**
+ * Builds the Clean Light theme.
+ * Board colors remain the classic clean light mode palette (Lavender for player, Sky for opponent, Orange for recent).
+ * App accent brand is determined by the selected app theme palette.
+ */
+fun buildCleanLightColors(palette: AppAccentPalette): BingoColors = BingoColors(
     isDark = false,
     background = Color(0xFFFAFAFC),
     backgroundSecondary = Color(0xFFF4F4F6),
@@ -112,23 +133,27 @@ val CleanLightColors = BingoColors(
     cellNeutralBevel = Color(0xFFFFFFFF),
     cellNeutralHighlight = Color(0xFFFFFFFF),
 
-    // Player Choice: Soft lavender with clear presence, NO BORDER
-    cellPlayerPickBg = Color(0xFFEADBFF),
-    cellPlayerPickText = Color(0xFF6B21A8),
-    cellPlayerPickBorder = Color(0xFF7C3AED), // Non-transparent accent fallback for buttons/badges
-    cellPlayerPickBevel = Color(0xFFEADBFF),
+    // Player Choice: #7E22CE with pure white text
+    cellPlayerPickBg = Color(0xFF7E22CE),
+    cellPlayerPickText = Color(0xFFFFFFFF),
+    cellPlayerPickBorder = Color(0xFF9333EA),
+    cellPlayerPickBevel = Color(0xFF6B21A8),
 
-    // Opponent Choice: Soft sky blue with clear presence, NO BORDER
-    cellOpponentPickBg = Color(0xFFD3EEFF),
-    cellOpponentPickText = Color(0xFF0369A1),
-    cellOpponentPickBorder = Color(0xFF0284C7), // Non-transparent accent fallback
-    cellOpponentPickBevel = Color(0xFFD3EEFF),
+    // Opponent Choice: #C2410C with pure white text
+    cellOpponentPickBg = Color(0xFFC2410C),
+    cellOpponentPickText = Color(0xFFFFFFFF),
+    cellOpponentPickBorder = Color(0xFFEA580C),
+    cellOpponentPickBevel = Color(0xFF9A3412),
 
-    // Recent Picked: Soft warm orange 🧡 with clear presence, NO BORDER
-    recentPickBg = Color(0xFFFFE0B8),
-    recentPickBorder = Color(0xFFEA580C), // Non-transparent accent fallback
-    recentPickText = Color(0xFFC2410C),
-    recentPickGlow = Color(0xFFFED7AA),
+    // Recent Picked: #D9B43D with dark slate text
+    recentPickBg = Color(0xFFD9B43D),
+    recentPickBorder = Color(0xFFB45309),
+    recentPickText = Color(0xFF0F172A),
+    recentPickGlow = Color(0x30D9B43D),
+
+    // Cells - Completed Winning Line: #64748B with pure white text
+    completedLineBg = Color(0xFF64748B),
+    completedLineText = Color(0xFFFFFFFF),
 
     // Completed B-I-N-G-O Letters: Clean amber gold
     completedLetterGradientStart = Color(0xFFFBBF24),
@@ -137,10 +162,10 @@ val CleanLightColors = BingoColors(
     completedLetterText = Color(0xFFFFFFFF),
     completedLetterGlow = Color(0x26F59E0B),
 
-    // Accents
-    turnBannerPlayer = Color(0xFF7C3AED),
-    turnBannerOpponent = Color(0xFF0284C7),
-    accentBrand = Color(0xFF7C3AED),
+    // App Accents
+    turnBannerPlayer = palette.primaryLight,
+    turnBannerOpponent = Color(0xFFC2410C),
+    accentBrand = palette.primaryLight,
     accentPlayGames = Color(0xFF16A34A),
     accentGoogle = Color(0xFF2563EB),
 
@@ -149,51 +174,74 @@ val CleanLightColors = BingoColors(
     faux3dInnerHighlight = Color(0xFFFFFFFF)
 )
 
-// Minimal Dark Scheme (Fallback if explicitly enabled)
-val MinimalDarkColors = BingoColors(
+/**
+ * Builds the AMOLED Pure Black theme (#000000).
+ * Default Board cells: #7E22CE for player pick, #C2410C for opponent pick, #FFFFFF for recent pick, #64748B for completed line.
+ */
+fun buildAmoledDarkColors(palette: AppAccentPalette): BingoColors = BingoColors(
     isDark = true,
-    background = Color(0xFF121216),
-    backgroundSecondary = Color(0xFF181820),
-    surface = Color(0xFF1E1E26),
-    surfaceBorder = Color(0xFF2D2D3A),
-    surfaceCardShadow = Color(0x40000000),
+    // 100% OLED Pure Black canvas
+    background = Color(0xFF000000),
+    backgroundSecondary = Color(0xFF0A0A0A),
+    surface = Color(0xFF141414),
+    surfaceBorder = Color(0xFF262626),
+    surfaceCardShadow = Color(0x00000000),
 
-    cellNeutralBg = Color(0xFF1E1E26),
-    cellNeutralText = Color(0xFFE2E8F0),
-    cellNeutralBorder = Color(0xFF2D2D3A),
-    cellNeutralBevel = Color(0xFF181820),
-    cellNeutralHighlight = Color(0x1AFFFFFF),
+    // Unpicked Cell: Matte carbon card with crisp pure white number
+    cellNeutralBg = Color(0xFF141414),
+    cellNeutralText = Color(0xFFFFFFFF),
+    cellNeutralBorder = Color(0xFF282828),
+    cellNeutralBevel = Color(0xFF0A0A0A),
+    cellNeutralHighlight = Color(0x14FFFFFF),
 
-    cellPlayerPickBg = Color(0x33A855F7),
-    cellPlayerPickText = Color(0xFFE9D5FF),
-    cellPlayerPickBorder = Color(0xFFA855F7),
+    // Player Choice: #7E22CE with pure white text
+    cellPlayerPickBg = Color(0xFF7E22CE),
+    cellPlayerPickText = Color(0xFFFFFFFF),
+    cellPlayerPickBorder = Color(0xFF9333EA),
     cellPlayerPickBevel = Color(0xFF6B21A8),
 
-    cellOpponentPickBg = Color(0x330284C7),
-    cellOpponentPickText = Color(0xFFBAE6FD),
-    cellOpponentPickBorder = Color(0xFF0284C7),
-    cellOpponentPickBevel = Color(0xFF0369A1),
+    // Opponent Choice: #C2410C with pure white text
+    cellOpponentPickBg = Color(0xFFC2410C),
+    cellOpponentPickText = Color(0xFFFFFFFF),
+    cellOpponentPickBorder = Color(0xFFEA580C),
+    cellOpponentPickBevel = Color(0xFF9A3412),
 
-    recentPickBg = Color(0x33EA580C),
-    recentPickBorder = Color(0xFFEA580C),
-    recentPickText = Color(0xFFFFEDD5),
-    recentPickGlow = Color(0x33EA580C),
+    // Recent Picked: Pure White #FFFFFF with black text
+    recentPickBg = Color(0xFFFFFFFF),
+    recentPickBorder = Color(0xFFFFFFFF),
+    recentPickText = Color(0xFF000000),
+    recentPickGlow = Color(0x30FFFFFF),
 
-    completedLetterGradientStart = Color(0xFFFBBF24),
-    completedLetterGradientEnd = Color(0xFFF59E0B),
-    completedLetterBorder = Color(0xFFFBBF24),
-    completedLetterText = Color(0xFF181820),
-    completedLetterGlow = Color(0x40F59E0B),
+    // Cells - Completed Winning Line: #64748B with pure white text
+    completedLineBg = Color(0xFF64748B),
+    completedLineText = Color(0xFFFFFFFF),
 
-    turnBannerPlayer = Color(0xFF8B5CF6),
-    turnBannerOpponent = Color(0xFF0284C7),
-    accentBrand = Color(0xFF8B5CF6),
-    accentPlayGames = Color(0xFF22C55E),
-    accentGoogle = Color(0xFF3B82F6),
+    // Completed B-I-N-G-O Letters: Clean gold
+    completedLetterGradientStart = Color(0xFFF59E0B),
+    completedLetterGradientEnd = Color(0xFFD97706),
+    completedLetterBorder = Color(0xFFB45309),
+    completedLetterText = Color(0xFFFFFFFF),
+    completedLetterGlow = Color(0x30F59E0B),
 
-    faux3dBevelBottom = Color(0xFF14141A),
-    faux3dInnerHighlight = Color(0x1AFFFFFF)
+    // App Accents: In AMOLED Dark, all cards, badges, and elements are pure white-to-black monochrome
+    turnBannerPlayer = Color(0xFFFFFFFF),
+    turnBannerOpponent = Color(0xFFF97316),
+    accentBrand = Color(0xFFFFFFFF),
+    accentPlayGames = Color(0xFFFFFFFF),
+    accentGoogle = Color(0xFFFFFFFF),
+
+    // Subtle tactile depth
+    faux3dBevelBottom = Color(0xFF080808),
+    faux3dInnerHighlight = Color(0x10FFFFFF)
 )
+
+val CleanLightColors: BingoColors by lazy {
+    buildCleanLightColors(ThemePreferences.getPalette("royal_violet"))
+}
+
+val AmoledDarkColors: BingoColors by lazy {
+    buildAmoledDarkColors(ThemePreferences.getPalette("royal_violet"))
+}
 
 data class BingoTypography(
     val logoTitle: TextStyle = TextStyle(
@@ -246,7 +294,6 @@ data class BingoElevations(
     val bottomBevelHeight: Dp = 1.5.dp
 )
 
-// Default is CleanLightColors
 val LocalBingoColors = staticCompositionLocalOf { CleanLightColors }
 val LocalBingoTypography = staticCompositionLocalOf { BingoTypography() }
 val LocalBingoShapes = staticCompositionLocalOf { BingoShapes() }
@@ -276,48 +323,106 @@ object BingoDesignSystem {
 
 typealias BingoTheme = BingoDesignSystem
 
-private val MaterialLightScheme = lightColorScheme(
-    primary = Color(0xFF7C3AED),
-    onPrimary = Color(0xFFFFFFFF),
-    primaryContainer = Color(0xFFF3E8FF),
-    onPrimaryContainer = Color(0xFF6B21A8),
-    secondary = Color(0xFF0284C7),
-    onSecondary = Color(0xFFFFFFFF),
-    background = Color(0xFFF8F9FA),
-    onBackground = Color(0xFF1E293B),
-    surface = Color(0xFFFFFFFF),
-    onSurface = Color(0xFF1E293B),
-    surfaceVariant = Color(0xFFF1F3F5),
-    onSurfaceVariant = Color(0xFF64748B),
-    outline = Color(0xFFE2E8F0)
-)
-
-private val MaterialDarkScheme = darkColorScheme(
-    primary = Color(0xFFA855F7),
-    onPrimary = Color(0xFF181820),
-    primaryContainer = Color(0xFF2D2D3A),
-    onPrimaryContainer = Color(0xFFE9D5FF),
-    secondary = Color(0xFF38BDF8),
-    onSecondary = Color(0xFF181820),
-    background = Color(0xFF121216),
-    onBackground = Color(0xFFE2E8F0),
-    surface = Color(0xFF1E1E26),
-    onSurface = Color(0xFFE2E8F0),
-    surfaceVariant = Color(0xFF2D2D3A),
-    onSurfaceVariant = Color(0xFF94A3B8),
-    outline = Color(0xFF2D2D3A)
-)
+fun computeContrastText(color: Color): Color {
+    val luminance = 0.299f * color.red + 0.587f * color.green + 0.114f * color.blue
+    return if (luminance > 0.55f) Color(0xFF0F172A) else Color(0xFFFFFFFF)
+}
 
 /**
- * Main app theme wrapper. Defaults strictly to clean Light mode.
+ * Main app theme wrapper.
+ * Dynamically switches between Clean Light mode and AMOLED Pure Black mode,
+ * styled with the user's selected accent tone and customized board cell colors.
  */
 @Composable
 fun BingoAppTheme(
-    darkTheme: Boolean = false, // Default is Light mode only as instructed
+    darkTheme: Boolean = ThemePreferences.isDarkTheme.value,
+    accentColorId: String = ThemePreferences.accentColorId.value,
+    customMyPickHex: String? = ThemePreferences.customMyPickHex.value,
+    customOpponentPickHex: String? = ThemePreferences.customOpponentPickHex.value,
+    customRecentPickHex: String? = ThemePreferences.customRecentPickHex.value,
+    customCompletedLineHex: String? = ThemePreferences.customCompletedLineHex.value,
+    cellBorderEnabled: Boolean = ThemePreferences.cellBorderEnabled.value,
+    cellBorderColorHex: String = ThemePreferences.cellBorderColorHex.value,
     content: @Composable () -> Unit
 ) {
-    val bingoColors = if (darkTheme) MinimalDarkColors else CleanLightColors
-    val materialColorScheme = if (darkTheme) MaterialDarkScheme else MaterialLightScheme
+    val palette = ThemePreferences.getPalette(accentColorId)
+    val baseColors = if (darkTheme) {
+        buildAmoledDarkColors(palette)
+    } else {
+        buildCleanLightColors(palette)
+    }
+
+    val customBorderColor = try {
+        Color(android.graphics.Color.parseColor(cellBorderColorHex))
+    } catch (_: Exception) {
+        if (darkTheme) Color.White else Color(0xFF64748B)
+    }
+
+    val customPlayerPickBg = customMyPickHex?.let {
+        try { Color(android.graphics.Color.parseColor(it)) } catch (_: Exception) { null }
+    }
+    val customOpponentPickBg = customOpponentPickHex?.let {
+        try { Color(android.graphics.Color.parseColor(it)) } catch (_: Exception) { null }
+    }
+    val customRecentPickBg = customRecentPickHex?.let {
+        try { Color(android.graphics.Color.parseColor(it)) } catch (_: Exception) { null }
+    }
+    val customCompletedLineBg = customCompletedLineHex?.let {
+        try { Color(android.graphics.Color.parseColor(it)) } catch (_: Exception) { null }
+    }
+
+    val bingoColors = baseColors.copy(
+        cellPlayerPickBg = customPlayerPickBg ?: baseColors.cellPlayerPickBg,
+        cellPlayerPickText = customPlayerPickBg?.let { computeContrastText(it) } ?: baseColors.cellPlayerPickText,
+        cellPlayerPickBorder = if (cellBorderEnabled) customBorderColor else (customPlayerPickBg ?: baseColors.cellPlayerPickBorder),
+
+        cellOpponentPickBg = customOpponentPickBg ?: baseColors.cellOpponentPickBg,
+        cellOpponentPickText = customOpponentPickBg?.let { computeContrastText(it) } ?: baseColors.cellOpponentPickText,
+        cellOpponentPickBorder = if (cellBorderEnabled) customBorderColor else (customOpponentPickBg ?: baseColors.cellOpponentPickBorder),
+
+        recentPickBg = customRecentPickBg ?: baseColors.recentPickBg,
+        recentPickText = customRecentPickBg?.let { computeContrastText(it) } ?: baseColors.recentPickText,
+        recentPickBorder = if (cellBorderEnabled) customBorderColor else (customRecentPickBg ?: baseColors.recentPickBorder),
+
+        completedLineBg = customCompletedLineBg ?: baseColors.completedLineBg,
+        completedLineText = customCompletedLineBg?.let { computeContrastText(it) } ?: baseColors.completedLineText,
+
+        cellNeutralBorder = if (cellBorderEnabled) customBorderColor else baseColors.cellNeutralBorder
+    )
+
+    val materialColorScheme = if (darkTheme) {
+        darkColorScheme(
+            primary = Color.White,
+            onPrimary = Color.Black,
+            primaryContainer = Color(0xFF262626),
+            onPrimaryContainer = Color.White,
+            secondary = Color(0xFFE4E4E7),
+            onSecondary = Color.Black,
+            background = Color(0xFF000000),
+            onBackground = Color(0xFFFFFFFF),
+            surface = Color(0xFF141414),
+            onSurface = Color(0xFFFFFFFF),
+            surfaceVariant = Color(0xFF1E1E1E),
+            onSurfaceVariant = Color(0xFFA1A1AA),
+            outline = Color(0xFF262626)
+        )
+    } else {
+        lightColorScheme(
+            primary = palette.primaryLight,
+            onPrimary = Color.White,
+            primaryContainer = palette.primaryLight.copy(alpha = 0.12f),
+            onPrimaryContainer = palette.primaryLight,
+            secondary = Color(0xFF0284C7),
+            onSecondary = Color.White,
+            background = Color(0xFFFAFAFC),
+            surface = Color.White,
+            onBackground = Color(0xFF1E293B),
+            onSurface = Color(0xFF1E293B),
+            surfaceVariant = Color(0xFFF1F3F5),
+            onSurfaceVariant = Color(0xFF64748B),
+            outline = Color(0xFFCBD5E1)
+        )
+    }
 
     CompositionLocalProvider(
         LocalBingoColors provides bingoColors,

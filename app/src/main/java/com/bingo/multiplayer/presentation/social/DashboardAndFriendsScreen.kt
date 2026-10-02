@@ -6,6 +6,7 @@ import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -36,6 +37,8 @@ import com.bingo.multiplayer.domain.model.Friend
 import com.bingo.multiplayer.domain.model.FriendRequest
 import com.bingo.multiplayer.domain.model.MatchRecord
 import com.bingo.multiplayer.domain.model.UserProfile
+import com.bingo.multiplayer.domain.network.AccountSessionManager
+import com.bingo.multiplayer.domain.network.ActionCooldownManager
 import com.bingo.multiplayer.domain.network.PlayerPresence
 import com.bingo.multiplayer.domain.network.PlayerRegistryEntry
 import com.bingo.multiplayer.domain.network.PresenceManager
@@ -325,7 +328,7 @@ private fun TabButton(
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = if (selected) tokens.accentBrand else tokens.cellNeutralText.copy(alpha = 0.5f),
+                tint = if (selected) (if (tokens.isDark) Color.White else tokens.accentBrand) else tokens.textMuted,
                 modifier = Modifier.size(16.dp)
             )
             Spacer(modifier = Modifier.width(6.dp))
@@ -333,19 +336,20 @@ private fun TabButton(
                 text = text,
                 fontSize = 12.5.sp,
                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                color = if (selected) tokens.cellNeutralText else tokens.cellNeutralText.copy(alpha = 0.6f)
+                color = if (selected) (if (tokens.isDark) Color.White else tokens.cellNeutralText) else tokens.textMuted
             )
             if (badgeCount > 0) {
                 Spacer(modifier = Modifier.width(4.dp))
                 Surface(
                     shape = RoundedCornerShape(8.dp),
-                    color = tokens.accentBrand.copy(alpha = 0.15f)
+                    color = tokens.badgeSurface,
+                    border = BorderStroke(1.dp, tokens.badgeOutline)
                 ) {
                     Text(
                         text = "$badgeCount",
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
-                        color = tokens.accentBrand,
+                        color = tokens.badgeContent,
                         modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
                     )
                 }
@@ -384,7 +388,7 @@ private fun DashboardTabContent(
                         text = "username: ${user.username.ifBlank { user.playerId }}",
                         fontSize = 11.5.sp,
                         fontWeight = FontWeight.Medium,
-                        color = tokens.cellNeutralText.copy(alpha = 0.55f)
+                        color = tokens.textMuted
                     )
                 }
 
@@ -415,13 +419,14 @@ private fun DashboardTabContent(
 
                             Surface(
                                 shape = RoundedCornerShape(6.dp),
-                                color = tokens.cellPlayerPickBg
+                                color = tokens.badgeSurface,
+                                border = BorderStroke(1.dp, tokens.badgeOutline)
                             ) {
                                 Text(
                                     text = user.rankTitle,
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = tokens.accentBrand,
+                                    color = tokens.badgeContent,
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                 )
                             }
@@ -432,7 +437,7 @@ private fun DashboardTabContent(
                         Text(
                             text = "Level ${user.level} • ${user.xp} XP",
                             fontSize = 11.sp,
-                            color = tokens.cellNeutralText.copy(alpha = 0.6f)
+                            color = tokens.textMuted
                         )
                     }
                 }
@@ -447,8 +452,8 @@ private fun DashboardTabContent(
                         .fillMaxWidth()
                         .height(6.dp)
                         .clip(RoundedCornerShape(3.dp)),
-                    color = tokens.accentBrand,
-                    trackColor = tokens.backgroundSecondary,
+                    color = if (tokens.isDark) Color.White else tokens.accentBrand,
+                    trackColor = if (tokens.isDark) Color(0xFF222222) else tokens.backgroundSecondary,
                 )
 
                 Spacer(modifier = Modifier.height(4.dp))
@@ -457,8 +462,8 @@ private fun DashboardTabContent(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(text = "Rank: Level ${user.level}", fontSize = 10.sp, color = tokens.cellNeutralText.copy(alpha = 0.5f))
-                    Text(text = "${(currentLevelProgress * 100).toInt()}% to Level ${user.level + 1}", fontSize = 10.sp, color = tokens.accentBrand, fontWeight = FontWeight.SemiBold)
+                    Text(text = "Rank: Level ${user.level}", fontSize = 10.sp, color = tokens.textMuted)
+                    Text(text = "${(currentLevelProgress * 100).toInt()}% to Level ${user.level + 1}", fontSize = 10.sp, color = if (tokens.isDark) Color.White else tokens.accentBrand, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -471,7 +476,7 @@ private fun DashboardTabContent(
             fontSize = 11.sp,
             fontWeight = FontWeight.Bold,
             letterSpacing = 1.sp,
-            color = tokens.cellNeutralText.copy(alpha = 0.5f)
+            color = tokens.textMuted
         )
 
         Spacer(modifier = Modifier.height(10.dp))
@@ -504,6 +509,29 @@ private fun DashboardTabContent(
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             StatCard(
+                title = "Active Streak",
+                value = "${user.currentStreak} 🔥",
+                icon = Icons.Default.LocalFireDepartment,
+                color = tokens.accentOrange,
+                modifier = Modifier.weight(1f)
+            )
+
+            StatCard(
+                title = "Best Streak",
+                value = "${user.bestStreak} 🏆",
+                icon = Icons.Default.EmojiEvents,
+                color = Color(0xFFEAB308),
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            StatCard(
                 title = "Win Rate",
                 value = "${user.winRatePercentage}%",
                 icon = Icons.Default.PieChart,
@@ -511,13 +539,7 @@ private fun DashboardTabContent(
                 modifier = Modifier.weight(1f)
             )
 
-            StatCard(
-                title = "Win Streak",
-                value = "${user.currentStreak} 🔥",
-                icon = Icons.Default.LocalFireDepartment,
-                color = tokens.accentOrange,
-                modifier = Modifier.weight(1f)
-            )
+            Spacer(modifier = Modifier.weight(1f))
         }
 
         Spacer(modifier = Modifier.height(20.dp))
@@ -587,16 +609,21 @@ private fun StatCard(
                 modifier = Modifier
                     .size(38.dp)
                     .clip(RoundedCornerShape(10.dp))
-                    .background(color.copy(alpha = 0.12f)),
+                    .background(if (tokens.isDark) Color(0xFF1E1E1E) else color.copy(alpha = 0.12f)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(imageVector = icon, contentDescription = null, tint = color, modifier = Modifier.size(20.dp))
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = if (tokens.isDark) Color.White else color,
+                    modifier = Modifier.size(20.dp)
+                )
             }
 
             Spacer(modifier = Modifier.width(10.dp))
 
             Column {
-                Text(text = title, fontSize = 10.5.sp, color = tokens.cellNeutralText.copy(alpha = 0.55f), fontWeight = FontWeight.Medium)
+                Text(text = title, fontSize = 10.5.sp, color = tokens.textMuted, fontWeight = FontWeight.Medium)
                 Text(text = value, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = tokens.cellNeutralText)
             }
         }
@@ -620,15 +647,23 @@ private fun MatchRecordCard(record: MatchRecord) {
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                val badgeBg = when {
-                    record.isDraw -> Color(0xFFEAB308).copy(alpha = 0.15f)
-                    record.didWin -> Color(0xFF16A34A).copy(alpha = 0.15f)
-                    else -> Color(0xFFDC2626).copy(alpha = 0.15f)
+                val badgeBg = if (tokens.isDark) {
+                    Color(0xFF222222)
+                } else {
+                    when {
+                        record.isDraw -> Color(0xFFEAB308).copy(alpha = 0.15f)
+                        record.didWin -> Color(0xFF16A34A).copy(alpha = 0.15f)
+                        else -> Color(0xFFDC2626).copy(alpha = 0.15f)
+                    }
                 }
-                val badgeColor = when {
-                    record.isDraw -> Color(0xFFEAB308)
-                    record.didWin -> Color(0xFF16A34A)
-                    else -> Color(0xFFDC2626)
+                val badgeColor = if (tokens.isDark) {
+                    Color.White
+                } else {
+                    when {
+                        record.isDraw -> Color(0xFFEAB308)
+                        record.didWin -> Color(0xFF16A34A)
+                        else -> Color(0xFFDC2626)
+                    }
                 }
                 val badgeLetter = when {
                     record.isDraw -> "D"
@@ -640,7 +675,11 @@ private fun MatchRecordCard(record: MatchRecord) {
                     modifier = Modifier
                         .size(34.dp)
                         .clip(RoundedCornerShape(17.dp))
-                        .background(badgeBg),
+                        .background(badgeBg)
+                        .then(
+                            if (tokens.isDark) Modifier.border(1.dp, Color(0xFF383838), RoundedCornerShape(17.dp))
+                            else Modifier
+                        ),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -714,6 +753,15 @@ private fun FriendsTabContent(
         }
     }
 
+    // Prefetch friends career records in background so profile dialogs open with zero delay
+    LaunchedEffect(friends) {
+        friends.forEach { friend ->
+            if (friend.username.isNotBlank()) {
+                AccountSessionManager.prefetchPlayer(friend.username, this)
+            }
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -766,15 +814,18 @@ private fun FriendsTabContent(
                             onSearch()
                         },
                         shape = RoundedCornerShape(10.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = tokens.accentBrand),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = tokens.primaryButtonBg,
+                            contentColor = tokens.primaryButtonText
+                        ),
                         enabled = !isSearching && searchUsernameInput.isNotBlank()
                     ) {
                         if (isSearching) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = tokens.primaryButtonText)
                         } else {
-                            Icon(imageVector = Icons.Default.Search, contentDescription = "Search", modifier = Modifier.size(16.dp))
+                            Icon(imageVector = Icons.Default.Search, contentDescription = "Search", modifier = Modifier.size(16.dp), tint = tokens.primaryButtonText)
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Search", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text("Search", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = tokens.primaryButtonText)
                         }
                     }
                 }
@@ -788,17 +839,8 @@ private fun FriendsTabContent(
                     val livePresence = presenceMap[cleanFoundUser]
                     val effectiveLastSeen = livePresence?.timestamp?.takeIf { it > 0L } ?: player.lastSeenTimestamp
                     val statusText = PresenceManager.getDisplayStatus(cleanFoundUser, effectiveLastSeen)
-                    val isOnline = statusText.equals("online", ignoreCase = true)
-                    val displayStatus = when {
-                        isOnline -> "online"
-                        statusText.equals("offline", ignoreCase = true) -> "offline"
-                        else -> statusText
-                    }
-                    val statusColor = when {
-                        isOnline -> Color(0xFF16A34A)
-                        displayStatus.equals("offline", ignoreCase = true) -> Color(0xFF94A3B8)
-                        else -> Color(0xFFEAB308)
-                    }
+                    val displayStatus = statusText
+                    val statusColor = PresenceManager.getStatusColor(statusText)
 
                     Spacer(modifier = Modifier.height(12.dp))
                     Surface(
@@ -853,24 +895,26 @@ private fun FriendsTabContent(
                                 already -> {
                                     // If already friends, no need to display anything
                                 }
-                                requested -> {
-                                    Surface(shape = RoundedCornerShape(8.dp), color = tokens.accentBrand.copy(alpha = 0.15f)) {
-                                        Text(text = "Requested", color = tokens.accentBrand, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
-                                    }
-                                }
                                 else -> {
+                                    val isOnCooldown = ActionCooldownManager.isFriendRequestOnCooldown(cleanFoundUser)
                                     IconButton(
-                                        onClick = { onSendFriendRequest(player) },
-                                        modifier = Modifier
-                                            .size(36.dp)
-                                            .clip(CircleShape)
-                                            .background(tokens.accentBrand.copy(alpha = 0.12f))
+                                        onClick = {
+                                            ActionCooldownManager.startFriendRequestCooldown(cleanFoundUser)
+                                            onSendFriendRequest(player)
+                                        },
+                                        enabled = !isOnCooldown,
+                                        modifier = Modifier.size(36.dp)
                                     ) {
+                                        val iconTint = if (isOnCooldown) {
+                                            tokens.textMuted
+                                        } else {
+                                            if (tokens.isDark) Color.White else tokens.accentBrand
+                                        }
                                         Icon(
                                             imageVector = Icons.Default.PersonAdd,
                                             contentDescription = "Add Friend",
-                                            tint = tokens.accentBrand,
-                                            modifier = Modifier.size(20.dp)
+                                            tint = iconTint,
+                                            modifier = Modifier.size(24.dp)
                                         )
                                     }
                                 }
@@ -903,22 +947,27 @@ private fun FriendsTabContent(
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 1.sp,
-                color = tokens.cellNeutralText.copy(alpha = 0.5f)
+                color = tokens.textMuted
             )
 
             val onlineCount = friends.count {
-                PresenceManager.getDisplayStatus(it.username, it.lastSeenTimestamp).equals("online", ignoreCase = true)
+                val cleanF = it.username.trim().lowercase().removePrefix("@")
+                val livePres = presenceMap[cleanF]
+                val effectiveTs = livePres?.timestamp?.takeIf { ts -> ts > 0L } ?: it.lastSeenTimestamp
+                val status = PresenceManager.getDisplayStatus(cleanF, effectiveTs)
+                PresenceManager.isStatusOnline(status)
             }
             if (onlineCount > 0) {
                 Surface(
                     shape = RoundedCornerShape(6.dp),
-                    color = Color(0xFF16A34A).copy(alpha = 0.15f)
+                    color = tokens.badgeSurface,
+                    border = BorderStroke(1.dp, tokens.badgeOutline)
                 ) {
                     Text(
                         text = "$onlineCount online",
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
-                        color = Color(0xFF16A34A),
+                        color = tokens.badgeContent,
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                     )
                 }
@@ -970,6 +1019,7 @@ private fun FriendCard(
     onClickProfile: () -> Unit
 ) {
     val tokens = BingoTheme.colors
+    val presenceMap by PresenceManager.presenceFlow.collectAsState()
     var ticker by remember { mutableStateOf(0L) }
     LaunchedEffect(Unit) {
         while (isActive) {
@@ -979,18 +1029,11 @@ private fun FriendCard(
     }
     if (ticker >= 0L) Unit
     val cleanFriend = friend.username.trim().lowercase().removePrefix("@")
-    val statusText = PresenceManager.getDisplayStatus(cleanFriend, friend.lastSeenTimestamp)
-    val isOnline = statusText.equals("online", ignoreCase = true)
-    val displayStatus = when {
-        isOnline -> "online"
-        statusText.equals("offline", ignoreCase = true) -> "offline"
-        else -> statusText
-    }
-    val statusColor = when {
-        isOnline -> Color(0xFF16A34A)
-        displayStatus.equals("offline", ignoreCase = true) -> Color(0xFF94A3B8)
-        else -> Color(0xFFEAB308)
-    }
+    val livePres = presenceMap[cleanFriend]
+    val effectiveTs = livePres?.timestamp?.takeIf { it > 0L } ?: friend.lastSeenTimestamp
+    val statusText = PresenceManager.getDisplayStatus(cleanFriend, effectiveTs)
+    val displayStatus = statusText
+    val statusColor = PresenceManager.getStatusColor(statusText)
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -1044,15 +1087,35 @@ private fun FriendCard(
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                val isInviteCooldown = ActionCooldownManager.isInviteOnCooldown(cleanFriend)
                 Button(
-                    onClick = onInvite,
+                    onClick = {
+                        ActionCooldownManager.startInviteCooldown(cleanFriend)
+                        onInvite()
+                    },
+                    enabled = !isInviteCooldown,
                     shape = RoundedCornerShape(8.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = tokens.accentBrand),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isInviteCooldown) (if (tokens.isDark) Color(0xFF222222) else Color(0xFFE2E8F0)) else tokens.primaryButtonBg,
+                        contentColor = if (isInviteCooldown) tokens.textMuted else tokens.primaryButtonText,
+                        disabledContainerColor = if (tokens.isDark) Color(0xFF222222) else Color(0xFFE2E8F0),
+                        disabledContentColor = tokens.textMuted
+                    ),
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
                 ) {
-                    Icon(imageVector = Icons.Default.SportsEsports, contentDescription = null, modifier = Modifier.size(13.dp))
+                    Icon(
+                        imageVector = Icons.Default.SportsEsports,
+                        contentDescription = null,
+                        modifier = Modifier.size(13.dp),
+                        tint = if (isInviteCooldown) tokens.textMuted else tokens.primaryButtonText
+                    )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Invite", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        text = if (isInviteCooldown) "Invited" else "Invite",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isInviteCooldown) tokens.textMuted else tokens.primaryButtonText
+                    )
                 }
 
                 IconButton(
@@ -1156,11 +1219,14 @@ private fun RequestsTabContent(
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Button(
                                     onClick = { onAcceptFriendRequest(req) },
-                                    colors = ButtonDefaults.buttonColors(containerColor = tokens.accentBrand),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = tokens.primaryButtonBg,
+                                        contentColor = tokens.primaryButtonText
+                                    ),
                                     shape = RoundedCornerShape(8.dp),
                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
                                 ) {
-                                    Text("Accept", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    Text("Accept", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = tokens.primaryButtonText)
                                 }
 
                                 OutlinedButton(
@@ -1259,10 +1325,13 @@ private fun RequestsTabContent(
                                         }
                                     },
                                     shape = RoundedCornerShape(8.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = tokens.accentBrand),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = tokens.primaryButtonBg,
+                                        contentColor = tokens.primaryButtonText
+                                    ),
                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                                 ) {
-                                    Text("Accept & Play", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    Text("Accept & Play", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = tokens.primaryButtonText)
                                 }
                             }
                         }

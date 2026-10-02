@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bingo.multiplayer.core.designsystem.BingoTheme
+import com.bingo.multiplayer.core.designsystem.ThemePreferences
 import com.bingo.multiplayer.domain.model.Cell
 import com.bingo.multiplayer.domain.model.CellMarkState
 
@@ -243,82 +244,47 @@ private fun resolveMinimalCellStyling(cell: Cell): MinimalCellVisualTokens {
     val isOpponentRecent = isOpponent && cell.isRecentPick
 
     return when {
-        // Winning line completed (Clean greyscale with numbers shaded dark while preserving ownership)
+        // Winning line completed
         cell.isPartOfCompletedLine -> {
-            when {
-                isOwn -> {
-                    // Player choice in completed line: Rich grey with shaded dark purple number
-                    MinimalCellVisualTokens(
-                        backgroundColor = Color(0xFF94A3B8),
-                        textColor = Color(0xFF2E0854),
-                        bevelColor = Color(0xFF64748B),
-                        borderColor = Color.Transparent,
-                        borderWidth = 0.dp
-                    )
-                }
-                isOpponentRecent -> {
-                    // Opponent recent pick in completed line: Rich grey with shaded dark orange number
-                    MinimalCellVisualTokens(
-                        backgroundColor = Color(0xFF94A3B8),
-                        textColor = Color(0xFF7C2D12),
-                        bevelColor = Color(0xFF64748B),
-                        borderColor = Color.Transparent,
-                        borderWidth = 0.dp
-                    )
-                }
-                isOpponent -> {
-                    // Opponent choice in completed line: Rich grey with shaded dark blue number
-                    MinimalCellVisualTokens(
-                        backgroundColor = Color(0xFF94A3B8),
-                        textColor = Color(0xFF082F49),
-                        bevelColor = Color(0xFF64748B),
-                        borderColor = Color.Transparent,
-                        borderWidth = 0.dp
-                    )
-                }
-                else -> {
-                    // Generic completed line cell: Clean strong greyscale with dark slate number
-                    MinimalCellVisualTokens(
-                        backgroundColor = Color(0xFF94A3B8),
-                        textColor = Color(0xFF020617),
-                        bevelColor = Color(0xFF64748B),
-                        borderColor = Color.Transparent,
-                        borderWidth = 0.dp
-                    )
-                }
-            }
+            MinimalCellVisualTokens(
+                backgroundColor = tokens.completedLineBg,
+                textColor = tokens.completedLineText,
+                bevelColor = tokens.completedLineBg.copy(alpha = 0.8f),
+                borderColor = if (ThemePreferences.cellBorderEnabled.value) tokens.cellNeutralBorder else Color.Transparent,
+                borderWidth = if (ThemePreferences.cellBorderEnabled.value) 1.dp else 0.dp
+            )
         }
 
-        // Player choice (ALWAYS Purple with darker purple 3D bevel!)
+        // Player choice (Lavender in light, Ice Blue in dark)
         isOwn -> {
             MinimalCellVisualTokens(
                 backgroundColor = tokens.cellPlayerPickBg,
                 textColor = tokens.cellPlayerPickText,
-                bevelColor = Color(0xFF6D28D9),
-                borderColor = Color.Transparent,
-                borderWidth = 0.dp
+                bevelColor = tokens.cellPlayerPickBevel,
+                borderColor = tokens.cellPlayerPickBorder,
+                borderWidth = if (tokens.isDark) 1.dp else 0.dp
             )
         }
 
-        // Opponent recent choice (Orange with darker orange 3D bevel!)
+        // Opponent recent choice (Orange in light and dark)
         isOpponentRecent -> {
             MinimalCellVisualTokens(
                 backgroundColor = tokens.recentPickBg,
                 textColor = tokens.recentPickText,
-                bevelColor = Color(0xFFC2410C),
-                borderColor = Color.Transparent,
-                borderWidth = 0.dp
+                bevelColor = if (tokens.isDark) Color(0xFFEA580C) else Color(0xFFC2410C),
+                borderColor = tokens.recentPickBorder,
+                borderWidth = if (tokens.isDark) 1.dp else 0.dp
             )
         }
 
-        // Opponent earlier choice (Blue with darker blue 3D bevel!)
+        // Opponent earlier choice (Blue in light, Orange in dark)
         isOpponent -> {
             MinimalCellVisualTokens(
                 backgroundColor = tokens.cellOpponentPickBg,
                 textColor = tokens.cellOpponentPickText,
-                bevelColor = Color(0xFF0369A1),
-                borderColor = Color.Transparent,
-                borderWidth = 0.dp
+                bevelColor = tokens.cellOpponentPickBevel,
+                borderColor = tokens.cellOpponentPickBorder,
+                borderWidth = if (tokens.isDark) 1.dp else 0.dp
             )
         }
 
@@ -327,7 +293,7 @@ private fun resolveMinimalCellStyling(cell: Cell): MinimalCellVisualTokens {
             MinimalCellVisualTokens(
                 backgroundColor = tokens.cellNeutralBg,
                 textColor = tokens.cellNeutralText,
-                bevelColor = Color(0xFFCBD5E1),
+                bevelColor = tokens.cellNeutralBevel,
                 borderColor = tokens.cellNeutralBorder,
                 borderWidth = 1.dp
             )

@@ -43,6 +43,7 @@ data class PlayerProfileData(
     val gamesPlayed: Int = 0,
     val gamesWon: Int = 0,
     val currentStreak: Int = 0,
+    val bestStreak: Int = 0,
     val level: Int = 1,
     val isOnline: Boolean = false,
     val lastSeenDisplay: String = "offline",
@@ -72,37 +73,37 @@ data class PlayerProfileData(
             }.ifBlank {
                 p.displayName.filter { it.isLetterOrDigit() }.lowercase().ifEmpty { p.id.take(8) }
             }
-            val statusText = if (isMe) "online" else com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(cleanUser, p.lastSeenTimestamp)
-            val isOnline = statusText.equals("online", ignoreCase = true)
-            val displayStatus = when {
-                statusText.equals("online", ignoreCase = true) -> "online"
-                statusText.equals("offline", ignoreCase = true) -> "offline"
-                else -> statusText
+            val statusText = if (isMe) {
+                when (com.bingo.multiplayer.domain.network.PresenceManager.currentActivityState) {
+                    com.bingo.multiplayer.domain.network.AppActivityState.IN_LOBBY -> "in-lobby"
+                    com.bingo.multiplayer.domain.network.AppActivityState.PLAYING -> "playing"
+                    com.bingo.multiplayer.domain.network.AppActivityState.ONLINE -> "online"
+                }
+            } else {
+                com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(cleanUser, p.lastSeenTimestamp)
             }
+            val isOnline = com.bingo.multiplayer.domain.network.PresenceManager.isStatusOnline(statusText)
+            val cached = if (!isMe) com.bingo.multiplayer.domain.network.AccountSessionManager.getCachedPlayer(cleanUser) else null
             return PlayerProfileData(
                 playerId = p.id,
                 username = cleanUser,
                 displayName = if (isMe && currentUser != null) currentUser.displayName else p.displayName,
                 avatarUrl = effAvatar,
-                gamesPlayed = if (isMe && currentUser != null) currentUser.gamesPlayed else p.gamesPlayed,
-                gamesWon = if (isMe && currentUser != null) currentUser.gamesWon else p.gamesWon,
-                currentStreak = if (isMe && currentUser != null) currentUser.currentStreak else p.currentStreak,
-                level = if (isMe && currentUser != null) currentUser.level else p.level,
+                gamesPlayed = if (isMe && currentUser != null) currentUser.gamesPlayed else (if (p.gamesPlayed > 0) p.gamesPlayed else (cached?.gamesPlayed ?: 0)),
+                gamesWon = if (isMe && currentUser != null) currentUser.gamesWon else (if (p.gamesWon > 0) p.gamesWon else (cached?.gamesWon ?: 0)),
+                currentStreak = if (isMe && currentUser != null) currentUser.currentStreak else (if (p.currentStreak > 0) p.currentStreak else (cached?.currentStreak ?: 0)),
+                bestStreak = if (isMe && currentUser != null) currentUser.bestStreak else (if (p.bestStreak > 0) p.bestStreak else (cached?.bestStreak ?: 0)),
+                level = if (isMe && currentUser != null) currentUser.level else (if (p.level > 1) p.level else (cached?.level?.coerceAtLeast(1) ?: 1)),
                 isOnline = isOnline,
-                lastSeenDisplay = displayStatus,
+                lastSeenDisplay = statusText,
                 lastSeenTimestamp = p.lastSeenTimestamp
             )
         }
 
         fun fromRegistryEntry(entry: PlayerRegistryEntry): PlayerProfileData {
             val cleanUser = entry.username.trim().lowercase().removePrefix("@")
-            val isOnline = com.bingo.multiplayer.domain.network.PresenceManager.isUserOnline(cleanUser)
             val statusText = com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(cleanUser, entry.lastSeenTimestamp)
-            val displayStatus = when {
-                statusText.equals("online", ignoreCase = true) -> "online"
-                statusText.equals("offline", ignoreCase = true) -> "offline"
-                else -> statusText
-            }
+            val isOnline = com.bingo.multiplayer.domain.network.PresenceManager.isStatusOnline(statusText)
             return PlayerProfileData(
                 playerId = entry.uid,
                 username = entry.username,
@@ -111,9 +112,10 @@ data class PlayerProfileData(
                 gamesPlayed = entry.gamesPlayed,
                 gamesWon = entry.gamesWon,
                 currentStreak = entry.currentStreak,
+                bestStreak = entry.bestStreak,
                 level = entry.level,
                 isOnline = isOnline,
-                lastSeenDisplay = displayStatus,
+                lastSeenDisplay = statusText,
                 lastSeenTimestamp = entry.lastSeenTimestamp
             )
         }
@@ -122,26 +124,40 @@ data class PlayerProfileData(
             val cleanUser = friend.username.ifBlank {
                 friend.displayName.filter { it.isLetterOrDigit() }.lowercase().ifEmpty { friend.uid.take(8) }
             }.trim().lowercase().removePrefix("@")
-            val isOnline = com.bingo.multiplayer.domain.network.PresenceManager.isUserOnline(cleanUser)
             val statusText = com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(cleanUser, friend.lastSeenTimestamp)
-            val displayStatus = when {
-                statusText.equals("online", ignoreCase = true) -> "online"
-                statusText.equals("offline", ignoreCase = true) -> "offline"
-                else -> statusText
+            val isOnline = com.bingo.multiplayer.domain.network.PresenceManager.isStatusOnline(statusText)
+            val cached = com.bingo.multiplayer.domain.network.AccountSessionManager.getCachedPlayer(cleanUser)
+            return if (cached != null) {
+                PlayerProfileData(
+                    playerId = cached.uid.ifBlank { friend.uid },
+                    username = cleanUser,
+                    displayName = cached.displayName.ifBlank { friend.displayName },
+                    avatarUrl = cached.avatarUrl?.takeIf { it.isNotBlank() } ?: friend.avatarUrl,
+                    gamesPlayed = cached.gamesPlayed,
+                    gamesWon = cached.gamesWon,
+                    currentStreak = cached.currentStreak,
+                    bestStreak = cached.bestStreak,
+                    level = cached.level.coerceAtLeast(1),
+                    isOnline = isOnline,
+                    lastSeenDisplay = statusText,
+                    lastSeenTimestamp = friend.lastSeenTimestamp
+                )
+            } else {
+                PlayerProfileData(
+                    playerId = friend.uid,
+                    username = cleanUser,
+                    displayName = friend.displayName,
+                    avatarUrl = friend.avatarUrl,
+                    gamesPlayed = 0,
+                    gamesWon = 0,
+                    currentStreak = 0,
+                    bestStreak = 0,
+                    level = 1,
+                    isOnline = isOnline,
+                    lastSeenDisplay = statusText,
+                    lastSeenTimestamp = friend.lastSeenTimestamp
+                )
             }
-            return PlayerProfileData(
-                playerId = friend.uid,
-                username = cleanUser,
-                displayName = friend.displayName,
-                avatarUrl = friend.avatarUrl,
-                gamesPlayed = 0,
-                gamesWon = 0,
-                currentStreak = 0,
-                level = 1,
-                isOnline = isOnline,
-                lastSeenDisplay = displayStatus,
-                lastSeenTimestamp = friend.lastSeenTimestamp
-            )
         }
     }
 }
@@ -186,12 +202,25 @@ fun PlayerProfileDialog(
                 gamesPlayed = currentUser.gamesPlayed,
                 gamesWon = currentUser.gamesWon,
                 currentStreak = currentUser.currentStreak,
+                bestStreak = currentUser.bestStreak,
                 level = currentUser.level
             )
         } else if (targetUsername.isNotBlank()) {
+            val cached = com.bingo.multiplayer.domain.network.AccountSessionManager.getCachedPlayer(targetUsername)
+            if (cached != null) {
+                effectiveData = effectiveData.copy(
+                    displayName = cached.displayName.ifBlank { effectiveData.displayName },
+                    avatarUrl = cached.avatarUrl?.takeIf { it.isNotBlank() } ?: effectiveData.avatarUrl,
+                    gamesPlayed = cached.gamesPlayed,
+                    gamesWon = cached.gamesWon,
+                    currentStreak = cached.currentStreak,
+                    bestStreak = cached.bestStreak,
+                    level = cached.level.coerceAtLeast(1)
+                )
+            }
             try {
                 val sessionManager = com.bingo.multiplayer.domain.network.AccountSessionManager()
-                val entry = sessionManager.searchPlayerByUsername(targetUsername, forceRefresh = true)
+                val entry = sessionManager.searchPlayerByUsername(targetUsername, forceRefresh = false)
                 if (entry != null) {
                     effectiveData = effectiveData.copy(
                         displayName = entry.displayName.ifBlank { effectiveData.displayName },
@@ -199,6 +228,7 @@ fun PlayerProfileDialog(
                         gamesPlayed = entry.gamesPlayed,
                         gamesWon = entry.gamesWon,
                         currentStreak = entry.currentStreak,
+                        bestStreak = entry.bestStreak,
                         level = entry.level.coerceAtLeast(1)
                     )
                 }
@@ -313,8 +343,8 @@ fun PlayerProfileDialog(
                     }
                     Surface(
                         shape = RoundedCornerShape(6.dp),
-                        color = tokens.cellPlayerPickBg,
-                        border = BorderStroke(1.dp, tokens.accentBrand.copy(alpha = 0.35f))
+                        color = tokens.badgeSurface,
+                        border = BorderStroke(1.dp, tokens.badgeOutline)
                     ) {
                         Text(
                             text = medalEmoji,
@@ -340,18 +370,16 @@ fun PlayerProfileDialog(
                     if (ticker >= 0L) Unit
                     val livePres = presenceMap[targetUsername]
                     val effectiveTs = livePres?.timestamp?.takeIf { it > 0L } ?: effectiveData.lastSeenTimestamp
-                    val rawStatus = if (isSelf) "online" else com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(targetUsername, effectiveTs)
-                    val isOnline = rawStatus.equals("online", ignoreCase = true)
-                    val displayStatus = when {
-                        isOnline -> "online"
-                        rawStatus.equals("offline", ignoreCase = true) -> "offline"
-                        else -> rawStatus
+                    val displayStatus = if (isSelf) {
+                        when (com.bingo.multiplayer.domain.network.PresenceManager.currentActivityState) {
+                            com.bingo.multiplayer.domain.network.AppActivityState.IN_LOBBY -> "in-lobby"
+                            com.bingo.multiplayer.domain.network.AppActivityState.PLAYING -> "playing"
+                            com.bingo.multiplayer.domain.network.AppActivityState.ONLINE -> "online"
+                        }
+                    } else {
+                        com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(targetUsername, effectiveTs)
                     }
-                    val statusColor = when {
-                        isOnline -> Color(0xFF16A34A)
-                        displayStatus.equals("offline", ignoreCase = true) -> Color(0xFF94A3B8)
-                        else -> Color(0xFFEAB308)
-                    }
+                    val statusColor = com.bingo.multiplayer.domain.network.PresenceManager.getStatusColor(displayStatus)
 
                     Surface(
                         shape = RoundedCornerShape(6.dp),
@@ -376,7 +404,7 @@ fun PlayerProfileDialog(
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 1.sp,
-                    color = tokens.cellNeutralText.copy(alpha = 0.5f),
+                    color = tokens.textMuted,
                     modifier = Modifier.align(Alignment.Start)
                 )
 
@@ -407,17 +435,32 @@ fun PlayerProfileDialog(
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     BattleStatCard(
+                        title = "Active Streak",
+                        value = if (effectiveData.currentStreak > 0) "${effectiveData.currentStreak} 🔥" else "0",
+                        icon = Icons.Default.Whatshot,
+                        modifier = Modifier.weight(1f)
+                    )
+                    BattleStatCard(
+                        title = "Best Streak",
+                        value = if (effectiveData.bestStreak > 0) "${effectiveData.bestStreak} 🏆" else "0",
+                        icon = Icons.Default.EmojiEvents,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    BattleStatCard(
                         title = "Win Rate",
                         value = "${effectiveData.winRatePercentage}%",
                         icon = Icons.Default.Analytics,
                         modifier = Modifier.weight(1f)
                     )
-                    BattleStatCard(
-                        title = "Streak",
-                        value = if (effectiveData.currentStreak > 0) "${effectiveData.currentStreak} 🔥" else "0",
-                        icon = Icons.Default.Whatshot,
-                        modifier = Modifier.weight(1f)
-                    )
+                    Spacer(modifier = Modifier.weight(1f))
                 }
 
                 Spacer(modifier = Modifier.height(20.dp))
@@ -445,8 +488,8 @@ fun PlayerProfileDialog(
                 } else if (isAlreadyFriend) {
                     Surface(
                         shape = RoundedCornerShape(12.dp),
-                        color = tokens.cellPlayerPickBg,
-                        border = BorderStroke(1.dp, tokens.accentBrand.copy(alpha = 0.5f)),
+                        color = tokens.badgeSurface,
+                        border = BorderStroke(1.dp, tokens.badgeOutline),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
@@ -457,7 +500,7 @@ fun PlayerProfileDialog(
                             Icon(
                                 imageVector = Icons.Default.Check,
                                 contentDescription = null,
-                                tint = tokens.accentBrand,
+                                tint = tokens.badgeContent,
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
@@ -465,7 +508,7 @@ fun PlayerProfileDialog(
                                 text = "Friends",
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = tokens.accentBrand
+                                color = tokens.badgeContent
                             )
                         }
                     }
@@ -496,13 +539,14 @@ fun PlayerProfileDialog(
                             )
                         }
                     }
-                } else {
+                    val isOnCooldown = com.bingo.multiplayer.domain.network.ActionCooldownManager.isFriendRequestOnCooldown(effectiveData.username)
                     Button(
                         onClick = {
                             if (currentUser == null) {
                                 Toast.makeText(context, "Sign in to add friends", Toast.LENGTH_SHORT).show()
                                 return@Button
                             }
+                            com.bingo.multiplayer.domain.network.ActionCooldownManager.startFriendRequestCooldown(effectiveData.username)
                             isSendingRequest = true
                             coroutineScope.launch {
                                 val success = friendsRepository?.sendFriendRequest(
@@ -520,10 +564,12 @@ fun PlayerProfileDialog(
                                 }
                             }
                         },
-                        enabled = !isSendingRequest,
+                        enabled = !isSendingRequest && !isOnCooldown,
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = tokens.accentBrand,
-                            contentColor = Color.White
+                            containerColor = if (isOnCooldown) (if (tokens.isDark) Color(0xFF222222) else Color(0xFFE2E8F0)) else tokens.primaryButtonBg,
+                            contentColor = if (isOnCooldown) tokens.textMuted else tokens.primaryButtonText,
+                            disabledContainerColor = if (tokens.isDark) Color(0xFF222222) else Color(0xFFE2E8F0),
+                            disabledContentColor = tokens.textMuted
                         ),
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth()
@@ -531,20 +577,20 @@ fun PlayerProfileDialog(
                         if (isSendingRequest) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(16.dp),
-                                color = Color.White,
+                                color = tokens.primaryButtonText,
                                 strokeWidth = 2.dp
                             )
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Sending Request...", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            Text("Sending Request...", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = tokens.primaryButtonText)
                         } else {
                             Icon(
                                 imageVector = Icons.Default.PersonAdd,
                                 contentDescription = null,
                                 modifier = Modifier.size(18.dp),
-                                tint = Color.White
+                                tint = tokens.primaryButtonText
                             )
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Add Friend", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            Text("Add Friend", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = tokens.primaryButtonText)
                         }
                     }
                 }
@@ -577,7 +623,7 @@ private fun BattleStatCard(
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    tint = tokens.accentBrand,
+                    tint = if (tokens.isDark) Color.White else tokens.accentBrand,
                     modifier = Modifier.size(15.dp)
                 )
                 Spacer(modifier = Modifier.width(5.dp))
@@ -585,7 +631,7 @@ private fun BattleStatCard(
                     text = title,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Medium,
-                    color = tokens.cellNeutralText.copy(alpha = 0.6f)
+                    color = tokens.textMuted
                 )
             }
             Spacer(modifier = Modifier.height(4.dp))

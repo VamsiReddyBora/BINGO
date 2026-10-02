@@ -26,11 +26,15 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.CastConnected
+import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Insights
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.ui.platform.LocalContext
+import com.bingo.multiplayer.core.designsystem.ThemePreferences
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -76,6 +80,7 @@ fun MainMenuScreen(
     onPlayNearbyNetwork: () -> Unit
 ) {
     val tokens = BingoTheme.colors
+    val context = LocalContext.current
     val authState by authRepository.authState.collectAsState()
     val userProfile = (authState as? AuthState.Authenticated)?.user ?: UserProfile(
         uid = "guest",
@@ -102,22 +107,35 @@ fun MainMenuScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
-                    Text(
-                        text = "B I N G O",
-                        style = BingoTheme.typography.logoTitle.copy(fontSize = 24.sp),
-                        color = tokens.cellNeutralText
-                    )
-                    Text(
-                        text = "MULTIPLAYER",
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.sp,
-                        color = tokens.accentBrand
-                    )
-                }
+                Text(
+                    text = "B I N G O",
+                    style = BingoTheme.typography.logoTitle.copy(fontSize = 24.sp),
+                    color = tokens.cellNeutralText
+                )
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Quick Theme Toggle (Light / AMOLED Dark Mode)
+                    Surface(
+                        onClick = {
+                            ThemePreferences.setDarkTheme(context, !tokens.isDark)
+                        },
+                        shape = CircleShape,
+                        color = tokens.backgroundSecondary,
+                        border = BorderStroke(1.dp, tokens.surfaceBorder),
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                            Icon(
+                                imageVector = if (tokens.isDark) Icons.Default.LightMode else Icons.Default.DarkMode,
+                                contentDescription = if (tokens.isDark) "Switch to Light Theme" else "Switch to Dark Theme",
+                                tint = tokens.accentBrand,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.width(8.dp))
+
                     // Dashboard & Friends Button
                     Surface(
                         onClick = onNavigateToDashboard,
@@ -154,12 +172,12 @@ fun MainMenuScreen(
                         color = tokens.backgroundSecondary,
                         border = BorderStroke(1.dp, tokens.surfaceBorder)
                     ) {
-                        Box(modifier = Modifier.padding(4.dp)) {
+                        Box(modifier = Modifier.padding(3.dp)) {
                             PlayerAvatar(
                                 avatarPathOrUri = userProfile.avatarUrl,
                                 displayName = userProfile.displayName,
-                                size = 28.dp,
-                                borderWidth = 1.dp,
+                                size = 36.dp,
+                                borderWidth = 1.2.dp,
                                 borderColor = tokens.accentBrand,
                                 username = userProfile.username
                             )
@@ -190,18 +208,23 @@ fun MainMenuScreen(
                             modifier = Modifier
                                 .size(34.dp)
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(tokens.accentBrand.copy(alpha = 0.12f)),
+                                .background(if (tokens.isDark) Color(0xFF1E1E1E) else tokens.accentBrand.copy(alpha = 0.12f)),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(imageVector = Icons.Default.Group, contentDescription = null, tint = tokens.accentBrand, modifier = Modifier.size(18.dp))
+                            Icon(
+                                imageVector = Icons.Default.Group,
+                                contentDescription = null,
+                                tint = if (tokens.isDark) Color.White else tokens.accentBrand,
+                                modifier = Modifier.size(18.dp)
+                            )
                         }
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
                             Text("Friends & Social Hub", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = tokens.cellNeutralText)
-                            Text("Online status, friends list & 1-tap invites", fontSize = 11.sp, color = tokens.cellNeutralText.copy(alpha = 0.5f))
+                            Text("Online status, friends list & 1-tap invites", fontSize = 11.sp, color = tokens.textMuted)
                         }
                     }
-                    Icon(imageVector = Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, tint = tokens.cellNeutralText.copy(alpha = 0.4f), modifier = Modifier.size(18.dp))
+                    Icon(imageVector = Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, tint = tokens.textMuted, modifier = Modifier.size(18.dp))
                 }
             }
 
@@ -217,7 +240,7 @@ fun MainMenuScreen(
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 1.sp,
-                    color = tokens.cellNeutralText.copy(alpha = 0.45f)
+                    color = tokens.textMuted
                 )
             }
 
@@ -237,7 +260,7 @@ fun MainMenuScreen(
                 title = "Online Match",
                 description = "Host or join multiplayer rooms with friends.",
                 icon = Icons.Default.CastConnected,
-                accentColor = tokens.accentOpponent,
+                accentColor = if (tokens.isDark) Color.White else tokens.accentOpponent,
                 onClick = onPlayOnline
             )
 
@@ -248,7 +271,7 @@ fun MainMenuScreen(
                 title = "Nearby Network",
                 description = "Zero-latency Wi-Fi & Hotspot peer discovery.",
                 icon = Icons.Default.Wifi,
-                accentColor = tokens.accentOrange,
+                accentColor = if (tokens.isDark) Color.White else tokens.accentOrange,
                 onClick = onPlayNearbyNetwork
             )
 
@@ -284,7 +307,7 @@ private fun CompactAiModeCard(
                 Icon(
                     imageVector = Icons.Default.SmartToy,
                     contentDescription = null,
-                    tint = tokens.accentBrand,
+                    tint = if (tokens.isDark) Color.White else tokens.accentBrand,
                     modifier = Modifier.size(28.dp)
                 )
 
@@ -300,7 +323,7 @@ private fun CompactAiModeCard(
                     Text(
                         text = "Solo practice match with bot",
                         fontSize = 12.sp,
-                        color = tokens.cellNeutralText.copy(alpha = 0.55f)
+                        color = tokens.textMuted
                     )
                 }
             }
@@ -355,14 +378,14 @@ private fun CompactAiModeCard(
                     .height(42.dp),
                 shape = RoundedCornerShape(10.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = tokens.accentBrand
+                    containerColor = tokens.primaryButtonBg
                 )
             ) {
                 Text(
                     text = "Start AI Game (${if (selectedDifficulty == AiDifficulty.EASY) "Easy" else "Master"})",
                     fontWeight = FontWeight.Bold,
                     fontSize = 13.sp,
-                    color = Color.White
+                    color = tokens.primaryButtonText
                 )
             }
         }
@@ -381,9 +404,9 @@ private fun CompactDifficultyChip(
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(8.dp))
-            .background(if (isSelected) tokens.surface else Color.Transparent)
+            .background(if (isSelected) (if (tokens.isDark) Color(0xFF222222) else tokens.surface) else Color.Transparent)
             .then(
-                if (isSelected) Modifier.border(1.dp, tokens.accentBrand, RoundedCornerShape(8.dp))
+                if (isSelected) Modifier.border(1.dp, if (tokens.isDark) Color.White else tokens.accentBrand, RoundedCornerShape(8.dp))
                 else Modifier
             )
             .pointerInput(Unit) {
@@ -396,7 +419,7 @@ private fun CompactDifficultyChip(
             text = title,
             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
             fontSize = 12.sp,
-            color = if (isSelected) tokens.cellNeutralText else tokens.cellNeutralText.copy(alpha = 0.5f)
+            color = if (isSelected) tokens.cellNeutralText else tokens.textMuted
         )
     }
 }
@@ -473,13 +496,14 @@ private fun CompactMenuCard(
                         Spacer(modifier = Modifier.width(8.dp))
                         Surface(
                             shape = RoundedCornerShape(4.dp),
-                            color = accentColor.copy(alpha = 0.12f)
+                            color = tokens.badgeSurface,
+                            border = BorderStroke(1.dp, tokens.badgeOutline)
                         ) {
                             Text(
                                 text = badgeText,
                                 fontSize = 9.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = accentColor,
+                                color = tokens.badgeContent,
                                 modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
                             )
                         }
@@ -492,7 +516,7 @@ private fun CompactMenuCard(
                     text = description,
                     fontSize = 12.sp,
                     lineHeight = 15.sp,
-                    color = tokens.cellNeutralText.copy(alpha = 0.55f)
+                    color = tokens.textMuted
                 )
             }
         }

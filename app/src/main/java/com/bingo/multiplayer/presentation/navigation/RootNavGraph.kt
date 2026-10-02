@@ -33,13 +33,18 @@ import com.bingo.multiplayer.presentation.auth.LoginScreen
 import com.bingo.multiplayer.presentation.game.GameScreen
 import com.bingo.multiplayer.presentation.lobby.LobbyScreen
 import com.bingo.multiplayer.presentation.menu.MainMenuScreen
+import com.bingo.multiplayer.presentation.nearby.NearbyChoiceScreen
 import com.bingo.multiplayer.presentation.nearby.NearbyLobbyScreen
 import com.bingo.multiplayer.presentation.online.JoinRoomScreen
 import com.bingo.multiplayer.presentation.online.OnlineMatchChoiceScreen
 import com.bingo.multiplayer.presentation.settings.SettingsScreen
 import com.bingo.multiplayer.presentation.social.DashboardAndFriendsScreen
 import androidx.compose.material3.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.bingo.multiplayer.core.designsystem.BingoTheme
@@ -60,6 +65,7 @@ sealed class Screen(val route: String) {
     data object Lobby : Screen("lobby")
     data object Game : Screen("game")
     data object Dashboard : Screen("dashboard")
+    data object NearbyChoice : Screen("nearby_choice")
     data object NearbyLobby : Screen("nearby_lobby")
     data object ManualBoardDesign : Screen("manual_board_design")
 }
@@ -87,6 +93,7 @@ fun RootNavGraph(
     val isRefreshing by onlineRoomSync.isRefreshing.collectAsState()
     val discoveredGames by lanDiscovery.discoveredGames.collectAsState()
     var joinedLanGame by remember { mutableStateOf<LanDiscoveredGame?>(null) }
+    var isNearbyHostMode by remember { mutableStateOf(false) }
 
     // Game Session State
     var currentGameMode by remember { mutableStateOf(GameMode.AI_EASY) }
@@ -156,6 +163,26 @@ fun RootNavGraph(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
+    LaunchedEffect(currentRoute) {
+        when (currentRoute) {
+            Screen.Game.route -> {
+                com.bingo.multiplayer.domain.network.PresenceManager.setActivityState(
+                    com.bingo.multiplayer.domain.network.AppActivityState.PLAYING
+                )
+            }
+            Screen.Lobby.route, Screen.NearbyLobby.route, Screen.ManualBoardDesign.route -> {
+                com.bingo.multiplayer.domain.network.PresenceManager.setActivityState(
+                    com.bingo.multiplayer.domain.network.AppActivityState.IN_LOBBY
+                )
+            }
+            else -> {
+                com.bingo.multiplayer.domain.network.PresenceManager.setActivityState(
+                    com.bingo.multiplayer.domain.network.AppActivityState.ONLINE
+                )
+            }
+        }
+    }
+
     val shouldInterceptBack = currentRoute != null &&
         currentRoute != Screen.MainMenu.route &&
         currentRoute != Screen.AuthGate.route &&
@@ -172,6 +199,7 @@ fun RootNavGraph(
 
         if (currentRoute == Screen.Lobby.route ||
             currentRoute == Screen.NearbyLobby.route ||
+            currentRoute == Screen.NearbyChoice.route ||
             currentRoute == Screen.JoinRoom.route ||
             currentRoute == Screen.OnlineChoice.route) {
             if (isHosting && currentGameMode == GameMode.ONLINE_ROOM && roomCode.isNotBlank()) {
@@ -323,18 +351,18 @@ fun RootNavGraph(
         }
     }
 
-    fun openNearbyLobby() {
-        navController.navigate(Screen.NearbyLobby.route)
+    fun openNearbyChoice() {
+        navController.navigate(Screen.NearbyChoice.route)
     }
 
     val nearbyPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) {
-        openNearbyLobby()
+        openNearbyChoice()
     }
 
     fun recordFinishedMatch(won: Boolean, isDraw: Boolean = false) {
-        val myName = currentAuthUser?.username?.ifBlank { currentAuthUser?.displayName } ?: getPlayerDisplayName()
+        val myName = currentAuthUser?.username?.ifBlank { currentAuthUser.displayName } ?: getPlayerDisplayName()
         val isGroup = realTimePlayers.size > 2
 
         val matchTitle = if (isGroup) {
@@ -391,10 +419,14 @@ fun RootNavGraph(
         return (1..6).map { chars.random() }.joinToString("")
     }
 
-    // Dynamic Board Sizing Formula: 2 players -> 5x5, 3 players -> 6x6, 4 players -> 7x7, 5+ players -> 8x8
+    // Dynamic Board Sizing Formula: 2 players -> 5x5, 3-4 players -> 6x6, 5-6 players -> 7x7, 7+ players -> 8x8
     fun calculateBoardSize(playerCount: Int): Int {
-        val count = playerCount.coerceAtLeast(2)
-        return (3 + count).coerceAtMost(8)
+        return when {
+            playerCount <= 2 -> 5
+            playerCount <= 4 -> 6
+            playerCount <= 6 -> 7
+            else -> 8
+        }
     }
 
     fun calculateNextTurnPlayerId(currentPickerId: String): String {
@@ -483,6 +515,10 @@ fun RootNavGraph(
         wantsToPlayAgainPlayerName = null
         opponentDisconnectMessage = null
         opponentSurrenderMessage = null
+        latestIncomingEmote = null
+        latestIncomingEmoteScale = 1.0f
+        latestIncomingEmoteTimestamp = 0L
+        latestIncomingChatMessage = null
 
         navController.navigate(Screen.Game.route)
     }
@@ -517,6 +553,10 @@ fun RootNavGraph(
             isGameOver = false
             didPlayerWin = false
             isDrawMatch = false
+            latestIncomingEmote = null
+            latestIncomingEmoteScale = 1.0f
+            latestIncomingEmoteTimestamp = 0L
+            latestIncomingChatMessage = null
 
             navController.navigate(Screen.Game.route) {
                 popUpTo(Screen.ManualBoardDesign.route) { inclusive = true }
@@ -647,8 +687,8 @@ fun RootNavGraph(
     LaunchedEffect(currentGameMode) {
         while (isActive) {
             delay(2500L)
-            val currentRoute = navController.currentDestination?.route
-            val inActiveGameScreen = (currentRoute == Screen.Game.route)
+            val activeRoute = navController.currentDestination?.route
+            val inActiveGameScreen = (activeRoute == Screen.Game.route)
             if ((currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) &&
                 !isGameOver &&
                 roomCode.isNotEmpty() &&
@@ -735,6 +775,10 @@ fun RootNavGraph(
                         wantsToPlayAgainPlayerName = null
                         opponentDisconnectMessage = null
                         opponentSurrenderMessage = null
+                        latestIncomingEmote = null
+                        latestIncomingEmoteScale = 1.0f
+                        latestIncomingEmoteTimestamp = 0L
+                        latestIncomingChatMessage = null
                         navController.navigate(Screen.ManualBoardDesign.route)
                     } else {
                         isManualBoard = false
@@ -750,6 +794,17 @@ fun RootNavGraph(
                             firstTurnPlayerId = packet.currentTurnPlayerId.takeIf { it.isNotBlank() },
                             hostSeed = packet.seed
                         )
+                    }
+                }
+            }
+
+            "GO_TO_LOBBY" -> {
+                if (!isHosting && currentGameMode == GameMode.NEARBY_NETWORK) {
+                    val currentDest = navController.currentDestination?.route
+                    if (currentDest != Screen.Lobby.route && currentDest != Screen.Game.route && currentDest != Screen.ManualBoardDesign.route) {
+                        navController.navigate(Screen.Lobby.route) {
+                            launchSingleTop = true
+                        }
                     }
                 }
             }
@@ -791,6 +846,10 @@ fun RootNavGraph(
                         wantsToPlayAgainPlayerName = null
                         opponentDisconnectMessage = null
                         opponentSurrenderMessage = null
+                        latestIncomingEmote = null
+                        latestIncomingEmoteScale = 1.0f
+                        latestIncomingEmoteTimestamp = 0L
+                        latestIncomingChatMessage = null
                         navController.navigate(Screen.ManualBoardDesign.route)
                     } else {
                         isManualBoard = false
@@ -1139,10 +1198,18 @@ fun RootNavGraph(
         launch { lanP2pSync.incomingPackets.collect { handleIncomingPacket(it) } }
     }
 
-    NavHost(
-        navController = navController,
-        startDestination = Screen.AuthGate.route
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(BingoTheme.colors.background)
     ) {
+        NavHost(
+            navController = navController,
+            startDestination = Screen.AuthGate.route,
+            modifier = Modifier
+                .fillMaxSize()
+                .background(BingoTheme.colors.background)
+        ) {
         // 1. Splash / Auth Gate
         composable(Screen.AuthGate.route) {
             AuthGateScreen(
@@ -1195,7 +1262,7 @@ fun RootNavGraph(
                 onPlayNearbyNetwork = {
                     val perms = PermissionHelper.getNearbyAndNotificationPermissions()
                     if (PermissionHelper.hasPermissions(context, perms)) {
-                        openNearbyLobby()
+                        openNearbyChoice()
                     } else {
                         nearbyPermissionLauncher.launch(perms.toTypedArray())
                     }
@@ -1640,6 +1707,32 @@ fun RootNavGraph(
             )
         }
 
+        // 5a. Nearby Network Choice Screen (Host Game vs Join Game)
+        composable(Screen.NearbyChoice.route) {
+            BackHandler {
+                navController.navigate(Screen.MainMenu.route) {
+                    popUpTo(Screen.MainMenu.route) { inclusive = false }
+                    launchSingleTop = true
+                }
+            }
+            NearbyChoiceScreen(
+                onHostGame = {
+                    isNearbyHostMode = true
+                    navController.navigate(Screen.NearbyLobby.route)
+                },
+                onJoinGame = {
+                    isNearbyHostMode = false
+                    navController.navigate(Screen.NearbyLobby.route)
+                },
+                onBack = {
+                    navController.navigate(Screen.MainMenu.route) {
+                        popUpTo(Screen.MainMenu.route) { inclusive = false }
+                        launchSingleTop = true
+                    }
+                }
+            )
+        }
+
         // 5b. Nearby Network (LAN / Hotspot) Lobby (Zero Room Codes)
         composable(Screen.NearbyLobby.route) {
             BackHandler {
@@ -1648,8 +1741,8 @@ fun RootNavGraph(
                 disconnectRoom()
                 isHosting = false
                 joinedLanGame = null
-                navController.navigate(Screen.MainMenu.route) {
-                    popUpTo(Screen.MainMenu.route) { inclusive = false }
+                navController.navigate(Screen.NearbyChoice.route) {
+                    popUpTo(Screen.NearbyChoice.route) { inclusive = false }
                     launchSingleTop = true
                 }
             }
@@ -1665,6 +1758,7 @@ fun RootNavGraph(
                 discoveredGames = discoveredGames,
                 connectedPeers = realTimePlayers,
                 isHosting = isHosting,
+                isHostMode = isNearbyHostMode,
                 joinedGame = joinedLanGame,
                 onStartBroadcasting = { selectedSize ->
                     isHosting = true
@@ -1690,7 +1784,6 @@ fun RootNavGraph(
                     
                     lanP2pSync.connectAsHost(localHost)
                     lanDiscovery.startBroadcasting(localHost, selectedSize, internalCode)
-                    navController.navigate(Screen.Lobby.route)
                 },
                 onStopBroadcasting = {
                     isHosting = false
@@ -1714,78 +1807,36 @@ fun RootNavGraph(
                         gamesWon = user?.gamesWon ?: 0,
                         currentStreak = user?.currentStreak ?: 0,
                         level = user?.level ?: 1,
-                        lobbyReadyStatus = "NOT_READY",
+                        lobbyReadyStatus = "READY",
                         lastSeenTimestamp = System.currentTimeMillis()
                     )
                     lanP2pSync.connectAsClient(game.hostIp, localJoiner)
-                    navController.navigate(Screen.Lobby.route)
+                    if (game.isInLobby) {
+                        navController.navigate(Screen.Lobby.route) {
+                            launchSingleTop = true
+                        }
+                    }
                 },
                 onLeaveJoinedGame = {
                     joinedLanGame = null
                     disconnectRoom()
                 },
-                onStartGame = {
-                    val dynamicSize = if (boardSize in 5..8) boardSize else calculateBoardSize(realTimePlayers.size)
-                    val seed = Random.nextLong().let { if (it == 0L) 1L else it }
-                    val myId = getLocalUid()
-                    val manualMode = isManualBoard
-
-                    lanP2pSync.updateLocalReadyStatus("IN_GAME")
-                    lanDiscovery.stopBroadcasting()
-                    lanDiscovery.stopDiscovering()
-
-                    val otherPlayerId = realTimePlayers.firstOrNull { it.id.isNotBlank() && it.id != myId }?.id
-                        ?: opponentPlayerId.takeIf { it.isNotBlank() }
-                    val candidateUids = if (otherPlayerId != null) listOf(myId, otherPlayerId).sorted() else listOf(myId)
-                    val chosenFirstTurnUid = ManualBoardEngine.determineRandomFirstTurn(seed, candidateUids)
-
-                    val startPacket = RoomMessagePacket(
-                        type = "START_GAME",
-                        boardSize = dynamicSize,
-                        seed = seed,
-                        playerId = myId,
-                        currentTurnPlayerId = chosenFirstTurnUid,
-                        isManualBoard = manualMode
+                onGoToLobby = {
+                    lanP2pSync.isHostInLobby = true
+                    lanDiscovery.updateLobbyState(true)
+                    val goToLobbyPacket = RoomMessagePacket(
+                        type = "GO_TO_LOBBY",
+                        playerId = getLocalUid()
                     )
-                    broadcastPacket(startPacket)
+                    broadcastPacket(goToLobbyPacket)
                     coroutineScope.launch {
                         delay(150L)
-                        broadcastPacket(startPacket)
+                        broadcastPacket(goToLobbyPacket)
                         delay(250L)
-                        broadcastPacket(startPacket)
+                        broadcastPacket(goToLobbyPacket)
                     }
-
-                    if (manualMode) {
-                        boardSize = dynamicSize
-                        currentMatchSeed = seed
-                        isLocalBoardReady = false
-                        isOpponentBoardReady = false
-                        countdownSeconds = -1
-                        firstTurnPlayerName = ""
-                        pickedNumbersHistory.clear()
-                        isProcessingTurn = false
-                        turnNumber = 1
-                        currentTurnPlayerId = ""
-                        isMyTurn = false
-                        turnTimer = 30
-                        isGamePaused = false
-                        pausedByPlayerName = ""
-                        recentPick = null
-                        isGameOver = false
-                        didPlayerWin = false
-                        isDrawMatch = false
-                        wantsToPlayAgainPlayerName = null
-                        opponentDisconnectMessage = null
-                        opponentSurrenderMessage = null
-                        navController.navigate(Screen.ManualBoardDesign.route)
-                    } else {
-                        startNewGame(
-                            mode = GameMode.NEARBY_NETWORK,
-                            difficulty = AiDifficulty.EASY,
-                            size = dynamicSize,
-                            firstTurnPlayerId = chosenFirstTurnUid,
-                            hostSeed = seed
-                        )
+                    navController.navigate(Screen.Lobby.route) {
+                        launchSingleTop = true
                     }
                 },
                 onBack = {
@@ -1794,8 +1845,8 @@ fun RootNavGraph(
                     disconnectRoom()
                     isHosting = false
                     joinedLanGame = null
-                    navController.navigate(Screen.MainMenu.route) {
-                        popUpTo(Screen.MainMenu.route) { inclusive = false }
+                    navController.navigate(Screen.NearbyChoice.route) {
+                        popUpTo(Screen.NearbyChoice.route) { inclusive = false }
                         launchSingleTop = true
                     }
                 }
@@ -2023,6 +2074,7 @@ fun RootNavGraph(
                 onTogglePause = { togglePause() },
                 recentPick = recentPick,
                 pickedNumbersHistory = pickedNumbersHistory.toList(),
+                matchSeed = currentMatchSeed,
                 opponentName = opponentDisplayName,
                 isGameOver = isGameOver,
                 didPlayerWin = didPlayerWin,
@@ -2082,8 +2134,10 @@ fun RootNavGraph(
                             )
                         )
                     }
-                    isGameOver = true
+                    isGameOver = false
                     didPlayerWin = false
+                    latestIncomingEmote = null
+                    latestIncomingEmoteTimestamp = 0L
                     recordFinishedMatch(false)
                     disconnectRoom()
                     navController.navigate(Screen.MainMenu.route) {
@@ -2160,6 +2214,10 @@ fun RootNavGraph(
                                 wantsToPlayAgainPlayerName = null
                                 opponentDisconnectMessage = null
                                 opponentSurrenderMessage = null
+                                latestIncomingEmote = null
+                                latestIncomingEmoteScale = 1.0f
+                                latestIncomingEmoteTimestamp = 0L
+                                latestIncomingChatMessage = null
                                 navController.navigate(Screen.ManualBoardDesign.route)
                             } else {
                                 startNewGame(
@@ -2191,6 +2249,10 @@ fun RootNavGraph(
                     wantsToPlayAgainPlayerName = null
                     opponentDisconnectMessage = null
                     opponentSurrenderMessage = null
+                    latestIncomingEmote = null
+                    latestIncomingEmoteScale = 1.0f
+                    latestIncomingEmoteTimestamp = 0L
+                    latestIncomingChatMessage = null
                     isLocalBoardReady = false
                     isOpponentBoardReady = false
                     countdownSeconds = -1
@@ -2218,6 +2280,10 @@ fun RootNavGraph(
                         wantsToPlayAgainPlayerName = null
                         opponentDisconnectMessage = null
                         opponentSurrenderMessage = null
+                        latestIncomingEmote = null
+                        latestIncomingEmoteScale = 1.0f
+                        latestIncomingEmoteTimestamp = 0L
+                        latestIncomingChatMessage = null
                         isLocalBoardReady = false
                         isOpponentBoardReady = false
                         countdownSeconds = -1
@@ -2397,7 +2463,7 @@ fun RootNavGraph(
                                 )
                             )
                         }
-                        isGameOver = true
+                        isGameOver = false
                         didPlayerWin = false
                         isLocalBoardReady = false
                         isOpponentBoardReady = false
@@ -2427,5 +2493,6 @@ fun RootNavGraph(
             containerColor = BingoTheme.colors.surface,
             shape = RoundedCornerShape(16.dp)
         )
+    }
     }
 }

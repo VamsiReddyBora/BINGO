@@ -31,6 +31,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.bingo.multiplayer.core.designsystem.BingoTheme
 import com.bingo.multiplayer.domain.model.Board
 
 private val BINGO_LETTERS = listOf('B', 'I', 'N', 'G', 'O')
@@ -47,6 +48,7 @@ fun BingoBoardView(
     isWinningBoard: Boolean = false,
     onBoardWidthMeasured: ((Dp) -> Unit)? = null
 ) {
+    val tokens = BingoTheme.colors
     val size = board.size
     val spacing = when {
         size <= 5 -> 8.dp
@@ -93,7 +95,7 @@ fun BingoBoardView(
                             text = letter.toString(),
                             fontSize = 24.sp,
                             fontWeight = FontWeight.Black,
-                            color = Color.Black
+                            color = tokens.cellNeutralText
                         )
 
                         // Diagonal strike across the letter on completion
@@ -115,7 +117,7 @@ fun BingoBoardView(
                                 val curEndY = startY + (targetEndY - startY) * progress
 
                                 drawLine(
-                                    color = Color.Black,
+                                    color = tokens.cellNeutralText,
                                     start = Offset(startX, startY),
                                     end = Offset(curEndX, curEndY),
                                     strokeWidth = 3.5.dp.toPx(),
@@ -176,6 +178,7 @@ fun BingoHeaderTracker(
     targetLines: Int = 5,
     modifier: Modifier = Modifier
 ) {
+    val tokens = BingoTheme.colors
     val extraStars = if (targetLines > 5) List(targetLines - 5) { '★' } else emptyList()
     val displayLetters = (BINGO_LETTERS.take(targetLines) + extraStars).take(targetLines)
 
@@ -203,7 +206,7 @@ fun BingoHeaderTracker(
                     text = letter.toString(),
                     fontSize = 25.sp,
                     fontWeight = FontWeight.Black,
-                    color = Color.Black
+                    color = tokens.cellNeutralText
                 )
 
                 if (strikeProgress > 0f) {
@@ -217,7 +220,7 @@ fun BingoHeaderTracker(
                         val centerY = size.height / 2f
 
                         drawLine(
-                            color = Color.Black,
+                            color = tokens.cellNeutralText,
                             start = Offset(startX, centerY),
                             end = Offset(currentEndX, centerY),
                             strokeWidth = 3.5.dp.toPx(),

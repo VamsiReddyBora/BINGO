@@ -55,6 +55,7 @@ data class PlayerRegistryEntry(
     val gamesPlayed: Int = 0,
     val gamesWon: Int = 0,
     val currentStreak: Int = 0,
+    val bestStreak: Int = 0,
     val level: Int = 1,
     val lastSeenTimestamp: Long = System.currentTimeMillis()
 ) {
@@ -596,6 +597,7 @@ class AccountSessionManager(
                     gamesPlayed = p.gamesPlayed,
                     gamesWon = p.gamesWon,
                     currentStreak = p.currentStreak,
+                    bestStreak = p.bestStreak,
                     level = p.level,
                     lastSeenTimestamp = backup.lastBackupTimestamp
                 )
@@ -1178,6 +1180,32 @@ class AccountSessionManager(
         private val backupMemoryCache = ConcurrentHashMap<String, com.bingo.multiplayer.domain.model.CloudUserDataBackup>()
 
         val defaultInstance by lazy { AccountSessionManager() }
+
+        fun getCachedPlayer(username: String): PlayerRegistryEntry? {
+            val clean = username.trim().lowercase().removePrefix("@")
+            return registryCache[clean]?.second
+        }
+
+        fun cachePlayer(entry: PlayerRegistryEntry) {
+            val clean = entry.username.trim().lowercase().removePrefix("@")
+            if (clean.isNotBlank()) {
+                registryCache[clean] = Pair(System.currentTimeMillis(), entry)
+            }
+        }
+
+        fun prefetchPlayer(username: String, scope: kotlinx.coroutines.CoroutineScope) {
+            val clean = username.trim().lowercase().removePrefix("@")
+            if (clean.isBlank()) return
+            val cached = registryCache[clean]
+            if (cached != null && (System.currentTimeMillis() - cached.first) < 120_000L) {
+                return
+            }
+            scope.launch(Dispatchers.IO) {
+                try {
+                    searchPlayerByUsername(clean, timeoutMs = 4000L, forceRefresh = false)
+                } catch (_: Exception) {}
+            }
+        }
 
         suspend fun searchPlayerByUsername(
             username: String,

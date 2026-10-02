@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.sp
 import com.bingo.multiplayer.core.designsystem.BingoColors
 import com.bingo.multiplayer.core.designsystem.BingoTheme
 import com.bingo.multiplayer.domain.model.InGameChatMessage
+import com.bingo.multiplayer.presentation.components.AnimatedEmoji
 
 /**
  * In-game WhatsApp-style chat space positioned between the 5x5 Bingo board and the emoji reactions strip.
@@ -137,6 +138,9 @@ private fun InGameChatBubble(
         )
     }
 
+    val trimmed = message.text.trim()
+    val isEmojiOnly = trimmed.isNotBlank() && trimmed.length <= 8 && !trimmed.any { it.isLetterOrDigit() }
+
     if (message.isSelf) {
         // Self message: aligned to the right (WhatsApp style soft green/mint or soft lavender)
         Box(
@@ -145,7 +149,8 @@ private fun InGameChatBubble(
         ) {
             Surface(
                 shape = RoundedCornerShape(topStart = 14.dp, topEnd = 3.dp, bottomStart = 14.dp, bottomEnd = 14.dp),
-                color = if (tokens.isDark) Color(0xFF005C4B) else Color(0xFFDCF8C6),
+                color = if (tokens.isDark) Color(0xFF262626) else Color(0xFFDCF8C6),
+                border = if (tokens.isDark) BorderStroke(1.dp, Color(0xFF383838)) else null,
                 shadowElevation = 1.dp,
                 modifier = Modifier
                     .graphicsLayer {
@@ -154,14 +159,23 @@ private fun InGameChatBubble(
                     }
                     .widthIn(max = 240.dp)
             ) {
-                Text(
-                    text = message.text,
-                    fontSize = 12.sp,
-                    lineHeight = 15.sp,
-                    color = if (tokens.isDark) Color.White else Color(0xFF111827),
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                )
+                if (isEmojiOnly) {
+                    Box(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+                        AnimatedEmoji(
+                            emoji = trimmed,
+                            fontSize = 22.sp
+                        )
+                    }
+                } else {
+                    Text(
+                        text = message.text,
+                        fontSize = 12.sp,
+                        lineHeight = 15.sp,
+                        color = tokens.textPrimary,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
             }
         }
     } else {
@@ -172,7 +186,7 @@ private fun InGameChatBubble(
         ) {
             Surface(
                 shape = RoundedCornerShape(topStart = 3.dp, topEnd = 14.dp, bottomStart = 14.dp, bottomEnd = 14.dp),
-                color = tokens.surface,
+                color = if (tokens.isDark) Color(0xFF181818) else tokens.surface,
                 border = BorderStroke(0.5.dp, tokens.surfaceBorder),
                 shadowElevation = 1.dp,
                 modifier = Modifier
@@ -192,16 +206,24 @@ private fun InGameChatBubble(
                             fontSize = 9.sp,
                             lineHeight = 10.sp,
                             fontWeight = FontWeight.Bold,
-                            color = tokens.accentOpponent
+                            color = if (tokens.isDark) tokens.textSecondary else tokens.accentOpponent
                         )
                     }
-                    Text(
-                        text = message.text,
-                        fontSize = 12.sp,
-                        lineHeight = 15.sp,
-                        color = tokens.cellNeutralText,
-                        fontWeight = FontWeight.Medium
-                    )
+                    if (isEmojiOnly) {
+                        AnimatedEmoji(
+                            emoji = trimmed,
+                            fontSize = 22.sp,
+                            modifier = Modifier.padding(vertical = 2.dp)
+                        )
+                    } else {
+                        Text(
+                            text = message.text,
+                            fontSize = 12.sp,
+                            lineHeight = 15.sp,
+                            color = tokens.textPrimary,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                 }
             }
         }

@@ -19,7 +19,7 @@ class PresenceAndFriendRequestTest {
     fun testPresenceDisplayFormatting_noGreenDotsOrSymbols() {
         val now = System.currentTimeMillis()
 
-        // 1. Online status — within 15 seconds
+        // 1. Online status — within 12 seconds fallback
         val onlineStatus = PresenceManager.getDisplayStatus("test_user_online", now)
         assertEquals("online", onlineStatus)
         assertFalse("Must not contain green dot or circle", onlineStatus.contains("●") || onlineStatus.contains("🟢") || onlineStatus.contains("•"))
@@ -27,13 +27,21 @@ class PresenceAndFriendRequestTest {
         // 2. 5 minutes ago — should show "last seen 5m ago"
         val fiveMinutesAgo = now - (5 * 60 * 1000L)
         val fiveMinStatus = PresenceManager.getDisplayStatus("unknown_user", fiveMinutesAgo)
-        assertTrue("Expected 'last seen 5m ago' but got: $fiveMinStatus", fiveMinStatus.startsWith("last seen 5m"))
+        assertEquals("last seen 5m ago", fiveMinStatus)
         assertFalse("Must not contain green dot", fiveMinStatus.contains("●") || fiveMinStatus.contains("🟢") || fiveMinStatus.contains("•"))
 
-        // 3. 2 hours ago — should show "last seen 2h ago"
+        // 2b. 48 minutes ago — should show "last seen 48m ago"
+        val fortyEightMinAgo = now - (48 * 60 * 1000L)
+        val fortyEightMinStatus = PresenceManager.getDisplayStatus("unknown_user", fortyEightMinAgo)
+        assertEquals("last seen 48m ago", fortyEightMinStatus)
+
+        // 3. Exceeds 1 hour (e.g. 2 hours ago) — should show 12-hour formatted time like "last seen 5:38pm"
         val twoHoursAgo = now - (2 * 3600 * 1000L)
         val twoHoursStatus = PresenceManager.getDisplayStatus("unknown_user", twoHoursAgo)
-        assertTrue("Expected 'last seen 2h ago' but got: $twoHoursStatus", twoHoursStatus.startsWith("last seen 2h"))
+        assertTrue(
+            "Expected 'last seen h:mma' (e.g. 'last seen 5:38pm') but got: $twoHoursStatus",
+            twoHoursStatus.matches(Regex("""^last seen \d{1,2}:\d{2}(am|pm)$"""))
+        )
         assertFalse("Must not contain green dot", twoHoursStatus.contains("●") || twoHoursStatus.contains("🟢"))
 
         // 4. Over 24 hours ago — show "offline"
@@ -44,15 +52,41 @@ class PresenceAndFriendRequestTest {
     }
 
     @Test
+    fun testDetailedActivityStatuses_inLobbyAndPlaying() {
+        val now = System.currentTimeMillis()
+
+        // Explicit IN_LOBBY
+        PresenceManager.onPresenceReceived(PlayerPresence("user_lobby", "IN_LOBBY", now))
+        assertEquals("in-lobby", PresenceManager.getDisplayStatus("user_lobby"))
+
+        // Explicit PLAYING
+        PresenceManager.onPresenceReceived(PlayerPresence("user_playing", "PLAYING", now))
+        assertEquals("playing", PresenceManager.getDisplayStatus("user_playing"))
+
+        // Explicit ONLINE
+        PresenceManager.onPresenceReceived(PlayerPresence("user_online_active", "ONLINE", now))
+        assertEquals("online", PresenceManager.getDisplayStatus("user_online_active"))
+
+        // isStatusOnline helper
+        assertTrue(PresenceManager.isStatusOnline("online"))
+        assertTrue(PresenceManager.isStatusOnline("in-lobby"))
+        assertTrue(PresenceManager.isStatusOnline("playing"))
+        assertFalse(PresenceManager.isStatusOnline("last seen just now"))
+        assertFalse(PresenceManager.isStatusOnline("last seen 48m ago"))
+        assertFalse(PresenceManager.isStatusOnline("last seen 5:38pm"))
+        assertFalse(PresenceManager.isStatusOnline("offline"))
+    }
+
+    @Test
     fun testPresenceDisplayFormatting_justNow() {
         val now = System.currentTimeMillis()
 
-        // 5 seconds ago — should show "online" (within 15s window)
+        // 5 seconds ago — should show "online" (within 12s window)
         val fiveSecsAgo = now - 5_000L
         val onlineStatus = PresenceManager.getDisplayStatus("unknown_user", fiveSecsAgo)
         assertEquals("online", onlineStatus)
 
-        // 30 seconds ago — should show "last seen just now" (between 15s and 60s)
+        // 30 seconds ago — should show "last seen just now" (between 12s and 60s)
         val thirtySecsAgo = now - 30_000L
         val justNowStatus = PresenceManager.getDisplayStatus("unknown_user", thirtySecsAgo)
         assertEquals("last seen just now", justNowStatus)

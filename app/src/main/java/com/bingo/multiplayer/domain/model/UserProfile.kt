@@ -24,9 +24,12 @@ data class UserProfile(
     val gamesPlayed: Int = 0,
     val gamesWon: Int = 0,
     val currentStreak: Int = 0,
+    val bestStreak: Int = 0,
     val level: Int = 1,
     val xp: Int = 0
 ) {
+    val activeStreak: Int
+        get() = currentStreak
     val playerId: String
         get() = username.ifEmpty { displayName.filter { it.isLetterOrDigit() }.lowercase().ifEmpty { uid.take(8) } }
     val winRatePercentage: Int

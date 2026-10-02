@@ -38,6 +38,9 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import com.bingo.multiplayer.domain.network.HotspotAndWifiManager
+import com.bingo.multiplayer.domain.network.NearbyHostQrPayload
+import com.bingo.multiplayer.presentation.nearby.NearbyHostQrDisplayDialog
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -45,6 +48,8 @@ import com.bingo.multiplayer.core.designsystem.BingoTheme
 import com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine
 import com.bingo.multiplayer.domain.model.Player
 
+import com.bingo.multiplayer.domain.network.AccountSessionManager
+import com.bingo.multiplayer.domain.network.ActionCooldownManager
 import com.bingo.multiplayer.domain.network.PlayerRegistryEntry
 import com.bingo.multiplayer.presentation.common.PlayerAvatar
 import com.bingo.multiplayer.presentation.common.PlayerProfileData
@@ -97,6 +102,14 @@ fun LobbyScreen(
         }
     }
 
+    LaunchedEffect(players) {
+        players.forEach { p ->
+            if (p.username.isNotBlank() && !p.isAi) {
+                AccountSessionManager.prefetchPlayer(p.username, this)
+            }
+        }
+    }
+
     var searchQuery by remember { mutableStateOf("") }
     var isSearching by remember { mutableStateOf(false) }
     var searchResult by remember { mutableStateOf<PlayerRegistryEntry?>(null) }
@@ -106,6 +119,21 @@ fun LobbyScreen(
     var inactivitySecondsLeft by remember { mutableStateOf(300) }
     var showInactivityDialog by remember { mutableStateOf(false) }
     var countdownSecondsLeft by remember { mutableStateOf(30) }
+    var showNearbyQrDialog by remember { mutableStateOf(false) }
+
+    if (showNearbyQrDialog) {
+        val hostPayload = NearbyHostQrPayload(
+            ssid = HotspotAndWifiManager.getHotspotName(context),
+            password = "",
+            roomCode = roomCode,
+            hostIp = "",
+            hostName = players.firstOrNull { it.isHost }?.displayName ?: "Nearby Host"
+        )
+        NearbyHostQrDisplayDialog(
+            payload = hostPayload,
+            onDismiss = { showNearbyQrDialog = false }
+        )
+    }
 
     LaunchedEffect(inactivityResetToken, isHost) {
         if (!isHost) return@LaunchedEffect
@@ -291,46 +319,78 @@ fun LobbyScreen(
                                 clipboard.setPrimaryClip(ClipData.newPlainText("Bingo Room Code", roomCode))
                                 Toast.makeText(context, "Code copied to clipboard!", Toast.LENGTH_SHORT).show()
                             },
-                            shape = RoundedCornerShape(8.dp)
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, tokens.surfaceBorder),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = tokens.textPrimary)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.ContentCopy,
                                 contentDescription = null,
                                 modifier = Modifier.size(15.dp),
-                                tint = tokens.cellNeutralText.copy(alpha = 0.7f)
+                                tint = tokens.textPrimary
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
                                 text = "Copy",
                                 fontSize = 12.sp,
-                                color = tokens.cellNeutralText.copy(alpha = 0.8f),
+                                color = tokens.textPrimary,
                                 fontWeight = FontWeight.SemiBold
                             )
                         }
 
-                        Button(
-                            onClick = {
-                                val sendIntent = Intent().apply {
-                                    action = Intent.ACTION_SEND
-                                    putExtra(Intent.EXTRA_TEXT, "Join my Bingo room! Room code: $roomCode")
-                                    type = "text/plain"
-                                }
-                                context.startActivity(Intent.createChooser(sendIntent, "Share Room Code"))
-                            },
-                            shape = RoundedCornerShape(8.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = tokens.accentBrand)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Share,
-                                contentDescription = null,
-                                modifier = Modifier.size(15.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Share Code",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
+                        if (isNearbyNetwork) {
+                            Button(
+                                onClick = { HotspotAndWifiManager.openHotspotSettings(context) },
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = tokens.primaryButtonBg,
+                                    contentColor = tokens.primaryButtonText
+                                )
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.QrCode,
+                                    contentDescription = "Show QR Code",
+                                    modifier = Modifier.size(16.dp),
+                                    tint = tokens.primaryButtonText
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Show QR",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = tokens.primaryButtonText
+                                )
+                            }
+                        } else {
+                            Button(
+                                onClick = {
+                                    val sendIntent = Intent().apply {
+                                        action = Intent.ACTION_SEND
+                                        putExtra(Intent.EXTRA_TEXT, "Join my Bingo room! Room code: $roomCode")
+                                        type = "text/plain"
+                                    }
+                                    context.startActivity(Intent.createChooser(sendIntent, "Share Room Code"))
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = tokens.primaryButtonBg,
+                                    contentColor = tokens.primaryButtonText
+                                )
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Share,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(15.dp),
+                                    tint = tokens.primaryButtonText
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Share Code",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = tokens.primaryButtonText
+                                )
+                            }
                         }
                     }
                 }
@@ -372,14 +432,14 @@ fun LobbyScreen(
                                 imageVector = Icons.Default.Refresh,
                                 contentDescription = null,
                                 modifier = Modifier.size(13.dp),
-                                tint = tokens.accentBrand
+                                tint = if (tokens.isDark) Color.White else tokens.accentBrand
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
                                 text = "Sync",
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = tokens.accentBrand
+                                color = if (tokens.isDark) Color.White else tokens.accentBrand
                             )
                         }
                     }
@@ -483,21 +543,19 @@ fun LobbyScreen(
                                 val livePres = presenceMap[cleanUser]
                                 val effectiveTs = livePres?.timestamp?.takeIf { it > 0L } ?: player.lastSeenTimestamp
                                 if (ticker >= 0L) Unit
-                                val rawStatus = if (isMe) "online" else com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(cleanUser, effectiveTs)
-                                val isOnline = rawStatus.equals("online", ignoreCase = true)
-                                val displayStatus = when {
-                                    isOnline -> "online"
-                                    rawStatus.equals("offline", ignoreCase = true) -> "offline"
-                                    else -> rawStatus
+                                val rawStatus = if (isMe) {
+                                    when (com.bingo.multiplayer.domain.network.PresenceManager.currentActivityState) {
+                                        com.bingo.multiplayer.domain.network.AppActivityState.IN_LOBBY -> "in-lobby"
+                                        com.bingo.multiplayer.domain.network.AppActivityState.PLAYING -> "playing"
+                                        com.bingo.multiplayer.domain.network.AppActivityState.ONLINE -> "online"
+                                    }
+                                } else {
+                                    com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(cleanUser, effectiveTs)
                                 }
-                                val statusColor = when {
-                                    isOnline -> Color(0xFF16A34A)
-                                    displayStatus.equals("offline", ignoreCase = true) -> Color(0xFF94A3B8)
-                                    else -> Color(0xFFEAB308)
-                                }
+                                val statusColor = com.bingo.multiplayer.domain.network.PresenceManager.getStatusColor(rawStatus)
 
                                 Text(
-                                    text = displayStatus,
+                                    text = rawStatus,
                                     fontSize = 11.5.sp,
                                     fontWeight = FontWeight.Medium,
                                     color = statusColor,
@@ -565,7 +623,15 @@ fun LobbyScreen(
                             }.trim().lowercase().removePrefix("@")
                             val livePres = presenceMap[cleanUser]
                             val effectiveTs = livePres?.timestamp?.takeIf { it > 0L } ?: player.lastSeenTimestamp
-                            val rawStatus = if (isMe) "online" else com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(cleanUser, effectiveTs)
+                            val rawStatus = if (isMe) {
+                                when (com.bingo.multiplayer.domain.network.PresenceManager.currentActivityState) {
+                                    com.bingo.multiplayer.domain.network.AppActivityState.IN_LOBBY -> "in-lobby"
+                                    com.bingo.multiplayer.domain.network.AppActivityState.PLAYING -> "playing"
+                                    com.bingo.multiplayer.domain.network.AppActivityState.ONLINE -> "online"
+                                }
+                            } else {
+                                com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(cleanUser, effectiveTs)
+                            }
 
                             val effectivePlayer = if (isMe) {
                                 player.copy(lobbyReadyStatus = if (isMyReadyState) LobbyLifecycleEngine.STATUS_READY else LobbyLifecycleEngine.STATUS_NOT_READY)
@@ -638,7 +704,8 @@ fun LobbyScreen(
                         val cleanF = f.username.trim().lowercase().removePrefix("@")
                         val pres = presenceMap[cleanF]
                         val effectiveTs = pres?.timestamp?.takeIf { it > 0L } ?: f.lastSeenTimestamp
-                        val isOnlineByPres = com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(cleanF, effectiveTs).equals("online", ignoreCase = true)
+                        val status = com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(cleanF, effectiveTs)
+                        val isOnlineByPres = com.bingo.multiplayer.domain.network.PresenceManager.isStatusOnline(status)
                         val notInRoom = players.none { p ->
                             p.id == f.uid ||
                             (f.username.isNotBlank() && p.username.equals(f.username, ignoreCase = true)) ||
@@ -758,20 +825,10 @@ fun LobbyScreen(
                                         val effectiveTs = livePres?.timestamp?.takeIf { it > 0L } ?: friend.lastSeenTimestamp
                                         if (ticker >= 0L) Unit
                                         val statusText = com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(cleanF, effectiveTs)
-                                        val isOnline = statusText.equals("online", ignoreCase = true)
-                                        val displayStatus = when {
-                                            isOnline -> "online"
-                                            statusText.equals("offline", ignoreCase = true) -> "offline"
-                                            else -> statusText
-                                        }
-                                        val statusColor = when {
-                                            isOnline -> Color(0xFF16A34A)
-                                            displayStatus.equals("offline", ignoreCase = true) -> Color(0xFF94A3B8)
-                                            else -> Color(0xFFEAB308)
-                                        }
+                                        val statusColor = com.bingo.multiplayer.domain.network.PresenceManager.getStatusColor(statusText)
 
                                         Text(
-                                            text = displayStatus,
+                                            text = statusText,
                                             fontSize = 10.5.sp,
                                             color = statusColor,
                                             fontWeight = FontWeight.Medium,
@@ -782,8 +839,10 @@ fun LobbyScreen(
 
                                     Spacer(modifier = Modifier.width(8.dp))
 
+                                    val isInviteCooldown = ActionCooldownManager.isInviteOnCooldown(friend.username)
                                     Button(
                                         onClick = {
+                                            ActionCooldownManager.startInviteCooldown(friend.username)
                                             val fromUser = currentUser?.username
                                                 ?: players.firstOrNull { it.isHost }?.id
                                                 ?: "Host"
@@ -804,14 +863,30 @@ fun LobbyScreen(
                                                 Toast.makeText(context, "Invite sent to @${friend.username}!", Toast.LENGTH_SHORT).show()
                                             }
                                         },
+                                        enabled = !isInviteCooldown,
                                         shape = RoundedCornerShape(8.dp),
-                                        colors = ButtonDefaults.buttonColors(containerColor = tokens.accentBrand),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (isInviteCooldown) (if (tokens.isDark) Color(0xFF222222) else Color(0xFFE2E8F0)) else tokens.primaryButtonBg,
+                                            contentColor = if (isInviteCooldown) tokens.textMuted else tokens.primaryButtonText,
+                                            disabledContainerColor = if (tokens.isDark) Color(0xFF222222) else Color(0xFFE2E8F0),
+                                            disabledContentColor = tokens.textMuted
+                                        ),
                                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                                         modifier = Modifier.height(30.dp)
                                     ) {
-                                        Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.size(12.dp))
+                                        Icon(
+                                            imageVector = Icons.Default.Share,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(12.dp),
+                                            tint = if (isInviteCooldown) tokens.textMuted else tokens.primaryButtonText
+                                        )
                                         Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Invite", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        Text(
+                                            text = if (isInviteCooldown) "Invited" else "Invite",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isInviteCooldown) tokens.textMuted else tokens.primaryButtonText
+                                        )
                                     }
                                 }
                             }
@@ -878,23 +953,27 @@ fun LobbyScreen(
                                 }
                             },
                             shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = tokens.accentBrand),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = tokens.primaryButtonBg,
+                                contentColor = tokens.primaryButtonText
+                            ),
                             enabled = !isSearching && searchQuery.isNotBlank()
                         ) {
                             if (isSearching) {
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(16.dp),
                                     strokeWidth = 2.dp,
-                                    color = Color.White
+                                    color = tokens.primaryButtonText
                                 )
                             } else {
                                 Icon(
                                     imageVector = Icons.Default.Search,
                                     contentDescription = "Search",
-                                    modifier = Modifier.size(16.dp)
+                                    modifier = Modifier.size(16.dp),
+                                    tint = tokens.primaryButtonText
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("Search", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text("Search", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = tokens.primaryButtonText)
                             }
                         }
                     }
@@ -956,19 +1035,9 @@ fun LobbyScreen(
                                     val effectiveTs = livePres?.timestamp?.takeIf { it > 0L } ?: result.lastSeenTimestamp
                                     if (ticker >= 0L) Unit
                                     val statusText = com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(cleanFound, effectiveTs)
-                                    val isOnline = statusText.equals("online", ignoreCase = true)
-                                    val displayStatus = when {
-                                        isOnline -> "online"
-                                        statusText.equals("offline", ignoreCase = true) -> "offline"
-                                        else -> statusText
-                                    }
-                                    val statusColor = when {
-                                        isOnline -> Color(0xFF16A34A)
-                                        displayStatus.equals("offline", ignoreCase = true) -> Color(0xFF94A3B8)
-                                        else -> Color(0xFFEAB308)
-                                    }
+                                    val statusColor = com.bingo.multiplayer.domain.network.PresenceManager.getStatusColor(statusText)
                                     Text(
-                                        text = displayStatus,
+                                        text = statusText,
                                         fontSize = 10.5.sp,
                                         color = statusColor,
                                         fontWeight = FontWeight.Medium,
@@ -984,54 +1053,41 @@ fun LobbyScreen(
                                         val isAlready = friendsRepository.isFriend(result.username) || friendsRepository.isFriend(result.uid)
                                         val hasSent = friendsRepository.hasSentRequest(result.username)
                                         if (!isAlready) {
-                                            if (hasSent) {
-                                                Surface(
-                                                    shape = RoundedCornerShape(6.dp),
-                                                    color = tokens.accentBrand.copy(alpha = 0.12f)
-                                                ) {
-                                                    Text(
-                                                        text = "Requested",
-                                                        color = tokens.accentBrand,
-                                                        fontSize = 10.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
-                                                    )
-                                                }
-                                            } else {
-                                                IconButton(
-                                                    onClick = {
-                                                        coroutineScope.launch {
-                                                            currentUser?.let { me ->
-                                                                val success = friendsRepository.sendFriendRequest(
-                                                                    targetUsername = result.username,
-                                                                    targetDisplayName = result.displayName,
-                                                                    targetUid = result.uid,
-                                                                    currentUser = me
-                                                                )
-                                                                if (success) {
-                                                                    Toast.makeText(context, "Friend request sent to ${result.displayName}!", Toast.LENGTH_SHORT).show()
-                                                                }
+                                            val isFriendCooldown = ActionCooldownManager.isFriendRequestOnCooldown(result.username)
+                                            IconButton(
+                                                onClick = {
+                                                    ActionCooldownManager.startFriendRequestCooldown(result.username)
+                                                    coroutineScope.launch {
+                                                        currentUser?.let { me ->
+                                                            val success = friendsRepository.sendFriendRequest(
+                                                                targetUsername = result.username,
+                                                                targetDisplayName = result.displayName,
+                                                                targetUid = result.uid,
+                                                                currentUser = me
+                                                            )
+                                                            if (success) {
+                                                                Toast.makeText(context, "Friend request sent to ${result.displayName}!", Toast.LENGTH_SHORT).show()
                                                             }
                                                         }
-                                                    },
-                                                    modifier = Modifier
-                                                        .size(32.dp)
-                                                        .clip(CircleShape)
-                                                        .background(tokens.accentBrand.copy(alpha = 0.12f))
-                                                ) {
-                                                    Icon(
-                                                        imageVector = Icons.Default.PersonAdd,
-                                                        contentDescription = "Add Friend",
-                                                        tint = tokens.accentBrand,
-                                                        modifier = Modifier.size(18.dp)
-                                                    )
-                                                }
+                                                    }
+                                                },
+                                                enabled = !isFriendCooldown,
+                                                modifier = Modifier.size(32.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.PersonAdd,
+                                                    contentDescription = "Add Friend",
+                                                    tint = if (isFriendCooldown) tokens.textMuted else (if (tokens.isDark) Color.White else tokens.accentBrand),
+                                                    modifier = Modifier.size(20.dp)
+                                                )
                                             }
                                         }
                                     }
 
+                                    val isInviteCooldown = ActionCooldownManager.isInviteOnCooldown(result.username)
                                     Button(
                                         onClick = {
+                                            ActionCooldownManager.startInviteCooldown(result.username)
                                             val fromUser = currentUser?.username
                                                 ?: players.firstOrNull { it.isHost }?.id
                                                 ?: "Host"
@@ -1052,14 +1108,30 @@ fun LobbyScreen(
                                                 Toast.makeText(context, "Invite sent to @${result.username}!", Toast.LENGTH_SHORT).show()
                                             }
                                         },
+                                        enabled = !isInviteCooldown,
                                         shape = RoundedCornerShape(8.dp),
-                                        colors = ButtonDefaults.buttonColors(containerColor = tokens.accentBrand),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (isInviteCooldown) (if (tokens.isDark) Color(0xFF222222) else Color(0xFFE2E8F0)) else tokens.primaryButtonBg,
+                                            contentColor = if (isInviteCooldown) tokens.textMuted else tokens.primaryButtonText,
+                                            disabledContainerColor = if (tokens.isDark) Color(0xFF222222) else Color(0xFFE2E8F0),
+                                            disabledContentColor = tokens.textMuted
+                                        ),
                                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                                         modifier = Modifier.height(30.dp)
                                     ) {
-                                        Icon(imageVector = Icons.Default.Share, contentDescription = null, modifier = Modifier.size(12.dp))
+                                        Icon(
+                                            imageVector = Icons.Default.Share,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(12.dp),
+                                            tint = if (isInviteCooldown) tokens.textMuted else tokens.primaryButtonText
+                                        )
                                         Spacer(modifier = Modifier.width(3.dp))
-                                        Text("Invite", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        Text(
+                                            text = if (isInviteCooldown) "Invited" else "Invite",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isInviteCooldown) tokens.textMuted else tokens.primaryButtonText
+                                        )
                                     }
                                 }
                             }
@@ -1115,9 +1187,9 @@ fun LobbyScreen(
                         checked = isManualBoard,
                         onCheckedChange = null,
                         colors = CheckboxDefaults.colors(
-                            checkedColor = tokens.accentBrand,
+                            checkedColor = if (tokens.isDark) Color.White else tokens.accentBrand,
                             uncheckedColor = tokens.surfaceBorder,
-                            checkmarkColor = Color.White
+                            checkmarkColor = if (tokens.isDark) Color.Black else Color.White
                         )
                     )
                 }
@@ -1133,14 +1205,16 @@ fun LobbyScreen(
                         .height(50.dp),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = tokens.accentBrand,
+                        containerColor = tokens.primaryButtonBg,
+                        contentColor = tokens.primaryButtonText,
                         disabledContainerColor = tokens.surfaceBorder
                     )
                 ) {
                     Icon(
                         imageVector = Icons.Default.PlayArrow,
                         contentDescription = null,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(18.dp),
+                        tint = if (allReady) tokens.primaryButtonText else tokens.textMuted
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
@@ -1151,7 +1225,7 @@ fun LobbyScreen(
                         },
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp,
-                        color = if (allReady) Color.White else tokens.cellNeutralText.copy(alpha = 0.5f)
+                        color = if (allReady) tokens.primaryButtonText else tokens.textMuted
                     )
                 }
             } else {
@@ -1200,17 +1274,17 @@ fun LobbyScreen(
                                 .fillMaxWidth()
                                 .height(50.dp),
                             shape = RoundedCornerShape(12.dp),
-                            border = BorderStroke(1.5.dp, tokens.accentBrand),
+                            border = BorderStroke(1.5.dp, if (tokens.isDark) Color.White else tokens.accentBrand),
                             colors = ButtonDefaults.outlinedButtonColors(
                                 containerColor = Color.Transparent,
-                                contentColor = tokens.accentBrand
+                                contentColor = if (tokens.isDark) Color.White else tokens.accentBrand
                             )
                         ) {
                             Text(
                                 text = "I'm Not Ready",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 15.sp,
-                                color = tokens.accentBrand
+                                color = if (tokens.isDark) Color.White else tokens.accentBrand
                             )
                         }
                     } else {
@@ -1225,14 +1299,15 @@ fun LobbyScreen(
                                 .height(50.dp),
                             shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = tokens.accentBrand
+                                containerColor = tokens.primaryButtonBg,
+                                contentColor = tokens.primaryButtonText
                             )
                         ) {
                             Text(
                                 text = "I'm Ready",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 15.sp,
-                                color = Color.White
+                                color = tokens.primaryButtonText
                             )
                         }
                     }

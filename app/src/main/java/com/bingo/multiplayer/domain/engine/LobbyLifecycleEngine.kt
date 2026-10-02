@@ -266,7 +266,8 @@ object LobbyLifecycleEngine {
      */
     fun isPlayerLeft(player: Player, isMe: Boolean, rawPresenceStatus: String): Boolean {
         if (player.lobbyReadyStatus == STATUS_LEFT_LOBBY) return true
-        if (!isMe && (System.currentTimeMillis() - player.lastSeenTimestamp) > 60_000L && rawPresenceStatus.equals("offline", ignoreCase = true)) {
+        if (!isMe && (System.currentTimeMillis() - player.lastSeenTimestamp) > 60_000L &&
+            !com.bingo.multiplayer.domain.network.PresenceManager.isStatusOnline(rawPresenceStatus)) {
             return true
         }
         return false

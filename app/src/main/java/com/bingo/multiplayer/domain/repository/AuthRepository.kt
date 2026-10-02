@@ -170,6 +170,7 @@ class AuthRepository(
             val gamesPlayed = prefs.getInt(KEY_GAMES_PLAYED, 0)
             val gamesWon = prefs.getInt(KEY_GAMES_WON, 0)
             val streak = prefs.getInt(KEY_STREAK, 0)
+            val bestStreak = maxOf(prefs.getInt(KEY_BEST_STREAK, streak), streak)
             val level = prefs.getInt(KEY_LEVEL, 1)
             val xp = prefs.getInt(KEY_XP, 0)
 
@@ -184,6 +185,7 @@ class AuthRepository(
                 gamesPlayed = gamesPlayed,
                 gamesWon = gamesWon,
                 currentStreak = streak,
+                bestStreak = bestStreak,
                 level = level,
                 xp = xp
             )
@@ -207,6 +209,7 @@ class AuthRepository(
                     gamesPlayed = user.gamesPlayed,
                     gamesWon = user.gamesWon,
                     currentStreak = user.currentStreak,
+                    bestStreak = user.bestStreak,
                     level = user.level
                 ),
                 googleId = googleId
@@ -248,6 +251,7 @@ class AuthRepository(
                     gamesPlayed = existing.gamesPlayed,
                     gamesWon = existing.gamesWon,
                     currentStreak = existing.currentStreak,
+                    bestStreak = existing.bestStreak,
                     level = existing.level,
                     xp = existing.xp
                 )
@@ -291,6 +295,7 @@ class AuthRepository(
                     gamesPlayed = current?.gamesPlayed ?: fetched.gamesPlayed,
                     gamesWon = current?.gamesWon ?: fetched.gamesWon,
                     currentStreak = current?.currentStreak ?: fetched.currentStreak,
+                    bestStreak = maxOf(current?.bestStreak ?: 0, fetched.bestStreak),
                     level = current?.level ?: fetched.level,
                     xp = current?.xp ?: fetched.xp
                 )
@@ -635,6 +640,7 @@ class AuthRepository(
         val newPlayed = current.gamesPlayed + 1
         val newWon = if (didWin) current.gamesWon + 1 else current.gamesWon
         val newStreak = if (didWin) current.currentStreak + 1 else if (isDraw) current.currentStreak else 0
+        val newBestStreak = maxOf(current.bestStreak, newStreak)
         val newXp = current.xp + when {
             didWin -> 100
             isDraw -> 50
@@ -646,6 +652,7 @@ class AuthRepository(
             gamesPlayed = newPlayed,
             gamesWon = newWon,
             currentStreak = newStreak,
+            bestStreak = newBestStreak,
             level = newLevel,
             xp = newXp
         )
@@ -662,6 +669,7 @@ class AuthRepository(
                 gamesPlayed = updated.gamesPlayed,
                 gamesWon = updated.gamesWon,
                 currentStreak = updated.currentStreak,
+                bestStreak = updated.bestStreak,
                 level = updated.level
             ),
             googleId = googleId
@@ -697,6 +705,7 @@ class AuthRepository(
             gamesPlayed = maxOf(current?.gamesPlayed ?: 0, cloudProfile.gamesPlayed),
             gamesWon = maxOf(current?.gamesWon ?: 0, cloudProfile.gamesWon),
             currentStreak = maxOf(current?.currentStreak ?: 0, cloudProfile.currentStreak),
+            bestStreak = maxOf(current?.bestStreak ?: 0, cloudProfile.bestStreak, cloudProfile.currentStreak),
             level = maxOf(current?.level ?: 1, cloudProfile.level),
             xp = maxOf(current?.xp ?: 0, cloudProfile.xp)
         )
@@ -749,6 +758,8 @@ class AuthRepository(
     fun getAuthToken(): String? = prefs.getString(KEY_AUTH_TOKEN, null)
 
     private fun loadExistingStats(): UserProfile {
+        val streak = prefs.getInt(KEY_STREAK, 0)
+        val bestStreak = maxOf(prefs.getInt(KEY_BEST_STREAK, streak), streak)
         return UserProfile(
             uid = "",
             displayName = "",
@@ -756,7 +767,8 @@ class AuthRepository(
             avatarBase64 = prefs.getString(KEY_AVATAR_BASE64, null),
             gamesPlayed = prefs.getInt(KEY_GAMES_PLAYED, 0),
             gamesWon = prefs.getInt(KEY_GAMES_WON, 0),
-            currentStreak = prefs.getInt(KEY_STREAK, 0),
+            currentStreak = streak,
+            bestStreak = bestStreak,
             level = prefs.getInt(KEY_LEVEL, 1),
             xp = prefs.getInt(KEY_XP, 0)
         )
@@ -774,6 +786,7 @@ class AuthRepository(
             .putInt(KEY_GAMES_PLAYED, profile.gamesPlayed)
             .putInt(KEY_GAMES_WON, profile.gamesWon)
             .putInt(KEY_STREAK, profile.currentStreak)
+            .putInt(KEY_BEST_STREAK, profile.bestStreak)
             .putInt(KEY_LEVEL, profile.level)
             .putInt(KEY_XP, profile.xp)
 
@@ -796,6 +809,7 @@ class AuthRepository(
         private const val KEY_GAMES_PLAYED = "games_played"
         private const val KEY_GAMES_WON = "games_won"
         private const val KEY_STREAK = "streak"
+        private const val KEY_BEST_STREAK = "best_streak"
         private const val KEY_LEVEL = "level"
         private const val KEY_XP = "xp"
         private const val KEY_DEVICE_ID = "device_id"

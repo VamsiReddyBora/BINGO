@@ -157,7 +157,8 @@ fun GameScreen(
     onSendEmote: (String, Float) -> Unit = { _, _ -> },
     incomingChatMessage: InGameChatMessage? = null,
     onSendChatMessage: (String) -> Unit = {},
-    pickedNumbersHistory: List<Int> = emptyList()
+    pickedNumbersHistory: List<Int> = emptyList(),
+    matchSeed: Long = 0L
 ) {
     val tokens = BingoTheme.colors
     val haptic = LocalHapticFeedback.current
@@ -168,7 +169,9 @@ fun GameScreen(
     var currentPhrases by remember { mutableStateOf(quickChatPhrases) }
 
     // ── In-Game WhatsApp Style Chat State ──
-    var chatMessages by remember { mutableStateOf(listOf<InGameChatMessage>()) }
+    val gameMountTime = remember(matchSeed) { System.currentTimeMillis() }
+    var lastHandledChatId by remember(matchSeed) { androidx.compose.runtime.mutableLongStateOf(0L) }
+    var chatMessages by remember(matchSeed) { mutableStateOf(listOf<InGameChatMessage>()) }
     var customChatInput by remember { mutableStateOf("") }
     var isCustomChatFocused by remember { mutableStateOf(false) }
     var isFullLengthChatActive by remember { mutableStateOf(false) }
@@ -176,8 +179,12 @@ fun GameScreen(
     val chatFocusRequester = remember { FocusRequester() }
     val coroutineScope = rememberCoroutineScope()
 
-    LaunchedEffect(incomingChatMessage) {
-        if (incomingChatMessage != null) {
+    LaunchedEffect(incomingChatMessage, matchSeed) {
+        if (incomingChatMessage != null &&
+            incomingChatMessage.timestamp >= gameMountTime &&
+            incomingChatMessage.id != lastHandledChatId
+        ) {
+            lastHandledChatId = incomingChatMessage.id
             chatMessages = chatMessages + incomingChatMessage
         }
     }
@@ -222,7 +229,7 @@ fun GameScreen(
     }
 
     // ── Floating Emotes State ──
-    var activeEmotes by remember { mutableStateOf(listOf<FloatingEmoteItem>()) }
+    var activeEmotes by remember(matchSeed) { mutableStateOf(listOf<FloatingEmoteItem>()) }
 
     fun spawnEmote(emoji: String, isSelf: Boolean, senderName: String? = null, scaleMultiplier: Float = 1.0f) {
         // Uniform random distribution from left (8%) to right (86%) across the whole screen width
@@ -236,8 +243,11 @@ fun GameScreen(
         )
     }
 
-    LaunchedEffect(incomingEmote, incomingEmoteTimestamp) {
-        if (!incomingEmote.isNullOrBlank()) {
+    var lastHandledEmoteTimestamp by remember(matchSeed) { androidx.compose.runtime.mutableLongStateOf(0L) }
+
+    LaunchedEffect(incomingEmote, incomingEmoteTimestamp, matchSeed) {
+        if (!incomingEmote.isNullOrBlank() && incomingEmoteTimestamp > 0L && incomingEmoteTimestamp >= gameMountTime && incomingEmoteTimestamp != lastHandledEmoteTimestamp) {
+            lastHandledEmoteTimestamp = incomingEmoteTimestamp
             spawnEmote(incomingEmote, isSelf = false, senderName = opponentName, scaleMultiplier = incomingEmoteScale)
         }
     }
@@ -293,11 +303,15 @@ fun GameScreen(
             val insetsController = WindowCompat.getInsetsController(window, view)
             insetsController.show(WindowInsetsCompat.Type.statusBars())
             insetsController.isAppearanceLightStatusBars = !isDarkTheme
+            insetsController.isAppearanceLightNavigationBars = !isDarkTheme
             window.statusBarColor = statusBarColor.toArgb()
+            window.navigationBarColor = statusBarColor.toArgb()
         }
         onDispose { }
     }
     var showSurrenderDialog by remember { mutableStateOf(false) }
+    var isExitingMatch by remember { mutableStateOf(false) }
+
     BackHandler(enabled = !isGameOver) {
         showSurrenderDialog = true
     }
@@ -317,8 +331,14 @@ fun GameScreen(
     var animateStampDrop by remember { mutableStateOf(true) }
     var hasTriggeredCelebration by remember { mutableStateOf(false) }
 
-    LaunchedEffect(isGameOver) {
-        if (isGameOver) {
+    LaunchedEffect(isGameOver, didPlayerWin, isExitingMatch) {
+        if (isExitingMatch) {
+            showStampBadge = false
+            isEmojiBurstActive = false
+            animateStampDrop = false
+            return@LaunchedEffect
+        }
+        if (isGameOver && didPlayerWin) {
             if (!hasTriggeredCelebration) {
                 hasTriggeredCelebration = true
                 isEmojiBurstActive = true
@@ -326,6 +346,11 @@ fun GameScreen(
             } else {
                 showStampBadge = true
             }
+        } else if (isGameOver && !didPlayerWin) {
+            // Defeat or draw: show stamp badge directly without winner emoji projectile celebration
+            showStampBadge = true
+            isEmojiBurstActive = false
+            animateStampDrop = true
         } else {
             hasTriggeredCelebration = false
             showStampBadge = false
@@ -357,7 +382,7 @@ fun GameScreen(
                 Text(
                     text = if (isMultiplayerLobbyGame) "Return to Lobby?" else "Exit Match?",
                     fontWeight = FontWeight.Bold,
-                    color = tokens.cellNeutralText
+                    color = tokens.textPrimary
                 )
             },
             text = {
@@ -366,13 +391,17 @@ fun GameScreen(
                         "Are you sure you want to leave this match? You will return to the lobby."
                     else
                         "Are you sure you want to leave the match and return to the main menu?",
-                    color = tokens.cellNeutralText.copy(alpha = 0.8f)
+                    color = tokens.textSecondary
                 )
             },
             confirmButton = {
                 Button(
                     onClick = {
+                        isExitingMatch = true
                         showSurrenderDialog = false
+                        isEmojiBurstActive = false
+                        showStampBadge = false
+                        animateStampDrop = false
                         if (isMultiplayerLobbyGame) {
                             onReturnToLobby?.invoke()
                         } else {
@@ -380,7 +409,7 @@ fun GameScreen(
                         }
                     },
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = tokens.accentOpponent
+                        containerColor = if (tokens.isDark) Color(0xFFEF4444) else tokens.accentOpponent
                     ),
                     shape = RoundedCornerShape(12.dp)
                 ) {
@@ -393,7 +422,7 @@ fun GameScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showSurrenderDialog = false }) {
-                    Text("Stay", color = tokens.cellNeutralText)
+                    Text("Stay", color = tokens.textMuted)
                 }
             }
         )
@@ -468,11 +497,7 @@ fun GameScreen(
                     // Item 1: Top Left Door Open Exit Button
                     IconButton(
                         onClick = {
-                            if (onReturnToLobby != null) {
-                                showSurrenderDialog = true
-                            } else {
-                                onSurrender()
-                            }
+                            showSurrenderDialog = true
                         },
                         modifier = Modifier
                             .size(36.dp)
@@ -486,7 +511,7 @@ fun GameScreen(
                         )
                     }
 
-                    // Item 2: Top Center 🛜 Wifi Icon (Black) + Ping (Color varies based on value, perfectly centered!)
+                    // Item 2: Top Center 🛜 Wifi Icon + Ping (Color varies based on value, perfectly centered!)
                     val pingColor = when {
                         pingMs <= 250L -> Color(0xFF16A34A)
                         pingMs <= 500L -> Color(0xFFEAB308)
@@ -502,7 +527,7 @@ fun GameScreen(
                         Icon(
                             imageVector = Icons.Default.Wifi,
                             contentDescription = "Ping",
-                            tint = Color.Black,
+                            tint = tokens.cellNeutralText,
                             modifier = Modifier.size(17.dp)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
@@ -663,11 +688,12 @@ fun GameScreen(
                                     .fillMaxWidth()
                                     .padding(bottom = 8.dp),
                                 shape = RoundedCornerShape(8.dp),
-                                color = tokens.cellPlayerPickBg
+                                color = tokens.badgeSurface,
+                                border = BorderStroke(1.dp, tokens.badgeOutline)
                             ) {
                                 Text(
                                     text = "🎮 $wantsToPlayAgainName wants to play again!",
-                                    color = tokens.accentBrand,
+                                    color = tokens.badgeContent,
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 12.5.sp,
                                     textAlign = TextAlign.Center,
@@ -684,18 +710,19 @@ fun GameScreen(
                                     .height(48.dp),
                                 shape = RoundedCornerShape(12.dp),
                                 colors = ButtonDefaults.buttonColors(
-                                    containerColor = tokens.accentBrand
+                                    containerColor = tokens.primaryButtonBg
                                 )
                             ) {
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                                     contentDescription = null,
+                                    tint = tokens.primaryButtonText,
                                     modifier = Modifier.size(18.dp)
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = "Return to Lobby",
-                                    color = Color.White,
+                                    color = tokens.primaryButtonText,
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 15.sp
                                 )
@@ -712,9 +739,12 @@ fun GameScreen(
                                         .weight(1f)
                                         .height(46.dp),
                                     shape = RoundedCornerShape(12.dp),
-                                    border = BorderStroke(1.dp, tokens.surfaceBorder)
+                                    border = BorderStroke(1.dp, tokens.surfaceBorder),
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        contentColor = tokens.textPrimary
+                                    )
                                 ) {
-                                    Text("Main Menu", color = tokens.cellNeutralText, fontWeight = FontWeight.SemiBold)
+                                    Text("Main Menu", color = tokens.textPrimary, fontWeight = FontWeight.SemiBold)
                                 }
 
                                 if (isHost) {
@@ -725,10 +755,10 @@ fun GameScreen(
                                             .height(46.dp),
                                         shape = RoundedCornerShape(12.dp),
                                         colors = ButtonDefaults.buttonColors(
-                                            containerColor = tokens.accentBrand
+                                            containerColor = tokens.primaryButtonBg
                                         )
                                     ) {
-                                        Text("Play Again", color = Color.White, fontWeight = FontWeight.Bold)
+                                        Text("Play Again", color = tokens.primaryButtonText, fontWeight = FontWeight.Bold)
                                     }
                                 } else {
                                     Button(
@@ -744,13 +774,13 @@ fun GameScreen(
                                             .height(46.dp),
                                         shape = RoundedCornerShape(12.dp),
                                         colors = ButtonDefaults.buttonColors(
-                                            containerColor = tokens.accentBrand,
+                                            containerColor = tokens.primaryButtonBg,
                                             disabledContainerColor = tokens.surfaceBorder
                                         )
                                     ) {
                                         Text(
                                             text = if (hasRequestedPlayAgain) "Requested" else "Play Again",
-                                            color = if (hasRequestedPlayAgain) tokens.cellNeutralText.copy(alpha = 0.5f) else Color.White,
+                                            color = if (hasRequestedPlayAgain) tokens.textMuted else tokens.primaryButtonText,
                                             fontWeight = FontWeight.Bold
                                         )
                                     }
@@ -793,7 +823,7 @@ fun GameScreen(
                         .fillMaxWidth(),
                     contentAlignment = Alignment.Center
                 ) {
-                    if (isGameOver && showStampBadge) {
+                    if (isGameOver && showStampBadge && !isExitingMatch) {
                         val stampType = when {
                             isDraw -> StampResultType.DRAW
                             !reviewingOpponentBoard -> if (didPlayerWin) StampResultType.WON else StampResultType.LOST
@@ -866,15 +896,10 @@ fun GameScreen(
                 }
             )
 
-            // ── Fullscreen 360° Radial Starburst Blast Celebration Overlay ──
-            if (isEmojiBurstActive) {
-                val burstType = when {
-                    isDraw -> StampResultType.DRAW
-                    didPlayerWin -> StampResultType.WON
-                    else -> StampResultType.LOST
-                }
+            // ── Fullscreen Winning Celebration Overlay (Only triggers on victory) ──
+            if (isEmojiBurstActive && didPlayerWin && !isExitingMatch) {
                 GameOverEmojiProjectileBurst(
-                    resultType = burstType,
+                    resultType = StampResultType.WON,
                     modifier = Modifier.fillMaxSize(),
                     onApexReached = {
                         showStampBadge = true
