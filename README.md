@@ -1,4 +1,4 @@
-# 🎱 BINGO — Real-Time Multiplayer
+# BINGO — Real-Time Multiplayer
 
 [![Play Online](https://img.shields.io/badge/Play%20Online-Web%20App-blue?style=for-the-badge&logo=googlechrome)](https://vamsireddybora.github.io/BINGO/)
 [![Download APK](https://img.shields.io/badge/Download-Android%20APK-emerald?style=for-the-badge&logo=android)](https://github.com/VamsiReddyBora/BINGO/releases/tag/v1.0)
