@@ -30,7 +30,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.runtime.remember
+import androidx.compose.ui.graphics.graphicsLayer
 import com.bingo.multiplayer.core.designsystem.BingoTheme
+import com.bingo.multiplayer.domain.model.Player
 import com.bingo.multiplayer.presentation.common.PlayerAvatar
 
 /**
@@ -192,3 +197,149 @@ fun BottomTurnProfileVsProfile(
         }
     }
 }
+
+/**
+ * Multiplayer Turn Spotlight Bar:
+ * - If players.size <= 2: Displays the original 2-player Profile vs Profile with smooth turn zoom.
+ * - If players.size > 2: Displays 3-icon circular spotlight:
+ *   [Previous Player (Small, 28dp)]  [Current Player (Big Spotlight Zoomed, 44dp)]  [Next Player (Small, 28dp)]
+ *   Rotates circularly:
+ *   prevIdx = (currIdx - 1 + N) % N
+ *   nextIdx = (currIdx + 1) % N
+ */
+@Composable
+fun MultiplayerTurnSpotlightBar(
+    players: List<Player>,
+    currentTurnPlayerId: String,
+    myPlayerId: String,
+    isMyTurn: Boolean,
+    isGameOver: Boolean,
+    myAvatarUrl: String?,
+    myDisplayName: String?,
+    myUsername: String?,
+    opponentAvatarUrl: String?,
+    opponentName: String,
+    opponentUsername: String?,
+    modifier: Modifier = Modifier
+) {
+    val activePlayers = remember(players) { players.filter { it.id.isNotBlank() } }
+
+    if (activePlayers.size <= 2) {
+        BottomTurnProfileVsProfile(
+            isMyTurn = isMyTurn,
+            isGameOver = isGameOver,
+            myAvatarUrl = myAvatarUrl,
+            myDisplayName = myDisplayName,
+            myUsername = myUsername,
+            opponentAvatarUrl = opponentAvatarUrl,
+            opponentName = opponentName,
+            opponentUsername = opponentUsername,
+            modifier = modifier
+        )
+    } else {
+        val tokens = BingoTheme.colors
+        val currIdx = remember(activePlayers, currentTurnPlayerId) {
+            val idx = activePlayers.indexOfFirst { it.id == currentTurnPlayerId }
+            if (idx >= 0) idx else 0
+        }
+        val prevIdx = (currIdx - 1 + activePlayers.size) % activePlayers.size
+        val nextIdx = (currIdx + 1) % activePlayers.size
+
+        val prevPlayer = activePlayers[prevIdx]
+        val currPlayer = activePlayers[currIdx]
+        val nextPlayer = activePlayers[nextIdx]
+
+        val isCurrentMe = (currPlayer.id == myPlayerId)
+
+        Row(
+            modifier = modifier,
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // Previous Player (Small Icon - 28dp)
+            AnimatedContent(
+                targetState = prevPlayer,
+                transitionSpec = {
+                    (fadeIn(tween(250)) + slideInHorizontally { -it / 2 }).togetherWith(
+                        fadeOut(tween(200)) + slideOutHorizontally { -it / 2 }
+                    )
+                },
+                label = "prevPlayerAnim"
+            ) { p ->
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .border(1.dp, tokens.surfaceBorder, CircleShape)
+                        .graphicsLayer { alpha = 0.65f },
+                    contentAlignment = Alignment.Center
+                ) {
+                    PlayerAvatar(
+                        avatarPathOrUri = p.avatarUrl,
+                        displayName = p.displayName,
+                        username = p.username,
+                        size = 28.dp
+                    )
+                }
+            }
+
+            // Current Turn Player (Big Icon Spotlight - 44dp)
+            AnimatedContent(
+                targetState = currPlayer,
+                transitionSpec = {
+                    (fadeIn(tween(300)) + scaleIn(tween(300))).togetherWith(
+                        fadeOut(tween(200)) + scaleOut(tween(200))
+                    )
+                },
+                label = "currPlayerSpotlightAnim"
+            ) { p ->
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .border(
+                            width = 2.5.dp,
+                            color = if (isCurrentMe) tokens.accentBrand else tokens.accentOpponent,
+                            shape = CircleShape
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    PlayerAvatar(
+                        avatarPathOrUri = p.avatarUrl,
+                        displayName = p.displayName,
+                        username = p.username,
+                        size = 44.dp
+                    )
+                }
+            }
+
+            // Next Player (Small Icon - 28dp)
+            AnimatedContent(
+                targetState = nextPlayer,
+                transitionSpec = {
+                    (fadeIn(tween(250)) + slideInHorizontally { it / 2 }).togetherWith(
+                        fadeOut(tween(200)) + slideOutHorizontally { it / 2 }
+                    )
+                },
+                label = "nextPlayerAnim"
+            ) { p ->
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .border(1.dp, tokens.surfaceBorder, CircleShape)
+                        .graphicsLayer { alpha = 0.65f },
+                    contentAlignment = Alignment.Center
+                ) {
+                    PlayerAvatar(
+                        avatarPathOrUri = p.avatarUrl,
+                        displayName = p.displayName,
+                        username = p.username,
+                        size = 28.dp
+                    )
+                }
+            }
+        }
+    }
+}
+

@@ -101,8 +101,11 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.draw.scale
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import com.bingo.multiplayer.core.designsystem.BingoTheme
 import com.bingo.multiplayer.domain.model.Board
+import com.bingo.multiplayer.domain.model.Player
 import com.bingo.multiplayer.domain.model.RecentPick
 import com.bingo.multiplayer.domain.network.QuickChatPreferences
 import com.bingo.multiplayer.presentation.common.PlayerAvatar
@@ -114,6 +117,7 @@ import com.bingo.multiplayer.presentation.components.FloatingEmoteBar
 import com.bingo.multiplayer.presentation.components.FloatingEmoteItem
 import com.bingo.multiplayer.presentation.components.FloatingEmotesOverlay
 import com.bingo.multiplayer.presentation.components.HeadToHeadScorecard
+import com.bingo.multiplayer.presentation.components.MultiplayerTurnSpotlightBar
 import com.bingo.multiplayer.presentation.components.RecentPicksQueuePill
 
 /**
@@ -158,7 +162,10 @@ fun GameScreen(
     incomingChatMessage: InGameChatMessage? = null,
     onSendChatMessage: (String) -> Unit = {},
     pickedNumbersHistory: List<Int> = emptyList(),
-    matchSeed: Long = 0L
+    matchSeed: Long = 0L,
+    players: List<Player> = emptyList(),
+    allPlayerBoards: Map<String, Board> = emptyMap(),
+    currentTurnPlayerId: String = ""
 ) {
     val tokens = BingoTheme.colors
     val haptic = LocalHapticFeedback.current
@@ -322,8 +329,32 @@ fun GameScreen(
             onBackToMenu()
         }
     }
-    var reviewingOpponentBoard by remember { mutableStateOf(false) }
+    var selectedReviewPlayerId by remember(myPlayerId, isGameOver) {
+        mutableStateOf(myPlayerId.ifBlank { "local" })
+    }
     var hasRequestedPlayAgain by remember(isGameOver) { mutableStateOf(false) }
+
+    val reviewPlayers = remember(players, myPlayerId, opponentName, myDisplayName, myAvatarUrl, opponentAvatarUrl) {
+        val filtered = players.filter { it.id.isNotBlank() }
+        if (filtered.isNotEmpty()) {
+            filtered
+        } else {
+            listOf(
+                Player(
+                    id = myPlayerId.ifBlank { "local" },
+                    displayName = myDisplayName ?: "You",
+                    username = myUsername ?: "",
+                    avatarUrl = myAvatarUrl
+                ),
+                Player(
+                    id = "opponent",
+                    displayName = opponentName,
+                    username = opponentUsername ?: "",
+                    avatarUrl = opponentAvatarUrl
+                )
+            )
+        }
+    }
 
     // ── Victory/Defeat Stamp & 360° Radial Starburst Celebration State ──
     var showStampBadge by remember { mutableStateOf(false) }
@@ -356,21 +387,27 @@ fun GameScreen(
             showStampBadge = false
             isEmojiBurstActive = false
             animateStampDrop = true
-            reviewingOpponentBoard = false
+            selectedReviewPlayerId = myPlayerId.ifBlank { "local" }
         }
     }
 
-    LaunchedEffect(reviewingOpponentBoard) {
+    LaunchedEffect(selectedReviewPlayerId) {
         if (showStampBadge) {
             animateStampDrop = false
         }
     }
 
-    val displayedBoard = if (isGameOver && reviewingOpponentBoard && opponentBoard != null) {
-        opponentBoard
+    val displayedBoard = if (isGameOver) {
+        allPlayerBoards[selectedReviewPlayerId]
+            ?: if (selectedReviewPlayerId == myPlayerId || selectedReviewPlayerId == "local") {
+                board
+            } else {
+                opponentBoard ?: board
+            }
     } else {
         board
     }
+
 
     if (showSurrenderDialog) {
         val isMultiplayerLobbyGame = (onReturnToLobby != null)
@@ -595,11 +632,11 @@ fun GameScreen(
                 if (isGameOver) {
                     Spacer(modifier = Modifier.height(4.dp))
 
-                    // ── Post-Game Board Review Switcher ──
+                    // ── Post-Game Board Review Scrollable Strip (All Players) ──
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 20.dp),
+                            .padding(horizontal = 16.dp),
                         shape = RoundedCornerShape(12.dp),
                         color = tokens.backgroundSecondary,
                         border = BorderStroke(1.dp, tokens.surfaceBorder)
@@ -607,69 +644,62 @@ fun GameScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(3.dp),
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                .horizontalScroll(rememberScrollState())
+                                .padding(4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            // My Board
-                            Surface(
-                                onClick = { reviewingOpponentBoard = false },
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(10.dp),
-                                color = if (!reviewingOpponentBoard) tokens.surface else Color.Transparent,
-                                border = if (!reviewingOpponentBoard) BorderStroke(1.dp, tokens.accentBrand) else null
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(vertical = 8.dp),
-                                    horizontalArrangement = Arrangement.Center,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    PlayerAvatar(
-                                        avatarPathOrUri = myAvatarUrl,
-                                        displayName = myDisplayName ?: "You",
-                                        username = myUsername,
-                                        size = 20.dp
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "My Board (${board.completedLinesCount}/${board.size})",
-                                        fontSize = 12.sp,
-                                        fontWeight = if (!reviewingOpponentBoard) FontWeight.Bold else FontWeight.Medium,
-                                        color = if (!reviewingOpponentBoard) tokens.accentBrand else tokens.cellNeutralText.copy(alpha = 0.6f)
-                                    )
-                                }
-                            }
+                            reviewPlayers.forEach { player ->
+                                val isSelected = (player.id == selectedReviewPlayerId) ||
+                                        (reviewPlayers.size == 1) ||
+                                        (selectedReviewPlayerId.isBlank() && (player.id == myPlayerId || player.id == "local"))
+                                val isLocal = (player.id == myPlayerId || player.id == "local")
+                                val playerBoardForTab = allPlayerBoards[player.id]
+                                    ?: if (isLocal) board else (opponentBoard ?: board)
+                                val linesCount = playerBoardForTab.completedLinesCount
+                                val isBingo = playerBoardForTab.isBingo
 
-                            // Opponent's Board
-                            Surface(
-                                onClick = { reviewingOpponentBoard = true },
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(10.dp),
-                                color = if (reviewingOpponentBoard) tokens.surface else Color.Transparent,
-                                border = if (reviewingOpponentBoard) BorderStroke(1.dp, tokens.accentOpponent) else null
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(vertical = 8.dp),
-                                    horizontalArrangement = Arrangement.Center,
-                                    verticalAlignment = Alignment.CenterVertically
+                                Surface(
+                                    onClick = {
+                                        selectedReviewPlayerId = player.id
+                                        animateStampDrop = false
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = if (isSelected) tokens.surface else Color.Transparent,
+                                    border = if (isSelected) {
+                                        BorderStroke(1.5.dp, if (isLocal) tokens.accentBrand else tokens.accentOpponent)
+                                    } else null
                                 ) {
-                                    PlayerAvatar(
-                                        avatarPathOrUri = opponentAvatarUrl,
-                                        displayName = opponentName,
-                                        username = opponentUsername,
-                                        size = 20.dp
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "$opponentName (${(opponentBoard?.completedLinesCount ?: 0)}/${board.size})",
-                                        fontSize = 12.sp,
-                                        fontWeight = if (reviewingOpponentBoard) FontWeight.Bold else FontWeight.Medium,
-                                        color = if (reviewingOpponentBoard) tokens.accentOpponent else tokens.cellNeutralText.copy(alpha = 0.6f)
-                                    )
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        PlayerAvatar(
+                                            avatarPathOrUri = if (isLocal) (myAvatarUrl ?: player.avatarUrl) else player.avatarUrl,
+                                            displayName = if (isLocal) (myDisplayName ?: "You") else player.displayName,
+                                            username = if (isLocal) myUsername else player.username,
+                                            size = 20.dp
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        val labelText = if (isLocal) "My Board" else player.displayName
+                                        Text(
+                                            text = "$labelText ($linesCount/${board.size})" + (if (isBingo) " 👑" else ""),
+                                            fontSize = 12.sp,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                            color = when {
+                                                isSelected && isLocal -> tokens.accentBrand
+                                                isSelected -> tokens.accentOpponent
+                                                else -> tokens.cellNeutralText.copy(alpha = 0.65f)
+                                            }
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
                 }
+
             }
         },
         bottomBar = {
@@ -803,7 +833,10 @@ fun GameScreen(
                     opponentAvatarUrl = opponentAvatarUrl,
                     opponentName = opponentName,
                     opponentUsername = opponentUsername,
-                    onSyncGame = onSyncGame
+                    onSyncGame = onSyncGame,
+                    players = players,
+                    currentTurnPlayerId = currentTurnPlayerId,
+                    myPlayerId = myPlayerId
                 )
             }
         }
@@ -827,10 +860,12 @@ fun GameScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     if (isGameOver && showStampBadge && !isExitingMatch) {
+                        val isReviewingLocal = (selectedReviewPlayerId == myPlayerId || selectedReviewPlayerId == "local")
                         val stampType = when {
                             isDraw -> StampResultType.DRAW
-                            !reviewingOpponentBoard -> if (didPlayerWin) StampResultType.WON else StampResultType.LOST
-                            else -> if (didPlayerWin) StampResultType.LOST else StampResultType.WON
+                            isReviewingLocal -> if (didPlayerWin) StampResultType.WON else StampResultType.LOST
+                            displayedBoard.isBingo -> StampResultType.WON
+                            else -> StampResultType.LOST
                         }
                         VictoryStampBadge(
                             resultType = stampType,
@@ -840,10 +875,8 @@ fun GameScreen(
                 }
 
                 // Item 4: 5x5 Bingo Board with B-I-N-G-O letters atop columns & diagonal strikes
-                val isWinningBoard = isGameOver && (
-                    (!reviewingOpponentBoard && didPlayerWin) ||
-                    (reviewingOpponentBoard && !didPlayerWin && !isDraw)
-                )
+                val isWinningBoard = isGameOver && displayedBoard.isBingo
+
 
                 BingoBoardView(
                     board = displayedBoard,
@@ -1141,7 +1174,10 @@ private fun InGameBottomBar(
     opponentAvatarUrl: String?,
     opponentName: String,
     opponentUsername: String?,
-    onSyncGame: () -> Unit
+    onSyncGame: () -> Unit,
+    players: List<Player> = emptyList(),
+    currentTurnPlayerId: String = "",
+    myPlayerId: String = ""
 ) {
     val tokens = BingoTheme.colors
 
@@ -1170,8 +1206,11 @@ private fun InGameBottomBar(
                 modifier = Modifier.align(Alignment.CenterStart)
             )
 
-            // Item 6: Center - Profile vs Profile with smooth turn zoom (Dead Center!)
-            BottomTurnProfileVsProfile(
+            // Item 6: Center - Profile vs Profile (<=2 players) OR 3-Icon Spotlight Bar (>2 players)
+            MultiplayerTurnSpotlightBar(
+                players = players,
+                currentTurnPlayerId = currentTurnPlayerId,
+                myPlayerId = myPlayerId,
                 isMyTurn = isMyTurn,
                 isGameOver = isGameOver,
                 myAvatarUrl = myAvatarUrl,
@@ -1182,6 +1221,7 @@ private fun InGameBottomBar(
                 opponentUsername = opponentUsername,
                 modifier = Modifier.align(Alignment.Center)
             )
+
 
             // Item 6: Right - Plain reload icon that rotates in the arrow direction (clockwise) and stops after 1 rotation
             IconButton(

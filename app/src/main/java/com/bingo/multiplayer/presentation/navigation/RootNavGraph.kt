@@ -16,6 +16,7 @@ import com.bingo.multiplayer.domain.engine.AiDifficulty
 import com.bingo.multiplayer.domain.engine.BingoAiPlayer
 import com.bingo.multiplayer.domain.engine.BingoEngine
 import com.bingo.multiplayer.domain.model.AuthState
+import com.bingo.multiplayer.domain.model.Board
 import com.bingo.multiplayer.domain.model.Friend
 import com.bingo.multiplayer.domain.model.GameMode
 import com.bingo.multiplayer.domain.model.InGameChatMessage
@@ -102,6 +103,7 @@ fun RootNavGraph(
     var boardSize by remember { mutableIntStateOf(5) }
     var playerBoard by remember { mutableStateOf(engine.generateBoard(5)) }
     var opponentBoard by remember { mutableStateOf(engine.generateBoard(5)) }
+    var allPlayerBoards by remember { mutableStateOf<Map<String, Board>>(emptyMap()) }
     var isMyTurn by remember { mutableStateOf(true) }
     var turnNumber by remember { mutableIntStateOf(1) }
     var turnTimer by remember { mutableIntStateOf(30) }
@@ -438,6 +440,7 @@ fun RootNavGraph(
             }
             GameMode.ONLINE_ROOM, GameMode.NEARBY_NETWORK -> {
                 val activePlayers = realTimePlayers.filter { it.id.isNotBlank() }
+                    .sortedWith(compareByDescending<Player> { it.isHost }.thenBy { it.id })
                 if (activePlayers.size > 2) {
                     val currentIndex = activePlayers.indexOfFirst { it.id == currentPickerId }
                     val nextIndex = if (currentIndex != -1) {
@@ -471,24 +474,50 @@ fun RootNavGraph(
         
         val baseSeed = hostSeed ?: kotlin.random.Random.nextLong()
         currentMatchSeed = baseSeed
+        val myUid = getLocalUid()
+        val activePlayersList = realTimePlayers.filter { it.id.isNotBlank() }
+            .sortedWith(compareByDescending<Player> { it.isHost }.thenBy { it.id })
+
         if (mode == GameMode.ONLINE_ROOM || mode == GameMode.NEARBY_NETWORK) {
-            if (isHosting) {
-                playerBoard = engine.generateBoard(size, baseSeed)
-                opponentBoard = engine.generateBoard(size, baseSeed + 1)
+            if (activePlayersList.size > 2) {
+                val newBoards = mutableMapOf<String, Board>()
+                activePlayersList.forEachIndexed { index, p ->
+                    val pSeed = baseSeed + index
+                    val b = engine.generateBoard(size, pSeed)
+                    newBoards[p.id] = b
+                }
+                allPlayerBoards = newBoards
+                playerBoard = newBoards[myUid] ?: engine.generateBoard(size, baseSeed)
+                opponentBoard = newBoards.filter { entry -> entry.key != myUid }.values.firstOrNull() ?: engine.generateBoard(size, baseSeed + 1)
             } else {
-                playerBoard = engine.generateBoard(size, baseSeed + 1)
-                opponentBoard = engine.generateBoard(size, baseSeed)
+                if (isHosting) {
+                    playerBoard = engine.generateBoard(size, baseSeed)
+                    opponentBoard = engine.generateBoard(size, baseSeed + 1)
+                } else {
+                    playerBoard = engine.generateBoard(size, baseSeed + 1)
+                    opponentBoard = engine.generateBoard(size, baseSeed)
+                }
+                val otherId = activePlayersList.firstOrNull { it.id != myUid }?.id ?: opponentPlayerId.ifBlank { "opponent" }
+                allPlayerBoards = mapOf(
+                    myUid to playerBoard,
+                    otherId to opponentBoard
+                )
             }
         } else {
             playerBoard = engine.generateBoard(size, baseSeed)
             opponentBoard = engine.generateBoard(size, baseSeed + 1)
+            allPlayerBoards = mapOf(
+                myUid to playerBoard,
+                "ai_bot" to opponentBoard
+            )
         }
+
         
         pickedNumbersHistory.clear()
         isProcessingTurn = false
 
-        val myUid = getLocalUid()
         val firstTurnUid = if (!firstTurnPlayerId.isNullOrBlank()) {
+
             firstTurnPlayerId
         } else if (mode == GameMode.ONLINE_ROOM || mode == GameMode.NEARBY_NETWORK) {
             val candidateUids = realTimePlayers.map { it.id }.filter { it.isNotBlank() }.distinct().sorted()
@@ -607,6 +636,16 @@ fun RootNavGraph(
                     turnNumber = turnNumber
                 )
 
+                allPlayerBoards = allPlayerBoards.mapValues { entry ->
+                    engine.markCell(
+                        board = entry.value,
+                        number = number,
+                        pickedByPlayerId = pickerId,
+                        isOwnPick = (pickerId == entry.key),
+                        turnNumber = turnNumber
+                    )
+                }
+
                 playerBoard = updatedPlayer
                 opponentBoard = updatedOpponent
                 recentPick = pick
@@ -619,7 +658,13 @@ fun RootNavGraph(
             }
 
             val pWon = playerBoard.isBingo
-            val oWon = opponentBoard.isBingo
+            val oWon = if (allPlayerBoards.isNotEmpty()) {
+                allPlayerBoards.filter { entry -> entry.key != getLocalUid() }.values.any { b -> b.isBingo }
+            } else {
+                opponentBoard.isBingo
+            }
+
+
             val over = !isTimeoutPass && (pWon || oWon)
 
             turnNumber += 1
@@ -876,7 +921,9 @@ fun RootNavGraph(
                         return
                     }
                     if (packet.pickedHistory.isNotEmpty()) {
-                        opponentBoard = ManualBoardEngine.buildBoard(packet.pickedHistory, boardSize)
+                        val mBoard = ManualBoardEngine.buildBoard(packet.pickedHistory, boardSize)
+                        opponentBoard = mBoard
+                        allPlayerBoards = allPlayerBoards + (packet.playerId to mBoard)
                     }
                     isOpponentBoardReady = true
                     if (isLocalBoardReady && countdownSeconds < 0) {
@@ -912,6 +959,15 @@ fun RootNavGraph(
                                 isOwnPick = isOpponentMine,
                                 turnNumber = turnNumber
                             )
+                            allPlayerBoards = allPlayerBoards.mapValues { entry ->
+                                engine.markCell(
+                                    board = entry.value,
+                                    number = num,
+                                    pickedByPlayerId = packet.playerId,
+                                    isOwnPick = (packet.playerId == entry.key),
+                                    turnNumber = turnNumber
+                                )
+                            }
                             recentPick = RecentPick(num, packet.playerId, turnNumber)
                             anyNewPick = true
                         }
@@ -936,13 +992,28 @@ fun RootNavGraph(
                             isOwnPick = isOpponentMine,
                             turnNumber = turnNumber
                         )
+                        allPlayerBoards = allPlayerBoards.mapValues { entry ->
+                            engine.markCell(
+                                board = entry.value,
+                                number = packet.number,
+                                pickedByPlayerId = packet.playerId,
+                                isOwnPick = (packet.playerId == entry.key),
+                                turnNumber = turnNumber
+                            )
+                        }
                         recentPick = RecentPick(packet.number, packet.playerId, turnNumber)
                         anyNewPick = true
                     }
 
                     // 3. Evaluate win conditions
                     val pWon = playerBoard.isBingo
-                    val oWon = opponentBoard.isBingo
+                    val oWon = if (allPlayerBoards.isNotEmpty()) {
+                        allPlayerBoards.filter { entry -> entry.key != myUid }.values.any { b -> b.isBingo }
+                    } else {
+                        opponentBoard.isBingo
+                    }
+
+
                     if (pWon && oWon) {
                         isGameOver = true
                         isDrawMatch = true
@@ -1032,6 +1103,15 @@ fun RootNavGraph(
                                 isOwnPick = isOpponentMine,
                                 turnNumber = turnNumber
                             )
+                            allPlayerBoards = allPlayerBoards.mapValues { entry ->
+                                engine.markCell(
+                                    board = entry.value,
+                                    number = num,
+                                    pickedByPlayerId = packet.playerId,
+                                    isOwnPick = (packet.playerId == entry.key),
+                                    turnNumber = turnNumber
+                                )
+                            }
                             recentPick = RecentPick(num, packet.playerId, turnNumber)
                             anyNewPick = true
                         }
@@ -1039,7 +1119,12 @@ fun RootNavGraph(
 
                     // 2. Evaluate win conditions
                     val pWon = playerBoard.isBingo
-                    val oWon = opponentBoard.isBingo
+                    val oWon = if (allPlayerBoards.isNotEmpty()) {
+                        allPlayerBoards.filter { entry -> entry.key != myUid }.values.any { b -> b.isBingo }
+                    } else {
+                        opponentBoard.isBingo
+                    }
+
                     if (pWon && oWon) {
                         isGameOver = true
                         isDrawMatch = true
@@ -1072,6 +1157,7 @@ fun RootNavGraph(
                 pausedByPlayerName = ""
             }
 
+
             "PLAY_AGAIN_REQUEST" -> {
                 if (isHosting) {
                     val requester = packet.displayName.ifBlank { "Opponent" }
@@ -1100,8 +1186,19 @@ fun RootNavGraph(
                                 isOwnPick = true,
                                 turnNumber = turnNumber
                             )
+                            allPlayerBoards = allPlayerBoards.mapValues { entry ->
+                                engine.markCell(
+                                    board = entry.value,
+                                    number = packet.number,
+                                    pickedByPlayerId = packet.playerId,
+                                    isOwnPick = (packet.playerId == entry.key),
+                                    turnNumber = turnNumber
+                                )
+                            }
+
                             recentPick = RecentPick(packet.number, packet.playerId, turnNumber)
                         }
+
                         isGameOver = true
                         didPlayerWin = false
                         isDrawMatch = false
@@ -1734,9 +1831,8 @@ fun RootNavGraph(
                         lanDiscovery.stopDiscovering()
                     }
 
-                    val otherPlayerId = realTimePlayers.firstOrNull { it.id.isNotBlank() && it.id != myId }?.id
-                        ?: opponentPlayerId.takeIf { it.isNotBlank() }
-                    val candidateUids = if (otherPlayerId != null) listOf(myId, otherPlayerId).sorted() else listOf(myId)
+                    val allUids = realTimePlayers.map { it.id }.filter { it.isNotBlank() }.distinct().sorted()
+                    val candidateUids = if (allUids.isNotEmpty()) allUids else listOf(myId)
                     val chosenFirstTurnUid = ManualBoardEngine.determineRandomFirstTurn(seed, candidateUids)
 
                     val startPacket = RoomMessagePacket(
@@ -2001,8 +2097,11 @@ fun RootNavGraph(
                 countdownSeconds = countdownSeconds,
                 firstTurnPlayerName = firstTurnPlayerName,
                 onBoardReady = { boardNumbers ->
-                    playerBoard = ManualBoardEngine.buildBoard(boardNumbers, boardSize)
+                    val mBoard = ManualBoardEngine.buildBoard(boardNumbers, boardSize)
+                    playerBoard = mBoard
+                    allPlayerBoards = allPlayerBoards + (getLocalUid() to mBoard)
                     isLocalBoardReady = true
+
 
                     val readyPacket = RoomMessagePacket(
                         type = "BOARD_READY",
@@ -2191,11 +2290,38 @@ fun RootNavGraph(
                 else -> 28L
             }
 
+            val gamePlayers = remember(realTimePlayers, currentGameMode, opponentDisplayName) {
+                when (currentGameMode) {
+                    GameMode.ONLINE_ROOM, GameMode.NEARBY_NETWORK -> {
+                        val filtered = realTimePlayers.filter { it.id.isNotBlank() }
+                            .sortedWith(compareByDescending<Player> { it.isHost }.thenBy { it.id })
+                        if (filtered.isNotEmpty()) {
+                            filtered
+                        } else {
+                            listOf(
+                                Player(id = getLocalUid(), displayName = getPlayerDisplayName(), avatarUrl = getPlayerAvatarUrl(), username = currentAuthUser?.username ?: ""),
+                                Player(id = opponentPlayerId.ifBlank { "opponent" }, displayName = opponentDisplayName, avatarUrl = opponentAvatarUrl, username = opponentUsername ?: "")
+                            )
+                        }
+                    }
+                    GameMode.AI_EASY, GameMode.AI_HARD -> {
+                        listOf(
+                            Player(id = getLocalUid(), displayName = getPlayerDisplayName(), avatarUrl = getPlayerAvatarUrl(), username = currentAuthUser?.username ?: ""),
+                            Player(id = "ai_bot", displayName = opponentDisplayName, isAi = true)
+                        )
+                    }
+                }
+            }
+
             GameScreen(
                 board = playerBoard,
                 opponentBoard = opponentBoard,
+                allPlayerBoards = allPlayerBoards,
+                players = gamePlayers,
+                currentTurnPlayerId = currentTurnPlayerId,
                 isMyTurn = isMyTurn,
                 turnTimeRemaining = turnTimer,
+
                 isGamePaused = isGamePaused,
                 pausedByPlayerName = pausedByPlayerName,
                 onTogglePause = { togglePause() },
