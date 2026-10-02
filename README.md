@@ -1,4 +1,4 @@
-# 🎲 BINGO Multiplayer
+# BINGO Multiplayer
 
 > Fast, aesthetic, real-time multiplayer Bingo with friends — online or offline over Wi-Fi / Hotspot!
 
