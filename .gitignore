@@ -20,3 +20,5 @@ captures/
 web/node_modules/
 web/dist/
 
+# Archive backups
+*.zip
