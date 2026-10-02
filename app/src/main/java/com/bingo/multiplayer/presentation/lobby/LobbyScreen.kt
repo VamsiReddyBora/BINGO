@@ -1422,13 +1422,16 @@ fun LobbyScreen(
                             showInactivityDialog = false
                             onExtendLobby()
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = tokens.accentBrand),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = tokens.primaryButtonBg,
+                            contentColor = tokens.primaryButtonText
+                        ),
                         shape = RoundedCornerShape(10.dp)
                     ) {
                         Text(
                             text = "Wait +5mins",
                             fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            color = tokens.primaryButtonText
                         )
                     }
                 },

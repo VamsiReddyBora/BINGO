@@ -103,6 +103,56 @@ class BingoAiPlayerTest {
     }
 
     @Test
+    fun testDecideNextMove_easyBot_prioritizesLineCompletion() = runBlocking {
+        val size = 5
+        var aiBoard = engine.generateBoard(size = size, seed = 444L)
+
+        // Mark 4 out of 5 cells in row 1 for AI
+        val winningNumber = aiBoard.getCell(1, 4).number
+        for (col in 0 until 4) {
+            val num = aiBoard.getCell(1, col).number
+            aiBoard = engine.markCell(aiBoard, num, "ai", true, col + 1)
+        }
+
+        // Easy bot should prioritize completing the line instead of a random number
+        val pick = aiPlayer.decideNextMove(
+            aiBoard = aiBoard,
+            opponentBoard = null,
+            difficulty = AiDifficulty.EASY
+        )
+
+        assertEquals("Easy AI must prioritize completing the line", winningNumber, pick)
+    }
+
+    @Test
+    fun testDecideNextMove_masterBot_avoidsOpponentInstantWin() = runBlocking {
+        val size = 5
+        var aiBoard = engine.generateBoard(size = size, seed = 555L)
+        var opponentBoard = engine.generateBoard(size = size, seed = 777L).copy(targetLines = 1)
+
+        // Opponent has 4 out of 5 in row 0, needing only 1 more for instant Bingo
+        val oppFatalNum = opponentBoard.getCell(0, 4).number
+        for (col in 0 until 4) {
+            val num = opponentBoard.getCell(0, col).number
+            opponentBoard = engine.markCell(opponentBoard, num, "opp", true, 1)
+            aiBoard = engine.markCell(aiBoard, num, "opp", false, 1)
+        }
+
+        assertEquals(0, opponentBoard.completedLinesCount)
+        assertFalse(opponentBoard.findCellByNumber(oppFatalNum)!!.isMarked)
+        assertFalse(aiBoard.findCellByNumber(oppFatalNum)!!.isMarked)
+
+        // 21 candidate numbers remain. AI must NOT pick oppFatalNum!
+        val pick = aiPlayer.decideNextMove(
+            aiBoard = aiBoard,
+            opponentBoard = opponentBoard,
+            difficulty = AiDifficulty.HARD
+        )
+
+        assertNotEquals("Master AI must avoid calling the fatal number that gives opponent instant Bingo", oppFatalNum, pick)
+    }
+
+    @Test
     fun testDecideNextMove_dynamicSizes_neverSelectsOutOfRangeNumber() = runBlocking {
         val sizes = listOf(5, 6, 7, 8)
         for (size in sizes) {

@@ -145,11 +145,11 @@ fun buildCleanLightColors(palette: AppAccentPalette): BingoColors = BingoColors(
     cellOpponentPickBorder = Color(0xFFEA580C),
     cellOpponentPickBevel = Color(0xFF9A3412),
 
-    // Recent Picked: #D9B43D with dark slate text
-    recentPickBg = Color(0xFFD9B43D),
+    // Recent Picked: #D9B13D with dark slate text
+    recentPickBg = Color(0xFFD9B13D),
     recentPickBorder = Color(0xFFB45309),
     recentPickText = Color(0xFF0F172A),
-    recentPickGlow = Color(0x30D9B43D),
+    recentPickGlow = Color(0x30D9B13D),
 
     // Cells - Completed Winning Line: #64748B with pure white text
     completedLineBg = Color(0xFF64748B),
@@ -236,11 +236,11 @@ fun buildAmoledDarkColors(palette: AppAccentPalette): BingoColors = BingoColors(
 )
 
 val CleanLightColors: BingoColors by lazy {
-    buildCleanLightColors(ThemePreferences.getPalette("royal_violet"))
+    buildCleanLightColors(ThemePreferences.getPalette("matte_slate"))
 }
 
 val AmoledDarkColors: BingoColors by lazy {
-    buildAmoledDarkColors(ThemePreferences.getPalette("royal_violet"))
+    buildAmoledDarkColors(ThemePreferences.getPalette("matte_slate"))
 }
 
 data class BingoTypography(

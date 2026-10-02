@@ -38,6 +38,18 @@ object ThemePreferences {
     // 12 curated, elegant matte palettes
     val PALETTES: List<AppAccentPalette> = listOf(
         AppAccentPalette(
+            id = "matte_slate",
+            name = "Matte Slate",
+            previewColor = Color(0xFF64748B),
+            primaryLight = Color(0xFF475569),
+            primaryDark = Color(0xFF94A3B8),
+            cellPlayerPickBgLight = Color(0xFFEADBFF),
+            cellPlayerPickTextLight = Color(0xFF6B21A8),
+            cellPlayerPickBgDark = Color(0xFF38BDF8),
+            cellPlayerPickTextDark = Color(0xFF032642),
+            cellPlayerPickBorderDark = Color(0xFF7DD3FC)
+        ),
+        AppAccentPalette(
             id = "royal_violet",
             name = "Royal Violet",
             previewColor = Color(0xFF7C3AED),
@@ -168,18 +180,6 @@ object ThemePreferences {
             cellPlayerPickBgDark = Color(0xFF38BDF8),
             cellPlayerPickTextDark = Color(0xFF032642),
             cellPlayerPickBorderDark = Color(0xFF7DD3FC)
-        ),
-        AppAccentPalette(
-            id = "matte_slate",
-            name = "Matte Slate",
-            previewColor = Color(0xFF64748B),
-            primaryLight = Color(0xFF475569),
-            primaryDark = Color(0xFF94A3B8),
-            cellPlayerPickBgLight = Color(0xFFEADBFF),
-            cellPlayerPickTextLight = Color(0xFF6B21A8),
-            cellPlayerPickBgDark = Color(0xFF38BDF8),
-            cellPlayerPickTextDark = Color(0xFF032642),
-            cellPlayerPickBorderDark = Color(0xFF7DD3FC)
         )
     )
 
@@ -189,6 +189,7 @@ object ThemePreferences {
     private const val KEY_CUSTOM_COMPLETED_LINE = "custom_completed_line_hex"
     private const val KEY_CELL_BORDER_ENABLED = "cell_border_enabled"
     private const val KEY_CELL_BORDER_COLOR = "cell_border_color_hex"
+    private const val KEY_USER_CUSTOMIZED_ACCENT = "user_customized_accent"
 
     val BORDER_COLOR_PRESETS = listOf(
         BorderColorPreset("#FFFFFF", "Pure White"),
@@ -204,7 +205,7 @@ object ThemePreferences {
 
     const val DEFAULT_MY_PICK_HEX = "#7E22CE"
     const val DEFAULT_OPPONENT_PICK_HEX = "#C2410C"
-    const val DEFAULT_RECENT_PICK_LIGHT_HEX = "#D9B43D"
+    const val DEFAULT_RECENT_PICK_LIGHT_HEX = "#D9B13D"
     const val DEFAULT_RECENT_PICK_DARK_HEX = "#FFFFFF"
     const val DEFAULT_COMPLETED_LINE_HEX = "#64748B"
 
@@ -212,8 +213,8 @@ object ThemePreferences {
         if (isDark) DEFAULT_RECENT_PICK_DARK_HEX else DEFAULT_RECENT_PICK_LIGHT_HEX
 
     val isDarkTheme: MutableState<Boolean> = mutableStateOf(false)
-    val accentColorId: MutableState<String> = mutableStateOf("royal_violet")
-    val customColorHex: MutableState<String> = mutableStateOf("#7C3AED")
+    val accentColorId: MutableState<String> = mutableStateOf("matte_slate")
+    val customColorHex: MutableState<String> = mutableStateOf("#64748B")
 
     // Board cell customized colors
     val customMyPickHex: MutableState<String?> = mutableStateOf(null)
@@ -226,8 +227,15 @@ object ThemePreferences {
     fun init(context: Context) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         isDarkTheme.value = prefs.getBoolean(KEY_IS_DARK, false)
-        accentColorId.value = prefs.getString(KEY_ACCENT_ID, "royal_violet") ?: "royal_violet"
-        customColorHex.value = prefs.getString(KEY_CUSTOM_COLOR, "#7C3AED") ?: "#7C3AED"
+        val defaultAccent = "matte_slate"
+        val savedAccent = prefs.getString(KEY_ACCENT_ID, defaultAccent) ?: defaultAccent
+        // If saved accent was the old default "royal_violet" and user hadn't explicitly chosen it, default to "matte_slate"
+        accentColorId.value = if (savedAccent == "royal_violet" && !prefs.getBoolean(KEY_USER_CUSTOMIZED_ACCENT, false)) {
+            defaultAccent
+        } else {
+            savedAccent
+        }
+        customColorHex.value = prefs.getString(KEY_CUSTOM_COLOR, "#64748B") ?: "#64748B"
 
         customMyPickHex.value = prefs.getString(KEY_CUSTOM_MY_PICK, null)
         customOpponentPickHex.value = prefs.getString(KEY_CUSTOM_OPPONENT_PICK, null)
@@ -239,6 +247,17 @@ object ThemePreferences {
 
     fun setDarkTheme(context: Context, isDark: Boolean) {
         isDarkTheme.value = isDark
+        // Automatically sync recent pick preset when switching themes if not manually overridden
+        val isRecentPickDefault = customRecentPickHex.value == null ||
+                customRecentPickHex.value.equals(DEFAULT_RECENT_PICK_LIGHT_HEX, ignoreCase = true) ||
+                customRecentPickHex.value.equals("#D9B43D", ignoreCase = true) ||
+                customRecentPickHex.value.equals(DEFAULT_RECENT_PICK_DARK_HEX, ignoreCase = true)
+        if (isRecentPickDefault) {
+            customRecentPickHex.value = null
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                .remove(KEY_CUSTOM_RECENT_PICK)
+                .apply()
+        }
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .putBoolean(KEY_IS_DARK, isDark)
@@ -250,6 +269,7 @@ object ThemePreferences {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .putString(KEY_ACCENT_ID, id)
+            .putBoolean(KEY_USER_CUSTOMIZED_ACCENT, true)
             .apply()
     }
 

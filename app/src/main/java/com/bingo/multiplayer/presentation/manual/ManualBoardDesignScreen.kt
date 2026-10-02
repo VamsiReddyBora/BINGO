@@ -360,7 +360,7 @@ fun ManualBoardDesignScreen(
                                 text = "Next: $nextNumber",
                                 fontWeight = FontWeight.ExtraBold,
                                 fontSize = 16.sp,
-                                color = Color.White
+                                color = tokens.primaryButtonText
                             )
                         }
                     } else {
@@ -488,15 +488,17 @@ fun ManualBoardDesignScreen(
                     },
                     enabled = nextNumber > 1 && !isWaitingForOpponent && countdownSeconds < 0,
                     shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = tokens.cellNeutralText),
                     modifier = Modifier.weight(1f)
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.Undo,
                         contentDescription = "Undo",
+                        tint = tokens.cellNeutralText,
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Undo", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Undo", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = tokens.cellNeutralText)
                 }
 
                 Spacer(modifier = Modifier.width(8.dp))
@@ -510,15 +512,17 @@ fun ManualBoardDesignScreen(
                     },
                     enabled = filledCount > 0 && !isWaitingForOpponent && countdownSeconds < 0,
                     shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = tokens.cellNeutralText),
                     modifier = Modifier.weight(1f)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Clear,
                         contentDescription = "Clear",
+                        tint = tokens.cellNeutralText,
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Clear", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Clear", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = tokens.cellNeutralText)
                 }
 
                 Spacer(modifier = Modifier.width(8.dp))
@@ -532,6 +536,7 @@ fun ManualBoardDesignScreen(
                     },
                     enabled = !isComplete && !isWaitingForOpponent && countdownSeconds < 0,
                     shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = tokens.accentBrand),
                     modifier = Modifier.weight(1.3f)
                 ) {
                     Icon(
@@ -562,15 +567,17 @@ fun ManualBoardDesignScreen(
                     .height(52.dp),
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = tokens.accentBrand,
-                    disabledContainerColor = tokens.surfaceBorder.copy(alpha = 0.6f)
+                    containerColor = tokens.primaryButtonBg,
+                    contentColor = tokens.primaryButtonText,
+                    disabledContainerColor = tokens.surfaceBorder.copy(alpha = 0.6f),
+                    disabledContentColor = tokens.cellNeutralText.copy(alpha = 0.4f)
                 )
             ) {
                 Icon(
                     imageVector = Icons.Default.CheckCircle,
                     contentDescription = null,
                     modifier = Modifier.size(20.dp),
-                    tint = if (isComplete && !isWaitingForOpponent) Color.White else tokens.cellNeutralText.copy(alpha = 0.4f)
+                    tint = if (isComplete && !isWaitingForOpponent) tokens.primaryButtonText else tokens.cellNeutralText.copy(alpha = 0.4f)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
@@ -581,7 +588,7 @@ fun ManualBoardDesignScreen(
                     },
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
-                    color = if (isComplete && !isWaitingForOpponent) Color.White else tokens.cellNeutralText.copy(alpha = 0.4f)
+                    color = if (isComplete && !isWaitingForOpponent) tokens.primaryButtonText else tokens.cellNeutralText.copy(alpha = 0.4f)
                 )
             }
         }

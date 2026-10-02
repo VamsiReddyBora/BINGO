@@ -27,6 +27,7 @@ import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 
 @Keep
 enum class AppActivityState {
@@ -34,6 +35,14 @@ enum class AppActivityState {
     IN_LOBBY,   // In a waiting room / lobby
     PLAYING     // Actively playing in a match
 }
+
+@Keep
+@Serializable
+data class AvatarUpdatePayload(
+    val username: String = "",
+    val avatar: String = "",
+    val timestamp: Long = System.currentTimeMillis()
+)
 
 @Keep
 @Serializable
@@ -471,6 +480,15 @@ object PresenceManager {
                                     Log.w(TAG, "Error parsing presence message: ${e.message}")
                                 }
                             }
+                            client.subscribe("bingo/v3/avatar_update/+", 1) { topic, message ->
+                                try {
+                                    val payload = String(message.payload, StandardCharsets.UTF_8)
+                                    val cleanUser = topic.substringAfterLast("/").trim().lowercase().removePrefix("@")
+                                    onAvatarUpdateReceived(cleanUser, payload)
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Error handling avatar update for $topic: ${e.message}")
+                                }
+                            }
                         } catch (e: Exception) {
                             Log.w(TAG, "Error subscribing to presence: ${e.message}")
                         }
@@ -498,6 +516,51 @@ object PresenceManager {
             }
             presenceMap[cleanUser] = presence.copy(username = cleanUser, timestamp = effectiveTimestamp)
             _presenceFlow.value = HashMap(presenceMap)
+        }
+    }
+
+    fun onAvatarUpdateReceived(cleanUser: String, payload: String) {
+        val clean = cleanUser.trim().lowercase().removePrefix("@")
+        if (clean.isBlank()) return
+        try {
+            val update = try {
+                json.decodeFromString<AvatarUpdatePayload>(payload)
+            } catch (_: Exception) {
+                null
+            }
+            val rawAvatar = update?.avatar?.trim()?.takeIf { it.isNotBlank() }
+                ?: try {
+                    val match = "\"avatar\"\\s*:\\s*\"([^\"]*)\"".toRegex().find(payload)
+                    match?.groupValues?.getOrNull(1)?.trim()?.takeIf { it.isNotBlank() }
+                } catch (_: Exception) { null }
+
+            val avatar = if (isLocalFilePath(rawAvatar)) null else rawAvatar
+
+            // 1. Evict memory cache and notify UI
+            com.bingo.multiplayer.presentation.common.PlayerAvatarCache.evict(clean)
+            if (!avatar.isNullOrBlank()) {
+                val bmp = com.bingo.multiplayer.presentation.common.decodeAvatarBitmap(avatar, null)
+                if (bmp != null) {
+                    com.bingo.multiplayer.presentation.common.PlayerAvatarCache.put("u:$clean", bmp.asImageBitmap())
+                }
+            }
+            com.bingo.multiplayer.presentation.common.PlayerAvatarCache.notifyAvatarChanged(clean)
+
+            // 2. Update cloud session cache
+            AccountSessionManager.defaultInstance.onRemoteAvatarUpdated(clean, avatar)
+
+            // 3. Update friends repository
+            com.bingo.multiplayer.domain.repository.FriendsRepository.activeInstance?.onRemoteAvatarUpdated(clean, avatar)
+
+            // 4. Update online room sync
+            com.bingo.multiplayer.domain.network.OnlineRoomSyncManager.activeInstance?.onRemoteAvatarUpdated(clean, avatar)
+
+            // 5. Update LAN P2P session
+            com.bingo.multiplayer.domain.network.LanP2pSessionManager.activeInstance?.onRemoteAvatarUpdated(clean, avatar)
+
+            Log.i(TAG, "Applied real-time avatar update for @$clean (hasAvatar=${!avatar.isNullOrBlank()})")
+        } catch (e: Exception) {
+            Log.w(TAG, "Error handling avatar update for @$clean: ${e.message}")
         }
     }
 

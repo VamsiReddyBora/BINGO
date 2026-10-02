@@ -1,7 +1,6 @@
 package com.bingo.multiplayer.presentation.nearby
 
 import android.widget.Toast
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -29,7 +28,6 @@ import com.bingo.multiplayer.core.designsystem.BingoTheme
 import com.bingo.multiplayer.domain.model.Player
 import com.bingo.multiplayer.domain.network.HotspotAndWifiManager
 import com.bingo.multiplayer.domain.network.LanDiscoveredGame
-import com.bingo.multiplayer.domain.network.NearbyHostQrPayload
 import com.bingo.multiplayer.presentation.common.PlayerAvatar
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -51,7 +49,7 @@ fun NearbyLobbyScreen(
     val context = LocalContext.current
     val tokens = BingoTheme.colors
 
-    // Dynamic board sizing is calculated silently in the background (no UI badges shown)
+    // Dynamic board sizing is calculated silently in the background
     val dynamicBoardSize = when {
         connectedPeers.size <= 2 -> 5
         connectedPeers.size <= 4 -> 6
@@ -59,12 +57,10 @@ fun NearbyLobbyScreen(
         else -> 8
     }
 
-    // Stable room code and payload generated once per session to prevent QR regeneration
-    val stableRoomCode = remember { "LAN_${(1000..9999).random()}" }
-
     // Hotspot & Wi-Fi reactive status checks
     var isHotspotActive by remember { mutableStateOf(HotspotAndWifiManager.isHotspotEnabled(context)) }
     var isWifiActive by remember { mutableStateOf(HotspotAndWifiManager.isWifiEnabled(context)) }
+    val isNetworkActive = isHotspotActive || isWifiActive
 
     // Periodic check to auto-detect when user returns from system settings
     LaunchedEffect(Unit) {
@@ -75,21 +71,14 @@ fun NearbyLobbyScreen(
         }
     }
 
-    // Auto-start broadcasting when in host mode and hotspot is genuinely active
+    // Auto-start broadcasting when in host mode and network is genuinely active
     var hasAutoStartedBroadcast by remember { mutableStateOf(false) }
-    LaunchedEffect(isHostMode, isHotspotActive) {
-        if (isHostMode && isHotspotActive && !isHosting && !hasAutoStartedBroadcast) {
+    LaunchedEffect(isHostMode, isNetworkActive) {
+        if (isHostMode && isNetworkActive && !isHosting && !hasAutoStartedBroadcast) {
             hasAutoStartedBroadcast = true
             onStartBroadcasting(dynamicBoardSize)
         }
     }
-
-    // QR Dialog & Scanner states
-    var showQrDialog by remember { mutableStateOf(false) }
-    var showScannerDialog by remember { mutableStateOf(false) }
-    var selectedGameToJoin by remember { mutableStateOf<LanDiscoveredGame?>(null) }
-    var joinPasswordInput by remember { mutableStateOf("") }
-    var isConnectingHotspot by remember { mutableStateOf(false) }
 
     // Pulsing radar animation for network scanning
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
@@ -102,180 +91,6 @@ fun NearbyLobbyScreen(
         ),
         label = "pulseAlpha"
     )
-
-    // ── Dialog 1: Host QR Code Display (Stable) ──
-    if (showQrDialog) {
-        val hostPayload = remember(stableRoomCode) {
-            NearbyHostQrPayload(
-                ssid = HotspotAndWifiManager.getHotspotName(context),
-                password = HotspotAndWifiManager.getSavedHotspotPassword(context),
-                roomCode = stableRoomCode,
-                hostIp = "",
-                hostName = connectedPeers.firstOrNull { it.isHost }?.displayName ?: "Nearby Host",
-                boardSize = dynamicBoardSize
-            )
-        }
-        NearbyHostQrDisplayDialog(
-            payload = hostPayload,
-            onDismiss = { showQrDialog = false }
-        )
-    }
-
-    // ── Dialog 2: Joiner Camera QR Scanner ──
-    if (showScannerDialog) {
-        NearbyQrScannerDialog(
-            onDismiss = { showScannerDialog = false },
-            onQrScanned = { payload ->
-                showScannerDialog = false
-                Toast.makeText(context, "Host QR scanned! Connecting to ${payload.hostName}...", Toast.LENGTH_SHORT).show()
-
-                if (payload.password.isNotBlank() && payload.ssid.isNotBlank()) {
-                    isConnectingHotspot = true
-                    HotspotAndWifiManager.connectToHostWifi(
-                        context = context,
-                        ssid = payload.ssid,
-                        password = payload.password,
-                        onConnected = {
-                            isConnectingHotspot = false
-                            val game = LanDiscoveredGame(
-                                hostId = payload.roomCode,
-                                hostDisplayName = payload.hostName,
-                                roomCode = payload.roomCode,
-                                hostIp = payload.hostIp,
-                                boardSize = payload.boardSize
-                            )
-                            onJoinDiscoveredGame(game)
-                        },
-                        onError = { _ ->
-                            isConnectingHotspot = false
-                            val game = LanDiscoveredGame(
-                                hostId = payload.roomCode,
-                                hostDisplayName = payload.hostName,
-                                roomCode = payload.roomCode,
-                                hostIp = payload.hostIp,
-                                boardSize = payload.boardSize
-                            )
-                            onJoinDiscoveredGame(game)
-                        }
-                    )
-                } else {
-                    val game = LanDiscoveredGame(
-                        hostId = payload.roomCode,
-                        hostDisplayName = payload.hostName,
-                        roomCode = payload.roomCode,
-                        hostIp = payload.hostIp,
-                        boardSize = payload.boardSize
-                    )
-                    onJoinDiscoveredGame(game)
-                }
-            }
-        )
-    }
-
-    // ── Dialog 3: Join Game Hotspot Password Dialog ──
-    selectedGameToJoin?.let { targetGame ->
-        val hostSsid = targetGame.ssid.ifBlank { "${targetGame.hostDisplayName}'s Hotspot" }
-
-        AlertDialog(
-            onDismissRequest = { selectedGameToJoin = null; joinPasswordInput = "" },
-            title = {
-                Text(
-                    text = "Connect to Host Network",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp,
-                    color = tokens.cellNeutralText
-                )
-            },
-            text = {
-                Column {
-                    Text(
-                        text = "Your phone is not yet connected to the host's hotspot. Connect below to enter the lobby:",
-                        fontSize = 12.sp,
-                        color = tokens.cellNeutralText.copy(alpha = 0.7f)
-                    )
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = tokens.backgroundSecondary,
-                        border = BorderStroke(1.dp, tokens.surfaceBorder),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(imageVector = Icons.Default.Wifi, contentDescription = null, tint = tokens.accentBrand, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = hostSsid,
-                                fontSize = 12.5.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = tokens.cellNeutralText
-                            )
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    OutlinedTextField(
-                        value = joinPasswordInput,
-                        onValueChange = { joinPasswordInput = it },
-                        label = { Text("Hotspot Password") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(10.dp)
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    OutlinedButton(
-                        onClick = {
-                            selectedGameToJoin = null
-                            showScannerDialog = true
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(10.dp),
-                        border = BorderStroke(1.dp, tokens.surfaceBorder)
-                    ) {
-                        Icon(imageVector = Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(16.dp), tint = tokens.accentBrand)
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Scan Host QR Instead", fontSize = 12.sp, color = tokens.cellNeutralText)
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val game = targetGame
-                        selectedGameToJoin = null
-                        if (joinPasswordInput.isNotBlank()) {
-                            isConnectingHotspot = true
-                            HotspotAndWifiManager.connectToHostWifi(
-                                context = context,
-                                ssid = game.ssid.ifBlank { game.hostDisplayName },
-                                password = joinPasswordInput,
-                                onConnected = {
-                                    isConnectingHotspot = false
-                                    onJoinDiscoveredGame(game)
-                                },
-                                onError = { _ ->
-                                    isConnectingHotspot = false
-                                    onJoinDiscoveredGame(game)
-                                }
-                            )
-                        } else {
-                            onJoinDiscoveredGame(game)
-                        }
-                    },
-                    shape = RoundedCornerShape(8.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = tokens.primaryButtonBg)
-                ) {
-                    Text("Connect & Join", color = tokens.primaryButtonText, fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { selectedGameToJoin = null }) {
-                    Text("Cancel", color = tokens.textMuted)
-                }
-            }
-        )
-    }
 
     Box(
         modifier = Modifier
@@ -319,7 +134,7 @@ fun NearbyLobbyScreen(
                         color = tokens.cellNeutralText
                     )
                     Text(
-                        text = if (isHostMode) "Hotspot Broadcasting • Waiting for Players" else "Zero-latency Wi-Fi & Hotspot • No Codes",
+                        text = if (isHostMode) "Broadcasting on Local Network • Waiting for Players" else "Fast Local P2P • No Codes",
                         fontSize = 11.5.sp,
                         color = tokens.cellNeutralText.copy(alpha = 0.55f)
                     )
@@ -332,8 +147,8 @@ fun NearbyLobbyScreen(
             // ── MODE A: HOST GAME VIEW ──
             // ══════════════════════════════════════════
             if (isHostMode) {
-                if (!isHotspotActive && !isHosting) {
-                    // Hotspot OFF Prompt with verified check (no blind bypass)
+                if (!isNetworkActive && !isHosting) {
+                    // Network OFF Prompt: Neither Hotspot nor Wi-Fi is active
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(16.dp),
@@ -355,14 +170,14 @@ fun NearbyLobbyScreen(
                             )
                             Spacer(modifier = Modifier.height(10.dp))
                             Text(
-                                text = "Hotspot is Turned Off",
+                                text = "Network Not Connected",
                                 fontSize = 15.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = tokens.cellNeutralText
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Please turn on your phone's Mobile Hotspot so other players can connect and join your local match.",
+                                text = "Connect to Wi-Fi or turn on Mobile Hotspot so nearby friends can discover and join your match.",
                                 fontSize = 12.sp,
                                 textAlign = TextAlign.Center,
                                 color = tokens.cellNeutralText.copy(alpha = 0.65f)
@@ -380,20 +195,14 @@ fun NearbyLobbyScreen(
                             }
                             Spacer(modifier = Modifier.height(8.dp))
                             OutlinedButton(
-                                onClick = {
-                                    val actuallyOn = HotspotAndWifiManager.isHotspotEnabled(context)
-                                    if (actuallyOn) {
-                                        isHotspotActive = true
-                                        onStartBroadcasting(dynamicBoardSize)
-                                    } else {
-                                        Toast.makeText(context, "Hotspot is not turned on yet. Please enable Mobile Hotspot in Settings.", Toast.LENGTH_SHORT).show()
-                                    }
-                                },
+                                onClick = { HotspotAndWifiManager.promptEnableWifi(context) },
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(10.dp),
                                 border = BorderStroke(1.dp, tokens.surfaceBorder)
                             ) {
-                                Text("Verify Hotspot & Broadcast", fontSize = 12.sp, color = tokens.cellNeutralText)
+                                Icon(imageVector = Icons.Default.Wifi, contentDescription = null, modifier = Modifier.size(16.dp), tint = tokens.accentBrand)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Turn On Wi-Fi", fontSize = 12.sp, color = tokens.cellNeutralText)
                             }
                         }
                     }
@@ -407,59 +216,32 @@ fun NearbyLobbyScreen(
                         shadowElevation = 1.dp
                     ) {
                         Column(modifier = Modifier.padding(18.dp)) {
-                            // Top Row: Hosting label + Plain text Broadcasting + QR Button
+                            // Top Row: Hosting label + Broadcasting indicator
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        imageVector = Icons.Default.Wifi,
-                                        contentDescription = null,
-                                        tint = tokens.accentOrange,
-                                        modifier = Modifier.size(20.dp)
-                                    )
+                                Icon(
+                                    imageVector = Icons.Default.Wifi,
+                                    contentDescription = null,
+                                    tint = tokens.accentOrange,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "HOSTING MATCH",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 1.sp,
+                                    color = tokens.cellNeutralText.copy(alpha = 0.6f)
+                                )
+                                if (isHosting) {
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = "HOSTING MATCH",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        letterSpacing = 1.sp,
-                                        color = tokens.cellNeutralText.copy(alpha = 0.6f)
-                                    )
-                                    if (isHosting) {
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        // Plain text without any box background
-                                        Text(
-                                            text = "Broadcasting...",
-                                            fontSize = 11.5.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = Color(0xFF16A34A)
-                                        )
-                                    }
-                                }
-
-                                // QR Code Button - Directly opens device Hotspot settings (shows phone's real SSID and native QR)
-                                OutlinedButton(
-                                    onClick = { HotspotAndWifiManager.openHotspotSettings(context) },
-                                    shape = RoundedCornerShape(8.dp),
-                                    border = BorderStroke(1.dp, tokens.surfaceBorder),
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                    modifier = Modifier.height(32.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.QrCode,
-                                        contentDescription = "Show QR",
-                                        tint = tokens.accentBrand,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = "QR",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = tokens.cellNeutralText
+                                        text = "Broadcasting...",
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color(0xFF16A34A)
                                     )
                                 }
                             }
@@ -478,7 +260,7 @@ fun NearbyLobbyScreen(
 
                             if (connectedPeers.isEmpty()) {
                                 Text(
-                                    text = "Waiting for players to connect to your hotspot or scan the QR code…",
+                                    text = "Waiting for players to join your game…",
                                     fontSize = 11.5.sp,
                                     color = tokens.cellNeutralText.copy(alpha = 0.5f)
                                 )
@@ -531,11 +313,14 @@ fun NearbyLobbyScreen(
                                         onClick = { onStartBroadcasting(dynamicBoardSize) },
                                         modifier = Modifier.weight(1f),
                                         shape = RoundedCornerShape(10.dp),
-                                        colors = ButtonDefaults.buttonColors(containerColor = tokens.accentBrand)
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = tokens.primaryButtonBg,
+                                            contentColor = tokens.primaryButtonText
+                                        )
                                     ) {
                                         Text(
                                             "Start",
-                                            color = if (tokens.isDark) Color.Black else Color.White,
+                                            color = tokens.primaryButtonText,
                                             fontSize = 12.sp,
                                             fontWeight = FontWeight.Bold
                                         )
@@ -562,8 +347,8 @@ fun NearbyLobbyScreen(
             // ── MODE B: JOIN GAME VIEW ──
             // ══════════════════════════════════════════
             if (!isHostMode) {
-                if (!isWifiActive) {
-                    // Wi-Fi OFF Prompt
+                if (!isNetworkActive) {
+                    // Network OFF Prompt
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(16.dp),
@@ -592,7 +377,7 @@ fun NearbyLobbyScreen(
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Please turn on Wi-Fi so your phone can discover nearby game hosts and connect to their hotspot.",
+                                text = "Please turn on Wi-Fi so your phone can discover nearby game hosts on your network or hotspot.",
                                 fontSize = 12.sp,
                                 textAlign = TextAlign.Center,
                                 color = tokens.cellNeutralText.copy(alpha = 0.65f)
@@ -609,6 +394,11 @@ fun NearbyLobbyScreen(
                         }
                     }
                 } else if (joinedGame != null) {
+                    val hostPeer = connectedPeers.firstOrNull { it.isHost }
+                    val hostDisplayName = hostPeer?.displayName
+                        ?: joinedGame.hostDisplayName.ifBlank { "Host" }
+                    val isConnectedToHost = hostPeer != null
+
                     // Joiner Connected / Waiting State
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
@@ -624,12 +414,16 @@ fun NearbyLobbyScreen(
                             ) {
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(16.dp),
-                                    color = tokens.accentBrand,
+                                    color = if (isConnectedToHost) Color(0xFF16A34A) else tokens.accentBrand,
                                     strokeWidth = 2.dp
                                 )
                                 Spacer(modifier = Modifier.width(10.dp))
                                 Text(
-                                    text = "Connected to ${joinedGame.hostDisplayName}'s Game! Waiting for host to open lobby…",
+                                    text = if (isConnectedToHost) {
+                                        "Connected to $hostDisplayName's Game! Waiting for host to open lobby…"
+                                    } else {
+                                        "Connecting to $hostDisplayName's game session…"
+                                    },
                                     fontSize = 12.5.sp,
                                     fontWeight = FontWeight.Medium,
                                     color = tokens.cellNeutralText
@@ -681,46 +475,25 @@ fun NearbyLobbyScreen(
                         }
                     }
                 } else {
-                    // Available Nearby Games List + Scan QR Action
+                    // Available Nearby Games List
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier
-                                    .size(8.dp)
-                                    .clip(CircleShape)
-                                    .background(Color(0xFF2563EB).copy(alpha = pulseAlpha))
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "AVAILABLE NEARBY GAMES",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                letterSpacing = 1.sp,
-                                color = tokens.cellNeutralText.copy(alpha = 0.5f)
-                            )
-                        }
-
-                        // Top Action: Scan QR Button
-                        OutlinedButton(
-                            onClick = { showScannerDialog = true },
-                            shape = RoundedCornerShape(8.dp),
-                            border = BorderStroke(1.dp, tokens.surfaceBorder),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                            modifier = Modifier.height(32.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.QrCodeScanner,
-                                contentDescription = "Scan QR",
-                                tint = tokens.accentBrand,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Scan QR", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = tokens.cellNeutralText)
-                        }
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF2563EB).copy(alpha = pulseAlpha))
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "AVAILABLE NEARBY GAMES",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp,
+                            color = tokens.cellNeutralText.copy(alpha = 0.5f)
+                        )
                     }
 
                     Spacer(modifier = Modifier.height(10.dp))
@@ -745,14 +518,14 @@ fun NearbyLobbyScreen(
                                 )
                                 Spacer(modifier = Modifier.height(14.dp))
                                 Text(
-                                    text = "Scanning Wi-Fi / Hotspot for hosts…",
+                                    text = "Searching for nearby hosts…",
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Medium,
                                     color = tokens.cellNeutralText
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = "Or tap 'Scan QR' above to scan the host's screen directly to connect and join automatically!",
+                                    text = "Make sure you and the host are connected to the same Wi-Fi or Mobile Hotspot.",
                                     fontSize = 11.5.sp,
                                     textAlign = TextAlign.Center,
                                     color = tokens.cellNeutralText.copy(alpha = 0.5f)
@@ -769,13 +542,7 @@ fun NearbyLobbyScreen(
                                     game = game,
                                     isJoined = false,
                                     onJoin = {
-                                        // Background check: already connected to host hotspot?
-                                        val isConnected = HotspotAndWifiManager.isConnectedToHost(context, game.hostIp, game.ssid)
-                                        if (isConnected) {
-                                            onJoinDiscoveredGame(game)
-                                        } else {
-                                            selectedGameToJoin = game
-                                        }
+                                        onJoinDiscoveredGame(game)
                                     }
                                 )
                             }
@@ -835,17 +602,18 @@ private fun DiscoveredGameCard(
                 enabled = !isJoined,
                 shape = RoundedCornerShape(10.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isJoined) Color(0xFF16A34A) else tokens.accentBrand,
-                    disabledContainerColor = Color(0xFF16A34A)
+                    containerColor = if (isJoined) Color(0xFF16A34A) else tokens.primaryButtonBg,
+                    contentColor = if (isJoined) Color.White else tokens.primaryButtonText,
+                    disabledContainerColor = Color(0xFF16A34A),
+                    disabledContentColor = Color.White
                 ),
                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
             ) {
-                // Button text color is explicitly pure Black in dark mode when active
                 Text(
                     text = if (isJoined) "Joined ✓" else "Join",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
-                    color = if (isJoined) Color.White else Color.Black
+                    color = if (isJoined) Color.White else tokens.primaryButtonText
                 )
             }
         }

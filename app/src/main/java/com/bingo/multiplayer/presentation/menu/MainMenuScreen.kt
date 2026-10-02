@@ -74,7 +74,7 @@ import com.bingo.multiplayer.presentation.common.PlayerAvatar
 fun MainMenuScreen(
     authRepository: AuthRepository,
     onNavigateToSettings: () -> Unit,
-    onNavigateToDashboard: () -> Unit,
+    onNavigateToDashboard: () -> Unit = {},
     onPlayAi: (difficulty: AiDifficulty) -> Unit,
     onPlayOnline: () -> Unit,
     onPlayNearbyNetwork: () -> Unit
@@ -134,36 +134,7 @@ fun MainMenuScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    // Dashboard & Friends Button
-                    Surface(
-                        onClick = onNavigateToDashboard,
-                        shape = RoundedCornerShape(20.dp),
-                        color = tokens.backgroundSecondary,
-                        border = BorderStroke(1.dp, tokens.surfaceBorder)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Insights,
-                                contentDescription = "Dashboard",
-                                tint = tokens.accentBrand,
-                                modifier = Modifier.size(15.dp)
-                            )
-                            Spacer(modifier = Modifier.width(5.dp))
-                            Text(
-                                text = "Dashboard",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = tokens.cellNeutralText
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
 
                     // Compact Profile & Settings Button
                     Surface(
@@ -183,48 +154,6 @@ fun MainMenuScreen(
                             )
                         }
                     }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(18.dp))
-
-            // ── Social & Friends Quick Hub Card ──
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onNavigateToDashboard() },
-                shape = RoundedCornerShape(14.dp),
-                color = tokens.surface,
-                border = BorderStroke(1.dp, tokens.surfaceBorder),
-                shadowElevation = 1.dp
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(34.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(if (tokens.isDark) Color(0xFF1E1E1E) else tokens.accentBrand.copy(alpha = 0.12f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Group,
-                                contentDescription = null,
-                                tint = if (tokens.isDark) Color.White else tokens.accentBrand,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column {
-                            Text("Friends & Social Hub", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = tokens.cellNeutralText)
-                            Text("Online status, friends list & 1-tap invites", fontSize = 11.sp, color = tokens.textMuted)
-                        }
-                    }
-                    Icon(imageVector = Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, tint = tokens.textMuted, modifier = Modifier.size(18.dp))
                 }
             }
 
@@ -275,7 +204,7 @@ fun MainMenuScreen(
                 onClick = onPlayNearbyNetwork
             )
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(84.dp))
         }
     }
 }

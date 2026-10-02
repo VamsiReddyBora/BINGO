@@ -252,12 +252,15 @@ fun SettingsScreen(
                         }
                     },
                     enabled = !isCheckingUsername,
-                    colors = ButtonDefaults.buttonColors(containerColor = tokens.accentBrand)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = tokens.primaryButtonBg,
+                        contentColor = tokens.primaryButtonText
+                    )
                 ) {
                     if (isCheckingUsername) {
-                        CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), color = tokens.primaryButtonText, strokeWidth = 2.dp)
                     } else {
-                        Text("Save", fontWeight = FontWeight.Bold)
+                        Text("Save", fontWeight = FontWeight.Bold, color = tokens.primaryButtonText)
                     }
                 }
             },
@@ -357,9 +360,12 @@ fun SettingsScreen(
                         }
                         editingPhraseIndex = null
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = tokens.accentBrand)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = tokens.primaryButtonBg,
+                        contentColor = tokens.primaryButtonText
+                    )
                 ) {
-                    Text("Save", fontWeight = FontWeight.Bold)
+                    Text("Save", fontWeight = FontWeight.Bold, color = tokens.primaryButtonText)
                 }
             },
             dismissButton = {
@@ -431,9 +437,12 @@ fun SettingsScreen(
                         }
                         showAddPhraseDialog = false
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = tokens.accentBrand)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = tokens.primaryButtonBg,
+                        contentColor = tokens.primaryButtonText
+                    )
                 ) {
-                    Text("Add", fontWeight = FontWeight.Bold)
+                    Text("Add", fontWeight = FontWeight.Bold, color = tokens.primaryButtonText)
                 }
             },
             dismissButton = {
@@ -827,7 +836,7 @@ fun SettingsScreen(
                         containerColor = parsedColor ?: tokens.accentBrand
                     )
                 ) {
-                    Text("Apply Color", fontWeight = FontWeight.Bold, color = parsedColor?.let { computeContrastText(it) } ?: Color.White)
+                    Text("Apply Color", fontWeight = FontWeight.Bold, color = parsedColor?.let { computeContrastText(it) } ?: tokens.primaryButtonText)
                 }
             },
             dismissButton = {
@@ -1056,13 +1065,15 @@ fun SettingsScreen(
                                     enabled = isNameChanged,
                                     shape = RoundedCornerShape(10.dp),
                                     colors = ButtonDefaults.buttonColors(
-                                        containerColor = tokens.accentBrand
+                                        containerColor = tokens.primaryButtonBg,
+                                        contentColor = tokens.primaryButtonText
                                     )
                                 ) {
                                     Text(
                                         text = "Save Name",
                                         fontSize = 13.sp,
-                                        fontWeight = FontWeight.Bold
+                                        fontWeight = FontWeight.Bold,
+                                        color = tokens.primaryButtonText
                                     )
                                 }
                             }
@@ -2062,7 +2073,7 @@ fun SettingsScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(84.dp))
         }
 
         val profileToDisplay = selectedProfilePlayer

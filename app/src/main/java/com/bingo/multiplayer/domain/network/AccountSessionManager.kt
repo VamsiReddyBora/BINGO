@@ -424,6 +424,8 @@ class AccountSessionManager(
 
         if (forceRefresh) {
             registryCache.remove(clean)
+            binIdCache.remove("ava_$clean")
+            binIdCache.remove("user_$clean")
         }
 
         // 0. In-memory hot cache for instant 0ms repeat searches (only if not forced)
@@ -718,6 +720,71 @@ class AccountSessionManager(
         } catch (e: Exception) {
             Log.w("AccountSessionManager", "saveUserAvatar error: ${e.message}")
             false
+        }
+    }
+
+    /**
+     * Removes avatar from KeyValue store.
+     */
+    suspend fun deleteUserAvatar(cleanUsername: String): Boolean = withContext(Dispatchers.IO) {
+        val clean = cleanUsername.trim().lowercase().removePrefix("@")
+        if (clean.isBlank()) return@withContext false
+        try {
+            binIdCache.remove("ava_$clean")
+            setKeyValue("ava_$clean", "")
+        } catch (e: Exception) {
+            Log.w("AccountSessionManager", "deleteUserAvatar error: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * Broadcasts profile avatar update across MQTT with retained flag.
+     * All listening devices (in lobby, match, friends list, or app) receive this immediately.
+     */
+    fun broadcastAvatarUpdate(cleanUsername: String, avatarBase64: String?) {
+        val clean = cleanUsername.trim().lowercase().removePrefix("@")
+        if (clean.isBlank()) return
+        scope.launch(Dispatchers.IO) {
+            try {
+                val topic = "bingo/v3/avatar_update/$clean"
+                val tempClientId = "ava_up_${UUID.randomUUID().toString().take(8)}"
+                val client = MqttAsyncClient(brokerUrl, tempClientId, MemoryPersistence())
+                val options = MqttConnectOptions().apply {
+                    isCleanSession = true
+                    connectionTimeout = 3
+                    socketFactory = LowLatencySocketFactory()
+                }
+                client.connect(options).waitForCompletion(2000L)
+                val payloadObj = org.json.JSONObject()
+                    .put("username", clean)
+                    .put("avatar", avatarBase64 ?: "")
+                    .put("timestamp", System.currentTimeMillis())
+                val message = MqttMessage(payloadObj.toString().toByteArray(StandardCharsets.UTF_8)).apply {
+                    qos = 1
+                    isRetained = true
+                }
+                client.publish(topic, message).waitForCompletion(2000L)
+                client.disconnect()
+                client.close()
+                Log.i("AccountSessionManager", "Broadcast avatar update for @$clean (hasAvatar=${!avatarBase64.isNullOrBlank()})")
+            } catch (e: Exception) {
+                Log.w("AccountSessionManager", "Failed to broadcast avatar update for @$clean: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Handles an incoming real-time avatar update for a user.
+     * Updates in-memory registryCache and invalidates binIdCache.
+     */
+    fun onRemoteAvatarUpdated(cleanUsername: String, avatarUrl: String?) {
+        val clean = cleanUsername.trim().lowercase().removePrefix("@")
+        if (clean.isBlank()) return
+        binIdCache.remove("ava_$clean")
+        val cached = registryCache[clean]?.second
+        if (cached != null) {
+            registryCache[clean] = Pair(System.currentTimeMillis(), cached.copy(avatarUrl = avatarUrl?.takeIf { it.isNotBlank() }))
         }
     }
 

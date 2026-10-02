@@ -22,6 +22,7 @@ import com.bingo.multiplayer.domain.model.InGameChatMessage
 import com.bingo.multiplayer.domain.model.Player
 import com.bingo.multiplayer.domain.model.RecentPick
 import com.bingo.multiplayer.domain.model.UserProfile
+import com.bingo.multiplayer.domain.network.HotspotAndWifiManager
 import com.bingo.multiplayer.domain.network.LanDiscoveryManager
 import com.bingo.multiplayer.domain.network.LanDiscoveredGame
 import com.bingo.multiplayer.domain.network.OnlineRoomSyncManager
@@ -1239,16 +1240,11 @@ fun RootNavGraph(
             )
         }
 
-        // 3. Main Menu Screen
+        // 3. Main Container Screen (3 tabs: Home, Dashboard, Settings with swipe & floating pill)
         composable(Screen.MainMenu.route) {
-            MainMenuScreen(
+            com.bingo.multiplayer.presentation.menu.MainContainerScreen(
                 authRepository = authRepository,
-                onNavigateToSettings = {
-                    navController.navigate(Screen.Settings.route)
-                },
-                onNavigateToDashboard = {
-                    navController.navigate(Screen.Dashboard.route)
-                },
+                friendsRepository = friendsRepository,
                 onPlayAi = { difficulty ->
                     startNewGame(
                         mode = if (difficulty == AiDifficulty.EASY) GameMode.AI_EASY else GameMode.AI_HARD,
@@ -1266,25 +1262,6 @@ fun RootNavGraph(
                     } else {
                         nearbyPermissionLauncher.launch(perms.toTypedArray())
                     }
-                }
-            )
-        }
-
-        // 3b. Settings Screen
-        composable(Screen.Settings.route) {
-            BackHandler {
-                navController.navigate(Screen.MainMenu.route) {
-                    popUpTo(Screen.MainMenu.route) { inclusive = false }
-                    launchSingleTop = true
-                }
-            }
-            SettingsScreen(
-                authRepository = authRepository,
-                onBack = {
-                    navController.navigate(Screen.MainMenu.route) {
-                        popUpTo(Screen.MainMenu.route) { inclusive = false }
-                        launchSingleTop = true
-                    }
                 },
                 onSignedOut = {
                     com.bingo.multiplayer.domain.network.PresenceManager.stopPresence()
@@ -1295,28 +1272,9 @@ fun RootNavGraph(
                         popUpTo(0) { inclusive = true }
                     }
                 },
-                onNavigateToDashboard = {
-                    navController.navigate(Screen.Dashboard.route)
-                },
-                friendsRepository = friendsRepository
-            )
-        }
-
-        // 3c. Dashboard & Friends Social Screen
-        composable(Screen.Dashboard.route) {
-            BackHandler {
-                navController.navigate(Screen.MainMenu.route) {
-                    popUpTo(Screen.MainMenu.route) { inclusive = false }
-                    launchSingleTop = true
-                }
-            }
-            val user = (authRepository.authState.collectAsState().value as? AuthState.Authenticated)?.user
-                ?: UserProfile(uid = "guest", displayName = "Player")
-            DashboardAndFriendsScreen(
-                user = user,
-                authRepository = authRepository,
-                friendsRepository = friendsRepository,
                 onInviteFriendToMatch = { friend ->
+                    val user = (authRepository.authState.value as? AuthState.Authenticated)?.user
+                        ?: UserProfile(uid = "guest", displayName = "Player")
                     roomCode = generateRoomCode()
                     currentGameMode = GameMode.ONLINE_ROOM
                     isUsingP2p = false
@@ -1360,12 +1318,171 @@ fun RootNavGraph(
                 onAcceptInviteToMatch = { invite ->
                     acceptAndJoinRoom(invite.roomCode)
                 },
-                onBack = {
-                    navController.navigate(Screen.MainMenu.route) {
-                        popUpTo(Screen.MainMenu.route) { inclusive = false }
-                        launchSingleTop = true
+                initialPage = 0
+            )
+        }
+
+        // 3b. Settings Screen (opens MainContainer at page 2)
+        composable(Screen.Settings.route) {
+            com.bingo.multiplayer.presentation.menu.MainContainerScreen(
+                authRepository = authRepository,
+                friendsRepository = friendsRepository,
+                onPlayAi = { difficulty ->
+                    startNewGame(
+                        mode = if (difficulty == AiDifficulty.EASY) GameMode.AI_EASY else GameMode.AI_HARD,
+                        difficulty = difficulty,
+                        size = 5
+                    )
+                },
+                onPlayOnline = {
+                    navController.navigate(Screen.OnlineChoice.route)
+                },
+                onPlayNearbyNetwork = {
+                    val perms = PermissionHelper.getNearbyAndNotificationPermissions()
+                    if (PermissionHelper.hasPermissions(context, perms)) {
+                        openNearbyChoice()
+                    } else {
+                        nearbyPermissionLauncher.launch(perms.toTypedArray())
                     }
-                }
+                },
+                onSignedOut = {
+                    com.bingo.multiplayer.domain.network.PresenceManager.stopPresence()
+                    disconnectRoom()
+                    lanDiscovery.stopBroadcasting()
+                    lanDiscovery.stopDiscovering()
+                    navController.navigate(Screen.Login.route) {
+                        popUpTo(0) { inclusive = true }
+                    }
+                },
+                onInviteFriendToMatch = { friend ->
+                    val user = (authRepository.authState.value as? AuthState.Authenticated)?.user
+                        ?: UserProfile(uid = "guest", displayName = "Player")
+                    roomCode = generateRoomCode()
+                    currentGameMode = GameMode.ONLINE_ROOM
+                    isUsingP2p = false
+                    isHosting = true
+                    val localHost = Player(
+                        id = getLocalUid(),
+                        displayName = getPlayerDisplayName(),
+                        username = user.username,
+                        isHost = true,
+                        avatarUrl = getPlayerAvatarUrl(),
+                        gamesPlayed = user.gamesPlayed,
+                        gamesWon = user.gamesWon,
+                        currentStreak = user.currentStreak,
+                        level = user.level,
+                        lastSeenTimestamp = System.currentTimeMillis()
+                    )
+                    coroutineScope.launch {
+                        com.bingo.multiplayer.domain.network.OnlineRoomRegistry.createRoom(roomCode, localHost, 5)
+                    }
+                    onlineRoomSync.connectToRoom(roomCode, localHost)
+                    val fromUser = user.username.ifBlank { getLocalUid() }
+                    val fromName = user.displayName.ifBlank { getPlayerDisplayName() }
+                    coroutineScope.launch {
+                        val success = com.bingo.multiplayer.domain.network.GameInviteManager.sendInvite(
+                            targetUsername = friend.username,
+                            invite = com.bingo.multiplayer.domain.network.GameInvite(
+                                fromUsername = fromUser,
+                                fromDisplayName = fromName,
+                                fromAvatarUrl = null,
+                                roomCode = roomCode
+                            )
+                        )
+                        if (success) {
+                            Toast.makeText(context, "Inviting @${friend.username} to room $roomCode...", Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(context, "Invite dispatched to @${friend.username}!", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    navController.navigate(Screen.Lobby.route)
+                },
+                onAcceptInviteToMatch = { invite ->
+                    acceptAndJoinRoom(invite.roomCode)
+                },
+                initialPage = 2
+            )
+        }
+
+        // 3c. Dashboard & Friends Social Screen (opens MainContainer at page 1)
+        composable(Screen.Dashboard.route) {
+            com.bingo.multiplayer.presentation.menu.MainContainerScreen(
+                authRepository = authRepository,
+                friendsRepository = friendsRepository,
+                onPlayAi = { difficulty ->
+                    startNewGame(
+                        mode = if (difficulty == AiDifficulty.EASY) GameMode.AI_EASY else GameMode.AI_HARD,
+                        difficulty = difficulty,
+                        size = 5
+                    )
+                },
+                onPlayOnline = {
+                    navController.navigate(Screen.OnlineChoice.route)
+                },
+                onPlayNearbyNetwork = {
+                    val perms = PermissionHelper.getNearbyAndNotificationPermissions()
+                    if (PermissionHelper.hasPermissions(context, perms)) {
+                        openNearbyChoice()
+                    } else {
+                        nearbyPermissionLauncher.launch(perms.toTypedArray())
+                    }
+                },
+                onSignedOut = {
+                    com.bingo.multiplayer.domain.network.PresenceManager.stopPresence()
+                    disconnectRoom()
+                    lanDiscovery.stopBroadcasting()
+                    lanDiscovery.stopDiscovering()
+                    navController.navigate(Screen.Login.route) {
+                        popUpTo(0) { inclusive = true }
+                    }
+                },
+                onInviteFriendToMatch = { friend ->
+                    val user = (authRepository.authState.value as? AuthState.Authenticated)?.user
+                        ?: UserProfile(uid = "guest", displayName = "Player")
+                    roomCode = generateRoomCode()
+                    currentGameMode = GameMode.ONLINE_ROOM
+                    isUsingP2p = false
+                    isHosting = true
+                    val localHost = Player(
+                        id = getLocalUid(),
+                        displayName = getPlayerDisplayName(),
+                        username = user.username,
+                        isHost = true,
+                        avatarUrl = getPlayerAvatarUrl(),
+                        gamesPlayed = user.gamesPlayed,
+                        gamesWon = user.gamesWon,
+                        currentStreak = user.currentStreak,
+                        level = user.level,
+                        lastSeenTimestamp = System.currentTimeMillis()
+                    )
+                    coroutineScope.launch {
+                        com.bingo.multiplayer.domain.network.OnlineRoomRegistry.createRoom(roomCode, localHost, 5)
+                    }
+                    onlineRoomSync.connectToRoom(roomCode, localHost)
+                    val fromUser = user.username.ifBlank { getLocalUid() }
+                    val fromName = user.displayName.ifBlank { getPlayerDisplayName() }
+                    coroutineScope.launch {
+                        val success = com.bingo.multiplayer.domain.network.GameInviteManager.sendInvite(
+                            targetUsername = friend.username,
+                            invite = com.bingo.multiplayer.domain.network.GameInvite(
+                                fromUsername = fromUser,
+                                fromDisplayName = fromName,
+                                fromAvatarUrl = null,
+                                roomCode = roomCode
+                            )
+                        )
+                        if (success) {
+                            Toast.makeText(context, "Inviting @${friend.username} to room $roomCode...", Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(context, "Invite dispatched to @${friend.username}!", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    navController.navigate(Screen.Lobby.route)
+                },
+                onAcceptInviteToMatch = { invite ->
+                    acceptAndJoinRoom(invite.roomCode)
+                },
+                initialPage = 1
             )
         }
 
@@ -1783,7 +1900,12 @@ fun RootNavGraph(
                     )
                     
                     lanP2pSync.connectAsHost(localHost)
-                    lanDiscovery.startBroadcasting(localHost, selectedSize, internalCode)
+                    lanDiscovery.startBroadcasting(
+                        host = localHost,
+                        boardSize = selectedSize,
+                        internalRoomCode = internalCode,
+                        ssid = HotspotAndWifiManager.getHotspotName(context)
+                    )
                 },
                 onStopBroadcasting = {
                     isHosting = false
@@ -1794,7 +1916,8 @@ fun RootNavGraph(
                     isHosting = false
                     isUsingP2p = true
                     currentGameMode = GameMode.NEARBY_NETWORK
-                    joinedLanGame = game
+                    val effectiveHostIp = game.hostIp.ifBlank { HotspotAndWifiManager.getGatewayIp(context) }
+                    joinedLanGame = game.copy(hostIp = effectiveHostIp)
                     roomCode = game.roomCode
                     boardSize = game.boardSize
                     val localJoiner = Player(
@@ -1810,7 +1933,11 @@ fun RootNavGraph(
                         lobbyReadyStatus = "READY",
                         lastSeenTimestamp = System.currentTimeMillis()
                     )
-                    lanP2pSync.connectAsClient(game.hostIp, localJoiner)
+                    lanP2pSync.connectAsClient(
+                        hostIp = effectiveHostIp,
+                        clientPlayer = localJoiner,
+                        fallbackIp = HotspotAndWifiManager.getGatewayIp(context)
+                    )
                     if (game.isInLobby) {
                         navController.navigate(Screen.Lobby.route) {
                             launchSingleTop = true
@@ -2350,9 +2477,12 @@ fun RootNavGraph(
                         }
                         acceptAndJoinRoom(inviteToJoin.roomCode)
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = BingoTheme.colors.accentBrand)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = BingoTheme.colors.primaryButtonBg,
+                        contentColor = BingoTheme.colors.primaryButtonText
+                    )
                 ) {
-                    Text("Accept & Play", fontWeight = FontWeight.Bold)
+                    Text("Accept & Play", color = BingoTheme.colors.primaryButtonText, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -2365,9 +2495,10 @@ fun RootNavGraph(
                                 com.bingo.multiplayer.domain.network.GameInviteManager.removeInvite(u.username, inviteToDecline.roomCode)
                             }
                         }
-                    }
+                    },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = BingoTheme.colors.textPrimary)
                 ) {
-                    Text("Decline")
+                    Text("Decline", color = BingoTheme.colors.textPrimary)
                 }
             },
             containerColor = BingoTheme.colors.surface,
@@ -2388,9 +2519,12 @@ fun RootNavGraph(
             confirmButton = {
                 Button(
                     onClick = { opponentSurrenderMessage = null },
-                    colors = ButtonDefaults.buttonColors(containerColor = BingoTheme.colors.accentBrand)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = BingoTheme.colors.primaryButtonBg,
+                        contentColor = BingoTheme.colors.primaryButtonText
+                    )
                 ) {
-                    Text("Claim Victory", fontWeight = FontWeight.Bold)
+                    Text("Claim Victory", color = BingoTheme.colors.primaryButtonText, fontWeight = FontWeight.Bold)
                 }
             },
             containerColor = BingoTheme.colors.surface,
@@ -2423,9 +2557,12 @@ fun RootNavGraph(
                             popUpTo(Screen.MainMenu.route) { inclusive = true }
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = BingoTheme.colors.accentBrand)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = BingoTheme.colors.primaryButtonBg,
+                        contentColor = BingoTheme.colors.primaryButtonText
+                    )
                 ) {
-                    Text("Back to Menu", fontWeight = FontWeight.Bold)
+                    Text("Back to Menu", color = BingoTheme.colors.primaryButtonText, fontWeight = FontWeight.Bold)
                 }
             },
             containerColor = BingoTheme.colors.surface,
@@ -2485,9 +2622,10 @@ fun RootNavGraph(
             },
             dismissButton = {
                 OutlinedButton(
-                    onClick = { showLeaveMatchDialog = false }
+                    onClick = { showLeaveMatchDialog = false },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = BingoTheme.colors.textPrimary)
                 ) {
-                    Text("Stay")
+                    Text("Stay", color = BingoTheme.colors.textPrimary)
                 }
             },
             containerColor = BingoTheme.colors.surface,

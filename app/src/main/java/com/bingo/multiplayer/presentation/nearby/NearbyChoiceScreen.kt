@@ -9,7 +9,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WifiTethering
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
@@ -103,7 +103,7 @@ fun NearbyChoiceScreen(
             RoleCard(
                 icon = Icons.Default.WifiTethering,
                 title = "Host a Game",
-                description = "Turn on Hotspot, broadcast a match, and let friends join automatically or via QR scan.",
+                description = "Broadcast a match on Wi-Fi or Hotspot and let nearby friends join directly.",
                 accentColor = tokens.accentBrand,
                 onClick = {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -115,9 +115,9 @@ fun NearbyChoiceScreen(
 
             // 2. Join a Game Card
             RoleCard(
-                icon = Icons.Default.QrCodeScanner,
+                icon = Icons.Default.Wifi,
                 title = "Join a Game",
-                description = "Scan Wi-Fi for available nearby hosts or scan the host's QR code to jump straight into the lobby.",
+                description = "Discover nearby friends hosting on Wi-Fi or Hotspot and join with 1 tap.",
                 accentColor = tokens.accentOpponent,
                 onClick = {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)

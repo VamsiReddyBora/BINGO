@@ -89,7 +89,10 @@ private fun RecentPickSlot(
                 .size(24.dp)
                 .clip(CircleShape)
                 .background(
-                    if (num != null && isLatest) tokens.cellPlayerPickBg else Color.Transparent
+                    if (num != null && isLatest) tokens.recentPickBg else Color.Transparent
+                )
+                .then(
+                    if (num != null && isLatest) Modifier.border(1.dp, tokens.recentPickBorder, CircleShape) else Modifier
                 ),
             contentAlignment = Alignment.Center
         ) {
@@ -99,8 +102,8 @@ private fun RecentPickSlot(
                 fontWeight = if (isLatest) FontWeight.ExtraBold else FontWeight.SemiBold,
                 color = when {
                     num == null -> tokens.cellNeutralText.copy(alpha = 0.25f)
-                    isLatest -> tokens.accentBrand
-                    else -> tokens.cellNeutralText.copy(alpha = 0.8f)
+                    isLatest -> tokens.recentPickText
+                    else -> tokens.cellNeutralText
                 }
             )
         }

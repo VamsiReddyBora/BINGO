@@ -179,6 +179,67 @@ object HotspotAndWifiManager {
     }
 
     /**
+     * Resolves the gateway IP of the currently connected network (i.e. the Host IP in a Hotspot).
+     * Falls back to standard Android Hotspot gateway "192.168.43.1".
+     */
+    fun getGatewayIp(context: Context): String {
+        try {
+            val cm = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            val activeNetwork = cm?.activeNetwork
+            if (activeNetwork != null) {
+                val lp = cm.getLinkProperties(activeNetwork)
+                val routeGateway = lp?.routes?.firstOrNull { it.isDefaultRoute }?.gateway?.hostAddress
+                if (!routeGateway.isNullOrBlank() && routeGateway != "0.0.0.0") {
+                    return routeGateway
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    val dhcpServer = lp?.dhcpServerAddress?.hostAddress
+                    if (!dhcpServer.isNullOrBlank() && dhcpServer != "0.0.0.0") {
+                        return dhcpServer
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        try {
+            val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            val dhcp = wifi?.dhcpInfo
+            if (dhcp != null && dhcp.gateway != 0) {
+                val g = dhcp.gateway
+                val ip = "${g and 0xFF}.${(g shr 8) and 0xFF}.${(g shr 16) and 0xFF}.${(g shr 24) and 0xFF}"
+                if (ip != "0.0.0.0") return ip
+            }
+        } catch (_: Exception) {}
+
+        return "192.168.43.1"
+    }
+
+    /**
+     * Scans and returns nearby Wi-Fi AP SSIDs broadcasting in the air.
+     */
+    fun getNearbyWifiAps(context: Context): List<String> {
+        return try {
+            val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            wifi?.scanResults
+                ?.mapNotNull { it.SSID?.trim()?.removeSurrounding("\"") }
+                ?.filter { it.isNotBlank() && !it.equals("<unknown ssid>", ignoreCase = true) }
+                ?.distinct() ?: emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    /**
+     * Triggers a system Wi-Fi AP scan.
+     */
+    fun triggerWifiScan(context: Context) {
+        try {
+            val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            wifi?.startScan()
+        } catch (_: Exception) {}
+    }
+
+    /**
      * Checks if the player's device is currently connected to the host's Wi-Fi / hotspot.
      */
     fun isConnectedToHost(context: Context, hostIp: String, hostSsid: String): Boolean {
@@ -207,12 +268,13 @@ object HotspotAndWifiManager {
     /**
      * Programmatically connects the joiner's device to the host's Wi-Fi hotspot.
      * On Android 10+ uses WifiNetworkSpecifier with ConnectivityManager.
+     * Passes the resolved gateway/host IP into [onConnected].
      */
     fun connectToHostWifi(
         context: Context,
         ssid: String,
         password: String,
-        onConnected: () -> Unit,
+        onConnected: (resolvedGatewayIp: String) -> Unit,
         onError: (String) -> Unit
     ) {
         val cleanSsid = ssid.trim().removeSurrounding("\"")
@@ -251,8 +313,25 @@ object HotspotAndWifiManager {
                         try {
                             cm.bindProcessToNetwork(network)
                         } catch (_: Exception) {}
-                        scope.launch(Dispatchers.Main) {
-                            onConnected()
+
+                        // Allow brief moment for IP routing & DHCP to finalize
+                        scope.launch(Dispatchers.IO) {
+                            kotlinx.coroutines.delay(400L)
+                            var gateway = ""
+                            try {
+                                val lp = cm.getLinkProperties(network)
+                                gateway = lp?.routes?.firstOrNull { it.isDefaultRoute }?.gateway?.hostAddress ?: ""
+                                if (gateway.isBlank() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                                    gateway = lp?.dhcpServerAddress?.hostAddress ?: ""
+                                }
+                            } catch (_: Exception) {}
+                            if (gateway.isBlank()) {
+                                gateway = getGatewayIp(context)
+                            }
+                            val finalGateway = if (gateway.isNotBlank() && gateway != "0.0.0.0") gateway else "192.168.43.1"
+                            scope.launch(Dispatchers.Main) {
+                                onConnected(finalGateway)
+                            }
                         }
                     }
 
@@ -284,8 +363,12 @@ object HotspotAndWifiManager {
                     wifi?.disconnect()
                     wifi?.enableNetwork(netId, true)
                     wifi?.reconnect()
-                    scope.launch(Dispatchers.Main) {
-                        onConnected()
+                    scope.launch(Dispatchers.IO) {
+                        kotlinx.coroutines.delay(800L)
+                        val gateway = getGatewayIp(context)
+                        scope.launch(Dispatchers.Main) {
+                            onConnected(gateway)
+                        }
                     }
                 } else {
                     onError("Failed to add Wi-Fi configuration")

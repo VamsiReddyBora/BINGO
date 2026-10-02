@@ -35,7 +35,48 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 
-private val avatarMemoryCache = object : androidx.collection.LruCache<String, ImageBitmap>(128) {}
+import androidx.compose.runtime.collectAsState
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+
+object PlayerAvatarCache {
+    private val memoryCache = object : androidx.collection.LruCache<String, ImageBitmap>(128) {}
+    private val _version = MutableStateFlow(0L)
+    val version: StateFlow<Long> = _version.asStateFlow()
+
+    fun get(key: String): ImageBitmap? = memoryCache.get(key)
+
+    fun put(key: String, bitmap: ImageBitmap) {
+        memoryCache.put(key, bitmap)
+    }
+
+    fun evict(username: String?, pathOrUri: String? = null) {
+        if (!username.isNullOrBlank()) {
+            val clean = username.trim().lowercase().removePrefix("@")
+            memoryCache.remove("u:$clean")
+            memoryCache.remove(clean)
+        }
+        if (!pathOrUri.isNullOrBlank()) {
+            memoryCache.remove(pathOrUri)
+        }
+        _version.value = System.currentTimeMillis()
+    }
+
+    fun evictAll() {
+        memoryCache.evictAll()
+        _version.value = System.currentTimeMillis()
+    }
+
+    fun notifyAvatarChanged(username: String? = null) {
+        if (!username.isNullOrBlank()) {
+            val clean = username.trim().lowercase().removePrefix("@")
+            memoryCache.remove("u:$clean")
+            memoryCache.remove(clean)
+        }
+        _version.value = System.currentTimeMillis()
+    }
+}
 
 /**
  * Checks whether a given string is a local filesystem path on an Android device.
@@ -66,7 +107,7 @@ fun isLocalFilePath(path: String?): Boolean {
  * If the source is a local path from a foreign device that does not exist here, returns null
  * so callers can fall back to username-based cloud lookup.
  */
-fun decodeAvatarBitmap(source: String?, context: Context): Bitmap? {
+fun decodeAvatarBitmap(source: String?, context: Context? = null): Bitmap? {
     if (source.isNullOrBlank()) return null
     return try {
         when {
@@ -82,7 +123,7 @@ fun decodeAvatarBitmap(source: String?, context: Context): Bitmap? {
             }
             source.startsWith("content://") || source.startsWith("file://") -> {
                 val uri = Uri.parse(source)
-                context.contentResolver.openInputStream(uri)?.use { stream ->
+                context?.contentResolver?.openInputStream(uri)?.use { stream ->
                     BitmapFactory.decodeStream(stream)
                 }
             }
@@ -133,16 +174,18 @@ fun PlayerAvatar(
         username?.trim()?.lowercase()?.removePrefix("@")?.takeIf { it.isNotBlank() }
     }
 
-    var bitmap by remember(avatarPathOrUri, cleanUser) {
+    val cacheVersion by PlayerAvatarCache.version.collectAsState()
+
+    var bitmap by remember(avatarPathOrUri, cleanUser, cacheVersion) {
         mutableStateOf(
-            avatarPathOrUri?.takeIf { it.isNotBlank() }?.let { avatarMemoryCache.get(it) }
-                ?: cleanUser?.let { avatarMemoryCache.get("u:$it") }
+            avatarPathOrUri?.takeIf { it.isNotBlank() }?.let { PlayerAvatarCache.get(it) }
+                ?: (if (avatarPathOrUri.isNullOrBlank()) cleanUser?.let { PlayerAvatarCache.get("u:$it") } else null)
         )
     }
 
-    LaunchedEffect(avatarPathOrUri, cleanUser) {
-        val cached = (avatarPathOrUri?.takeIf { it.isNotBlank() }?.let { avatarMemoryCache.get(it) })
-            ?: (cleanUser?.let { avatarMemoryCache.get("u:$it") })
+    LaunchedEffect(avatarPathOrUri, cleanUser, cacheVersion) {
+        val cached = avatarPathOrUri?.takeIf { it.isNotBlank() }?.let { PlayerAvatarCache.get(it) }
+            ?: (if (avatarPathOrUri.isNullOrBlank()) cleanUser?.let { PlayerAvatarCache.get("u:$it") } else null)
 
         if (cached != null) {
             bitmap = cached
@@ -157,9 +200,9 @@ fun PlayerAvatar(
                 val bmp = decodeAvatarBitmap(source, context)
                 if (bmp != null) {
                     resolvedBitmap = bmp.asImageBitmap()
-                    avatarMemoryCache.put(source, resolvedBitmap)
+                    PlayerAvatarCache.put(source, resolvedBitmap)
                     if (cleanUser != null) {
-                        avatarMemoryCache.put("u:$cleanUser", resolvedBitmap)
+                        PlayerAvatarCache.put("u:$cleanUser", resolvedBitmap)
                     }
                 }
             }
@@ -173,8 +216,8 @@ fun PlayerAvatar(
                         val bmp = decodeAvatarBitmap(remoteAvatar, context)
                         if (bmp != null) {
                             resolvedBitmap = bmp.asImageBitmap()
-                            avatarMemoryCache.put("u:$cleanUser", resolvedBitmap)
-                            avatarMemoryCache.put(remoteAvatar, resolvedBitmap)
+                            PlayerAvatarCache.put("u:$cleanUser", resolvedBitmap)
+                            PlayerAvatarCache.put(remoteAvatar, resolvedBitmap)
                         }
                     }
                 } catch (_: Exception) {}
@@ -182,6 +225,9 @@ fun PlayerAvatar(
 
             if (resolvedBitmap != null) {
                 bitmap = resolvedBitmap
+            } else if (source.isNullOrBlank()) {
+                // Explicitly clear bitmap if no avatar source exists
+                bitmap = null
             }
         }
     }

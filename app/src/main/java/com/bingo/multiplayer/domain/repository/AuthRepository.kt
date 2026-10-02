@@ -18,6 +18,7 @@ import kotlinx.coroutines.withContext
 import com.bingo.multiplayer.domain.network.AccountSessionManager
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import androidx.compose.ui.graphics.asImageBitmap
 import java.io.File
 import java.util.UUID
 
@@ -476,6 +477,7 @@ class AuthRepository(
     fun saveProfileAvatar(uri: Uri): Boolean {
         return try {
             val current = (_authState.value as? AuthState.Authenticated)?.user ?: return false
+            val cleanUser = current.username.trim().lowercase().removePrefix("@")
 
             // Remove any old avatar file in internal storage
             current.avatarUrl?.let { oldPath ->
@@ -497,9 +499,11 @@ class AuthRepository(
             }
 
             // Compress and convert to Base64 for cross-device cloud persistence
+            var decodedBitmap: android.graphics.Bitmap? = null
             val base64 = try {
                 val bitmap = android.graphics.BitmapFactory.decodeFile(targetFile.absolutePath)
                 if (bitmap != null) {
+                    decodedBitmap = bitmap
                     val maxDim = 160
                     val scaled = if (bitmap.width > maxDim || bitmap.height > maxDim) {
                         val ratio = bitmap.width.toFloat() / bitmap.height.toFloat()
@@ -514,6 +518,18 @@ class AuthRepository(
             } catch (_: Exception) {
                 null
             }
+
+            // 1. Immediately evict and pre-populate memory cache so all local UI renders the new avatar ON THE SPOT with ZERO delay
+            com.bingo.multiplayer.presentation.common.PlayerAvatarCache.evict(current.username, current.avatarUrl)
+            if (decodedBitmap != null) {
+                val imageBmp = decodedBitmap.asImageBitmap()
+                com.bingo.multiplayer.presentation.common.PlayerAvatarCache.put(targetFile.absolutePath, imageBmp)
+                com.bingo.multiplayer.presentation.common.PlayerAvatarCache.put("u:$cleanUser", imageBmp)
+                if (!base64.isNullOrBlank()) {
+                    com.bingo.multiplayer.presentation.common.PlayerAvatarCache.put(base64, imageBmp)
+                }
+            }
+            com.bingo.multiplayer.presentation.common.PlayerAvatarCache.notifyAvatarChanged(cleanUser)
 
             val updated = current.copy(
                 avatarUrl = targetFile.absolutePath,
@@ -536,10 +552,16 @@ class AuthRepository(
                 ),
                 googleId = googleId
             )
-            if (base64 != null) {
-                scope.launch {
+            scope.launch {
+                if (base64 != null) {
                     sessionManager.saveUserAvatar(updated.username, base64)
                 }
+                // 2. Real-time broadcast to all players across MQTT
+                sessionManager.broadcastAvatarUpdate(updated.username, base64)
+                // 3. Update active match / lobby / friends
+                com.bingo.multiplayer.domain.network.OnlineRoomSyncManager.activeInstance?.updateLocalAvatar(base64)
+                com.bingo.multiplayer.domain.network.LanP2pSessionManager.activeInstance?.updateLocalAvatar(base64)
+                com.bingo.multiplayer.domain.repository.FriendsRepository.activeInstance?.onRemoteAvatarUpdated(updated.username, base64)
             }
             true
         } catch (e: Exception) {
@@ -566,6 +588,7 @@ class AuthRepository(
      */
     fun removeProfileAvatar(): Boolean {
         val current = (_authState.value as? AuthState.Authenticated)?.user ?: return false
+        val cleanUser = current.username.trim().lowercase().removePrefix("@")
         current.avatarUrl?.let { oldPath ->
             try {
                 val oldFile = File(oldPath)
@@ -575,10 +598,37 @@ class AuthRepository(
             } catch (_: Exception) {}
         }
 
+        // 1. Evict and notify local UI
+        com.bingo.multiplayer.presentation.common.PlayerAvatarCache.evict(current.username, current.avatarUrl)
+        com.bingo.multiplayer.presentation.common.PlayerAvatarCache.notifyAvatarChanged(cleanUser)
+
         val updated = current.copy(avatarUrl = null, avatarBase64 = null)
         persistUser(updated, prefs.getString(KEY_AUTH_TOKEN, ""))
         _authState.value = AuthState.Authenticated(updated)
         backupUserDataToCloud()
+
+        val googleId = if (updated.uid.startsWith("google_")) updated.uid.removePrefix("google_") else null
+        sessionManager.claimUsername(
+            com.bingo.multiplayer.domain.network.PlayerRegistryEntry(
+                username = updated.username,
+                uid = updated.uid,
+                displayName = updated.displayName,
+                avatarUrl = null,
+                gamesPlayed = updated.gamesPlayed,
+                gamesWon = updated.gamesWon,
+                currentStreak = updated.currentStreak,
+                level = updated.level
+            ),
+            googleId = googleId
+        )
+
+        scope.launch {
+            sessionManager.deleteUserAvatar(cleanUser)
+            sessionManager.broadcastAvatarUpdate(cleanUser, null)
+            com.bingo.multiplayer.domain.network.OnlineRoomSyncManager.activeInstance?.updateLocalAvatar(null)
+            com.bingo.multiplayer.domain.network.LanP2pSessionManager.activeInstance?.updateLocalAvatar(null)
+            com.bingo.multiplayer.domain.repository.FriendsRepository.activeInstance?.onRemoteAvatarUpdated(cleanUser, null)
+        }
         return true
     }
 

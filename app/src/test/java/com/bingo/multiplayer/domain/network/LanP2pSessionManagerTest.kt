@@ -73,4 +73,70 @@ class LanP2pSessionManagerTest {
         clientManager.disconnect()
         println("=== P2P Network Flow Test Passed Successfully ===")
     }
+
+    @Test
+    fun testStandardHotspotQrParsing() {
+        val qrRaw = "WIFI:T:WPA;S:realme 8 pro;P:secret123;;"
+        val payload = QrCodeHelper.parseQrContent(qrRaw)
+        assertNotNull(payload)
+        assertEquals("realme 8 pro", payload?.ssid)
+        assertEquals("secret123", payload?.password)
+        assertEquals("realme 8 pro", payload?.hostName)
+    }
+
+    @Test
+    fun testP2pClientConnectWithFallbackIp() = runBlocking {
+        val hostManager = LanP2pSessionManager()
+        val clientManager = LanP2pSessionManager()
+
+        val hostPlayer = Player(id = "host2", displayName = "RealmeHost", isHost = true)
+        val clientPlayer = Player(id = "client2", displayName = "JoinerBob", isHost = false)
+
+        hostManager.connectAsHost(hostPlayer, port = 9002)
+        delay(500)
+
+        // Connect with empty hostIp and valid fallbackIp ("127.0.0.1")
+        clientManager.connectAsClient("", clientPlayer, port = 9002, fallbackIp = "127.0.0.1")
+        delay(1500)
+
+        val clientPlayers = clientManager.players.value
+        val hostPlayers = hostManager.players.value
+
+        assertTrue(clientPlayers.any { it.id == "client2" })
+        assertTrue(hostPlayers.any { it.id == "client2" })
+
+        hostManager.disconnect()
+        clientManager.disconnect()
+    }
+
+    @Test
+    fun testLanDiscoveredGameCodecAndIsAlive() {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; isLenient = true; encodeDefaults = true }
+        val now = System.currentTimeMillis()
+        val game = LanDiscoveredGame(
+            hostId = "host_123",
+            hostDisplayName = "Rahul",
+            hostUsername = "rahul99",
+            avatarUrl = "https://example.com/avatar.png",
+            boardSize = 5,
+            roomCode = "LAN_4821",
+            hostIp = "192.168.1.45",
+            ssid = "HomeWifi",
+            isInLobby = false,
+            broadcastTimestamp = now,
+            lastSeenTimestamp = now
+        )
+
+        val encoded = json.encodeToString(LanDiscoveredGame.serializer(), game)
+        val decoded = json.decodeFromString(LanDiscoveredGame.serializer(), encoded)
+
+        assertEquals("host_123", decoded.hostId)
+        assertEquals("Rahul", decoded.hostDisplayName)
+        assertEquals("LAN_4821", decoded.roomCode)
+        assertEquals("192.168.1.45", decoded.hostIp)
+        assertTrue(decoded.isAlive)
+
+        val staleGame = decoded.copy(lastSeenTimestamp = now - 5000L)
+        assertFalse(staleGame.isAlive)
+    }
 }

@@ -71,12 +71,13 @@ object QrCodeHelper {
                     }
                 }
                 if (ssid.isNotBlank()) {
+                    val displayName = if (name.isNotBlank() && name != "Nearby Host") name else ssid
                     NearbyHostQrPayload(
                         ssid = ssid,
                         password = pass,
                         roomCode = room,
                         hostIp = ip,
-                        hostName = name
+                        hostName = displayName
                     )
                 } else null
             } catch (_: Exception) {

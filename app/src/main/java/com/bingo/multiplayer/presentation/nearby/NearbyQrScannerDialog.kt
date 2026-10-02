@@ -266,9 +266,12 @@ fun NearbyQrScannerDialog(
                             Button(
                                 onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) },
                                 shape = RoundedCornerShape(8.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = tokens.accentBrand)
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = tokens.primaryButtonBg,
+                                    contentColor = tokens.primaryButtonText
+                                )
                             ) {
-                                Text("Grant Permission", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text("Grant Permission", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = tokens.primaryButtonText)
                             }
                         }
                     }

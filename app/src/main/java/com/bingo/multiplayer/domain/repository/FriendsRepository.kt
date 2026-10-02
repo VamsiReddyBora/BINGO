@@ -44,6 +44,7 @@ class FriendsRepository(
     val sentRequestUsernames: StateFlow<Set<String>> = _sentRequestUsernames.asStateFlow()
 
     init {
+        activeInstance = this
         loadFriends()
     }
 
@@ -282,7 +283,22 @@ class FriendsRepository(
             .apply()
     }
 
+    fun onRemoteAvatarUpdated(username: String, newAvatarUrl: String?) {
+        val clean = username.trim().lowercase().removePrefix("@")
+        if (clean.isBlank()) return
+        val current = _friends.value
+        val idx = current.indexOfFirst { it.username.trim().lowercase().removePrefix("@") == clean }
+        if (idx != -1) {
+            val updatedList = current.toMutableList()
+            val safeAvatar = newAvatarUrl?.takeIf { !com.bingo.multiplayer.presentation.common.isLocalFilePath(it) }
+            updatedList[idx] = updatedList[idx].copy(avatarUrl = safeAvatar)
+            _friends.value = updatedList
+            persistFriends(updatedList)
+        }
+    }
+
     companion object {
+        @Volatile var activeInstance: FriendsRepository? = null
         private const val PREFS_NAME = "bingo_friends_prefs"
         private const val KEY_FRIENDS = "friends_list"
     }

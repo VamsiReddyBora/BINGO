@@ -3,6 +3,7 @@ package com.bingo.multiplayer.domain.network
 import android.util.Log
 import com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine
 import com.bingo.multiplayer.domain.model.Player
+import androidx.compose.ui.graphics.asImageBitmap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -58,6 +59,52 @@ class LanP2pSessionManager {
 
     private val _incomingPackets = MutableSharedFlow<RoomMessagePacket>(replay = 1, extraBufferCapacity = 64)
     val incomingPackets: SharedFlow<RoomMessagePacket> = _incomingPackets.asSharedFlow()
+
+    init {
+        activeInstance = this
+    }
+
+    fun updateLocalAvatar(newAvatarUrl: String?) {
+        val p = localPlayer ?: return
+        val updated = p.copy(avatarUrl = newAvatarUrl)
+        localPlayer = updated
+        playerRegistry[p.id] = updated
+        _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+        broadcastPacket(
+            RoomMessagePacket(
+                type = "HEARTBEAT",
+                playerId = updated.id,
+                displayName = updated.displayName,
+                username = updated.username,
+                isHost = updated.isHost,
+                avatarUrl = updated.avatarUrl,
+                gamesPlayed = updated.gamesPlayed,
+                gamesWon = updated.gamesWon,
+                currentStreak = updated.currentStreak,
+                level = updated.level,
+                timestamp = System.currentTimeMillis(),
+                readyStatus = updated.lobbyReadyStatus,
+                readyVersion = updated.readyVersion
+            )
+        )
+    }
+
+    fun onRemoteAvatarUpdated(username: String, avatarUrl: String?) {
+        val clean = username.trim().lowercase().removePrefix("@")
+        val found = playerRegistry.values.find { it.username.trim().lowercase().removePrefix("@") == clean }
+        if (found != null && found.avatarUrl != avatarUrl) {
+            com.bingo.multiplayer.presentation.common.PlayerAvatarCache.evict(clean)
+            if (!avatarUrl.isNullOrBlank()) {
+                val bmp = com.bingo.multiplayer.presentation.common.decodeAvatarBitmap(avatarUrl, null)
+                if (bmp != null) {
+                    com.bingo.multiplayer.presentation.common.PlayerAvatarCache.put("u:$clean", bmp.asImageBitmap())
+                }
+            }
+            com.bingo.multiplayer.presentation.common.PlayerAvatarCache.notifyAvatarChanged(clean)
+            playerRegistry[found.id] = found.copy(avatarUrl = avatarUrl)
+            _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+        }
+    }
 
     fun connectAsHost(hostPlayer: Player, port: Int = 8999) {
         disconnect()
@@ -120,7 +167,7 @@ class LanP2pSessionManager {
         startHeartbeat()
     }
 
-    fun connectAsClient(hostIp: String, clientPlayer: Player, port: Int = 8999) {
+    fun connectAsClient(hostIp: String, clientPlayer: Player, port: Int = 8999, fallbackIp: String = "") {
         disconnect()
         localPlayer = clientPlayer
         isHostInLobby = false
@@ -128,14 +175,39 @@ class LanP2pSessionManager {
         _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
 
         scope.launch(Dispatchers.IO) {
-            try {
-                val socket = Socket(hostIp, port)
-                socket.tcpNoDelay = true
-                try { socket.trafficClass = 0x10 } catch (_: Exception) {}
-                clientSocket = socket
-                setupSocketStreams(socket)
-            } catch (e: Exception) {
-                Log.e("LanP2p", "Client connect error", e)
+            val candidateIps = mutableListOf<String>()
+            if (hostIp.isNotBlank()) candidateIps.add(hostIp)
+            if (fallbackIp.isNotBlank() && !candidateIps.contains(fallbackIp)) candidateIps.add(fallbackIp)
+            listOf("192.168.43.1", "192.168.49.1").forEach { ip ->
+                if (!candidateIps.contains(ip)) candidateIps.add(ip)
+            }
+
+            var connectedSocket: Socket? = null
+            // Retry connecting for up to ~12 seconds to allow Wi-Fi & DHCP routes to finalize
+            for (attempt in 1..12) {
+                if (!isActive) break
+                for (targetIp in candidateIps) {
+                    try {
+                        val socket = Socket()
+                        socket.connect(java.net.InetSocketAddress(targetIp, port), 1200)
+                        socket.tcpNoDelay = true
+                        try { socket.trafficClass = 0x10 } catch (_: Exception) {}
+                        connectedSocket = socket
+                        Log.d("LanP2p", "Client successfully connected to host at $targetIp:$port on attempt $attempt")
+                        break
+                    } catch (e: Exception) {
+                        Log.d("LanP2p", "Attempt $attempt connecting to $targetIp:$port: ${e.message}")
+                    }
+                }
+                if (connectedSocket != null) break
+                delay(600L)
+            }
+
+            if (connectedSocket != null) {
+                clientSocket = connectedSocket
+                setupSocketStreams(connectedSocket)
+            } else {
+                Log.e("LanP2p", "Client failed to connect to host across candidates: $candidateIps")
             }
         }
         startHeartbeat()
@@ -258,6 +330,14 @@ class LanP2pSessionManager {
                         isLocal -> localPlayer?.username?.takeIf { it.isNotBlank() } ?: existing?.username ?: ""
                         packet.username.isNotBlank() -> packet.username
                         else -> existing?.username ?: ""
+                    }
+                    if (!effectiveAvatar.isNullOrBlank() && effectiveAvatar != existing?.avatarUrl && !isLocal) {
+                        com.bingo.multiplayer.presentation.common.PlayerAvatarCache.evict(effectiveUsername)
+                        val bmp = com.bingo.multiplayer.presentation.common.decodeAvatarBitmap(effectiveAvatar, null)
+                        if (bmp != null) {
+                            com.bingo.multiplayer.presentation.common.PlayerAvatarCache.put("u:${effectiveUsername.trim().lowercase().removePrefix("@")}", bmp.asImageBitmap())
+                        }
+                        com.bingo.multiplayer.presentation.common.PlayerAvatarCache.notifyAvatarChanged(effectiveUsername)
                     }
                     val effectiveDisplayName = when {
                         isLocal -> localPlayer?.displayName?.takeIf { it.isNotBlank() } ?: existing?.displayName ?: packet.displayName
@@ -451,5 +531,9 @@ class LanP2pSessionManager {
         localPlayer = null
         playerRegistry.clear()
         _players.value = emptyList()
+    }
+
+    companion object {
+        @Volatile var activeInstance: LanP2pSessionManager? = null
     }
 }

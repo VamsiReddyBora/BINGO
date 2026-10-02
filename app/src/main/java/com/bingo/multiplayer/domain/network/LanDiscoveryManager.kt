@@ -116,30 +116,40 @@ class LanDiscoveryManager(
             // Also advertise on MQTT LAN channel
             startMqttPublisher(gameInfo)
 
-            // Determine broadcast address (fallback to 255.255.255.255 if cannot compute)
-            val broadcastAddr = try {
-                getBroadcastAddress()
-            } catch (e: Exception) {
-                Log.w("LanDiscovery", "Failed to compute broadcast address, using 255.255.255.255: ${e.message}")
-                InetAddress.getByName("255.255.255.255")
-            }
+            val broadcastAddresses = mutableListOf<InetAddress>()
+            try {
+                broadcastAddresses.add(InetAddress.getByName("255.255.255.255"))
+            } catch (_: Exception) {}
+            try {
+                broadcastAddresses.add(InetAddress.getByName("192.168.43.255"))
+            } catch (_: Exception) {}
+            try {
+                broadcastAddresses.add(InetAddress.getByName("192.168.49.255"))
+            } catch (_: Exception) {}
+            try {
+                val interfaces = java.net.NetworkInterface.getNetworkInterfaces()?.toList() ?: emptyList()
+                for (iface in interfaces) {
+                    if (!iface.isUp || iface.isLoopback) continue
+                    for (ifaceAddr in iface.interfaceAddresses) {
+                        val bcast = ifaceAddr.broadcast
+                        if (bcast != null && !broadcastAddresses.contains(bcast)) {
+                            broadcastAddresses.add(bcast)
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
 
             while (isActive && isBroadcasting) {
                 val currentInfo = currentBroadcastGameInfo?.copy(broadcastTimestamp = System.currentTimeMillis()) ?: gameInfo
                 val payload = json.encodeToString(currentInfo)
 
-                // 1. Broadcast over UDP on LAN
-                try {
-                    val bytes = payload.toByteArray(StandardCharsets.UTF_8)
-                    val packet = DatagramPacket(
-                        bytes,
-                        bytes.size,
-                        broadcastAddr,
-                        udpPort
-                    )
-                    udpSocket?.send(packet)
-                } catch (ex: Exception) {
-                    Log.w("LanDiscovery", "Failed to send broadcast packet: ${ex.message}")
+                // 1. Broadcast over UDP on LAN / Hotspot
+                val bytes = payload.toByteArray(StandardCharsets.UTF_8)
+                for (bcastAddr in broadcastAddresses) {
+                    try {
+                        val packet = DatagramPacket(bytes, bytes.size, bcastAddr, udpPort)
+                        udpSocket?.send(packet)
+                    } catch (_: Exception) {}
                 }
 
                 delay(1200L)
@@ -218,7 +228,13 @@ class LanDiscoveryManager(
                         socket.receive(packet)
                         val dataStr = String(packet.data, 0, packet.length, StandardCharsets.UTF_8)
                         val game = json.decodeFromString<LanDiscoveredGame>(dataStr)
-                        onGameDiscovered(game)
+                        val senderIp = packet.address?.hostAddress ?: ""
+                        val resolvedGame = if (senderIp.isNotBlank() && !senderIp.startsWith("127.") && (game.hostIp.isBlank() || game.hostIp == "0.0.0.0" || game.hostIp == "127.0.0.1")) {
+                            game.copy(hostIp = senderIp)
+                        } else {
+                            game
+                        }
+                        onGameDiscovered(resolvedGame)
                     } catch (_: Exception) {}
                 }
             } catch (e: Exception) {
@@ -233,7 +249,7 @@ class LanDiscoveryManager(
         // 2. Also listen for games advertised via the fallback LAN bridge
         startMqttSubscriber()
 
-        // 3. Cleanup stale games every 1 second
+        // 3. Cleanup stale games (strictly actual Bingo game broadcasts only)
         scope.launch(Dispatchers.IO) {
             while (isActive && isDiscovering) {
                 delay(1000L)
@@ -270,10 +286,6 @@ class LanDiscoveryManager(
             return
         }
         val now = System.currentTimeMillis()
-        // Discard any stale packets from past sessions or invalid timestamps
-        if (game.broadcastTimestamp <= 0L || (now - game.broadcastTimestamp) > 3000L) {
-            return
-        }
         gamesCache[game.roomCode] = game.copy(lastSeenTimestamp = now)
         gamesCache.entries.removeIf { (_, g) -> (now - g.lastSeenTimestamp) > 4000L }
         _discoveredGames.value = gamesCache.values.sortedByDescending { it.lastSeenTimestamp }
@@ -283,23 +295,42 @@ class LanDiscoveryManager(
 
     // Original MQTT subscriber removed (duplicate)
 
-    // Restores getLocalIpAddress utility used by getBroadcastAddress
-    private fun getLocalIpAddress(): String {
+    // Restores getLocalIpAddress utility prioritizing Hotspot / Wi-Fi interfaces over cellular
+    fun getLocalIpAddress(): String {
         return try {
-            val interfaces = java.net.NetworkInterface.getNetworkInterfaces()
-            while (interfaces.hasMoreElements()) {
-                val iface = interfaces.nextElement()
-                val addresses = iface.inetAddresses
-                while (addresses.hasMoreElements()) {
-                    val addr = addresses.nextElement()
+            val interfaces = java.net.NetworkInterface.getNetworkInterfaces()?.toList() ?: emptyList()
+            val ipv4List = mutableListOf<Pair<String, String>>()
+
+            for (iface in interfaces) {
+                if (!iface.isUp || iface.isLoopback) continue
+                val name = iface.name.lowercase()
+                for (addr in iface.inetAddresses) {
                     if (!addr.isLoopbackAddress && addr is java.net.Inet4Address) {
-                        return addr.hostAddress ?: ""
+                        val host = addr.hostAddress ?: continue
+                        ipv4List.add(name to host)
                     }
                 }
             }
-            ""
+
+            // 1. Hotspot interfaces
+            ipv4List.firstOrNull { (name, ip) ->
+                name.contains("ap") || name.contains("swlan") || name.contains("softap") ||
+                        ip.startsWith("192.168.43.") || ip.startsWith("192.168.49.")
+            }?.second
+            // 2. Wi-Fi / Ethernet interfaces
+            ?: ipv4List.firstOrNull { (name, _) ->
+                name.contains("wlan") || name.contains("wifi") || name.contains("eth")
+            }?.second
+            // 3. Non-cellular LAN interface
+            ?: ipv4List.firstOrNull { (name, _) ->
+                !name.contains("rmnet") && !name.contains("ccmni") && !name.contains("dummy") &&
+                        !name.contains("pdp") && !name.contains("tun")
+            }?.second
+            // 4. Any IPv4 fallback
+            ?: ipv4List.firstOrNull()?.second
+            ?: "192.168.43.1"
         } catch (_: Exception) {
-            ""
+            "192.168.43.1"
         }
     }
 

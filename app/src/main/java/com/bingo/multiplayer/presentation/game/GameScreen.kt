@@ -465,10 +465,13 @@ fun GameScreen(
             confirmButton = {
                 Button(
                     onClick = onTogglePause,
-                    colors = ButtonDefaults.buttonColors(containerColor = tokens.accentBrand),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = tokens.primaryButtonBg,
+                        contentColor = tokens.primaryButtonText
+                    ),
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("Resume Game", color = Color.White, fontWeight = FontWeight.Bold)
+                    Text("Resume Game", color = tokens.primaryButtonText, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -1101,7 +1104,7 @@ fun GameScreen(
                             modifier = Modifier
                                 .size(28.dp)
                                 .clip(CircleShape)
-                                .background(if (customChatInput.isNotBlank()) tokens.accentBrand else tokens.backgroundSecondary)
+                                .background(if (customChatInput.isNotBlank()) tokens.primaryButtonBg else tokens.backgroundSecondary)
                                 .clickable(
                                     enabled = customChatInput.isNotBlank(),
                                     onClick = { submitCustomChatMessage() }
@@ -1110,7 +1113,7 @@ fun GameScreen(
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.Send,
                                 contentDescription = "Send Message",
-                                tint = if (customChatInput.isNotBlank()) Color.White else tokens.cellNeutralText.copy(alpha = 0.35f),
+                                tint = if (customChatInput.isNotBlank()) tokens.primaryButtonText else tokens.cellNeutralText.copy(alpha = 0.35f),
                                 modifier = Modifier.size(14.dp)
                             )
                         }

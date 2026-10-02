@@ -2,6 +2,7 @@ package com.bingo.multiplayer.domain.network
 
 import com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine
 import com.bingo.multiplayer.domain.model.Player
+import androidx.compose.ui.graphics.asImageBitmap
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.serialization.Serializable
@@ -82,8 +83,54 @@ class OnlineRoomSyncManager(
     @Volatile private var isSubscribed: Boolean = false
     @Volatile private var lastStartedMatchSeed: Long = 0L
 
+    init {
+        activeInstance = this
+    }
+
     fun resetMatchSession() {
         lastStartedMatchSeed = 0L
+    }
+
+    fun updateLocalAvatar(newAvatarUrl: String?) {
+        val p = localPlayer ?: return
+        val updated = p.copy(avatarUrl = newAvatarUrl)
+        localPlayer = updated
+        playerRegistry[p.id] = updated
+        _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+        broadcastPacket(
+            RoomMessagePacket(
+                type = "HEARTBEAT",
+                playerId = updated.id,
+                displayName = updated.displayName,
+                username = updated.username,
+                isHost = updated.isHost,
+                avatarUrl = updated.avatarUrl,
+                gamesPlayed = updated.gamesPlayed,
+                gamesWon = updated.gamesWon,
+                currentStreak = updated.currentStreak,
+                level = updated.level,
+                timestamp = System.currentTimeMillis(),
+                readyStatus = updated.lobbyReadyStatus,
+                readyVersion = updated.readyVersion
+            )
+        )
+    }
+
+    fun onRemoteAvatarUpdated(username: String, avatarUrl: String?) {
+        val clean = username.trim().lowercase().removePrefix("@")
+        val found = playerRegistry.values.find { it.username.trim().lowercase().removePrefix("@") == clean }
+        if (found != null && found.avatarUrl != avatarUrl) {
+            com.bingo.multiplayer.presentation.common.PlayerAvatarCache.evict(clean)
+            if (!avatarUrl.isNullOrBlank()) {
+                val bmp = com.bingo.multiplayer.presentation.common.decodeAvatarBitmap(avatarUrl, null)
+                if (bmp != null) {
+                    com.bingo.multiplayer.presentation.common.PlayerAvatarCache.put("u:$clean", bmp.asImageBitmap())
+                }
+            }
+            com.bingo.multiplayer.presentation.common.PlayerAvatarCache.notifyAvatarChanged(clean)
+            playerRegistry[found.id] = found.copy(avatarUrl = avatarUrl)
+            _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+        }
     }
 
     private fun getTopic(code: String): String =
@@ -499,6 +546,14 @@ class OnlineRoomSyncManager(
                             else -> "NOT_READY"
                         }
                         val effVersion = if (isLocal) (localPlayer?.readyVersion ?: 0L) else maxOf(p.readyVersion, existing?.readyVersion ?: 0L)
+                        if (!effAvatar.isNullOrBlank() && effAvatar != existing?.avatarUrl && !isLocal) {
+                            com.bingo.multiplayer.presentation.common.PlayerAvatarCache.evict(p.username)
+                            val bmp = com.bingo.multiplayer.presentation.common.decodeAvatarBitmap(effAvatar, null)
+                            if (bmp != null) {
+                                com.bingo.multiplayer.presentation.common.PlayerAvatarCache.put("u:${p.username.trim().lowercase().removePrefix("@")}", bmp.asImageBitmap())
+                            }
+                            com.bingo.multiplayer.presentation.common.PlayerAvatarCache.notifyAvatarChanged(p.username)
+                        }
                         playerRegistry[p.id] = p.copy(
                             displayName = effDisplay,
                             username = effUsername,
@@ -515,6 +570,15 @@ class OnlineRoomSyncManager(
             "JOIN", "HEARTBEAT" -> {
                 if (packet.playerId.isNotEmpty()) {
                     val existing = playerRegistry[packet.playerId]
+
+                    if (!packet.avatarUrl.isNullOrBlank() && packet.avatarUrl != existing?.avatarUrl && packet.playerId != localPlayer?.id) {
+                        com.bingo.multiplayer.presentation.common.PlayerAvatarCache.evict(packet.username)
+                        val bmp = com.bingo.multiplayer.presentation.common.decodeAvatarBitmap(packet.avatarUrl, null)
+                        if (bmp != null) {
+                            com.bingo.multiplayer.presentation.common.PlayerAvatarCache.put("u:${packet.username.trim().lowercase().removePrefix("@")}", bmp.asImageBitmap())
+                        }
+                        com.bingo.multiplayer.presentation.common.PlayerAvatarCache.notifyAvatarChanged(packet.username)
+                    }
 
                     val updated = LobbyLifecycleEngine.onRemotePlayerJoinOrHeartbeat(packet, existing)
                     playerRegistry[packet.playerId] = updated
@@ -742,5 +806,9 @@ class OnlineRoomSyncManager(
         lastStartedMatchSeed = 0L
         playerRegistry.clear()
         _players.value = emptyList()
+    }
+
+    companion object {
+        @Volatile var activeInstance: OnlineRoomSyncManager? = null
     }
 }

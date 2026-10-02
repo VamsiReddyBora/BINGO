@@ -289,9 +289,12 @@ fun LoginScreen(
                         }
                     },
                     shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = tokens.accentBrand)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = tokens.primaryButtonBg,
+                        contentColor = tokens.primaryButtonText
+                    )
                 ) {
-                    Text("Log In Here", fontWeight = FontWeight.Bold, color = Color.White)
+                    Text("Log In Here", fontWeight = FontWeight.Bold, color = tokens.primaryButtonText)
                 }
             },
             dismissButton = {
@@ -397,12 +400,15 @@ fun LoginScreen(
                     },
                     enabled = newPlayerNickname.trim().length >= 3 && !isCheckingUsername,
                     shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = tokens.accentBrand)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = tokens.primaryButtonBg,
+                        contentColor = tokens.primaryButtonText
+                    )
                 ) {
                     Text(
                         text = if (isCheckingUsername) "Checking..." else "Confirm & Start",
                         fontWeight = FontWeight.Bold,
-                        color = Color.White
+                        color = tokens.primaryButtonText
                     )
                 }
             },
@@ -467,16 +473,20 @@ fun LoginScreen(
                             copyToClipboard("Release SHA-1", RELEASE_SHA1)
                         },
                         shape = RoundedCornerShape(10.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = tokens.accentBrand),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = tokens.primaryButtonBg,
+                            contentColor = tokens.primaryButtonText
+                        ),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(
                             imageVector = Icons.Default.ContentCopy,
                             contentDescription = null,
+                            tint = tokens.primaryButtonText,
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Copy Release SHA-1", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Copy Release SHA-1", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = tokens.primaryButtonText)
                     }
 
                     Text(
@@ -762,7 +772,7 @@ fun LoginScreen(
                                 .fillMaxWidth()
                                 .height(50.dp),
                             shape = RoundedCornerShape(14.dp),
-                            color = Color(0xFFF5EEFF) // Very light thin coated purple
+                            color = if (tokens.isDark) Color(0xFF2E1065) else Color(0xFFF5EEFF)
                         ) {
                             Row(
                                 modifier = Modifier.padding(horizontal = 16.dp),
@@ -772,13 +782,13 @@ fun LoginScreen(
                                 Icon(
                                     imageVector = Icons.Default.PersonOutline,
                                     contentDescription = null,
-                                    tint = Color(0xFF6B21A8),
+                                    tint = if (tokens.isDark) Color(0xFFE9D5FF) else Color(0xFF6B21A8),
                                     modifier = Modifier.size(20.dp)
                                 )
                                 Spacer(modifier = Modifier.width(10.dp))
                                 Text(
                                     text = "Play as Guest",
-                                    color = Color(0xFF6B21A8),
+                                    color = if (tokens.isDark) Color(0xFFE9D5FF) else Color(0xFF6B21A8),
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 14.sp
                                 )

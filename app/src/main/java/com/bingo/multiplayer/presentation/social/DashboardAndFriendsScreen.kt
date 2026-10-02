@@ -580,7 +580,7 @@ private fun DashboardTabContent(
             }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(84.dp))
     }
 }
 
@@ -1007,7 +1007,7 @@ private fun FriendsTabContent(
             }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(84.dp))
     }
 }
 
@@ -1308,7 +1308,7 @@ private fun RequestsTabContent(
                                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                                     modifier = Modifier.padding(end = 6.dp)
                                 ) {
-                                    Text("Decline", fontSize = 11.sp)
+                                    Text("Decline", fontSize = 11.sp, color = tokens.cellNeutralText)
                                 }
                                 Button(
                                     onClick = {
@@ -1340,6 +1340,6 @@ private fun RequestsTabContent(
             }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(84.dp))
     }
 }
