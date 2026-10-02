@@ -77,7 +77,7 @@ fun BingoBoardView(
                 horizontalArrangement = Arrangement.spacedBy(spacing)
             ) {
                 for (c in 0 until size) {
-                    val letter = if (c < BINGO_LETTERS.size) BINGO_LETTERS[c] else '★'
+                    val letter = if (c < BINGO_LETTERS.size) BINGO_LETTERS[c] else 'O'
                     val isUnlocked = c < board.completedLinesCount || board.isBingo || (isWinningBoard && c < size)
                     val strikeProgress by animateFloatAsState(
                         targetValue = if (isUnlocked) 1f else 0f,
@@ -179,8 +179,8 @@ fun BingoHeaderTracker(
     modifier: Modifier = Modifier
 ) {
     val tokens = BingoTheme.colors
-    val extraStars = if (targetLines > 5) List(targetLines - 5) { '★' } else emptyList()
-    val displayLetters = (BINGO_LETTERS.take(targetLines) + extraStars).take(targetLines)
+    val extraOs = if (targetLines > 5) List(targetLines - 5) { 'O' } else emptyList()
+    val displayLetters = (BINGO_LETTERS.take(targetLines) + extraOs).take(targetLines)
 
     Row(
         modifier = modifier,

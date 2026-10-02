@@ -120,7 +120,7 @@ object ManualBoardEngine {
                 )
             }
         }
-        return Board(size = size, cells = cells)
+        return Board(size = size, cells = cells, targetLines = size)
     }
 
     /**

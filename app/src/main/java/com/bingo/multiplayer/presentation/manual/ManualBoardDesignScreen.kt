@@ -70,6 +70,8 @@ fun ManualBoardDesignScreen(
     roomCode: String = "",
     opponentName: String = "",
     isWaitingForOpponent: Boolean = false,
+    readyPlayersCount: Int = 1,
+    totalPlayersCount: Int = 2,
     countdownSeconds: Int = -1,
     firstTurnPlayerName: String = "",
     onBoardReady: (List<Int>) -> Unit,
@@ -153,11 +155,15 @@ fun ManualBoardDesignScreen(
                     )
                 },
                 text = {
+                    val message = if (totalPlayersCount > 2) {
+                        "Waiting for all players to arrange their board...\n($readyPlayersCount of $totalPlayersCount players ready)\n\nGame will start automatically when all players are ready."
+                    } else if (opponentName.isNotBlank()) {
+                        "$opponentName is arranging their board...\nGame will start automatically when ready."
+                    } else {
+                        "Waiting for other players to arrange their board...\nGame will start automatically when ready."
+                    }
                     Text(
-                        text = if (opponentName.isNotBlank())
-                            "$opponentName is arranging their board...\nGame will start automatically when ready."
-                        else
-                            "Waiting for other players to arrange their board...\nGame will start automatically when ready.",
+                        text = message,
                         fontSize = 14.sp,
                         color = tokens.cellNeutralText.copy(alpha = 0.8f),
                         textAlign = TextAlign.Center,
@@ -216,7 +222,7 @@ fun ManualBoardDesignScreen(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = "Both boards ready!",
+                            text = if (totalPlayersCount > 2) "All $totalPlayersCount boards ready!" else "Both boards ready!",
                             fontSize = 13.sp,
                             color = tokens.cellNeutralText.copy(alpha = 0.7f),
                             textAlign = TextAlign.Center

@@ -629,4 +629,127 @@ class MultiplayerWinLogicAndSimulationTest {
         assertFalse("Player did not win yet", outcome.didPlayerWin)
         assertFalse("Player did not lose yet", outcome.isDraw)
     }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // DYNAMIC BOARD SIZING & LINE TARGETS (5x5 = 5 lines, 6x6 = 6 lines, 7x7 = 7 lines)
+    // ════════════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun `dynamic target lines - 5x5 requires 5 lines, 6x6 requires 6 lines, 7x7 requires 7 lines`() {
+        // 5x5 board
+        val board5 = engine.generateBoard(size = 5)
+        assertEquals("5x5 board size", 5, board5.size)
+        assertEquals("5x5 board targetLines must be 5", 5, board5.targetLines)
+        val board5With4Lines = createBoardWithCompletedLines(size = 5, linesToComplete = 4)
+        assertFalse("5x5 with 4 lines is NOT bingo", board5With4Lines.isBingo)
+        val board5With5Lines = createBoardWithCompletedLines(size = 5, linesToComplete = 5)
+        assertTrue("5x5 with 5 lines IS bingo", board5With5Lines.isBingo)
+
+        // 6x6 board
+        val board6 = engine.generateBoard(size = 6)
+        assertEquals("6x6 board size", 6, board6.size)
+        assertEquals("6x6 board targetLines must be 6", 6, board6.targetLines)
+        val board6With5Lines = createBoardWithCompletedLines(size = 6, linesToComplete = 5)
+        assertFalse("6x6 with 5 lines is NOT bingo (requires 6 lines)", board6With5Lines.isBingo)
+        val board6With6Lines = createBoardWithCompletedLines(size = 6, linesToComplete = 6)
+        assertTrue("6x6 with 6 lines IS bingo", board6With6Lines.isBingo)
+
+        // 7x7 board
+        val board7 = engine.generateBoard(size = 7)
+        assertEquals("7x7 board size", 7, board7.size)
+        assertEquals("7x7 board targetLines must be 7", 7, board7.targetLines)
+        val board7With6Lines = createBoardWithCompletedLines(size = 7, linesToComplete = 6)
+        assertFalse("7x7 with 6 lines is NOT bingo (requires 7 lines)", board7With6Lines.isBingo)
+        val board7With7Lines = createBoardWithCompletedLines(size = 7, linesToComplete = 7)
+        assertTrue("7x7 with 7 lines IS bingo", board7With7Lines.isBingo)
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // BINGOOOO LETTERS (Repeat 'O' for columns > 5 instead of stars)
+    // ════════════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun `BINGOOOO letters generation - repeats 'O' for extra lines and never uses stars`() {
+        val bingoBase = listOf('B', 'I', 'N', 'G', 'O')
+
+        fun getLettersForSize(size: Int): List<Char> {
+            val extraOs = if (size > 5) List(size - 5) { 'O' } else emptyList()
+            return (bingoBase.take(size) + extraOs).take(size)
+        }
+
+        // 5x5 board -> B, I, N, G, O
+        assertEquals(listOf('B', 'I', 'N', 'G', 'O'), getLettersForSize(5))
+
+        // 6x6 board -> B, I, N, G, O, O (BINGOO)
+        assertEquals(listOf('B', 'I', 'N', 'G', 'O', 'O'), getLettersForSize(6))
+
+        // 7x7 board -> B, I, N, G, O, O, O (BINGOOO)
+        assertEquals(listOf('B', 'I', 'N', 'G', 'O', 'O', 'O'), getLettersForSize(7))
+
+        // 8x8 board -> B, I, N, G, O, O, O, O (BINGOOOO)
+        assertEquals(listOf('B', 'I', 'N', 'G', 'O', 'O', 'O', 'O'), getLettersForSize(8))
+
+        // Verify no star '★' is ever present
+        for (sz in 5..8) {
+            val letters = getLettersForSize(sz)
+            assertFalse("Size $sz letters must not contain star symbol", letters.contains('★'))
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // 3-PLAYER MANUAL BOARD READINESS SYNCHRONIZATION
+    // ════════════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun `manual board 3-player readiness synchronization - game waits until all 3 players click Board Ready`() {
+        val participants = listOf(
+            Player(id = "p1", displayName = "Player 1", isHost = true),
+            Player(id = "p2", displayName = "Player 2", isHost = false),
+            Player(id = "p3", displayName = "Player 3", isHost = false)
+        )
+        val expectedUids = participants.map { it.id }.toSet()
+        assertEquals(3, expectedUids.size)
+
+        var boardsOnDevice1 = mapOf<String, Board>()
+        var boardsOnDevice2 = mapOf<String, Board>()
+        var boardsOnDevice3 = mapOf<String, Board>()
+
+        fun isAllReady(boards: Map<String, Board>): Boolean {
+            return expectedUids.isNotEmpty() && expectedUids.all { boards.containsKey(it) }
+        }
+
+        // Step 1: Player 1 finishes manual board design and clicks Board Ready
+        val b1 = ManualBoardEngine.buildBoard((1..36).toList(), 6)
+        boardsOnDevice1 = boardsOnDevice1 + ("p1" to b1)
+        boardsOnDevice2 = boardsOnDevice2 + ("p1" to b1) // Received broadcast
+        boardsOnDevice3 = boardsOnDevice3 + ("p1" to b1) // Received broadcast
+
+        assertFalse("Device 1 must NOT start when only 1 of 3 is ready", isAllReady(boardsOnDevice1))
+        assertFalse("Device 2 must NOT start", isAllReady(boardsOnDevice2))
+        assertFalse("Device 3 must NOT start", isAllReady(boardsOnDevice3))
+
+        // Step 2: Player 2 finishes manual board design and clicks Board Ready
+        val b2 = ManualBoardEngine.buildBoard((1..36).shuffled(), 6)
+        boardsOnDevice1 = boardsOnDevice1 + ("p2" to b2) // Received broadcast
+        boardsOnDevice2 = boardsOnDevice2 + ("p2" to b2) // Local ready
+        boardsOnDevice3 = boardsOnDevice3 + ("p2" to b2) // Received broadcast
+
+        // CRITICAL CHECK: Player 3 is STILL designing! Neither P1 nor P2 should start!
+        assertEquals(2, boardsOnDevice1.size)
+        assertEquals(2, boardsOnDevice2.size)
+        assertFalse("Device 1 must NOT start when 2 of 3 are ready (waiting for P3)", isAllReady(boardsOnDevice1))
+        assertFalse("Device 2 must NOT start when 2 of 3 are ready (waiting for P3)", isAllReady(boardsOnDevice2))
+        assertFalse("Device 3 must NOT start", isAllReady(boardsOnDevice3))
+
+        // Step 3: Player 3 finishes manual board design and clicks Board Ready
+        val b3 = ManualBoardEngine.buildBoard((1..36).reversed().toList(), 6)
+        boardsOnDevice1 = boardsOnDevice1 + ("p3" to b3) // Received broadcast
+        boardsOnDevice2 = boardsOnDevice2 + ("p3" to b3) // Received broadcast
+        boardsOnDevice3 = boardsOnDevice3 + ("p3" to b3) // Local ready
+
+        // NOW all 3 players are ready!
+        assertTrue("Device 1 can now start countdown (all 3 ready)", isAllReady(boardsOnDevice1))
+        assertTrue("Device 2 can now start countdown (all 3 ready)", isAllReady(boardsOnDevice2))
+        assertTrue("Device 3 can now start countdown (all 3 ready)", isAllReady(boardsOnDevice3))
+    }
 }

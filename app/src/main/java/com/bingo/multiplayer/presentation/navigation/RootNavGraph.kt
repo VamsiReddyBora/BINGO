@@ -124,6 +124,8 @@ fun RootNavGraph(
     var latestIncomingEmoteTimestamp by remember { androidx.compose.runtime.mutableLongStateOf(0L) }
     var latestIncomingChatMessage by remember { mutableStateOf<InGameChatMessage?>(null) }
     var opponentPlayerId by remember { mutableStateOf("") }
+    var matchParticipants by remember { mutableStateOf<List<Player>>(emptyList()) }
+    var isStartingCountdown by remember { mutableStateOf(false) }
 
     // History and Turn Authority (reconciles network packets and prevents stalls)
     val pickedNumbersHistory = remember { mutableStateListOf<Int>() }
@@ -438,6 +440,19 @@ fun RootNavGraph(
                 (activeCount > 2 || allPlayerBoards.size > 2)
     }
 
+    fun getActiveParticipants(): List<Player> {
+        val fromMatch = matchParticipants.filter { it.id.isNotBlank() }.distinctBy { it.id }
+        if (fromMatch.isNotEmpty()) return fromMatch
+        val fromRealTime = realTimePlayers.filter { it.id.isNotBlank() }.distinctBy { it.id }
+        if (fromRealTime.isNotEmpty()) return fromRealTime
+        val myUid = getLocalUid()
+        val other = opponentPlayerId.takeIf { it.isNotBlank() } ?: "opponent"
+        return listOf(
+            Player(id = myUid, displayName = getPlayerDisplayName(), isHost = isHosting),
+            Player(id = other, displayName = "Opponent", isHost = !isHosting)
+        )
+    }
+
     data class MatchOutcome(
         val isGameOver: Boolean,
         val didPlayerWin: Boolean,
@@ -605,42 +620,46 @@ fun RootNavGraph(
     }
 
     fun startCountdownAndInitiateTurn() {
+        if (isStartingCountdown || countdownSeconds >= 0) return
+        isStartingCountdown = true
         coroutineScope.launch {
-            val candidateUids = realTimePlayers.map { it.id }.filter { it.isNotBlank() }.distinct().sorted()
-            val myUid = getLocalUid()
-            val effCandidates = if (candidateUids.size >= 2) candidateUids else {
-                val other = realTimePlayers.firstOrNull { it.id != myUid }?.id
-                    ?: opponentPlayerId.takeIf { it.isNotBlank() }
-                    ?: "opponent"
-                listOf(myUid, other).sorted()
-            }
-            val firstTurnUid = ManualBoardEngine.determineRandomFirstTurn(currentMatchSeed, effCandidates)
-            val assignedPlayer = realTimePlayers.find { it.id == firstTurnUid }
-            firstTurnPlayerName = if (firstTurnUid == myUid) "You" else (assignedPlayer?.displayName ?: "Opponent")
+            try {
+                val candidateUids = getActiveParticipants().map { it.id }.filter { it.isNotBlank() }.distinct().sorted()
+                val myUid = getLocalUid()
+                val effCandidates = if (candidateUids.size >= 2) candidateUids else {
+                    val other = opponentPlayerId.takeIf { it.isNotBlank() } ?: "opponent"
+                    listOf(myUid, other).distinct().sorted()
+                }
+                val firstTurnUid = ManualBoardEngine.determineRandomFirstTurn(currentMatchSeed, effCandidates)
+                val assignedPlayer = getActiveParticipants().find { it.id == firstTurnUid }
+                firstTurnPlayerName = if (firstTurnUid == myUid) "You" else (assignedPlayer?.displayName ?: "Opponent")
 
-            for (s in 5 downTo 1) {
-                countdownSeconds = s
-                delay(1000L)
-            }
-            countdownSeconds = 0
-            delay(300L)
-            countdownSeconds = -1
+                for (s in 5 downTo 1) {
+                    countdownSeconds = s
+                    delay(1000L)
+                }
+                countdownSeconds = 0
+                delay(300L)
+                countdownSeconds = -1
 
-            currentTurnPlayerId = firstTurnUid
-            isMyTurn = (currentTurnPlayerId == myUid)
-            turnNumber = 1
-            turnTimer = 30
-            isGamePaused = false
-            isGameOver = false
-            didPlayerWin = false
-            isDrawMatch = false
-            latestIncomingEmote = null
-            latestIncomingEmoteScale = 1.0f
-            latestIncomingEmoteTimestamp = 0L
-            latestIncomingChatMessage = null
+                currentTurnPlayerId = firstTurnUid
+                isMyTurn = (currentTurnPlayerId == myUid)
+                turnNumber = 1
+                turnTimer = 30
+                isGamePaused = false
+                isGameOver = false
+                didPlayerWin = false
+                isDrawMatch = false
+                latestIncomingEmote = null
+                latestIncomingEmoteScale = 1.0f
+                latestIncomingEmoteTimestamp = 0L
+                latestIncomingChatMessage = null
 
-            navController.navigate(Screen.Game.route) {
-                popUpTo(Screen.ManualBoardDesign.route) { inclusive = true }
+                navController.navigate(Screen.Game.route) {
+                    popUpTo(Screen.ManualBoardDesign.route) { inclusive = true }
+                }
+            } finally {
+                isStartingCountdown = false
             }
         }
     }
@@ -831,6 +850,10 @@ fun RootNavGraph(
                     } else if (currentGameMode == GameMode.NEARBY_NETWORK) {
                         lanP2pSync.updateLocalReadyStatus("IN_GAME")
                     }
+                    val activeList = (if (packet.players.isNotEmpty()) packet.players else realTimePlayers)
+                        .filter { it.id.isNotBlank() }
+                        .distinctBy { it.id }
+                    matchParticipants = activeList
                     if (packet.isManualBoard) {
                         isManualBoard = true
                         currentMatchSeed = packet.seed
@@ -904,6 +927,10 @@ fun RootNavGraph(
                         return
                     }
                     pickedNumbersHistory.clear()
+                    val activeList = (if (packet.players.isNotEmpty()) packet.players else realTimePlayers)
+                        .filter { it.id.isNotBlank() }
+                        .distinctBy { it.id }
+                    matchParticipants = activeList
                     if (packet.isManualBoard || isManualBoard) {
                         isManualBoard = true
                         currentMatchSeed = packet.seed
@@ -957,16 +984,17 @@ fun RootNavGraph(
                     if (!com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPacketForActiveMatch(packet.seed, currentMatchSeed)) {
                         return
                     }
-                    if (packet.pickedHistory.isNotEmpty()) {
+                    if (packet.pickedHistory.isNotEmpty() && packet.playerId.isNotBlank()) {
                         val mBoard = ManualBoardEngine.buildBoard(packet.pickedHistory, boardSize)
-                        if (packet.playerId.isNotBlank()) {
-                            allPlayerBoards = allPlayerBoards + (packet.playerId to mBoard)
+                        allPlayerBoards = allPlayerBoards + (packet.playerId to mBoard)
+                        if (packet.playerId != getLocalUid()) {
+                            opponentBoard = mBoard
+                            isOpponentBoardReady = true
                         }
-                        opponentBoard = mBoard
                     }
-                    isOpponentBoardReady = true
-                    val totalExpected = realTimePlayers.count { it.id.isNotBlank() }.coerceAtLeast(2)
-                    val allReady = (allPlayerBoards.size >= totalExpected) || (isLocalBoardReady && isOpponentBoardReady && totalExpected <= 2)
+                    val participants = getActiveParticipants()
+                    val expectedUids = participants.map { it.id }.filter { it.isNotBlank() }.toSet()
+                    val allReady = expectedUids.isNotEmpty() && expectedUids.all { allPlayerBoards.containsKey(it) }
                     if (isLocalBoardReady && allReady && countdownSeconds < 0) {
                         startCountdownAndInitiateTurn()
                     }
@@ -1860,6 +1888,7 @@ fun RootNavGraph(
                     val activeList = realTimePlayers.filter { it.id.isNotBlank() }
                         .distinctBy { it.id }
                         .sortedWith(compareByDescending<Player> { it.isHost }.thenBy { it.id })
+                    matchParticipants = activeList
                     val allUids = activeList.map { it.id }.filter { it.isNotBlank() }.distinct().sorted()
                     val candidateUids = if (allUids.isNotEmpty()) allUids else listOf(myId)
                     val chosenFirstTurnUid = ManualBoardEngine.determineRandomFirstTurn(seed, candidateUids)
@@ -2121,23 +2150,39 @@ fun RootNavGraph(
                 GameMode.NEARBY_NETWORK -> opponentPlayer?.displayName ?: "Nearby Peer"
             }
 
+            val participants = getActiveParticipants()
+            val expectedUids = participants.map { it.id }.filter { it.isNotBlank() }.toSet()
+            val readyCount = expectedUids.count { allPlayerBoards.containsKey(it) }
+            val totalCount = expectedUids.size.coerceAtLeast(2)
+            val allReady = expectedUids.isNotEmpty() && expectedUids.all { allPlayerBoards.containsKey(it) }
+
             ManualBoardDesignScreen(
                 boardSize = boardSize,
                 roomCode = roomCode,
                 opponentName = opponentDisplayName,
-                isWaitingForOpponent = isLocalBoardReady && !isOpponentBoardReady,
+                isWaitingForOpponent = isLocalBoardReady && !allReady,
+                readyPlayersCount = readyCount,
+                totalPlayersCount = totalCount,
                 countdownSeconds = countdownSeconds,
                 firstTurnPlayerName = firstTurnPlayerName,
                 onBoardReady = { boardNumbers ->
                     val mBoard = ManualBoardEngine.buildBoard(boardNumbers, boardSize)
                     playerBoard = mBoard
-                    allPlayerBoards = allPlayerBoards + (getLocalUid() to mBoard)
-                    isLocalBoardReady = true
+                    val myUid = getLocalUid()
+                    var updatedBoards = allPlayerBoards + (myUid to mBoard)
 
+                    if (currentGameMode == GameMode.AI_EASY || currentGameMode == GameMode.AI_HARD) {
+                        val aiBoard = engine.generateBoard(boardSize, currentMatchSeed + 1)
+                        opponentBoard = aiBoard
+                        updatedBoards = updatedBoards + ("ai" to aiBoard)
+                    }
+
+                    allPlayerBoards = updatedBoards
+                    isLocalBoardReady = true
 
                     val readyPacket = RoomMessagePacket(
                         type = "BOARD_READY",
-                        playerId = getLocalUid(),
+                        playerId = myUid,
                         seed = currentMatchSeed,
                         pickedHistory = boardNumbers
                     )
@@ -2149,8 +2194,23 @@ fun RootNavGraph(
                         broadcastPacket(readyPacket)
                     }
 
-                    if (isOpponentBoardReady && countdownSeconds < 0) {
+                    val curExpected = getActiveParticipants().map { it.id }.filter { it.isNotBlank() }.toSet()
+                    val curAllReady = (currentGameMode == GameMode.AI_EASY || currentGameMode == GameMode.AI_HARD) ||
+                            (curExpected.isNotEmpty() && curExpected.all { updatedBoards.containsKey(it) })
+
+                    if (curAllReady && countdownSeconds < 0) {
                         startCountdownAndInitiateTurn()
+                    } else {
+                        coroutineScope.launch {
+                            while (isActive && isLocalBoardReady && countdownSeconds < 0) {
+                                val latestExpected = getActiveParticipants().map { it.id }.filter { it.isNotBlank() }.toSet()
+                                if (latestExpected.isNotEmpty() && latestExpected.all { allPlayerBoards.containsKey(it) }) {
+                                    break
+                                }
+                                delay(1500L)
+                                broadcastPacket(readyPacket)
+                            }
+                        }
                     }
                 },
                 onLeave = {
@@ -2174,6 +2234,12 @@ fun RootNavGraph(
                     }
                     disconnectRoom()
                     isHosting = false
+                    matchParticipants = emptyList()
+                    allPlayerBoards = emptyMap()
+                    isLocalBoardReady = false
+                    isOpponentBoardReady = false
+                    isStartingCountdown = false
+                    countdownSeconds = -1
                     navController.navigate(Screen.MainMenu.route) {
                         popUpTo(Screen.MainMenu.route) { inclusive = false }
                         launchSingleTop = true
@@ -2471,6 +2537,7 @@ fun RootNavGraph(
                             val activeList = realTimePlayers.filter { it.id.isNotBlank() }
                                 .distinctBy { it.id }
                                 .sortedWith(compareByDescending<Player> { it.isHost }.thenBy { it.id })
+                            matchParticipants = activeList
                             val playAgainPacket = RoomMessagePacket(
                                 type = "PLAY_AGAIN",
                                 boardSize = boardSize,
@@ -2551,6 +2618,8 @@ fun RootNavGraph(
                     latestIncomingChatMessage = null
                     isLocalBoardReady = false
                     isOpponentBoardReady = false
+                    matchParticipants = emptyList()
+                    isStartingCountdown = false
                     countdownSeconds = -1
                     firstTurnPlayerName = ""
                     onlineRoomSync.resetMatchSession()
@@ -2583,6 +2652,8 @@ fun RootNavGraph(
                         latestIncomingChatMessage = null
                         isLocalBoardReady = false
                         isOpponentBoardReady = false
+                        matchParticipants = emptyList()
+                        isStartingCountdown = false
                         countdownSeconds = -1
                         firstTurnPlayerName = ""
                         onlineRoomSync.resetMatchSession()

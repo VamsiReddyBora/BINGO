@@ -134,7 +134,7 @@ data class Board(
     val size: Int,
     val cells: List<Cell>,
     val completedLines: Set<LineCoordinate> = emptySet(),
-    val targetLines: Int = 5
+    val targetLines: Int = size
 ) {
     init {
         require(cells.size == size * size) {
