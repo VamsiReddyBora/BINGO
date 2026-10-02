@@ -222,7 +222,11 @@ fun MultiplayerTurnSpotlightBar(
     opponentUsername: String?,
     modifier: Modifier = Modifier
 ) {
-    val activePlayers = remember(players) { players.filter { it.id.isNotBlank() } }
+    val activePlayers = remember(players) {
+        players.filter { it.id.isNotBlank() }
+            .distinctBy { it.id }
+            .sortedWith(compareByDescending<Player> { it.isHost }.thenBy { it.id })
+    }
 
     if (activePlayers.size <= 2) {
         BottomTurnProfileVsProfile(
@@ -249,8 +253,6 @@ fun MultiplayerTurnSpotlightBar(
         val currPlayer = activePlayers[currIdx]
         val nextPlayer = activePlayers[nextIdx]
 
-        val isCurrentMe = (currPlayer.id == myPlayerId)
-
         Row(
             modifier = modifier,
             verticalAlignment = Alignment.CenterVertically,
@@ -258,14 +260,15 @@ fun MultiplayerTurnSpotlightBar(
         ) {
             // Previous Player (Small Icon - 28dp)
             AnimatedContent(
-                targetState = prevPlayer,
+                targetState = prevPlayer.id,
                 transitionSpec = {
                     (fadeIn(tween(250)) + slideInHorizontally { -it / 2 }).togetherWith(
                         fadeOut(tween(200)) + slideOutHorizontally { -it / 2 }
                     )
                 },
                 label = "prevPlayerAnim"
-            ) { p ->
+            ) { targetId ->
+                val p = activePlayers.firstOrNull { it.id == targetId } ?: prevPlayer
                 Box(
                     modifier = Modifier
                         .size(28.dp)
@@ -285,14 +288,16 @@ fun MultiplayerTurnSpotlightBar(
 
             // Current Turn Player (Big Icon Spotlight - 44dp)
             AnimatedContent(
-                targetState = currPlayer,
+                targetState = currPlayer.id,
                 transitionSpec = {
                     (fadeIn(tween(300)) + scaleIn(tween(300))).togetherWith(
                         fadeOut(tween(200)) + scaleOut(tween(200))
                     )
                 },
                 label = "currPlayerSpotlightAnim"
-            ) { p ->
+            ) { targetId ->
+                val p = activePlayers.firstOrNull { it.id == targetId } ?: currPlayer
+                val isCurrentMe = (p.id == myPlayerId)
                 Box(
                     modifier = Modifier
                         .size(44.dp)
@@ -315,14 +320,15 @@ fun MultiplayerTurnSpotlightBar(
 
             // Next Player (Small Icon - 28dp)
             AnimatedContent(
-                targetState = nextPlayer,
+                targetState = nextPlayer.id,
                 transitionSpec = {
                     (fadeIn(tween(250)) + slideInHorizontally { it / 2 }).togetherWith(
                         fadeOut(tween(200)) + slideOutHorizontally { it / 2 }
                     )
                 },
                 label = "nextPlayerAnim"
-            ) { p ->
+            ) { targetId ->
+                val p = activePlayers.firstOrNull { it.id == targetId } ?: nextPlayer
                 Box(
                     modifier = Modifier
                         .size(28.dp)

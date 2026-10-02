@@ -649,6 +649,10 @@ fun GameScreen(
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            val winnersCount = reviewPlayers.count { p ->
+                                val b = allPlayerBoards[p.id] ?: if (p.id == myPlayerId || p.id == "local") board else (opponentBoard ?: board)
+                                b.isBingo
+                            }
                             reviewPlayers.forEach { player ->
                                 val isSelected = (player.id == selectedReviewPlayerId) ||
                                         (reviewPlayers.size == 1) ||
@@ -658,6 +662,9 @@ fun GameScreen(
                                     ?: if (isLocal) board else (opponentBoard ?: board)
                                 val linesCount = playerBoardForTab.completedLinesCount
                                 val isBingo = playerBoardForTab.isBingo
+                                val badgeSuffix = if (isBingo) {
+                                    if (winnersCount > 1) " 🤝" else " 👑"
+                                } else ""
 
                                 Surface(
                                     onClick = {
@@ -684,7 +691,7 @@ fun GameScreen(
                                         Spacer(modifier = Modifier.width(6.dp))
                                         val labelText = if (isLocal) "My Board" else player.displayName
                                         Text(
-                                            text = "$labelText ($linesCount/${board.size})" + (if (isBingo) " 👑" else ""),
+                                            text = "$labelText ($linesCount/${board.size})$badgeSuffix",
                                             fontSize = 12.sp,
                                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                                             color = when {
@@ -860,12 +867,14 @@ fun GameScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     if (isGameOver && showStampBadge && !isExitingMatch) {
-                        val isReviewingLocal = (selectedReviewPlayerId == myPlayerId || selectedReviewPlayerId == "local")
-                        val stampType = when {
-                            isDraw -> StampResultType.DRAW
-                            isReviewingLocal -> if (didPlayerWin) StampResultType.WON else StampResultType.LOST
-                            displayedBoard.isBingo -> StampResultType.WON
-                            else -> StampResultType.LOST
+                        val winnersCount = reviewPlayers.count { p ->
+                            val b = allPlayerBoards[p.id] ?: if (p.id == myPlayerId || p.id == "local") board else (opponentBoard ?: board)
+                            b.isBingo
+                        }
+                        val stampType = if (displayedBoard.isBingo) {
+                            if (winnersCount > 1) StampResultType.DRAW else StampResultType.WON
+                        } else {
+                            StampResultType.LOST
                         }
                         VictoryStampBadge(
                             resultType = stampType,

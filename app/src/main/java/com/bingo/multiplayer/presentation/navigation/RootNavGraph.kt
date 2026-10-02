@@ -432,6 +432,55 @@ fun RootNavGraph(
         }
     }
 
+    fun isGroupMatch(): Boolean {
+        val activeCount = realTimePlayers.count { it.id.isNotBlank() }
+        return (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) &&
+                (activeCount > 2 || allPlayerBoards.size > 2)
+    }
+
+    data class MatchOutcome(
+        val isGameOver: Boolean,
+        val didPlayerWin: Boolean,
+        val isDraw: Boolean
+    )
+
+    fun evaluateMatchOutcome(): MatchOutcome {
+        val isGroup = isGroupMatch()
+        val myUid = getLocalUid()
+
+        if (!isGroup) {
+            // STRICT 2-PLAYER OR AI MATCH LOGIC: strictly isolated, 100% stable
+            val pWon = playerBoard.isBingo
+            val oWon = opponentBoard.isBingo
+            return when {
+                pWon && oWon -> MatchOutcome(isGameOver = true, didPlayerWin = false, isDraw = true)
+                pWon -> MatchOutcome(isGameOver = true, didPlayerWin = true, isDraw = false)
+                oWon -> MatchOutcome(isGameOver = true, didPlayerWin = false, isDraw = false)
+                else -> MatchOutcome(isGameOver = false, didPlayerWin = false, isDraw = false)
+            }
+        } else {
+            // 3+ PLAYERS GROUP MATCH LOGIC
+            val effBoards = if (allPlayerBoards.containsKey(myUid)) allPlayerBoards else (allPlayerBoards + (myUid to playerBoard))
+            val winners = effBoards.filter { it.value.isBingo }.keys
+            if (winners.isEmpty()) {
+                return MatchOutcome(isGameOver = false, didPlayerWin = false, isDraw = false)
+            }
+            val myWon = (myUid in winners) || playerBoard.isBingo
+            return if (myWon) {
+                if (winners.size > 1) {
+                    // Two or three players completed 5 lines at a time -> Draw for the winners
+                    MatchOutcome(isGameOver = true, didPlayerWin = false, isDraw = true)
+                } else {
+                    // Exactly one player completed 5 lines first -> Winner
+                    MatchOutcome(isGameOver = true, didPlayerWin = true, isDraw = false)
+                }
+            } else {
+                // Local player did not achieve 5 lines -> Lost
+                MatchOutcome(isGameOver = true, didPlayerWin = false, isDraw = false)
+            }
+        }
+    }
+
     fun calculateNextTurnPlayerId(currentPickerId: String): String {
         val myUid = getLocalUid()
         return when (currentGameMode) {
@@ -440,6 +489,7 @@ fun RootNavGraph(
             }
             GameMode.ONLINE_ROOM, GameMode.NEARBY_NETWORK -> {
                 val activePlayers = realTimePlayers.filter { it.id.isNotBlank() }
+                    .distinctBy { it.id }
                     .sortedWith(compareByDescending<Player> { it.isHost }.thenBy { it.id })
                 if (activePlayers.size > 2) {
                     val currentIndex = activePlayers.indexOfFirst { it.id == currentPickerId }
@@ -449,7 +499,7 @@ fun RootNavGraph(
                     activePlayers[nextIndex].id
                 } else {
                     if (currentPickerId == myUid) {
-                        val other = realTimePlayers.firstOrNull { it.id.isNotBlank() && it.id != myUid }?.id
+                        val other = activePlayers.firstOrNull { it.id != myUid }?.id
                             ?: opponentPlayerId.takeIf { it.isNotBlank() }
                             ?: "opponent"
                         other
@@ -466,7 +516,8 @@ fun RootNavGraph(
         difficulty: AiDifficulty = AiDifficulty.EASY,
         size: Int = 5,
         firstTurnPlayerId: String? = null,
-        hostSeed: Long? = null
+        hostSeed: Long? = null,
+        incomingPlayersList: List<Player> = emptyList()
     ) {
         currentGameMode = mode
         currentAiDifficulty = difficulty
@@ -475,7 +526,9 @@ fun RootNavGraph(
         val baseSeed = hostSeed ?: kotlin.random.Random.nextLong()
         currentMatchSeed = baseSeed
         val myUid = getLocalUid()
-        val activePlayersList = realTimePlayers.filter { it.id.isNotBlank() }
+        val activePlayersList = (if (incomingPlayersList.isNotEmpty()) incomingPlayersList else realTimePlayers)
+            .filter { it.id.isNotBlank() }
+            .distinctBy { it.id }
             .sortedWith(compareByDescending<Player> { it.isHost }.thenBy { it.id })
 
         if (mode == GameMode.ONLINE_ROOM || mode == GameMode.NEARBY_NETWORK) {
@@ -512,17 +565,15 @@ fun RootNavGraph(
             )
         }
 
-        
         pickedNumbersHistory.clear()
         isProcessingTurn = false
 
         val firstTurnUid = if (!firstTurnPlayerId.isNullOrBlank()) {
-
             firstTurnPlayerId
         } else if (mode == GameMode.ONLINE_ROOM || mode == GameMode.NEARBY_NETWORK) {
-            val candidateUids = realTimePlayers.map { it.id }.filter { it.isNotBlank() }.distinct().sorted()
+            val candidateUids = activePlayersList.map { it.id }.filter { it.isNotBlank() }.distinct().sorted()
             val effCandidates = if (candidateUids.size >= 2) candidateUids else {
-                val other = realTimePlayers.firstOrNull { it.id != myUid }?.id
+                val other = activePlayersList.firstOrNull { it.id != myUid }?.id
                     ?: opponentPlayerId.takeIf { it.isNotBlank() }
                     ?: "opponent"
                 listOf(myUid, other).sorted()
@@ -657,37 +708,19 @@ fun RootNavGraph(
                 )
             }
 
-            val pWon = playerBoard.isBingo
-            val oWon = if (allPlayerBoards.isNotEmpty()) {
-                allPlayerBoards.filter { entry -> entry.key != getLocalUid() }.values.any { b -> b.isBingo }
-            } else {
-                opponentBoard.isBingo
-            }
-
-
-            val over = !isTimeoutPass && (pWon || oWon)
+            val outcome = if (!isTimeoutPass) evaluateMatchOutcome() else MatchOutcome(false, false, false)
 
             turnNumber += 1
             turnTimer = 30
-            isGameOver = over
+            isGameOver = outcome.isGameOver
 
             val nextPlayerId = calculateNextTurnPlayerId(pickerId)
             currentTurnPlayerId = nextPlayerId
 
-            if (over) {
-                if (pWon && oWon) {
-                    isDrawMatch = true
-                    didPlayerWin = false
-                    recordFinishedMatch(won = false, isDraw = true)
-                } else if (pWon) {
-                    isDrawMatch = false
-                    didPlayerWin = true
-                    recordFinishedMatch(won = true, isDraw = false)
-                } else {
-                    isDrawMatch = false
-                    didPlayerWin = false
-                    recordFinishedMatch(won = false, isDraw = false)
-                }
+            if (outcome.isGameOver) {
+                isDrawMatch = outcome.isDraw
+                didPlayerWin = outcome.didPlayerWin
+                recordFinishedMatch(won = outcome.didPlayerWin, isDraw = outcome.isDraw)
             } else {
                 isMyTurn = (nextPlayerId == getLocalUid())
             }
@@ -705,7 +738,7 @@ fun RootNavGraph(
                         seed = currentMatchSeed
                     )
                 )
-                if (pWon) {
+                if (playerBoard.isBingo) {
                     val winPacket = RoomMessagePacket(
                         type = "BINGO_CLAIMED",
                         number = number,
@@ -802,6 +835,7 @@ fun RootNavGraph(
                         isManualBoard = true
                         currentMatchSeed = packet.seed
                         boardSize = packet.boardSize
+                        allPlayerBoards = emptyMap()
                         isLocalBoardReady = false
                         isOpponentBoardReady = false
                         countdownSeconds = -1
@@ -838,7 +872,8 @@ fun RootNavGraph(
                             difficulty = AiDifficulty.EASY,
                             size = packet.boardSize,
                             firstTurnPlayerId = packet.currentTurnPlayerId.takeIf { it.isNotBlank() },
-                            hostSeed = packet.seed
+                            hostSeed = packet.seed,
+                            incomingPlayersList = packet.players
                         )
                     }
                 }
@@ -873,6 +908,7 @@ fun RootNavGraph(
                         isManualBoard = true
                         currentMatchSeed = packet.seed
                         boardSize = packet.boardSize
+                        allPlayerBoards = emptyMap()
                         isLocalBoardReady = false
                         isOpponentBoardReady = false
                         countdownSeconds = -1
@@ -909,7 +945,8 @@ fun RootNavGraph(
                             difficulty = AiDifficulty.EASY,
                             size = packet.boardSize,
                             firstTurnPlayerId = null,
-                            hostSeed = packet.seed
+                            hostSeed = packet.seed,
+                            incomingPlayersList = packet.players
                         )
                     }
                 }
@@ -922,11 +959,15 @@ fun RootNavGraph(
                     }
                     if (packet.pickedHistory.isNotEmpty()) {
                         val mBoard = ManualBoardEngine.buildBoard(packet.pickedHistory, boardSize)
+                        if (packet.playerId.isNotBlank()) {
+                            allPlayerBoards = allPlayerBoards + (packet.playerId to mBoard)
+                        }
                         opponentBoard = mBoard
-                        allPlayerBoards = allPlayerBoards + (packet.playerId to mBoard)
                     }
                     isOpponentBoardReady = true
-                    if (isLocalBoardReady && countdownSeconds < 0) {
+                    val totalExpected = realTimePlayers.count { it.id.isNotBlank() }.coerceAtLeast(2)
+                    val allReady = (allPlayerBoards.size >= totalExpected) || (isLocalBoardReady && isOpponentBoardReady && totalExpected <= 2)
+                    if (isLocalBoardReady && allReady && countdownSeconds < 0) {
                         startCountdownAndInitiateTurn()
                     }
                 }
@@ -1006,24 +1047,12 @@ fun RootNavGraph(
                     }
 
                     // 3. Evaluate win conditions
-                    val pWon = playerBoard.isBingo
-                    val oWon = if (allPlayerBoards.isNotEmpty()) {
-                        allPlayerBoards.filter { entry -> entry.key != myUid }.values.any { b -> b.isBingo }
-                    } else {
-                        opponentBoard.isBingo
-                    }
-
-
-                    if (pWon && oWon) {
+                    val outcome = evaluateMatchOutcome()
+                    if (outcome.isGameOver) {
                         isGameOver = true
-                        isDrawMatch = true
-                        didPlayerWin = false
-                        recordFinishedMatch(won = false, isDraw = true)
-                    } else if (pWon || oWon) {
-                        isGameOver = true
-                        isDrawMatch = false
-                        didPlayerWin = pWon
-                        recordFinishedMatch(won = pWon, isDraw = false)
+                        isDrawMatch = outcome.isDraw
+                        didPlayerWin = outcome.didPlayerWin
+                        recordFinishedMatch(won = outcome.didPlayerWin, isDraw = outcome.isDraw)
                     } else {
                         if (packet.turnNumber >= turnNumber || anyNewPick) {
                             turnNumber = packet.turnNumber.coerceAtLeast(turnNumber + 1)
@@ -1118,23 +1147,12 @@ fun RootNavGraph(
                     }
 
                     // 2. Evaluate win conditions
-                    val pWon = playerBoard.isBingo
-                    val oWon = if (allPlayerBoards.isNotEmpty()) {
-                        allPlayerBoards.filter { entry -> entry.key != myUid }.values.any { b -> b.isBingo }
-                    } else {
-                        opponentBoard.isBingo
-                    }
-
-                    if (pWon && oWon) {
+                    val outcome = evaluateMatchOutcome()
+                    if (outcome.isGameOver) {
                         isGameOver = true
-                        isDrawMatch = true
-                        didPlayerWin = false
-                        recordFinishedMatch(won = false, isDraw = true)
-                    } else if (pWon || oWon) {
-                        isGameOver = true
-                        isDrawMatch = false
-                        didPlayerWin = pWon
-                        recordFinishedMatch(won = pWon, isDraw = false)
+                        isDrawMatch = outcome.isDraw
+                        didPlayerWin = outcome.didPlayerWin
+                        recordFinishedMatch(won = outcome.didPlayerWin, isDraw = outcome.isDraw)
                     } else if (packet.turnNumber > turnNumber || (anyNewPick && packet.turnNumber >= turnNumber)) {
                         // Strictly newer turn or reconciled missed turn! Reconcile turn authority
                         turnNumber = packet.turnNumber.coerceAtLeast(turnNumber + 1)
@@ -1199,10 +1217,18 @@ fun RootNavGraph(
                             recentPick = RecentPick(packet.number, packet.playerId, turnNumber)
                         }
 
-                        isGameOver = true
-                        didPlayerWin = false
-                        isDrawMatch = false
-                        recordFinishedMatch(won = false, isDraw = false)
+                        val outcome = evaluateMatchOutcome()
+                        if (outcome.isGameOver) {
+                            isGameOver = true
+                            didPlayerWin = outcome.didPlayerWin
+                            isDrawMatch = outcome.isDraw
+                            recordFinishedMatch(won = outcome.didPlayerWin, isDraw = outcome.isDraw)
+                        } else {
+                            isGameOver = true
+                            didPlayerWin = false
+                            isDrawMatch = false
+                            recordFinishedMatch(won = false, isDraw = false)
+                        }
                     }
                 }
             }
@@ -1831,7 +1857,10 @@ fun RootNavGraph(
                         lanDiscovery.stopDiscovering()
                     }
 
-                    val allUids = realTimePlayers.map { it.id }.filter { it.isNotBlank() }.distinct().sorted()
+                    val activeList = realTimePlayers.filter { it.id.isNotBlank() }
+                        .distinctBy { it.id }
+                        .sortedWith(compareByDescending<Player> { it.isHost }.thenBy { it.id })
+                    val allUids = activeList.map { it.id }.filter { it.isNotBlank() }.distinct().sorted()
                     val candidateUids = if (allUids.isNotEmpty()) allUids else listOf(myId)
                     val chosenFirstTurnUid = ManualBoardEngine.determineRandomFirstTurn(seed, candidateUids)
 
@@ -1841,7 +1870,8 @@ fun RootNavGraph(
                         seed = seed,
                         playerId = myId,
                         currentTurnPlayerId = chosenFirstTurnUid,
-                        isManualBoard = manualMode
+                        isManualBoard = manualMode,
+                        players = activeList
                     )
                     broadcastPacket(startPacket)
                     coroutineScope.launch {
@@ -1854,6 +1884,7 @@ fun RootNavGraph(
                     if (manualMode) {
                         boardSize = dynamicSize
                         currentMatchSeed = seed
+                        allPlayerBoards = emptyMap()
                         isLocalBoardReady = false
                         isOpponentBoardReady = false
                         countdownSeconds = -1
@@ -1880,7 +1911,8 @@ fun RootNavGraph(
                             difficulty = AiDifficulty.EASY,
                             size = dynamicSize,
                             firstTurnPlayerId = chosenFirstTurnUid,
-                            hostSeed = seed
+                            hostSeed = seed,
+                            incomingPlayersList = activeList
                         )
                     }
                 },
@@ -2290,10 +2322,14 @@ fun RootNavGraph(
                 else -> 28L
             }
 
-            val gamePlayers = remember(realTimePlayers, currentGameMode, opponentDisplayName) {
+            val playerSummaryKeys = remember(realTimePlayers) {
+                realTimePlayers.map { "${it.id}_${it.displayName}_${it.avatarUrl}_${it.isHost}" }
+            }
+            val gamePlayers = remember(playerSummaryKeys, currentGameMode, opponentDisplayName) {
                 when (currentGameMode) {
                     GameMode.ONLINE_ROOM, GameMode.NEARBY_NETWORK -> {
                         val filtered = realTimePlayers.filter { it.id.isNotBlank() }
+                            .distinctBy { it.id }
                             .sortedWith(compareByDescending<Player> { it.isHost }.thenBy { it.id })
                         if (filtered.isNotEmpty()) {
                             filtered
@@ -2432,12 +2468,16 @@ fun RootNavGraph(
                                     )
                                 }
                             }
+                            val activeList = realTimePlayers.filter { it.id.isNotBlank() }
+                                .distinctBy { it.id }
+                                .sortedWith(compareByDescending<Player> { it.isHost }.thenBy { it.id })
                             val playAgainPacket = RoomMessagePacket(
                                 type = "PLAY_AGAIN",
                                 boardSize = boardSize,
                                 seed = seed,
                                 playerId = getLocalUid(),
-                                isManualBoard = isManualBoard
+                                isManualBoard = isManualBoard,
+                                players = activeList
                             )
                             broadcastPacket(playAgainPacket)
                             coroutineScope.launch {
@@ -2448,6 +2488,7 @@ fun RootNavGraph(
                             }
                             if (isManualBoard) {
                                 currentMatchSeed = seed
+                                allPlayerBoards = emptyMap()
                                 isLocalBoardReady = false
                                 isOpponentBoardReady = false
                                 countdownSeconds = -1
@@ -2478,7 +2519,8 @@ fun RootNavGraph(
                                     difficulty = currentAiDifficulty,
                                     size = boardSize,
                                     firstTurnPlayerId = null,
-                                    hostSeed = seed
+                                    hostSeed = seed,
+                                    incomingPlayersList = activeList
                                 )
                             }
                         }
@@ -2491,6 +2533,7 @@ fun RootNavGraph(
                     didPlayerWin = false
                     isDrawMatch = false
                     currentMatchSeed = 0L
+                    allPlayerBoards = emptyMap()
                     pickedNumbersHistory.clear()
                     isProcessingTurn = false
                     isMyTurn = false
@@ -2522,6 +2565,7 @@ fun RootNavGraph(
                         didPlayerWin = false
                         isDrawMatch = false
                         currentMatchSeed = 0L
+                        allPlayerBoards = emptyMap()
                         pickedNumbersHistory.clear()
                         isProcessingTurn = false
                         isMyTurn = false
