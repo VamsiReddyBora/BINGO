@@ -2,16 +2,13 @@
 
 > Fast, aesthetic, real-time multiplayer Bingo with friends — online or offline over Wi-Fi / Hotspot!
 
-[![Play Online](https://img.shields.io/badge/Play%20Online-Web%20App-007ACC?style=for-the-badge&logo=googlechrome&logoColor=white)](https://vamsireddybora.github.io/BINGO/)
 [![Download APK](https://img.shields.io/badge/Download-Android%20APK-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/VamsiReddyBora/BINGO/releases/download/v1.0/Bingo.apk)
 [![Release](https://img.shields.io/badge/Release-v1.0-FF4081?style=for-the-badge&logo=github&logoColor=white)](https://github.com/VamsiReddyBora/BINGO/releases/tag/v1.0)
+[![Platform](https://img.shields.io/badge/Platform-Android%207.0%2B-blue?style=for-the-badge&logo=android&logoColor=white)](https://github.com/VamsiReddyBora/BINGO/releases/tag/v1.0)
 
 ---
 
-### 🎮 Jump Right In!
-
-* 🌐 **[Play Live in Browser (Cross-Play)](https://vamsireddybora.github.io/BINGO/)**
-* 📱 **[Download Native Android APK (Bingo.apk)](https://github.com/VamsiReddyBora/BINGO/releases/download/v1.0/Bingo.apk)**
+### 📥 [Download Native Android APK (Bingo.apk)](https://github.com/VamsiReddyBora/BINGO/releases/download/v1.0/Bingo.apk)
 
 ---
 
@@ -37,7 +34,6 @@
 ## 📦 Requirements
 
 * **Android**: 7.0 (API 24) or higher
-* **Web**: Any modern browser (Chrome, Safari, Edge, Firefox)
 
 ---
 
