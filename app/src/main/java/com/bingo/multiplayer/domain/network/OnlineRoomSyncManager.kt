@@ -63,6 +63,7 @@ class OnlineRoomSyncManager(
     private var localPlayer: Player? = null
 
     private val playerRegistry = ConcurrentHashMap<String, Player>()
+    private val kickedPlayerIds = ConcurrentHashMap.newKeySet<String>()
 
     private val _players = MutableStateFlow<List<Player>>(emptyList())
     val players: StateFlow<List<Player>> = _players.asStateFlow()
@@ -148,6 +149,7 @@ class OnlineRoomSyncManager(
         localPlayer = player
 
         playerRegistry.clear()
+        kickedPlayerIds.clear()
         initialPlayers.forEach { p ->
             if (p.id.isNotBlank()) {
                 playerRegistry[p.id] = p.copy(lastSeenTimestamp = System.currentTimeMillis())
@@ -365,12 +367,14 @@ class OnlineRoomSyncManager(
      */
     private suspend fun reconcileWithCloud(code: String, localP: Player) {
         try {
-            val cloudSession = OnlineRoomRegistry.syncRoom(code, localP, playerRegistry.values.toList()) ?: return
+            val cloudSession = OnlineRoomRegistry.syncRoom(code, localP, playerRegistry.values.toList(), kickedPlayerIds) ?: return
             val now = System.currentTimeMillis()
             var hasNewPlayer = false
 
             cloudSession.players.forEach { p ->
-                if (p.id.isNotBlank()) {
+                val pCleanUser = p.username.trim().lowercase().removePrefix("@")
+                val pCleanDisplay = p.displayName.trim().lowercase()
+                if (p.id.isNotBlank() && p.id !in kickedPlayerIds && pCleanUser !in kickedPlayerIds && pCleanDisplay !in kickedPlayerIds) {
                     val isLocal = (p.id == localP.id)
                     val existing = playerRegistry[p.id]
 
@@ -516,10 +520,31 @@ class OnlineRoomSyncManager(
             return
         }
 
+        val pCleanUser = packet.username.trim().lowercase().removePrefix("@")
+        val pCleanDisplay = packet.displayName.trim().lowercase()
+        val isSenderKicked = packet.playerId in kickedPlayerIds ||
+                (pCleanUser.isNotBlank() && pCleanUser in kickedPlayerIds) ||
+                (pCleanDisplay.isNotBlank() && pCleanDisplay in kickedPlayerIds)
+
+        if (isSenderKicked) {
+            if (localPlayer?.isHost == true) {
+                broadcastPacket(
+                    RoomMessagePacket(
+                        type = "KICK_PLAYER",
+                        targetPlayerId = packet.playerId,
+                        playerId = localPlayer?.id ?: ""
+                    )
+                )
+            }
+            return
+        }
+
         when (packet.type) {
             "ROOM_STATE" -> {
                 packet.players.forEach { p ->
-                    if (p.id.isNotBlank()) {
+                    val pcUser = p.username.trim().lowercase().removePrefix("@")
+                    val pcDisplay = p.displayName.trim().lowercase()
+                    if (p.id.isNotBlank() && p.id !in kickedPlayerIds && pcUser !in kickedPlayerIds && pcDisplay !in kickedPlayerIds) {
                         val existing = playerRegistry[p.id]
                         val isLocal = p.id == localPlayer?.id
                         val effAvatar = when {
@@ -746,6 +771,16 @@ class OnlineRoomSyncManager(
     }
 
     fun removePlayer(playerId: String) {
+        val targetPlayer = playerRegistry[playerId]
+        kickedPlayerIds.add(playerId)
+        if (targetPlayer != null) {
+            if (targetPlayer.username.isNotBlank()) {
+                kickedPlayerIds.add(targetPlayer.username.trim().lowercase().removePrefix("@"))
+            }
+            if (targetPlayer.displayName.isNotBlank()) {
+                kickedPlayerIds.add(targetPlayer.displayName.trim().lowercase())
+            }
+        }
         playerRegistry.remove(playerId)
         _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
         val code = currentRoomCode
@@ -754,13 +789,18 @@ class OnlineRoomSyncManager(
                 OnlineRoomRegistry.removePlayerFromRoom(code, playerId)
             }
         }
-        broadcastPacket(
-            RoomMessagePacket(
+        scope.launch(Dispatchers.IO) {
+            val kickPacket = RoomMessagePacket(
                 type = "KICK_PLAYER",
                 targetPlayerId = playerId,
                 playerId = localPlayer?.id ?: ""
             )
-        )
+            broadcastPacket(kickPacket)
+            delay(150L)
+            broadcastPacket(kickPacket)
+            delay(300L)
+            broadcastPacket(kickPacket)
+        }
     }
 
     fun disconnect() {
@@ -805,6 +845,7 @@ class OnlineRoomSyncManager(
         isSubscribed = false
         lastStartedMatchSeed = 0L
         playerRegistry.clear()
+        kickedPlayerIds.clear()
         _players.value = emptyList()
     }
 

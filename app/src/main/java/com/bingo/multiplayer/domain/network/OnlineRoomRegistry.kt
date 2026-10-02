@@ -367,7 +367,8 @@ object OnlineRoomRegistry {
     suspend fun syncRoom(
         roomCode: String,
         localPlayer: Player,
-        knownPlayers: List<Player> = emptyList()
+        knownPlayers: List<Player> = emptyList(),
+        bannedPlayerIds: Set<String> = emptySet()
     ): OnlineRoomSession? = withContext(Dispatchers.IO) {
         val cleanCode = roomCode.trim().uppercase()
         if (cleanCode.isBlank()) return@withContext null
@@ -378,6 +379,27 @@ object OnlineRoomRegistry {
                 session = getRoomMqtt(cleanCode)
             }
             if (session == null || session.status == "CLOSED") return@withContext null
+
+            // If caller is in banned set, do not re-add or sync
+            val cleanLocalUser = localPlayer.username.trim().lowercase().removePrefix("@")
+            val cleanLocalDisplay = localPlayer.displayName.trim().lowercase()
+            if (localPlayer.id in bannedPlayerIds ||
+                (cleanLocalUser.isNotBlank() && cleanLocalUser in bannedPlayerIds) ||
+                (cleanLocalDisplay.isNotBlank() && cleanLocalDisplay in bannedPlayerIds)
+            ) {
+                return@withContext null
+            }
+
+            // Filter out any banned/kicked players from the session
+            if (bannedPlayerIds.isNotEmpty()) {
+                session = session.copy(
+                    players = session.players.filterNot { p ->
+                        p.id in bannedPlayerIds ||
+                        (p.username.isNotBlank() && p.username.trim().lowercase().removePrefix("@") in bannedPlayerIds) ||
+                        (p.displayName.isNotBlank() && p.displayName.trim().lowercase() in bannedPlayerIds)
+                    }
+                )
+            }
 
             val now = System.currentTimeMillis()
             val safeLocal = sanitizePlayer(localPlayer).copy(lastSeenTimestamp = now)
@@ -604,10 +626,16 @@ object OnlineRoomRegistry {
      */
     suspend fun removePlayerFromRoom(roomCode: String, playerId: String) = withContext(Dispatchers.IO) {
         val cleanCode = roomCode.trim().uppercase()
+        val cleanTarget = playerId.trim().lowercase().removePrefix("@")
         if (cleanCode.isBlank() || playerId.isBlank()) return@withContext
         try {
             val current = getRoom(cleanCode) ?: return@withContext
-            val updatedPlayers = current.players.filterNot { it.id == playerId }
+            val updatedPlayers = current.players.filterNot { p ->
+                p.id == playerId ||
+                p.id.equals(cleanTarget, ignoreCase = true) ||
+                (p.username.isNotBlank() && p.username.trim().lowercase().removePrefix("@") == cleanTarget) ||
+                (p.displayName.isNotBlank() && p.displayName.trim().lowercase() == cleanTarget)
+            }
             val updated = current.copy(players = updatedPlayers, lastHeartbeat = System.currentTimeMillis())
             val jsonStr = json.encodeToString(updated)
             val b64 = encodeBase64Url(jsonStr)

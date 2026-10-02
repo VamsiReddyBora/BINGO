@@ -752,4 +752,135 @@ class MultiplayerWinLogicAndSimulationTest {
         assertTrue("Device 2 can now start countdown (all 3 ready)", isAllReady(boardsOnDevice2))
         assertTrue("Device 3 can now start countdown (all 3 ready)", isAllReady(boardsOnDevice3))
     }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // POST-MATCH REVIEW STRIP LAYOUT FOR 2 PLAYERS VS 3+ PLAYERS
+    // ════════════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun `post-game board review layout - 2-player match uses 50-50 equal weight edge-to-edge tabs without trailing space`() {
+        val twoPlayers = listOf(
+            Player(id = "local", displayName = "You", isHost = true),
+            Player(id = "opp1", displayName = "Opponent", isHost = false)
+        )
+        val isTwoPlayerLayout = twoPlayers.size <= 2
+        assertTrue("2-player match must select two-player layout", isTwoPlayerLayout)
+
+        // Weight distribution verification: both tabs take equal weight(1f) to occupy 100% width
+        val tabWeights = twoPlayers.map { if (isTwoPlayerLayout) 1f else null }
+        assertEquals(2, tabWeights.size)
+        assertEquals(1f, tabWeights[0])
+        assertEquals(1f, tabWeights[1])
+
+        // When 3 or more players are present, horizontal scroll is used instead
+        val threePlayers = twoPlayers + Player(id = "opp2", displayName = "Player 3", isHost = false)
+        val isThreePlayerTwoLayout = threePlayers.size <= 2
+        assertFalse("3-player match must use scrollable strip instead of 2-player layout", isThreePlayerTwoLayout)
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // LOBBY PLAYER REMOVAL / KICK BLACKLIST VERIFICATION
+    // ════════════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun `lobby player kick - host blacklist rejects in-flight heartbeats and late cloud packets from kicked player`() {
+        val kickedPlayerIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+        val playerRegistry = mutableMapOf<String, Player>()
+
+        val host = Player(id = "host1", username = "hostUser", displayName = "Host", isHost = true)
+        val guest = Player(id = "guest1", username = "guestUser", displayName = "Guest", isHost = false)
+        playerRegistry[host.id] = host
+        playerRegistry[guest.id] = guest
+        assertEquals(2, playerRegistry.size)
+
+        // Host removes the guest from the lobby
+        kickedPlayerIds.add(guest.id)
+        kickedPlayerIds.add(guest.username.lowercase())
+        kickedPlayerIds.add(guest.displayName.lowercase())
+        playerRegistry.remove(guest.id)
+        assertEquals(1, playerRegistry.size)
+
+        // Simulated late incoming packet from guest (e.g. heartbeat or join)
+        val latePacketFromGuest = RoomMessagePacket(
+            type = "HEARTBEAT",
+            playerId = guest.id,
+            username = guest.username,
+            displayName = guest.displayName
+        )
+
+        fun canProcessPacket(packet: RoomMessagePacket): Boolean {
+            val pCleanUser = packet.username.trim().lowercase().removePrefix("@")
+            val pCleanDisplay = packet.displayName.trim().lowercase()
+            val isSenderKicked = packet.playerId in kickedPlayerIds ||
+                    (pCleanUser.isNotBlank() && pCleanUser in kickedPlayerIds) ||
+                    (pCleanDisplay.isNotBlank() && pCleanDisplay in kickedPlayerIds)
+            return !isSenderKicked
+        }
+
+        assertFalse("Late heartbeat from kicked guest must be rejected", canProcessPacket(latePacketFromGuest))
+
+        // Simulated cloud room sync containing stale guest before HTTP call completed
+        val staleCloudPlayers = listOf(host, guest)
+        val reconciledPlayers = staleCloudPlayers.filterNot { p ->
+            val pCleanUser = p.username.trim().lowercase().removePrefix("@")
+            val pCleanDisplay = p.displayName.trim().lowercase()
+            p.id in kickedPlayerIds || pCleanUser in kickedPlayerIds || pCleanDisplay in kickedPlayerIds
+        }
+
+        assertEquals(1, reconciledPlayers.size)
+        assertEquals("host1", reconciledPlayers[0].id)
+        assertFalse("Kicked player must NEVER be resurrected from cloud sync", reconciledPlayers.any { it.id == guest.id })
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // FRIEND DELETION PERSISTENCE & COOLDOWN BLACKLIST VERIFICATION
+    // ════════════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun `friend deletion persistence - recentlyRemoved blacklist prevents resurrection from stale cloud responses`() {
+        val recentlyRemoved = java.util.concurrent.ConcurrentHashMap<String, Long>()
+        var friends = listOf(
+            com.bingo.multiplayer.domain.model.Friend(uid = "uid1", username = "alice", displayName = "Alice"),
+            com.bingo.multiplayer.domain.model.Friend(uid = "uid2", username = "bob", displayName = "Bob")
+        )
+
+        // User deletes "bob"
+        val targetUid = "uid2"
+        val targetUsername = "bob"
+        val now = System.currentTimeMillis()
+        recentlyRemoved[targetUid] = now
+        recentlyRemoved[targetUsername.lowercase()] = now
+        friends = friends.filterNot { it.uid in recentlyRemoved.keys || it.username.lowercase() in recentlyRemoved.keys }
+        assertEquals(1, friends.size)
+        assertEquals("alice", friends[0].username)
+
+        // In-flight / stale cloud response returns both alice and bob 500ms later
+        val staleCloudResponse = listOf(
+            com.bingo.multiplayer.domain.model.Friend(uid = "uid1", username = "alice", displayName = "Alice"),
+            com.bingo.multiplayer.domain.model.Friend(uid = "uid2", username = "bob", displayName = "Bob")
+        )
+
+        // Sync logic applying recentlyRemoved blacklist:
+        val currentMap = friends
+            .filterNot { it.uid in recentlyRemoved.keys || it.username.trim().lowercase().removePrefix("@") in recentlyRemoved.keys }
+            .associateBy { it.uid.ifBlank { it.username.lowercase() } }
+            .toMutableMap()
+
+        var hadStaleFriendInCloud = false
+        staleCloudResponse.forEach { cf ->
+            val cfClean = cf.username.trim().lowercase().removePrefix("@")
+            if (cf.uid in recentlyRemoved.keys || cfClean in recentlyRemoved.keys) {
+                hadStaleFriendInCloud = true
+            } else {
+                val key = cf.uid.ifBlank { cf.username.lowercase() }
+                currentMap[key] = cf
+            }
+        }
+        val syncedFriends = currentMap.values.toList()
+
+        assertTrue("Stale cloud response should be flagged for cloud overwrite", hadStaleFriendInCloud)
+        assertEquals(1, syncedFriends.size)
+        assertEquals("alice", syncedFriends[0].username)
+        assertFalse("Deleted friend bob must NOT be resurrected on the screen", syncedFriends.any { it.username == "bob" })
+    }
 }

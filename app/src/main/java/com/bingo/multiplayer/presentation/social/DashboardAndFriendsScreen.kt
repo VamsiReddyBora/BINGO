@@ -82,12 +82,12 @@ fun DashboardAndFriendsScreen(
     var foundPlayer by remember { mutableStateOf<PlayerRegistryEntry?>(null) }
     var searchAttempted by remember { mutableStateOf(false) }
 
-    LaunchedEffect(user.username, friends, foundPlayer) {
+    LaunchedEffect(user.username, foundPlayer) {
         friendsRepository.syncFriendsAndRequests(user.username)
         PresenceManager.startPresence(user.username)
         while (isActive) {
             val usersToFetch = mutableListOf<String>()
-            friends.forEach { if (it.username.isNotBlank()) usersToFetch.add(it.username) }
+            friendsRepository.friends.value.forEach { if (it.username.isNotBlank()) usersToFetch.add(it.username) }
             val fp = foundPlayer
             if (fp != null && fp.username.isNotBlank()) {
                 usersToFetch.add(fp.username)

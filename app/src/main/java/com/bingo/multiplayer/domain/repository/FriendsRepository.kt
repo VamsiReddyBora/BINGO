@@ -19,6 +19,7 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Manages the user's in-app friends list and pending PUBG-style friend requests.
@@ -36,6 +37,8 @@ class FriendsRepository(
 
     private val _friends = MutableStateFlow<List<Friend>>(emptyList())
     val friends: StateFlow<List<Friend>> = _friends.asStateFlow()
+
+    private val recentlyRemoved = ConcurrentHashMap<String, Long>()
 
     private val _pendingRequests = MutableStateFlow<List<FriendRequest>>(emptyList())
     val pendingRequests: StateFlow<List<FriendRequest>> = _pendingRequests.asStateFlow()
@@ -57,17 +60,37 @@ class FriendsRepository(
 
         scope.launch {
             try {
+                // Expire removed entries older than 60 seconds
+                val now = System.currentTimeMillis()
+                recentlyRemoved.entries.removeIf { (now - it.value) > 60_000L }
+
                 // 1. Sync cloud friends
                 val cloudFriends = FriendRequestManager.fetchCloudFriends(clean)
                 if (cloudFriends.isNotEmpty()) {
-                    val currentMap = _friends.value.associateBy { it.uid.ifBlank { it.username.lowercase() } }.toMutableMap()
+                    val currentMap = _friends.value
+                        .filterNot { it.uid in recentlyRemoved.keys || it.username.trim().lowercase().removePrefix("@") in recentlyRemoved.keys }
+                        .associateBy { it.uid.ifBlank { it.username.lowercase() } }
+                        .toMutableMap()
+
+                    var hadStaleFriendInCloud = false
                     cloudFriends.forEach { cf ->
-                        val key = cf.uid.ifBlank { cf.username.lowercase() }
-                        currentMap[key] = cf
+                        val cfClean = cf.username.trim().lowercase().removePrefix("@")
+                        if (cf.uid in recentlyRemoved.keys || cfClean in recentlyRemoved.keys) {
+                            hadStaleFriendInCloud = true
+                        } else {
+                            val key = cf.uid.ifBlank { cf.username.lowercase() }
+                            currentMap[key] = cf
+                        }
                     }
                     val merged = currentMap.values.toList()
                     _friends.value = merged
                     persistFriends(merged)
+
+                    // If stale cloud returned a deleted friend, overwrite cloud immediately with sanitized list
+                    if (hadStaleFriendInCloud) {
+                        FriendRequestManager.saveCloudFriends(clean, merged)
+                    }
+
                     val friendUsernames = merged.map { it.username }.filter { it.isNotBlank() }
                     if (friendUsernames.isNotEmpty()) {
                         com.bingo.multiplayer.domain.network.PresenceManager.fetchCloudPresenceForUsers(friendUsernames)
@@ -249,8 +272,25 @@ class FriendsRepository(
      */
     fun removeFriend(uidOrUsername: String, currentUsername: String? = null) {
         val clean = uidOrUsername.removePrefix("@").trim().lowercase()
+        val now = System.currentTimeMillis()
+        recentlyRemoved[uidOrUsername] = now
+        recentlyRemoved[clean] = now
+
+        val found = _friends.value.find { it.uid == uidOrUsername || it.username.trim().lowercase().removePrefix("@") == clean }
+        if (found != null) {
+            recentlyRemoved[found.uid] = now
+            if (found.username.isNotBlank()) {
+                recentlyRemoved[found.username.trim().lowercase().removePrefix("@")] = now
+            }
+        }
+
         val current = _friends.value.toMutableList()
-        current.removeAll { it.uid == uidOrUsername || it.username.lowercase() == clean }
+        current.removeAll {
+            it.uid == uidOrUsername ||
+            it.username.trim().lowercase().removePrefix("@") == clean ||
+            it.uid in recentlyRemoved.keys ||
+            it.username.trim().lowercase().removePrefix("@") in recentlyRemoved.keys
+        }
         _friends.value = current
         persistFriends(current)
 

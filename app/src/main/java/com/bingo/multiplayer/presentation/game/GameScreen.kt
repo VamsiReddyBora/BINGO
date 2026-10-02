@@ -52,6 +52,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.text.BasicTextField
@@ -641,11 +642,18 @@ fun GameScreen(
                         color = tokens.backgroundSecondary,
                         border = BorderStroke(1.dp, tokens.surfaceBorder)
                     ) {
+                        val isTwoPlayerLayout = reviewPlayers.size <= 2
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState())
-                                .padding(4.dp),
+                            modifier = if (isTwoPlayerLayout) {
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(4.dp)
+                            } else {
+                                Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState())
+                                    .padding(4.dp)
+                            },
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -671,6 +679,7 @@ fun GameScreen(
                                         selectedReviewPlayerId = player.id
                                         animateStampDrop = false
                                     },
+                                    modifier = if (isTwoPlayerLayout) Modifier.weight(1f) else Modifier,
                                     shape = RoundedCornerShape(10.dp),
                                     color = if (isSelected) tokens.surface else Color.Transparent,
                                     border = if (isSelected) {
@@ -678,7 +687,8 @@ fun GameScreen(
                                     } else null
                                 ) {
                                     Row(
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                        modifier = (if (isTwoPlayerLayout) Modifier.fillMaxWidth() else Modifier)
+                                            .padding(horizontal = 12.dp, vertical = 8.dp),
                                         horizontalArrangement = Arrangement.Center,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
@@ -698,7 +708,9 @@ fun GameScreen(
                                                 isSelected && isLocal -> tokens.accentBrand
                                                 isSelected -> tokens.accentOpponent
                                                 else -> tokens.cellNeutralText.copy(alpha = 0.65f)
-                                            }
+                                            },
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                     }
                                 }

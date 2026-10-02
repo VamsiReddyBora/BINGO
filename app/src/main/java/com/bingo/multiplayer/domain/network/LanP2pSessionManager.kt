@@ -25,6 +25,7 @@ import java.io.InputStreamReader
 import java.io.PrintWriter
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.concurrent.ConcurrentHashMap
 
 class LanP2pSessionManager {
 
@@ -54,6 +55,7 @@ class LanP2pSessionManager {
     var isHostInLobby = false
 
     private val playerRegistry = mutableMapOf<String, Player>()
+    private val kickedPlayerIds = ConcurrentHashMap.newKeySet<String>()
     private val _players = MutableStateFlow<List<Player>>(emptyList())
     val players: StateFlow<List<Player>> = _players.asStateFlow()
 
@@ -315,6 +317,25 @@ class LanP2pSessionManager {
     }
 
     private fun handleIncomingPacket(packet: RoomMessagePacket) {
+        val pCleanUser = packet.username.trim().lowercase().removePrefix("@")
+        val pCleanDisplay = packet.displayName.trim().lowercase()
+        val isSenderKicked = packet.playerId in kickedPlayerIds ||
+                (pCleanUser.isNotBlank() && pCleanUser in kickedPlayerIds) ||
+                (pCleanDisplay.isNotBlank() && pCleanDisplay in kickedPlayerIds)
+
+        if (isSenderKicked) {
+            if (localPlayer?.isHost == true) {
+                broadcastPacket(
+                    RoomMessagePacket(
+                        type = "KICK_PLAYER",
+                        targetPlayerId = packet.playerId,
+                        playerId = localPlayer?.id ?: ""
+                    )
+                )
+            }
+            return
+        }
+
         when (packet.type) {
             "JOIN", "HEARTBEAT" -> {
                 if (packet.playerId.isNotEmpty()) {
@@ -473,15 +494,30 @@ class LanP2pSessionManager {
     }
 
     fun removePlayer(playerId: String) {
+        val targetPlayer = playerRegistry[playerId]
+        kickedPlayerIds.add(playerId)
+        if (targetPlayer != null) {
+            if (targetPlayer.username.isNotBlank()) {
+                kickedPlayerIds.add(targetPlayer.username.trim().lowercase().removePrefix("@"))
+            }
+            if (targetPlayer.displayName.isNotBlank()) {
+                kickedPlayerIds.add(targetPlayer.displayName.trim().lowercase())
+            }
+        }
         playerRegistry.remove(playerId)
         _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
-        broadcastPacket(
-            RoomMessagePacket(
+        scope.launch(Dispatchers.IO) {
+            val kickPacket = RoomMessagePacket(
                 type = "KICK_PLAYER",
                 targetPlayerId = playerId,
                 playerId = localPlayer?.id ?: ""
             )
-        )
+            broadcastPacket(kickPacket)
+            delay(150L)
+            broadcastPacket(kickPacket)
+            delay(300L)
+            broadcastPacket(kickPacket)
+        }
     }
 
     fun disconnect() {
@@ -530,6 +566,7 @@ class LanP2pSessionManager {
         isHostInLobby = false
         localPlayer = null
         playerRegistry.clear()
+        kickedPlayerIds.clear()
         _players.value = emptyList()
     }
 
