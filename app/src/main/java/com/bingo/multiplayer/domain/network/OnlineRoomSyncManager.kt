@@ -89,6 +89,24 @@ class OnlineRoomSyncManager(
 
     @Volatile private var isSubscribed: Boolean = false
     @Volatile private var lastStartedMatchSeed: Long = 0L
+    private val completedMatchSeeds = ConcurrentHashMap.newKeySet<Long>()
+
+    fun recordStartedSeed(seed: Long) {
+        if (seed != 0L) {
+            lastStartedMatchSeed = seed
+        }
+    }
+
+    fun recordCompletedSeed(seed: Long) {
+        if (seed != 0L) {
+            completedMatchSeeds.add(seed)
+            lastStartedMatchSeed = seed
+        }
+    }
+
+    fun isSeedCompleted(seed: Long): Boolean {
+        return seed != 0L && completedMatchSeeds.contains(seed)
+    }
 
     private val lastDirectHeartbeatTimestamps = ConcurrentHashMap<String, Long>()
 
@@ -516,12 +534,13 @@ class OnlineRoomSyncManager(
 
             // 3. Dual-Channel Cloud Room Status Fallback:
             // ONLY if the host has started the game ("PLAYING"), local player is a guest,
-            // guest is still in the lobby (waiting for match to start), and seed has not yet triggered start!
+            // guest is actively in STATUS_READY in the lobby, and seed is valid, unstarted, and not completed!
             if (cloudSession.status == "PLAYING" &&
                 !localP.isHost &&
                 cloudSession.currentSeed != 0L &&
-                localP.lobbyReadyStatus != "IN_GAME" &&
-                cloudSession.currentSeed != lastStartedMatchSeed
+                localP.lobbyReadyStatus == com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.STATUS_READY &&
+                cloudSession.currentSeed != lastStartedMatchSeed &&
+                !completedMatchSeeds.contains(cloudSession.currentSeed)
             ) {
                 lastStartedMatchSeed = cloudSession.currentSeed
                 _incomingPackets.tryEmit(
@@ -679,6 +698,15 @@ class OnlineRoomSyncManager(
         }
 
         when (packet.type) {
+            "START_GAME", "PLAY_AGAIN" -> {
+                if (packet.seed != 0L) {
+                    recordStartedSeed(packet.seed)
+                }
+                if (isSeedCompleted(packet.seed)) {
+                    return
+                }
+            }
+
             "ROOM_STATE" -> {
                 packet.players.forEach { p ->
                     val pcUser = p.username.trim().lowercase().removePrefix("@")
@@ -980,6 +1008,7 @@ class OnlineRoomSyncManager(
         localPlayer = null
         isSubscribed = false
         lastStartedMatchSeed = 0L
+        completedMatchSeeds.clear()
         lastDirectHeartbeatTimestamps.clear()
         playerRegistry.clear()
         kickedPlayerIds.clear()

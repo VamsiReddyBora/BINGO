@@ -328,7 +328,8 @@ object LobbyLifecycleEngine {
         incomingSeed: Long?,
         currentMatchSeed: Long,
         isGameOver: Boolean,
-        isCurrentlyInGame: Boolean
+        isCurrentlyInGame: Boolean,
+        isCompletedSeed: Boolean = false
     ): Boolean {
         // Host always triggers its own match initiation with fresh seeds
         if (isHost) return true
@@ -336,6 +337,14 @@ object LobbyLifecycleEngine {
         // Incoming seed must be valid non-zero
         val seed = incomingSeed ?: return false
         if (seed == 0L) return false
+
+        // Invariant: Completed matches must NEVER be restarted by duplicate or stale packets
+        if (isCompletedSeed) return false
+
+        // If the incoming seed matches a finished match's seed, reject it
+        if (seed == currentMatchSeed && currentMatchSeed != 0L && isGameOver) {
+            return false
+        }
 
         // If guest is currently in the game screen and game is not over:
         // Reject duplicate start packets for the ongoing match (e.g. network retries or rogue starts)

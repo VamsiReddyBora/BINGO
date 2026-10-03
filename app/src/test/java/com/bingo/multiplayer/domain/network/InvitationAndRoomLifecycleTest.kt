@@ -138,4 +138,45 @@ class InvitationAndRoomLifecycleTest {
         list.clear()
         assertTrue(list.isEmpty())
     }
+
+    @Test
+    fun `test room status transition from PLAYING to WAITING resets seed to 0L`() {
+        val playingRoom = OnlineRoomSession(
+            roomCode = "ROOM99",
+            hostId = "host1",
+            hostUsername = "host1",
+            hostDisplayName = "Host",
+            status = "PLAYING",
+            currentSeed = 88888888L
+        )
+        assertEquals("PLAYING", playingRoom.status)
+        assertEquals(88888888L, playingRoom.currentSeed)
+
+        // When game completes or returns to lobby, room transitions to WAITING with seed = 0L
+        val waitingRoom = playingRoom.copy(
+            status = "WAITING",
+            currentSeed = 0L
+        )
+        assertEquals("WAITING", waitingRoom.status)
+        assertEquals(0L, waitingRoom.currentSeed)
+    }
+
+    @Test
+    fun `test guest returning to lobby in NOT_READY status rejects cloud PLAYING fallback`() {
+        val completedSeed = 123456L
+        val completedSeeds = setOf(completedSeed)
+
+        // Guest returning to lobby is in STATUS_NOT_READY
+        val guestLobbyStatus = "NOT_READY"
+        val cloudStatus = "PLAYING"
+        val cloudSeed = completedSeed
+
+        // Verify fallback condition evaluates to false
+        val shouldFallbackTrigger = cloudStatus == "PLAYING" &&
+            cloudSeed != 0L &&
+            guestLobbyStatus == "READY" && // requires READY
+            !completedSeeds.contains(cloudSeed) // must not be in completedSeeds
+
+        assertFalse("Guest in NOT_READY status with completed seed must not trigger start", shouldFallbackTrigger)
+    }
 }

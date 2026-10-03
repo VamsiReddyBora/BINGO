@@ -298,6 +298,28 @@ class LobbyLifecycleEngineTest {
         )
         assertTrue("Initial match start from lobby must be accepted", lobbyStartAllowed)
 
+        // Completed seed returning to lobby must be strictly rejected
+        val completedSeedRejected = LobbyLifecycleEngine.shouldStartNewMatch(
+            isHost = false,
+            incomingSeed = activeSeed,
+            currentMatchSeed = 0L,
+            isGameOver = false,
+            isCurrentlyInGame = false,
+            isCompletedSeed = true
+        )
+        assertFalse("Completed seed must be rejected when returning to lobby", completedSeedRejected)
+
+        // Same seed when game concluded must be strictly rejected
+        val sameSeedGameOverRejected = LobbyLifecycleEngine.shouldStartNewMatch(
+            isHost = false,
+            incomingSeed = activeSeed,
+            currentMatchSeed = activeSeed,
+            isGameOver = true,
+            isCurrentlyInGame = false,
+            isCompletedSeed = false
+        )
+        assertFalse("Same seed must be rejected if match already concluded", sameSeedGameOverRejected)
+
         // Host always triggers match initiation
         assertTrue(
             "Host always starts",
