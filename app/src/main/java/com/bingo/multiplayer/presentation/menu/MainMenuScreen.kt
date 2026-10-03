@@ -173,11 +173,19 @@ fun MainMenuScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "B I N G O",
-                    style = BingoTheme.typography.logoTitle.copy(fontSize = 24.sp),
-                    color = tokens.cellNeutralText
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.foundation.Image(
+                        painter = androidx.compose.ui.res.painterResource(id = com.bingo.multiplayer.R.drawable.ic_bingo_logo),
+                        contentDescription = "Logo",
+                        modifier = Modifier.size(32.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "B I N G O",
+                        style = BingoTheme.typography.logoTitle.copy(fontSize = 24.sp),
+                        color = tokens.cellNeutralText
+                    )
+                }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     // Quick Theme Toggle (Light / AMOLED Dark Mode)

@@ -523,20 +523,12 @@ fun LoginScreen(
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Smooth, borderless soft purple squircle emblem
-                Box(
-                    modifier = Modifier
-                        .size(76.dp)
-                        .clip(RoundedCornerShape(22.dp))
-                        .background(Color(0xFFF5EEFF)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    androidx.compose.foundation.Image(
-                        painter = androidx.compose.ui.res.painterResource(id = com.bingo.multiplayer.R.drawable.ic_bingo_logo),
-                        contentDescription = "App Icon",
-                        modifier = Modifier.size(64.dp)
-                    )
-                }
+                // Royal Bingo Crown Logo Emblem
+                androidx.compose.foundation.Image(
+                    painter = androidx.compose.ui.res.painterResource(id = com.bingo.multiplayer.R.drawable.ic_bingo_logo),
+                    contentDescription = "Royal Bingo Logo",
+                    modifier = Modifier.size(100.dp)
+                )
 
                 Spacer(modifier = Modifier.height(16.dp))
 
