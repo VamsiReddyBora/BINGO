@@ -1,22 +1,15 @@
 package com.bingo.multiplayer
 
-import android.Manifest
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Build
+import android.app.NotificationManager
+import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
-import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import com.bingo.multiplayer.core.designsystem.BingoAppTheme
 import com.bingo.multiplayer.core.designsystem.ThemePreferences
-import com.bingo.multiplayer.core.notification.BingoNotificationHelper
-import com.bingo.multiplayer.core.notification.NotificationAction
-import com.bingo.multiplayer.core.notification.NotificationActionBus
 import com.bingo.multiplayer.domain.network.AppLifecycleObserver
 import com.bingo.multiplayer.domain.network.PresenceManager
 import com.bingo.multiplayer.domain.repository.AuthRepository
@@ -28,27 +21,16 @@ class MainActivity : ComponentActivity() {
     private lateinit var authRepository: AuthRepository
     private lateinit var friendsRepository: FriendsRepository
 
-    private val notificationPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { /* Permission response handled silently */ }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         WindowCompat.setDecorFitsSystemWindows(window, true)
 
-        // Initialize high-priority notification channel for game invites and friend online alerts
-        BingoNotificationHelper.createNotificationChannel(applicationContext)
-
-        // Request runtime notification permission on Android 13+ (API 33+)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            }
-        }
-
-        // Handle any incoming notification launch intent
-        handleNotificationIntent(intent)
+        // Clear any old/stale OS notifications from previous app versions
+        try {
+            val nm = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            nm?.cancelAll()
+        } catch (_: Exception) {}
 
         // Initialize ThemePreferences with saved theme and accent
         ThemePreferences.init(applicationContext)
@@ -65,20 +47,6 @@ class MainActivity : ComponentActivity() {
 
         authRepository = AuthRepository(applicationContext)
         friendsRepository = FriendsRepository(applicationContext)
-
-        // Start background notification daemon & periodic wake-up alarms (silent notification removed)
-        com.bingo.multiplayer.core.notification.BingoNotificationDaemon.start(applicationContext)
-        try {
-            applicationContext.stopService(
-                Intent(applicationContext, com.bingo.multiplayer.core.notification.BingoPushNotificationService::class.java)
-            )
-            val nm = applicationContext.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
-            nm?.cancel(com.bingo.multiplayer.core.notification.BingoPushNotificationService.SERVICE_NOTIFICATION_ID)
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                nm?.deleteNotificationChannel(com.bingo.multiplayer.core.notification.BingoPushNotificationService.SERVICE_CHANNEL_ID)
-            }
-        } catch (_: Exception) {}
-        com.bingo.multiplayer.core.notification.BingoAlarmReceiver.scheduleAlarm(applicationContext)
 
         setContent {
             val isDark = ThemePreferences.isDarkTheme.value
@@ -132,29 +100,5 @@ class MainActivity : ComponentActivity() {
     override fun onStop() {
         super.onStop()
         AppLifecycleObserver.onBackgroundImmediate()
-    }
-
-    override fun onNewIntent(intent: Intent?) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        handleNotificationIntent(intent)
-    }
-
-    private fun handleNotificationIntent(intent: Intent?) {
-        val action = intent?.action ?: return
-        when (action) {
-            BingoNotificationHelper.ACTION_SEND_INVITE -> {
-                val friendUsername = intent.getStringExtra(BingoNotificationHelper.EXTRA_FRIEND_USERNAME) ?: return
-                val friendDisplayName = intent.getStringExtra(BingoNotificationHelper.EXTRA_FRIEND_DISPLAY_NAME) ?: friendUsername
-                BingoNotificationHelper.cancelFriendOnlineNotification(this, friendUsername)
-                NotificationActionBus.postAction(NotificationAction.SendInvite(friendUsername, friendDisplayName))
-            }
-            BingoNotificationHelper.ACTION_ACCEPT_INVITE -> {
-                val roomCode = intent.getStringExtra(BingoNotificationHelper.EXTRA_ROOM_CODE) ?: return
-                val hostUsername = intent.getStringExtra(BingoNotificationHelper.EXTRA_HOST_USERNAME) ?: ""
-                BingoNotificationHelper.cancelInviteNotification(this, roomCode)
-                NotificationActionBus.postAction(NotificationAction.AcceptInvite(roomCode, hostUsername))
-            }
-        }
     }
 }

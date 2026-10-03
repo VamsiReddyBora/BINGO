@@ -10,7 +10,6 @@ object PermissionHelper {
     fun getNearbyAndNotificationPermissions(): List<String> {
         val permissions = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
             permissions.add(Manifest.permission.NEARBY_WIFI_DEVICES)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
