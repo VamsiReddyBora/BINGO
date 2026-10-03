@@ -290,15 +290,17 @@ object LobbyLifecycleEngine {
      * - All non-host players are in STATUS_READY (host is ready by default)
      */
     fun canStartMatch(players: List<Player>): Boolean {
-        if (players.size < 2) return false
-        return players.all { it.isHost || it.lobbyReadyStatus == STATUS_READY }
+        val activePlayers = players.filter { it.lobbyReadyStatus != STATUS_LEFT_LOBBY }
+        if (activePlayers.size < 2) return false
+        return activePlayers.all { it.isHost || it.lobbyReadyStatus == STATUS_READY }
     }
 
     /**
      * Counts how many players are currently ready (including host).
      */
     fun countReadyPlayers(players: List<Player>): Int {
-        return players.count { it.isHost || it.lobbyReadyStatus == STATUS_READY }
+        val activePlayers = players.filter { it.lobbyReadyStatus != STATUS_LEFT_LOBBY }
+        return activePlayers.count { it.isHost || it.lobbyReadyStatus == STATUS_READY }
     }
 
     /**

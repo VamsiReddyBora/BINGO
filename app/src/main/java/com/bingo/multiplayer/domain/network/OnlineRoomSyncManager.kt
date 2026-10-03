@@ -66,7 +66,10 @@ class OnlineRoomSyncManager(
     private var mqttClient: MqttAsyncClient? = null
 
     private var currentRoomCode: String? = null
-    private var localPlayer: Player? = null
+    var localPlayer: Player? = null
+        private set
+    @Volatile var currentHostId: String? = null
+        private set
 
     private val playerRegistry = ConcurrentHashMap<String, Player>()
     private val kickedPlayerIds = ConcurrentHashMap.newKeySet<String>()
@@ -209,16 +212,22 @@ class OnlineRoomSyncManager(
 
         val cleanCode = roomCode.trim().uppercase()
         currentRoomCode = cleanCode
-        localPlayer = player
+        val isPlayerHost = player.isHost || (currentHostId != null && player.id == currentHostId)
+        val safePlayer = player.copy(isHost = isPlayerHost)
+        localPlayer = safePlayer
 
         playerRegistry.clear()
         kickedPlayerIds.clear()
         initialPlayers.forEach { p ->
             if (p.id.isNotBlank()) {
-                playerRegistry[p.id] = p.copy(lastSeenTimestamp = System.currentTimeMillis())
+                val isPActuallyHost = p.isHost || (currentHostId != null && p.id == currentHostId)
+                playerRegistry[p.id] = p.copy(
+                    isHost = isPActuallyHost,
+                    lastSeenTimestamp = System.currentTimeMillis()
+                )
             }
         }
-        playerRegistry[player.id] = player.copy(lastSeenTimestamp = System.currentTimeMillis())
+        playerRegistry[safePlayer.id] = safePlayer.copy(lastSeenTimestamp = System.currentTimeMillis())
         _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
 
         val clientId = "bingo_${player.id}_${UUID.randomUUID().toString().take(6)}"
@@ -468,6 +477,9 @@ class OnlineRoomSyncManager(
     private suspend fun reconcileWithCloud(code: String, localP: Player) {
         try {
             val cloudSession = OnlineRoomRegistry.syncRoom(code, localP, playerRegistry.values.toList(), kickedPlayerIds) ?: return
+            if (cloudSession.hostId.isNotBlank()) {
+                currentHostId = cloudSession.hostId
+            }
             val now = System.currentTimeMillis()
             var hasNewPlayer = false
 
@@ -480,6 +492,15 @@ class OnlineRoomSyncManager(
 
                     if (existing == null && !isLocal) {
                         hasNewPlayer = true
+                    }
+
+                    val isPlayerActuallyHost = p.isHost ||
+                        (cloudSession.hostId.isNotBlank() && p.id == cloudSession.hostId) ||
+                        (cloudSession.hostUsername.isNotBlank() && p.username.equals(cloudSession.hostUsername, ignoreCase = true)) ||
+                        existing?.isHost == true
+
+                    if (isLocal && isPlayerActuallyHost && localPlayer?.isHost != true) {
+                        localPlayer = localP.copy(isHost = true)
                     }
 
                     val effAvatar = when {
@@ -499,7 +520,7 @@ class OnlineRoomSyncManager(
                     }
 
                     // If player is host and room heartbeat is alive (< 5 mins), record host liveness
-                    val isHostAlive = (p.isHost && (now - cloudSession.lastHeartbeat) < 300_000L)
+                    val isHostAlive = (isPlayerActuallyHost && (now - cloudSession.lastHeartbeat) < 300_000L)
                     val effectiveLastSeen = when {
                         isLocal -> now
                         isHostAlive -> maxOf(existing?.lastSeenTimestamp ?: 0L, cloudSession.lastHeartbeat)
@@ -520,6 +541,7 @@ class OnlineRoomSyncManager(
                     }
 
                     playerRegistry[p.id] = p.copy(
+                        isHost = isPlayerActuallyHost,
                         displayName = effDisplay,
                         username = effUsername,
                         avatarUrl = effAvatar,
@@ -1006,6 +1028,7 @@ class OnlineRoomSyncManager(
 
         currentRoomCode = null
         localPlayer = null
+        currentHostId = null
         isSubscribed = false
         lastStartedMatchSeed = 0L
         completedMatchSeeds.clear()

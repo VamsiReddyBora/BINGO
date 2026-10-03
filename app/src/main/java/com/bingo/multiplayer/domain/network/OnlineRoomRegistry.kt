@@ -433,7 +433,11 @@ object OnlineRoomRegistry {
             }
 
             val now = System.currentTimeMillis()
-            val safeLocal = sanitizePlayer(localPlayer).copy(lastSeenTimestamp = now)
+            val isLocalActuallyHost = localPlayer.isHost || (session.hostId.isNotBlank() && (localPlayer.id == session.hostId || (localPlayer.username.isNotBlank() && session.players.any { it.isHost && it.username.equals(localPlayer.username, ignoreCase = true) })))
+            val safeLocal = sanitizePlayer(localPlayer).copy(
+                isHost = isLocalActuallyHost,
+                lastSeenTimestamp = now
+            )
 
             val isHostAlive = (now - session.lastHeartbeat) < 600_000L
 
@@ -444,7 +448,9 @@ object OnlineRoomRegistry {
                 session.players.map { existing ->
                     if (existing.id == safeLocal.id || (existing.username.isNotBlank() && existing.username.equals(safeLocal.username, ignoreCase = true))) {
                         safeLocal
-                    } else if (localPlayer.isHost) {
+                    } else if (existing.id == session.hostId || (session.hostUsername.isNotBlank() && existing.username.equals(session.hostUsername, ignoreCase = true))) {
+                        existing.copy(isHost = true, lastSeenTimestamp = if (isHostAlive) now else existing.lastSeenTimestamp)
+                    } else if (isLocalActuallyHost) {
                         val known = knownPlayers.find {
                             it.id == existing.id || (it.username.isNotBlank() && it.username.equals(existing.username, ignoreCase = true))
                         }
@@ -471,7 +477,9 @@ object OnlineRoomRegistry {
                 }
             } else {
                 session.players.map { existing ->
-                    if (existing.isHost && isHostAlive) {
+                    if (existing.id == session.hostId || (session.hostUsername.isNotBlank() && existing.username.equals(session.hostUsername, ignoreCase = true))) {
+                        existing.copy(isHost = true, lastSeenTimestamp = if (isHostAlive) now else existing.lastSeenTimestamp)
+                    } else if (existing.isHost && isHostAlive) {
                         existing.copy(lastSeenTimestamp = now)
                     } else {
                         existing
@@ -479,7 +487,7 @@ object OnlineRoomRegistry {
                 } + safeLocal
             }
 
-            val newHeartbeat = if (localPlayer.isHost) now else session.lastHeartbeat
+            val newHeartbeat = if (isLocalActuallyHost) now else session.lastHeartbeat
             val updatedSession = session.copy(
                 players = updatedPlayers,
                 lastHeartbeat = newHeartbeat
@@ -491,7 +499,7 @@ object OnlineRoomRegistry {
             }
 
             // Write back to cloud & MQTT if host, if local player was not present, or if local ready status changed
-            if (localPlayer.isHost || !playerExists || localStatusChanged) {
+            if (isLocalActuallyHost || !playerExists || localStatusChanged) {
                 try {
                     val updatedJson = json.encodeToString(updatedSession)
                     val b64 = encodeBase64Url(updatedJson)

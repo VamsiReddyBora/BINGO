@@ -406,6 +406,7 @@ fun RootNavGraph(
                             playerId = myUid,
                             displayName = myName,
                             username = user?.username ?: "",
+                            isHost = isHosting,
                             seed = currentMatchSeed,
                             boardSize = boardSize,
                             turnNumber = turnNumber,
@@ -1692,8 +1693,17 @@ fun RootNavGraph(
                         matchChatHistory = matchChatHistory + sysMsg
                         latestIncomingChatMessage = sysMsg
                     }
-                    val hostUid = matchParticipants.find { it.isHost }?.id ?: realTimePlayers.find { it.isHost }?.id ?: ""
-                    val isHostGone = isHostLeftGame || disconnectedPlayerIds.contains(hostUid)
+                    val hostUid = matchParticipants.find { it.isHost }?.id ?: realTimePlayers.find { it.isHost }?.id ?: onlineRoomSync.currentHostId ?: ""
+                    val isHostSender = packet.isHost || (hostUid.isNotBlank() && com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(packet.playerId, hostUid))
+                    if (isHostSender) {
+                        isHostLeftGame = false
+                        matchParticipants = matchParticipants.map {
+                            if (com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it.id, packet.playerId)) {
+                                it.copy(isHost = true)
+                            } else it
+                        }
+                    }
+                    val isHostGone = isHostLeftGame || (hostUid.isNotBlank() && disconnectedPlayerIds.contains(hostUid))
                     val activeRemaining = (matchParticipants.ifEmpty { realTimePlayers }).filter { it.id.isNotBlank() && it.id !in disconnectedPlayerIds }
                     val isActingHost = isHostGone && activeRemaining.firstOrNull()?.id == myUid
                     if (isHosting || currentTurnPlayerId == myUid || isActingHost) {
@@ -2220,6 +2230,7 @@ fun RootNavGraph(
                             displayName = getPlayerDisplayName(),
                             username = user?.username ?: "",
                             avatarUrl = getPlayerAvatarUrl(),
+                            isHost = matchData.isHost,
                             gamesPlayed = user?.gamesPlayed ?: 0,
                             gamesWon = user?.gamesWon ?: 0,
                             currentStreak = user?.currentStreak ?: 0,
@@ -2227,6 +2238,9 @@ fun RootNavGraph(
                         )
                         roomCode = matchData.roomCode
                         isHosting = matchData.isHost
+                        if (matchData.isHost) {
+                            isHostLeftGame = false
+                        }
                         currentGameMode = GameMode.ONLINE_ROOM
                         boardSize = matchData.boardSize
                         isDynamicBoard = matchData.isDynamicBoard
@@ -2287,6 +2301,7 @@ fun RootNavGraph(
                                 playerId = myUid,
                                 displayName = getPlayerDisplayName(),
                                 username = user?.username ?: "",
+                                isHost = matchData.isHost,
                                 seed = matchData.matchSeed,
                                 boardSize = matchData.boardSize,
                                 timestamp = System.currentTimeMillis()
@@ -2629,6 +2644,7 @@ fun RootNavGraph(
                                                 playerId = getLocalUid(),
                                                 displayName = getPlayerDisplayName(),
                                                 username = user?.username ?: "",
+                                                isHost = isHosting,
                                                 seed = matchData.matchSeed,
                                                 currentTurnPlayerId = matchData.currentTurnPlayerId,
                                                 turnNumber = matchData.turnNumber
@@ -2716,10 +2732,16 @@ fun RootNavGraph(
             val user = (authRepository.authState.collectAsState().value as? AuthState.Authenticated)?.user
             val ongoingMatchData = com.bingo.multiplayer.domain.network.OngoingMatchStore.getOngoingMatch(context)
             val hasActiveOngoing = (ongoingMatchData != null && !isGameOver && (roomCode.isBlank() || ongoingMatchData.roomCode == roomCode))
+            val isKnownHost = isHosting ||
+                (onlineRoomSync.currentHostId != null && getLocalUid() == onlineRoomSync.currentHostId) ||
+                realTimePlayers.any { it.isHost && com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it.id, getLocalUid()) }
+            if (isKnownHost && !isHosting) {
+                isHosting = true
+            }
             LobbyScreen(
                 roomCode = roomCode,
                 players = realTimePlayers,
-                isHost = isHosting,
+                isHost = isKnownHost,
                 currentUser = user,
                 currentUserId = getLocalUid(),
                 friendsRepository = if (currentGameMode == GameMode.NEARBY_NETWORK) null else friendsRepository,
@@ -2736,6 +2758,7 @@ fun RootNavGraph(
                         displayName = getPlayerDisplayName(),
                         username = user?.username ?: "",
                         avatarUrl = getPlayerAvatarUrl(),
+                        isHost = data.isHost,
                         gamesPlayed = user?.gamesPlayed ?: 0,
                         gamesWon = user?.gamesWon ?: 0,
                         currentStreak = user?.currentStreak ?: 0,
@@ -2743,6 +2766,9 @@ fun RootNavGraph(
                     )
                     roomCode = data.roomCode
                     isHosting = data.isHost
+                    if (data.isHost) {
+                        isHostLeftGame = false
+                    }
                     currentGameMode = GameMode.ONLINE_ROOM
                     playerBoard = data.playerBoard
                     opponentBoard = data.opponentBoard ?: engine.generateBoard(data.boardSize)
@@ -2785,6 +2811,7 @@ fun RootNavGraph(
                                 playerId = myUid,
                                 displayName = getPlayerDisplayName(),
                                 username = user?.username ?: "",
+                                isHost = data.isHost,
                                 seed = data.matchSeed,
                                 turnNumber = turnNumber,
                                 currentTurnPlayerId = currentTurnPlayerId,
@@ -3928,7 +3955,15 @@ fun RootNavGraph(
                         countdownSeconds = -1
                         firstTurnPlayerName = ""
                         onlineRoomSync.resetMatchSession()
-                        if (!isHosting && isHostLeftGame) {
+                        val hostUid = matchParticipants.find { it.isHost }?.id ?: realTimePlayers.find { it.isHost }?.id ?: onlineRoomSync.currentHostId ?: ""
+                        val isKnownHost = isHosting || 
+                            (onlineRoomSync.currentHostId != null && getLocalUid() == onlineRoomSync.currentHostId) || 
+                            realTimePlayers.any { it.isHost && com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it.id, getLocalUid()) }
+                        if (isKnownHost && !isHosting) {
+                            isHosting = true
+                        }
+                        val isHostActuallyGone = isHostLeftGame && (hostUid.isBlank() || isPlayerDisconnected(hostUid))
+                        if (!isHosting && isHostActuallyGone) {
                             Toast.makeText(context, "Host left the lobby.", Toast.LENGTH_LONG).show()
                             disconnectRoom()
                             isHosting = false

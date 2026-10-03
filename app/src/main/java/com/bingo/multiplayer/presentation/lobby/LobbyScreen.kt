@@ -574,16 +574,17 @@ fun LobbyScreen(
                                     remoteAvatar ?: player.avatarUrl
                                 }
 
+                                val isPlayerHost = player.isHost || (isMe && isHost)
                                 Box {
                                     PlayerAvatar(
                                         avatarPathOrUri = effectiveAvatar,
                                         displayName = player.displayName,
                                         size = 40.dp,
                                         borderWidth = 1.5.dp,
-                                        borderColor = if (player.isHost) tokens.accentBrand else tokens.surfaceBorder,
+                                        borderColor = if (isPlayerHost) tokens.accentBrand else tokens.surfaceBorder,
                                         username = player.username.ifBlank { player.displayName }
                                     )
-                                    if (player.isHost) {
+                                    if (isPlayerHost) {
                                         Text(
                                             text = "👑",
                                             fontSize = 20.sp,
@@ -714,7 +715,7 @@ fun LobbyScreen(
                             val (readyIcon, readyTint, readyDesc) = when (lobbyStatus) {
                                 LobbyLifecycleEngine.PlayerLobbyStatus.IN_GAME -> Triple(Icons.Default.HourglassBottom, Color(0xFFF59E0B), "Reviewing Board")
                                 LobbyLifecycleEngine.PlayerLobbyStatus.LEFT_LOBBY -> Triple(Icons.Default.Cancel, Color(0xFFEF4444), "Left Lobby")
-                                LobbyLifecycleEngine.PlayerLobbyStatus.READY -> Triple(Icons.Default.CheckCircle, Color(0xFF16A34A), if (player.isHost) "Host Ready" else "Ready")
+                                LobbyLifecycleEngine.PlayerLobbyStatus.READY -> Triple(Icons.Default.CheckCircle, Color(0xFF16A34A), if (player.isHost || (isMe && isHost)) "Host Ready" else "Ready")
                                 LobbyLifecycleEngine.PlayerLobbyStatus.NOT_READY -> Triple(Icons.Default.PauseCircle, Color(0xFFEAB308), "Not Ready")
                             }
 
@@ -1236,7 +1237,10 @@ fun LobbyScreen(
                     isHost = isHost
                 )
                 if (isThisLocal) {
-                    p.copy(lobbyReadyStatus = if (isMyReadyState) LobbyLifecycleEngine.STATUS_READY else LobbyLifecycleEngine.STATUS_NOT_READY)
+                    p.copy(
+                        isHost = if (isHost) true else p.isHost,
+                        lobbyReadyStatus = if (isHost || isMyReadyState) LobbyLifecycleEngine.STATUS_READY else LobbyLifecycleEngine.STATUS_NOT_READY
+                    )
                 } else {
                     p
                 }
@@ -1366,10 +1370,11 @@ fun LobbyScreen(
                         tint = if (allReady) tokens.primaryButtonText else tokens.textMuted
                     )
                     Spacer(modifier = Modifier.width(6.dp))
+                    val activePlayerCount = effectivePlayers.count { it.lobbyReadyStatus != LobbyLifecycleEngine.STATUS_LEFT_LOBBY }
                     Text(
                         text = when {
-                            players.size < 2 -> "Need at least 2 Players"
-                            !allReady -> "Waiting for Players to be Ready ($readyCount/${players.size})"
+                            activePlayerCount < 2 -> "Need at least 2 Players"
+                            !allReady -> "Waiting for Players to be Ready ($readyCount/$activePlayerCount)"
                             else -> "Start Match (${boardSize}×${boardSize})"
                         },
                         fontWeight = FontWeight.Bold,

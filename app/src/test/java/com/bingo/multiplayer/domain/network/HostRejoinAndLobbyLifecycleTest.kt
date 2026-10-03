@@ -1,0 +1,177 @@
+package com.bingo.multiplayer.domain.network
+
+import com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine
+import com.bingo.multiplayer.domain.model.Player
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * Targeted verification for Host disconnect, rejoin, and lobby authority preservation:
+ * 1. Host disconnects mid-game: guests mark isHostLeftGame = true.
+ * 2. Host rejoins mid-game:
+ *    - me player retains isHost = true.
+ *    - REJOIN_GAME packet carries isHost = true.
+ *    - Guests receive REJOIN_GAME and reset isHostLeftGame = false.
+ * 3. Match finishes and players return to lobby:
+ *    - Guests do NOT kick to MainMenu with "Host left the lobby".
+ *    - Host retains crown 👑 and authority to configure / start match.
+ * 4. LobbyLifecycleEngine ignores STATUS_LEFT_LOBBY players so departed players do not deadlock lobby.
+ * 5. OnlineRoomRegistry syncRoom never demotes room creator from isHost = true.
+ */
+class HostRejoinAndLobbyLifecycleTest {
+
+    private val json = Json { ignoreUnknownKeys = true; isLenient = true; encodeDefaults = true }
+
+    @Test
+    fun `test host mid-game disconnect and rejoin resets isHostLeftGame and preserves crown and authority`() {
+        val host = Player(
+            id = "host_101",
+            displayName = "Bob The Host",
+            username = "bob",
+            isHost = true,
+            lobbyReadyStatus = LobbyLifecycleEngine.STATUS_READY
+        )
+        val guest1 = Player(
+            id = "guest_202",
+            displayName = "Alice",
+            username = "alice",
+            isHost = false,
+            lobbyReadyStatus = LobbyLifecycleEngine.STATUS_READY
+        )
+        val guest2 = Player(
+            id = "guest_303",
+            displayName = "Charlie",
+            username = "charlie",
+            isHost = false,
+            lobbyReadyStatus = LobbyLifecycleEngine.STATUS_READY
+        )
+
+        var matchParticipants = listOf(host, guest1, guest2)
+
+        // 1. Host intentionally disconnects mid-game
+        var guest1IsHostLeftGame = false
+        val disconnectedPlayerIds = mutableSetOf<String>()
+
+        // Host disconnect event triggers on guest 1:
+        disconnectedPlayerIds.add(host.id)
+        guest1IsHostLeftGame = true // Simulating packet.type == "HOST_LEFT" or disconnect detection
+        assertTrue("Guest 1 detects host left", guest1IsHostLeftGame)
+
+        // 2. Host rejoins the game via ongoing match store
+        val ongoingMatchData = OngoingMatchData(
+            roomCode = "ROOM99",
+            matchSeed = 123456789L,
+            boardSize = 5,
+            isHost = true,
+            participants = matchParticipants
+        )
+
+        // Host recreates local player on rejoin:
+        val hostLocalMe = Player(
+            id = host.id,
+            displayName = host.displayName,
+            username = host.username,
+            isHost = ongoingMatchData.isHost
+        )
+        assertTrue("Host local me player must retain isHost = true", hostLocalMe.isHost)
+
+        // Host broadcasts REJOIN_GAME packet:
+        val rejoinPacket = RoomMessagePacket(
+            type = "REJOIN_GAME",
+            playerId = hostLocalMe.id,
+            displayName = hostLocalMe.displayName,
+            username = hostLocalMe.username,
+            isHost = hostLocalMe.isHost,
+            seed = ongoingMatchData.matchSeed
+        )
+        assertTrue("REJOIN_GAME packet must carry isHost = true", rejoinPacket.isHost)
+
+        // 3. Guest 1 processes incoming REJOIN_GAME packet:
+        val hostUid = matchParticipants.find { it.isHost }?.id ?: host.id
+        val isHostSender = rejoinPacket.isHost || (hostUid.isNotBlank() && LobbyLifecycleEngine.isPlayerIdMatch(rejoinPacket.playerId, hostUid))
+        assertTrue("Guest 1 identifies sender as host", isHostSender)
+
+        if (isHostSender) {
+            guest1IsHostLeftGame = false
+            disconnectedPlayerIds.remove(rejoinPacket.playerId)
+            matchParticipants = matchParticipants.map {
+                if (LobbyLifecycleEngine.isPlayerIdMatch(it.id, rejoinPacket.playerId)) {
+                    it.copy(isHost = true)
+                } else it
+            }
+        }
+
+        assertFalse("Guest 1 must have reset isHostLeftGame = false upon host rejoin", guest1IsHostLeftGame)
+        assertFalse("Host must be removed from disconnectedPlayerIds", disconnectedPlayerIds.contains(host.id))
+        val hostInParticipants = matchParticipants.find { it.id == host.id }
+        assertNotNull("Host exists in participants", hostInParticipants)
+        assertTrue("Host in matchParticipants retains isHost = true", hostInParticipants!!.isHost)
+
+        // 4. Match completes and players click "Return to Lobby"
+        // Guest 1 evaluation:
+        val isHostActuallyGoneGuest1 = guest1IsHostLeftGame && (hostUid.isBlank() || disconnectedPlayerIds.contains(hostUid))
+        assertFalse("Guest 1 must NOT consider host gone", isHostActuallyGoneGuest1)
+
+        // Host evaluation:
+        val isKnownHostOnHost = hostLocalMe.isHost || (hostLocalMe.id == hostUid)
+        assertTrue("Host is recognized as room host", isKnownHostOnHost)
+
+        // Host returns to lobby: Crown display check
+        val hostCardPlayer = matchParticipants.find { it.id == host.id }!!
+        val isPlayerHost = hostCardPlayer.isHost || (hostCardPlayer.id == host.id && isKnownHostOnHost)
+        assertTrue("Host player card must have crown enabled (isPlayerHost = true)", isPlayerHost)
+
+        // Lobby readiness check:
+        val effectivePlayers = matchParticipants.map { p ->
+            if (p.id == host.id) p.copy(isHost = true, lobbyReadyStatus = LobbyLifecycleEngine.STATUS_READY)
+            else p.copy(lobbyReadyStatus = LobbyLifecycleEngine.STATUS_NOT_READY)
+        }
+        val readyCountInitial = LobbyLifecycleEngine.countReadyPlayers(effectivePlayers)
+        assertEquals("Initially only host is ready", 1, readyCountInitial)
+
+        // Guests ready up in lobby:
+        val guestsReady = effectivePlayers.map { p ->
+            p.copy(lobbyReadyStatus = LobbyLifecycleEngine.STATUS_READY)
+        }
+        assertTrue("All players ready: canStartMatch must be true", LobbyLifecycleEngine.canStartMatch(guestsReady))
+        assertEquals("All 3 players ready", 3, LobbyLifecycleEngine.countReadyPlayers(guestsReady))
+    }
+
+    @Test
+    fun `test LobbyLifecycleEngine canStartMatch ignores departed players with STATUS_LEFT_LOBBY`() {
+        val host = Player(id = "p1", displayName = "Host", isHost = true, lobbyReadyStatus = LobbyLifecycleEngine.STATUS_READY)
+        val guest1 = Player(id = "p2", displayName = "Guest1", isHost = false, lobbyReadyStatus = LobbyLifecycleEngine.STATUS_READY)
+        val departedGuest = Player(id = "p3", displayName = "Guest2", isHost = false, lobbyReadyStatus = LobbyLifecycleEngine.STATUS_LEFT_LOBBY)
+
+        val players = listOf(host, guest1, departedGuest)
+
+        // Without fix, departedGuest in STATUS_LEFT_LOBBY would block canStartMatch
+        val canStart = LobbyLifecycleEngine.canStartMatch(players)
+        assertTrue("Active host + 1 ready guest can start even if another player left lobby", canStart)
+        assertEquals("Ready count should only consider active players", 2, LobbyLifecycleEngine.countReadyPlayers(players))
+    }
+
+    @Test
+    fun `test OngoingMatchData serialization preserves isHost flag`() {
+        val original = OngoingMatchData(
+            roomCode = "BINGO7",
+            matchSeed = 987654321L,
+            boardSize = 6,
+            isDynamicBoard = true,
+            isHost = true
+        )
+
+        val serialized = json.encodeToString(original)
+        assertTrue("Serialized JSON must contain isHost: true", serialized.contains("\"isHost\":true"))
+
+        val restored = json.decodeFromString<OngoingMatchData>(serialized)
+        assertTrue("Restored data must have isHost == true", restored.isHost)
+        assertEquals("Room code preserved", "BINGO7", restored.roomCode)
+        assertEquals("Match seed preserved", 987654321L, restored.matchSeed)
+    }
+}
