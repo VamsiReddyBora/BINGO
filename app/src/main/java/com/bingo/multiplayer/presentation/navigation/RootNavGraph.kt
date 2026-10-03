@@ -255,43 +255,6 @@ fun RootNavGraph(
     val authStateValue by authRepository.authState.collectAsState()
     val currentAuthUser = (authStateValue as? AuthState.Authenticated)?.user
 
-    // Friend Online In-App Toast Watcher
-    val friendsList by friendsRepository.friends.collectAsState()
-    val presenceMap by com.bingo.multiplayer.domain.network.PresenceManager.presenceFlow.collectAsState()
-    val previouslyOnlineFriends = remember { mutableSetOf<String>() }
-    var isInitialPresenceSnapshot by remember { mutableStateOf(true) }
-
-    LaunchedEffect(currentAuthUser?.username, presenceMap, friendsList) {
-        val myU = currentAuthUser?.username?.trim()?.lowercase()?.removePrefix("@")
-        if (myU.isNullOrBlank()) return@LaunchedEffect
-
-        val friendUsernames = friendsList
-            .map { it.username.trim().lowercase().removePrefix("@") }
-            .filter { it.isNotBlank() && it != myU }
-            .toSet()
-
-        val currentlyOnlineFriendUsernames = friendUsernames.filter { friendU ->
-            val pres = presenceMap[friendU]
-            pres != null && pres.isOnline
-        }.toSet()
-
-        if (isInitialPresenceSnapshot) {
-            previouslyOnlineFriends.addAll(currentlyOnlineFriendUsernames)
-            isInitialPresenceSnapshot = false
-        } else {
-            val newlyOnline = currentlyOnlineFriendUsernames - previouslyOnlineFriends
-            newlyOnline.forEach { friendU ->
-                val friendObj = friendsList.firstOrNull {
-                    it.username.trim().lowercase().removePrefix("@") == friendU
-                }
-                val displayName = friendObj?.displayName?.ifBlank { "@$friendU" } ?: "@$friendU"
-                Toast.makeText(context, "👋 $displayName is now online", Toast.LENGTH_SHORT).show()
-            }
-            previouslyOnlineFriends.clear()
-            previouslyOnlineFriends.addAll(currentlyOnlineFriendUsernames)
-        }
-    }
-
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
@@ -377,8 +340,12 @@ fun RootNavGraph(
             onDispose {}
         } else {
             val inviteListener = com.bingo.multiplayer.domain.network.GameInviteManager.startInviteListener(username) { invite ->
-                if (roomCode != invite.roomCode) {
-                    incomingInvite = invite
+                if (roomCode != invite.roomCode && (System.currentTimeMillis() - invite.timestamp) < 120_000L) {
+                    val currentDest = navController.currentDestination?.route
+                    val isActivelyPlaying = (currentDest == Screen.Game.route || currentDest == Screen.ManualBoardDesign.route) && !isGameOver
+                    if (!isActivelyPlaying) {
+                        incomingInvite = invite
+                    }
                 }
             }
             val requestListener = friendsRepository.startListeningForRequests(
@@ -474,12 +441,16 @@ fun RootNavGraph(
         if (!u.isNullOrBlank()) {
             friendsRepository.syncFriendsAndRequests(u)
             while (isActive) {
-                delay(4000L)
+                delay(2000L)
                 try {
                     val pendingInvites = com.bingo.multiplayer.domain.network.GameInviteManager.fetchInvitesForUser(u)
-                    val validInvite = pendingInvites.firstOrNull { it.roomCode != roomCode }
-                    if (validInvite != null) {
-                        incomingInvite = validInvite
+                    val validInvite = pendingInvites.firstOrNull { it.roomCode != roomCode && (System.currentTimeMillis() - it.timestamp) < 120_000L }
+                    if (validInvite != null && (incomingInvite == null || incomingInvite?.roomCode != validInvite.roomCode)) {
+                        val currentDest = navController.currentDestination?.route
+                        val isActivelyPlaying = (currentDest == Screen.Game.route || currentDest == Screen.ManualBoardDesign.route) && !isGameOver
+                        if (!isActivelyPlaying) {
+                            incomingInvite = validInvite
+                        }
                     }
                     friendsRepository.syncFriendsAndRequests(u)
                 } catch (_: Exception) {}
@@ -505,7 +476,12 @@ fun RootNavGraph(
             readyVersion = joinerVersion
         )
         coroutineScope.launch {
-            when (val result = com.bingo.multiplayer.domain.network.OnlineRoomRegistry.validateAndJoinRoom(cleanCode, localJoiner)) {
+            var result = com.bingo.multiplayer.domain.network.OnlineRoomRegistry.validateAndJoinRoom(cleanCode, localJoiner)
+            if (result is com.bingo.multiplayer.domain.network.RoomJoinResult.NotFound) {
+                kotlinx.coroutines.delay(500L)
+                result = com.bingo.multiplayer.domain.network.OnlineRoomRegistry.validateAndJoinRoom(cleanCode, localJoiner)
+            }
+            when (result) {
                 is com.bingo.multiplayer.domain.network.RoomJoinResult.Success -> {
                     incomingInvite = null
                     val myU = user?.username?.trim()?.lowercase()?.removePrefix("@")
@@ -2187,13 +2163,10 @@ fun RootNavGraph(
                         level = user.level,
                         lastSeenTimestamp = System.currentTimeMillis()
                     )
-                    coroutineScope.launch {
-                        com.bingo.multiplayer.domain.network.OnlineRoomRegistry.createRoom(roomCode, localHost, 5)
-                    }
-                    onlineRoomSync.connectToRoom(roomCode, localHost)
                     val fromUser = user.username.ifBlank { getLocalUid() }
                     val fromName = user.displayName.ifBlank { getPlayerDisplayName() }
                     coroutineScope.launch {
+                        com.bingo.multiplayer.domain.network.OnlineRoomRegistry.createRoom(roomCode, localHost, 5)
                         val success = com.bingo.multiplayer.domain.network.GameInviteManager.sendInvite(
                             targetUsername = friend.username,
                             invite = com.bingo.multiplayer.domain.network.GameInvite(
@@ -2209,6 +2182,7 @@ fun RootNavGraph(
                             Toast.makeText(context, "Invite dispatched to @${friend.username}!", Toast.LENGTH_SHORT).show()
                         }
                     }
+                    onlineRoomSync.connectToRoom(roomCode, localHost)
                     navController.navigate(Screen.Lobby.route)
                 },
                 onAcceptInviteToMatch = { invite ->
@@ -2381,13 +2355,10 @@ fun RootNavGraph(
                         level = user.level,
                         lastSeenTimestamp = System.currentTimeMillis()
                     )
-                    coroutineScope.launch {
-                        com.bingo.multiplayer.domain.network.OnlineRoomRegistry.createRoom(roomCode, localHost, 5)
-                    }
-                    onlineRoomSync.connectToRoom(roomCode, localHost)
                     val fromUser = user.username.ifBlank { getLocalUid() }
                     val fromName = user.displayName.ifBlank { getPlayerDisplayName() }
                     coroutineScope.launch {
+                        com.bingo.multiplayer.domain.network.OnlineRoomRegistry.createRoom(roomCode, localHost, 5)
                         val success = com.bingo.multiplayer.domain.network.GameInviteManager.sendInvite(
                             targetUsername = friend.username,
                             invite = com.bingo.multiplayer.domain.network.GameInvite(
@@ -2403,6 +2374,7 @@ fun RootNavGraph(
                             Toast.makeText(context, "Invite dispatched to @${friend.username}!", Toast.LENGTH_SHORT).show()
                         }
                     }
+                    onlineRoomSync.connectToRoom(roomCode, localHost)
                     navController.navigate(Screen.Lobby.route)
                 },
                 onAcceptInviteToMatch = { invite ->
@@ -2466,13 +2438,10 @@ fun RootNavGraph(
                         level = user.level,
                         lastSeenTimestamp = System.currentTimeMillis()
                     )
-                    coroutineScope.launch {
-                        com.bingo.multiplayer.domain.network.OnlineRoomRegistry.createRoom(roomCode, localHost, 5)
-                    }
-                    onlineRoomSync.connectToRoom(roomCode, localHost)
                     val fromUser = user.username.ifBlank { getLocalUid() }
                     val fromName = user.displayName.ifBlank { getPlayerDisplayName() }
                     coroutineScope.launch {
+                        com.bingo.multiplayer.domain.network.OnlineRoomRegistry.createRoom(roomCode, localHost, 5)
                         val success = com.bingo.multiplayer.domain.network.GameInviteManager.sendInvite(
                             targetUsername = friend.username,
                             invite = com.bingo.multiplayer.domain.network.GameInvite(
@@ -2488,6 +2457,7 @@ fun RootNavGraph(
                             Toast.makeText(context, "Invite dispatched to @${friend.username}!", Toast.LENGTH_SHORT).show()
                         }
                     }
+                    onlineRoomSync.connectToRoom(roomCode, localHost)
                     navController.navigate(Screen.Lobby.route)
                 },
                 onAcceptInviteToMatch = { invite ->

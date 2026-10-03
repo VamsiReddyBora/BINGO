@@ -920,17 +920,19 @@ fun LobbyScreen(
                                                 ?: players.firstOrNull { it.isHost }?.displayName
                                                 ?: "Host"
 
-                                            coroutineScope.launch {
-                                                com.bingo.multiplayer.domain.network.GameInviteManager.sendInvite(
-                                                    targetUsername = friend.username,
-                                                    invite = com.bingo.multiplayer.domain.network.GameInvite(
-                                                        fromUsername = fromUser,
-                                                        fromDisplayName = fromName,
-                                                        fromAvatarUrl = null,
-                                                        roomCode = roomCode
+                                            if (roomCode.isNotBlank()) {
+                                                coroutineScope.launch {
+                                                    com.bingo.multiplayer.domain.network.GameInviteManager.sendInvite(
+                                                        targetUsername = friend.username,
+                                                        invite = com.bingo.multiplayer.domain.network.GameInvite(
+                                                            fromUsername = fromUser,
+                                                            fromDisplayName = fromName,
+                                                            fromAvatarUrl = null,
+                                                            roomCode = roomCode
+                                                        )
                                                     )
-                                                )
-                                                Toast.makeText(context, "Invite sent to @${friend.username}!", Toast.LENGTH_SHORT).show()
+                                                    Toast.makeText(context, "Invite sent to @${friend.username}!", Toast.LENGTH_SHORT).show()
+                                                }
                                             }
                                         },
                                         enabled = !isInviteCooldown,
@@ -1165,17 +1167,19 @@ fun LobbyScreen(
                                                 ?: players.firstOrNull { it.isHost }?.displayName
                                                 ?: "Host"
 
-                                            coroutineScope.launch {
-                                                com.bingo.multiplayer.domain.network.GameInviteManager.sendInvite(
-                                                    targetUsername = result.username,
-                                                    invite = com.bingo.multiplayer.domain.network.GameInvite(
-                                                        fromUsername = fromUser,
-                                                        fromDisplayName = fromName,
-                                                        fromAvatarUrl = null,
-                                                        roomCode = roomCode
+                                            if (roomCode.isNotBlank()) {
+                                                coroutineScope.launch {
+                                                    com.bingo.multiplayer.domain.network.GameInviteManager.sendInvite(
+                                                        targetUsername = result.username,
+                                                        invite = com.bingo.multiplayer.domain.network.GameInvite(
+                                                            fromUsername = fromUser,
+                                                            fromDisplayName = fromName,
+                                                            fromAvatarUrl = null,
+                                                            roomCode = roomCode
+                                                        )
                                                     )
-                                                )
-                                                Toast.makeText(context, "Invite sent to @${result.username}!", Toast.LENGTH_SHORT).show()
+                                                    Toast.makeText(context, "Invite sent to @${result.username}!", Toast.LENGTH_SHORT).show()
+                                                }
                                             }
                                         },
                                         enabled = !isInviteCooldown,

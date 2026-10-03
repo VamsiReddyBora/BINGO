@@ -6,6 +6,7 @@ import androidx.annotation.Keep
 import com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine
 import com.bingo.multiplayer.domain.model.Player
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -64,13 +65,17 @@ object OnlineRoomRegistry {
     }
 
     private fun safeBase64Decode(clean: String): ByteArray {
+        val padded = clean + "=".repeat((4 - clean.length % 4) % 4)
         val result = try {
-            Base64.decode(clean, Base64.URL_SAFE or Base64.NO_WRAP)
+            Base64.decode(padded, Base64.URL_SAFE or Base64.NO_WRAP)
         } catch (_: Throwable) { null }
         return result ?: try {
-            java.util.Base64.getUrlDecoder().decode(clean)
+            java.util.Base64.getUrlDecoder().decode(padded)
+        } catch (_: Throwable) { null }
+        ?: try {
+            java.util.Base64.getDecoder().decode(padded)
         } catch (_: Throwable) {
-            java.util.Base64.getDecoder().decode(clean)
+            clean.toByteArray(StandardCharsets.UTF_8)
         }
     }
 
@@ -85,14 +90,20 @@ object OnlineRoomRegistry {
 
     internal fun decodeBase64Url(raw: String): String {
         val clean = raw.trim().removeSurrounding("\"")
+        if (clean.startsWith("{") || clean.startsWith("[")) {
+            return clean
+        }
         if (clean.startsWith("GZ:")) {
-            val b64 = clean.removePrefix("GZ:")
-            val compressed = safeBase64Decode(b64)
-            return java.util.zip.GZIPInputStream(java.io.ByteArrayInputStream(compressed)).bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
+            try {
+                val b64 = clean.removePrefix("GZ:")
+                val compressed = safeBase64Decode(b64)
+                return java.util.zip.GZIPInputStream(java.io.ByteArrayInputStream(compressed)).bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
+            } catch (_: Exception) {}
         }
         return try {
             val bytes = safeBase64Decode(clean)
-            String(bytes, StandardCharsets.UTF_8)
+            val decoded = String(bytes, StandardCharsets.UTF_8)
+            if (decoded.startsWith("{") || decoded.startsWith("[")) decoded else clean
         } catch (_: Exception) {
             clean
         }
@@ -125,6 +136,7 @@ object OnlineRoomRegistry {
             val options = MqttConnectOptions().apply {
                 isCleanSession = true
                 connectionTimeout = 3
+                socketFactory = LowLatencySocketFactory()
             }
             client.connect(options).waitForCompletion(2000L)
             val jsonStr = json.encodeToString(session)
@@ -133,8 +145,10 @@ object OnlineRoomRegistry {
                 isRetained = true
             }
             client.publish("bingo/v3/room_meta/${session.roomCode}", message).waitForCompletion(2000L)
-            client.disconnect()
-            client.close()
+            try {
+                client.disconnect().waitForCompletion(500L)
+                client.close()
+            } catch (_: Exception) {}
         } catch (_: Exception) {}
     }
 
@@ -147,6 +161,7 @@ object OnlineRoomRegistry {
             val options = MqttConnectOptions().apply {
                 isCleanSession = true
                 connectionTimeout = 3
+                socketFactory = LowLatencySocketFactory()
             }
             client.connect(options).waitForCompletion(2000L)
             val message = MqttMessage(ByteArray(0)).apply {
@@ -154,20 +169,23 @@ object OnlineRoomRegistry {
                 isRetained = true
             }
             client.publish("bingo/v3/room_meta/$roomCode", message).waitForCompletion(2000L)
-            client.disconnect()
-            client.close()
+            try {
+                client.disconnect().waitForCompletion(500L)
+                client.close()
+            } catch (_: Exception) {}
         } catch (_: Exception) {}
     }
 
     /**
      * Retrieves room session from MQTT retained topic.
      */
-    private suspend fun getRoomMqtt(cleanCode: String): OnlineRoomSession? = withContext(Dispatchers.IO) {
+    internal suspend fun getRoomMqtt(cleanCode: String): OnlineRoomSession? = withContext(Dispatchers.IO) {
         try {
             val client = MqttAsyncClient(NetworkConfig.BROKER_URL, "query_meta_${UUID.randomUUID().toString().take(8)}", MemoryPersistence())
             val options = MqttConnectOptions().apply {
                 isCleanSession = true
                 connectionTimeout = 3
+                socketFactory = LowLatencySocketFactory()
             }
             var result: OnlineRoomSession? = null
             val latch = CountDownLatch(1)
@@ -185,8 +203,10 @@ object OnlineRoomRegistry {
                 latch.countDown()
             }
             latch.await(1500L, TimeUnit.MILLISECONDS)
-            client.disconnect()
-            client.close()
+            try {
+                client.disconnect().waitForCompletion(500L)
+                client.close()
+            } catch (_: Exception) {}
             result
         } catch (_: Exception) {
             null
@@ -219,6 +239,12 @@ object OnlineRoomRegistry {
                 players = listOf(safeHost)
             )
 
+            // 1. Immediately publish retained MQTT in background so joiners can find it in < 100ms
+            kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+                publishRoomMetaMqtt(session)
+            }
+
+            // 2. Persist to KeyValue cloud storage
             val jsonStr = json.encodeToString(session)
             val b64 = encodeBase64Url(jsonStr)
             val encVal = URLEncoder.encode(b64, "UTF-8")
@@ -230,7 +256,6 @@ object OnlineRoomRegistry {
                 .build()
 
             val success = client.newCall(request).execute().use { it.isSuccessful }
-            publishRoomMetaMqtt(session)
             Log.i(TAG, "Created room $cleanCode in cloud registry: success=$success")
             success
         } catch (e: Exception) {
@@ -256,8 +281,12 @@ object OnlineRoomRegistry {
         try {
             var session = getRoom(cleanCode)
             if (session == null) {
-                // Dual-channel fallback: query MQTT retained room topic
-                session = getRoomMqtt(cleanCode)
+                // Network jitter or host just created room: retry up to 3 times
+                for (retry in 1..3) {
+                    kotlinx.coroutines.delay(400L)
+                    session = getRoom(cleanCode)
+                    if (session != null) break
+                }
             }
 
             if (session == null) {
@@ -357,7 +386,7 @@ object OnlineRoomRegistry {
                 }
             }
         } catch (_: Exception) {}
-        null
+        return@withContext getRoomMqtt(cleanCode)
     }
 
     /**
