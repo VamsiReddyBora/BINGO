@@ -34,18 +34,10 @@ object FeedbackManager {
         val cleanMsg = message.trim()
         val cleanUser = username.trim().lowercase().removePrefix("@").ifBlank { "anonymous" }
         val cleanName = displayName.trim().ifBlank { cleanUser }
-        val deviceModel = "${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE})"
-        val appVersion = try {
-            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "1.2"
-        } catch (_: Exception) {
-            "1.2"
-        }
-
         val formattedText = buildString {
-            append("💌 *Bingo Multiplayer Feedback*\n")
-            append("👤 *From*: $cleanName (@$cleanUser)\n")
-            append("📱 *Device*: $deviceModel | App v$appVersion\n\n")
-            append("💬 *Message*:\n$cleanMsg")
+            append("*Bingo Multiplayer Feedback*\n\n")
+            append("*From*: $cleanName (@$cleanUser)\n\n")
+            append("*Message*:\n$cleanMsg")
         }
 
         val encoded = URLEncoder.encode(formattedText, "UTF-8")
@@ -88,16 +80,8 @@ object FeedbackManager {
     ): Boolean = withContext(Dispatchers.IO) {
         val cleanMsg = message.trim()
         if (cleanMsg.isBlank()) return@withContext false
-
         val cleanUser = username.trim().lowercase().removePrefix("@").ifBlank { "anonymous" }
         val cleanName = displayName.trim().ifBlank { cleanUser }
-        val deviceModel = "${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE})"
-        val appVersion = try {
-            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "1.2"
-        } catch (_: Exception) {
-            "1.2"
-        }
-
         var emailDelivered = false
         var cloudBackedUp = false
 
@@ -108,7 +92,6 @@ object FeedbackManager {
                 put("email", DEV_EMAIL)
                 put("_subject", "💌 Bingo App Feedback from @$cleanUser")
                 put("message", cleanMsg)
-                put("device", "$deviceModel | App v$appVersion")
                 put("timestamp", System.currentTimeMillis().toString())
             }
 
@@ -134,7 +117,6 @@ object FeedbackManager {
                 put("user", cleanUser)
                 put("name", cleanName)
                 put("msg", cleanMsg)
-                put("device", "$deviceModel | App v$appVersion")
                 put("ts", ts)
             }.toString()
 

@@ -68,8 +68,7 @@ fun AuthGateScreen(
                 val ongoing = OngoingMatchStore.getOngoingMatch(context)
                 if (ongoing != null) {
                     val session = OnlineRoomRegistry.getRoom(ongoing.roomCode)
-                    val now = System.currentTimeMillis()
-                    if (session != null && (session.status == "CLOSED" || (now - session.lastHeartbeat) > 60_000L || session.players.isEmpty())) {
+                    if (session != null && session.status == "CLOSED") {
                         OngoingMatchStore.clearOngoingMatch(context)
                     }
                 }

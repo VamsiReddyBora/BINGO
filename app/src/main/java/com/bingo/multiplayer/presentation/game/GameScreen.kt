@@ -315,9 +315,12 @@ fun GameScreen(
         }
     }
 
-    // Quick chat style message "Your turn" when local player's turn arrives
+    // Quick chat style message "Your turn" when local player's turn arrives (only for >2 players and not AI)
     LaunchedEffect(isMyTurn, isGameOver) {
-        if (isMyTurn && !isGameOver) {
+        val opponentIsAi = opponentName.contains("ai bot", ignoreCase = true) ||
+                opponentUsername?.contains("ai_bot", ignoreCase = true) == true ||
+                players.any { it.isAi || it.id == "ai_bot" || it.username == "ai_bot" }
+        if (isMyTurn && !isGameOver && !opponentIsAi && players.size > 2) {
             spawnEmote("Your turn", isSelf = true, scaleMultiplier = 1.15f)
         }
     }
@@ -1013,8 +1016,8 @@ fun GameScreen(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .padding(bottom = 2.dp)
+                                .align(Alignment.Center)
+                                .padding(bottom = 4.dp)
                         )
                     }
                 }

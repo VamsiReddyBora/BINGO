@@ -129,9 +129,8 @@ fun MainMenuScreen(
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 try {
                     val session = com.bingo.multiplayer.domain.network.OnlineRoomRegistry.getRoom(ongoing.roomCode)
-                    val now = System.currentTimeMillis()
-                    // Only clear if the room was successfully queried AND is confirmed closed or dead
-                    if (session != null && (session.status == "CLOSED" || (now - session.lastHeartbeat) > 60_000L || session.players.isEmpty())) {
+                    // Only clear if the room was successfully queried AND is confirmed closed
+                    if (session != null && session.status == "CLOSED") {
                         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                             OngoingMatchStore.clearOngoingMatch(context)
                             ongoingMatch = null
@@ -174,12 +173,6 @@ fun MainMenuScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    androidx.compose.foundation.Image(
-                        painter = androidx.compose.ui.res.painterResource(id = com.bingo.multiplayer.R.drawable.ic_bingo_logo),
-                        contentDescription = "Logo",
-                        modifier = Modifier.size(32.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = "B I N G O",
                         style = BingoTheme.typography.logoTitle.copy(fontSize = 24.sp),
