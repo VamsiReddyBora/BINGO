@@ -964,11 +964,11 @@ fun GameScreen(
                         val isLocalDisconnected = disconnectedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, myPlayerId) }
                         val (stampType, stampText) = if (isLocalSelected) {
                             when {
-                                isLocalDisconnected -> StampResultType.LOST to "${displayedBoard.completedLinesCount}/${displayedBoard.targetLines} LINES (OFFLINE)"
+                                isLocalDisconnected -> StampResultType.OFFLINE to "OFFLINE"
                                 didPlayerWin -> StampResultType.WON to "YOU'VE WON!"
                                 isRunner -> StampResultType.RUNNER to "RUNNER!"
                                 isDraw -> StampResultType.DRAW to "DRAW!"
-                                else -> StampResultType.LOST to "${displayedBoard.completedLinesCount}/${displayedBoard.targetLines} LINES"
+                                else -> StampResultType.LOST to "YOU LOST!"
                             }
                         } else {
                             val isSelectedDisconnected = disconnectedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, selectedReviewPlayerId) }
@@ -978,10 +978,10 @@ fun GameScreen(
                             }
                             val reviewName = reviewPlayer?.displayName?.takeIf { it.isNotBlank() } ?: reviewPlayer?.username ?: "Player"
                             when {
+                                isSelectedDisconnected -> StampResultType.OFFLINE to "OFFLINE"
                                 isWinnerSelected -> StampResultType.WON to "$reviewName WON!"
-                                !isSelectedDisconnected && displayedBoard.isBingo -> StampResultType.RUNNER to "RUNNER!"
-                                isSelectedDisconnected -> StampResultType.LOST to "${displayedBoard.completedLinesCount}/${displayedBoard.targetLines} LINES (OFFLINE)"
-                                else -> StampResultType.LOST to "${displayedBoard.completedLinesCount}/${displayedBoard.targetLines} LINES"
+                                displayedBoard.isBingo -> StampResultType.RUNNER to "RUNNER!"
+                                else -> StampResultType.LOST to "LOST!"
                             }
                         }
                         VictoryStampBadge(

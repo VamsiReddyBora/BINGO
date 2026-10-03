@@ -46,7 +46,8 @@ enum class StampResultType {
     WON,
     LOST,
     DRAW,
-    RUNNER
+    RUNNER,
+    OFFLINE
 }
 
 /**
@@ -89,6 +90,11 @@ fun VictoryStampBadge(
             "DRAW!",
             Color(0xFFD97706), // Stamped Amber / Yellow
             Color(0x18F59E0B)
+        )
+        StampResultType.OFFLINE -> Triple(
+            "OFFLINE",
+            Color(0xFF6B7280), // Neutral Stamped Gray
+            Color(0x186B7280)
         )
     }
     val text = customText?.takeIf { it.isNotBlank() } ?: defaultText
