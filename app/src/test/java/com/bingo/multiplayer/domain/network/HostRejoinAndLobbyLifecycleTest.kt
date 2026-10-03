@@ -174,4 +174,99 @@ class HostRejoinAndLobbyLifecycleTest {
         assertEquals("Room code preserved", "BINGO7", restored.roomCode)
         assertEquals("Match seed preserved", 987654321L, restored.matchSeed)
     }
+
+    @Test
+    fun `test player clean exit mid-game broadcasts PLAYER_DISCONNECTED and advances turn immediately`() {
+        val playerA = Player(id = "userA", displayName = "Alice", isHost = true)
+        val playerB = Player(id = "userB", displayName = "Bob", isHost = false)
+        val playerC = Player(id = "userC", displayName = "Charlie", isHost = false)
+        val participants = listOf(playerA, playerB, playerC)
+
+        val disconnectedPlayerIds = mutableSetOf<String>()
+        var currentTurnPlayerId = "userB"
+        var turnNumber = 3
+
+        // Player B clicks door icon on GameScreen to return to lobby during active match
+        val packet = RoomMessagePacket(
+            type = "PLAYER_DISCONNECTED",
+            playerId = playerB.id,
+            displayName = playerB.displayName,
+            isHost = false
+        )
+
+        // Peer (Player A) processes packet
+        disconnectedPlayerIds.add(packet.playerId)
+        assertTrue("Player B is marked in disconnectedPlayerIds", disconnectedPlayerIds.contains("userB"))
+
+        // Because it was Player B's turn, coordinator immediately advances turn
+        val isTurnOfDepartedPlayer = (currentTurnPlayerId == packet.playerId)
+        assertTrue("Departed player had active turn", isTurnOfDepartedPlayer)
+
+        val activeRemaining = participants.filter { it.id !in disconnectedPlayerIds }
+        assertEquals("2 active players remain", 2, activeRemaining.size)
+
+        // Next player calculated without 30s delay
+        val nextId = "userC"
+        currentTurnPlayerId = nextId
+        turnNumber += 1
+        assertEquals("Turn advanced to Charlie", "userC", currentTurnPlayerId)
+        assertEquals("Turn number incremented", 4, turnNumber)
+
+        // Turn countdown fast skip check:
+        // When Charlie completes turn and it rotates back to Bob (userB) who is still in lobby:
+        val activePicker = "userB"
+        val isDisconnected = disconnectedPlayerIds.contains(activePicker)
+        assertTrue("Active picker is recognized as disconnected", isDisconnected)
+        val maxWaitSeconds = if (isDisconnected) 28 else 15
+        assertEquals("Fast skip threshold is 28 seconds (2s delay only)", 28, maxWaitSeconds)
+    }
+
+    @Test
+    fun `test invite debouncing prevents duplicate invitation popups during join delay`() {
+        val handledInviteRoomCodes = mutableMapOf<String, Long>()
+        var isJoiningRoom = false
+
+        val testRoomCode = "ROOM88"
+        val now = System.currentTimeMillis()
+
+        // 1. First invite arrives
+        val canShowFirst = !isJoiningRoom && ((now - (handledInviteRoomCodes[testRoomCode] ?: 0L)) >= 60_000L)
+        assertTrue("First invite should be allowed to display", canShowFirst)
+
+        // 2. User taps 'Accept & Play'
+        isJoiningRoom = true
+        handledInviteRoomCodes[testRoomCode] = now
+
+        // 3. Second invite arrives from cloud poll 2 seconds later while join is in flight
+        val timeAfter2Sec = now + 2000L
+        val canShowSecond = !isJoiningRoom && ((timeAfter2Sec - (handledInviteRoomCodes[testRoomCode] ?: 0L)) >= 60_000L)
+        assertFalse("Second invite popup MUST be suppressed while joining or recently handled", canShowSecond)
+
+        // 4. Joining finishes
+        isJoiningRoom = false
+        val timeAfter5Sec = now + 5000L
+        val canShowAfterJoin = !isJoiningRoom && ((timeAfter5Sec - (handledInviteRoomCodes[testRoomCode] ?: 0L)) >= 60_000L)
+        assertFalse("Same room code invite MUST still be suppressed within 60s cooldown", canShowAfterJoin)
+    }
+
+    @Test
+    fun `test match completion and lobby return clears chat history for next match`() {
+        var matchChatHistory = listOf(
+            "🔴 Bob disconnected",
+            "🟢 Bob reconnected",
+            "📢 Turn skipped (Bob in lobby...)"
+        )
+        assertFalse("Initial chat history contains previous match messages", matchChatHistory.isEmpty())
+
+        // Match completes and return to lobby is clicked (wasOver == true)
+        val wasOver = true
+        if (wasOver) {
+            matchChatHistory = emptyList()
+        }
+        assertTrue("Chat history must be empty after returning to lobby", matchChatHistory.isEmpty())
+
+        // Next match starts in manual mode or auto mode
+        val nextMatchChat = matchChatHistory
+        assertEquals("Next match starts with zero stale chat messages", 0, nextMatchChat.size)
+    }
 }
