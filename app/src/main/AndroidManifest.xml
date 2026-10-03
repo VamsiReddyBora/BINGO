@@ -84,10 +84,7 @@
 
         <service
             android:name=".core.notification.BingoPushNotificationService"
-            android:enabled="true"
-            android:exported="false"
-            android:foregroundServiceType="dataSync"
-            android:stopWithTask="false" />
+            android:exported="false" />
 
         <receiver
             android:name=".core.notification.BingoAlarmReceiver"

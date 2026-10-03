@@ -37,7 +37,14 @@ object BingoNotificationHelper {
      * Creates high-priority notification channel for game invites and friend online alerts.
      */
     fun createNotificationChannel(context: Context) {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+        // Explicitly cancel and purge any old foreground service notification and channel
+        manager?.cancel(40402)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                manager?.deleteNotificationChannel("bingo_background_sync_channel")
+            } catch (_: Exception) {}
+
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 CHANNEL_NAME,
@@ -48,7 +55,6 @@ object BingoNotificationHelper {
                 enableVibration(true)
                 setShowBadge(true)
             }
-            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
             manager?.createNotificationChannel(channel)
         }
     }
@@ -65,9 +71,9 @@ object BingoNotificationHelper {
     }
 
     /**
-     * Shows a clean, minimal notification when a friend comes online.
+     * Shows a clean, polished notification when a friend comes online.
      * Content: "$friendDisplayName is online"
-     * Action: "Send Invite" -> automatically opens app, hosts an online match, and invites friend.
+     * Action: "Invite to Play" -> opens app, hosts an online match, and invites friend.
      */
     fun showFriendOnlineNotification(
         context: Context,
@@ -100,19 +106,28 @@ object BingoNotificationHelper {
             null
         }
 
+        val displayName = friendDisplayName.ifBlank { "@$cleanUsername" }
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
             .apply {
                 if (largeIcon != null) setLargeIcon(largeIcon)
             }
-            .setContentTitle("$friendDisplayName is online")
+            .setContentTitle("👋 $displayName is online")
+            .setContentText("Tap to invite and start a Bingo match!")
+            .setStyle(
+                NotificationCompat.BigTextStyle()
+                    .setBigContentTitle("👋 $displayName is Online")
+                    .bigText("$displayName is active now. Tap below to invite them to a live match!")
+            )
+            .setColor(0xFF10B981.toInt())
             .setContentIntent(sendInvitePendingIntent)
             .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setCategory(NotificationCompat.CATEGORY_SOCIAL)
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
             .addAction(
                 0,
-                "Send Invite",
+                "Invite to Play",
                 sendInvitePendingIntent
             )
             .build()
@@ -123,8 +138,8 @@ object BingoNotificationHelper {
     }
 
     /**
-     * Shows a clean, minimal notification when a match invitation is received.
-     * Content: "$fromDisplayName invited you to the lobby"
+     * Shows a clean, polished notification when a match invitation is received.
+     * Content: "$displayName invited you to play Bingo in room #$cleanRoomCode"
      * Actions:
      * - "Accept" -> opens app, joins host lobby.
      * - "Decline" -> closes notification, removes cloud invite.
@@ -181,11 +196,19 @@ object BingoNotificationHelper {
             .apply {
                 if (largeIcon != null) setLargeIcon(largeIcon)
             }
-            .setContentTitle("$displayName invited you to the lobby")
+            .setContentTitle("🎮 Match Invitation from $displayName")
+            .setContentText("Invited you to play in room #$cleanRoomCode")
+            .setStyle(
+                NotificationCompat.BigTextStyle()
+                    .setBigContentTitle("🎮 Match Invitation from $displayName")
+                    .bigText("$displayName invited you to play Bingo!\nRoom Code: #$cleanRoomCode\nTap Accept to join the lobby.")
+            )
+            .setColor(0xFF4F46E5.toInt())
             .setContentIntent(acceptPendingIntent)
             .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setCategory(NotificationCompat.CATEGORY_SOCIAL)
+            .setCategory(NotificationCompat.CATEGORY_EVENT)
             .addAction(
                 0,
                 "Accept",

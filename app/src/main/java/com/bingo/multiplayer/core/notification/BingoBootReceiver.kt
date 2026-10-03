@@ -23,9 +23,6 @@ class BingoBootReceiver : BroadcastReceiver() {
             try {
                 BingoNotificationDaemon.start(app)
                 BingoAlarmReceiver.scheduleAlarm(app)
-
-                val serviceIntent = Intent(app, BingoPushNotificationService::class.java)
-                ContextCompat.startForegroundService(app, serviceIntent)
             } catch (e: Exception) {
                 Log.w("BingoBootReceiver", "Failed to start services on boot: ${e.message}")
             }

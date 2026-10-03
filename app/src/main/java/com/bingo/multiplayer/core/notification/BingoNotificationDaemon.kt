@@ -48,8 +48,51 @@ object BingoNotificationDaemon {
     private var backgroundSyncJob: Job? = null
     private var activeUsername: String = ""
 
+    @Volatile
+    var currentActiveRoomCode: String? = null
+
     // In-memory quick lookup for cooldowns
     private val friendAlertCooldown = ConcurrentHashMap<String, Long>()
+
+    /**
+     * Strictly validates whether an incoming game invite should trigger a notification.
+     * Enforces single notification delivery per sender invite click:
+     * - Returns true ONLY IF invite.timestamp > lastNotifiedTimestamp for this sender & room.
+     * - Suppresses duplicates, repeats, and self-invites.
+     * - Discards expired invites (> 10 mins).
+     * - Does NOT notify if user is already inside that room.
+     */
+    @Synchronized
+    fun shouldNotifyInvite(context: Context, invite: GameInvite): Boolean {
+        val cleanSender = invite.fromUsername.trim().lowercase().removePrefix("@")
+        val cleanRoom = invite.roomCode.trim().uppercase()
+        if (cleanSender.isBlank() || cleanRoom.isBlank()) return false
+
+        // Do not notify if user is already inside this specific room
+        val activeRoom = currentActiveRoomCode?.trim()?.uppercase()
+        if (activeRoom != null && activeRoom == cleanRoom) {
+            return false
+        }
+
+        val now = System.currentTimeMillis()
+        // Discard expired invites (> 10 mins old) or invalid future timestamps (> 1 min in future)
+        if (now - invite.timestamp > 600_000L || invite.timestamp > now + 60_000L) {
+            return false
+        }
+
+        val prefs = context.getSharedPreferences(PREFS_INVITES_CACHE, Context.MODE_PRIVATE)
+        val key = "last_notified_ts_${cleanSender}_$cleanRoom"
+        val lastNotifiedTs = prefs.getLong(key, 0L)
+
+        // Only notify if the sender performed a NEW click (timestamp is strictly newer)
+        if (invite.timestamp > lastNotifiedTs) {
+            prefs.edit().putLong(key, invite.timestamp).apply()
+            Log.i(TAG, "New invite click detected from @$cleanSender for room $cleanRoom (ts=${invite.timestamp} > last=$lastNotifiedTs). Allowed.")
+            return true
+        }
+
+        return false
+    }
 
     @Synchronized
     fun start(context: Context) {
@@ -211,16 +254,8 @@ object BingoNotificationDaemon {
         try {
             val payload = String(message.payload, StandardCharsets.UTF_8)
             val invite = json.decodeFromString<GameInvite>(payload)
-            val now = System.currentTimeMillis()
-
-            if ((now - invite.timestamp) < 900_000L && invite.roomCode.isNotBlank()) {
-                val inviteCache = context.getSharedPreferences(PREFS_INVITES_CACHE, Context.MODE_PRIVATE)
-                val key = "seen_${invite.roomCode}"
-                val lastSeen = inviteCache.getLong(key, 0L)
-                if (now - lastSeen > 60_000L) {
-                    inviteCache.edit().putLong(key, now).apply()
-                    BingoNotificationHelper.showGameInviteNotification(context, invite, myUsername)
-                }
+            if (shouldNotifyInvite(context, invite)) {
+                BingoNotificationHelper.showGameInviteNotification(context, invite, myUsername)
             }
         } catch (e: Exception) {
             Log.w(TAG, "Error handling invite packet: ${e.message}")
@@ -233,7 +268,8 @@ object BingoNotificationDaemon {
         val cooldownCache = context.getSharedPreferences(PREFS_COOLDOWN_CACHE, Context.MODE_PRIVATE)
         val lastAlert = cooldownCache.getLong(cleanUser, 0L)
 
-        if (now - lastAlert > 60_000L) {
+        // 15-minute cooldown to prevent spammy alerts
+        if (now - lastAlert > 900_000L) {
             cooldownCache.edit().putLong(cleanUser, now).apply()
             friendAlertCooldown[cleanUser] = now
             val cleanName = displayName.ifBlank { "@$cleanUser" }
@@ -274,19 +310,11 @@ object BingoNotificationDaemon {
                 val username = resolveActiveUsername(context)
                 if (username.isBlank()) return@launch
 
-                val now = System.currentTimeMillis()
-
-                // 1. Check for incoming invites in cloud storage
+                // 1. Check for incoming invites in cloud storage (notifies ONCE per sender invite click)
                 val pendingInvites = GameInviteManager.fetchInvitesForUser(username)
-                val inviteCache = context.getSharedPreferences(PREFS_INVITES_CACHE, Context.MODE_PRIVATE)
                 for (invite in pendingInvites) {
-                    if ((now - invite.timestamp) < 900_000L && invite.roomCode.isNotBlank()) {
-                        val key = "seen_${invite.roomCode}"
-                        val lastSeen = inviteCache.getLong(key, 0L)
-                        if (now - lastSeen > 60_000L) {
-                            inviteCache.edit().putLong(key, now).apply()
-                            BingoNotificationHelper.showGameInviteNotification(context, invite, username)
-                        }
+                    if (shouldNotifyInvite(context, invite)) {
+                        BingoNotificationHelper.showGameInviteNotification(context, invite, username)
                     }
                 }
 

@@ -66,13 +66,17 @@ class MainActivity : ComponentActivity() {
         authRepository = AuthRepository(applicationContext)
         friendsRepository = FriendsRepository(applicationContext)
 
-        // Start background notification daemon, service & periodic wake-up alarms
+        // Start background notification daemon & periodic wake-up alarms (silent notification removed)
         com.bingo.multiplayer.core.notification.BingoNotificationDaemon.start(applicationContext)
         try {
-            androidx.core.content.ContextCompat.startForegroundService(
-                applicationContext,
+            applicationContext.stopService(
                 Intent(applicationContext, com.bingo.multiplayer.core.notification.BingoPushNotificationService::class.java)
             )
+            val nm = applicationContext.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+            nm?.cancel(com.bingo.multiplayer.core.notification.BingoPushNotificationService.SERVICE_NOTIFICATION_ID)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                nm?.deleteNotificationChannel(com.bingo.multiplayer.core.notification.BingoPushNotificationService.SERVICE_CHANNEL_ID)
+            }
         } catch (_: Exception) {}
         com.bingo.multiplayer.core.notification.BingoAlarmReceiver.scheduleAlarm(applicationContext)
 

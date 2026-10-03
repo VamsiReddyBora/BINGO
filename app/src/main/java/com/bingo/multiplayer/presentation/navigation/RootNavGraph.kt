@@ -106,6 +106,10 @@ fun RootNavGraph(
     }
     val coroutineScope = rememberCoroutineScope()
 
+    LaunchedEffect(roomCode) {
+        com.bingo.multiplayer.core.notification.BingoNotificationDaemon.currentActiveRoomCode = roomCode.ifBlank { null }
+    }
+
     val onlineRealTimePlayers by onlineRoomSync.players.collectAsState()
     val p2pRealTimePlayers by lanP2pSync.players.collectAsState()
     val realTimePlayers = if (isUsingP2p) p2pRealTimePlayers else onlineRealTimePlayers
@@ -385,8 +389,10 @@ fun RootNavGraph(
         } else {
             val inviteListener = com.bingo.multiplayer.domain.network.GameInviteManager.startInviteListener(username) { invite ->
                 if (roomCode != invite.roomCode) {
-                    incomingInvite = invite
-                    BingoNotificationHelper.showGameInviteNotification(context, invite, username)
+                    if (com.bingo.multiplayer.core.notification.BingoNotificationDaemon.shouldNotifyInvite(context, invite)) {
+                        incomingInvite = invite
+                        BingoNotificationHelper.showGameInviteNotification(context, invite, username)
+                    }
                 }
             }
             val requestListener = friendsRepository.startListeningForRequests(
@@ -482,13 +488,15 @@ fun RootNavGraph(
         if (!u.isNullOrBlank()) {
             friendsRepository.syncFriendsAndRequests(u)
             while (isActive) {
-                delay(3000L)
+                delay(4000L)
                 try {
                     val pendingInvites = com.bingo.multiplayer.domain.network.GameInviteManager.fetchInvitesForUser(u)
                     val validInvite = pendingInvites.firstOrNull { it.roomCode != roomCode }
-                    if (validInvite != null && incomingInvite?.roomCode != validInvite.roomCode) {
-                        incomingInvite = validInvite
-                        BingoNotificationHelper.showGameInviteNotification(context, validInvite, u)
+                    if (validInvite != null) {
+                        if (com.bingo.multiplayer.core.notification.BingoNotificationDaemon.shouldNotifyInvite(context, validInvite)) {
+                            incomingInvite = validInvite
+                            BingoNotificationHelper.showGameInviteNotification(context, validInvite, u)
+                        }
                     }
                     friendsRepository.syncFriendsAndRequests(u)
                 } catch (_: Exception) {}

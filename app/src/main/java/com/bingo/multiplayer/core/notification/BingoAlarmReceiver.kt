@@ -28,14 +28,6 @@ class BingoAlarmReceiver : BroadcastReceiver() {
             try {
                 BingoNotificationDaemon.start(app)
                 BingoNotificationDaemon.performCloudCheck(app)
-
-                // Restart foreground service if not already running
-                try {
-                    val serviceIntent = Intent(app, BingoPushNotificationService::class.java)
-                    ContextCompat.startForegroundService(app, serviceIntent)
-                } catch (e: Exception) {
-                    Log.d("BingoAlarmReceiver", "Foreground service start note: ${e.message}")
-                }
             } catch (e: Exception) {
                 Log.w("BingoAlarmReceiver", "Error during alarm execution: ${e.message}")
             } finally {
