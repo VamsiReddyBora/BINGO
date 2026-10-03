@@ -44,21 +44,21 @@ fun AuthGateScreen(
     val tokens = BingoTheme.colors
     val context = LocalContext.current
 
-    val iconScale = remember { Animatable(0.82f) }
+    val iconScale = remember { Animatable(0.72f) }
     val iconAlpha = remember { Animatable(0f) }
 
     LaunchedEffect(Unit) {
-        // 1. Smooth opening scale and alpha reveal animation (~650ms)
+        // 1. Smooth opening scale and alpha reveal animation (~700ms)
         launch {
             iconScale.animateTo(
                 targetValue = 1.0f,
-                animationSpec = tween(durationMillis = 650, easing = FastOutSlowInEasing)
+                animationSpec = tween(durationMillis = 700, easing = FastOutSlowInEasing)
             )
         }
         launch {
             iconAlpha.animateTo(
                 targetValue = 1.0f,
-                animationSpec = tween(durationMillis = 450, easing = LinearEasing)
+                animationSpec = tween(durationMillis = 400, easing = LinearEasing)
             )
         }
 
@@ -76,8 +76,8 @@ fun AuthGateScreen(
             } catch (_: Exception) {}
         }
 
-        // 3. Keep full-screen icon opening for ~850ms (< 1s)
-        delay(850L)
+        // 3. Keep big launch icon visible on app opening (~1s)
+        delay(1050L)
         refreshJob.join()
 
         // 4. Ensure auth state is resolved
@@ -108,7 +108,7 @@ fun AuthGateScreen(
             painter = painterResource(id = R.drawable.ic_bingo_logo),
             contentDescription = "Bingo Logo",
             modifier = Modifier
-                .size(112.dp)
+                .size(220.dp)
                 .scale(iconScale.value)
                 .alpha(iconAlpha.value)
         )
