@@ -59,7 +59,7 @@ data class PlayerPresence(
         get() = (status.equals("ONLINE", ignoreCase = true) ||
                  status.equals("IN_LOBBY", ignoreCase = true) ||
                  status.equals("PLAYING", ignoreCase = true)) &&
-                (System.currentTimeMillis() - timestamp) < 12_000L
+                (System.currentTimeMillis() - timestamp) < 15_000L
 }
 
 /**

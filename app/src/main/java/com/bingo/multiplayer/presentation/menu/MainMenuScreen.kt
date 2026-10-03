@@ -12,6 +12,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -142,11 +143,23 @@ fun MainMenuScreen(
         }
     }
 
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(tokens.background)
     ) {
+        val screenHeight = maxHeight
+        // Estimated height of content up to bottom of Nearby Network card:
+        // Top padding 20.dp + Top bar 36.dp + Spacers ~40.dp + AI card ~92.dp + Online card ~72.dp + Nearby card ~72.dp ~= 332.dp
+        // If ongoing match is present, it adds ~88.dp.
+        val topContentHeight = if (ongoingMatch != null) 420.dp else 332.dp
+        // Floating bottom navigation pill clearance from bottom: pill height (~52.dp) + bottom padding (16.dp) + margin = ~80.dp
+        val navPillClearance = 80.dp
+        val buttonHeight = 40.dp
+        // Available space between the Nearby Network card and the Floating Bottom Navigation Pill:
+        val availableSpace = (screenHeight - topContentHeight - navPillClearance - buttonHeight).coerceAtLeast(32.dp)
+        // Split available space equally above and below so the pill button is centered in the gap
+        val middleSpacing = availableSpace / 2
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -351,7 +364,9 @@ fun MainMenuScreen(
                 onClick = onPlayNearbyNetwork
             )
 
-            Spacer(modifier = Modifier.height(20.dp))
+            // Dynamic vertical gap placing the developer note pill directly in the middle
+            // between the Nearby Network card and the bottom navigation pill:
+            Spacer(modifier = Modifier.height(middleSpacing))
 
             // Developer Note Pill Button
             Surface(
@@ -374,7 +389,8 @@ fun MainMenuScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(84.dp))
+            // Symmetrical bottom spacing + navPillClearance so distance from button to nav pill is exactly middleSpacing
+            Spacer(modifier = Modifier.height(middleSpacing + navPillClearance))
         }
     }
 }

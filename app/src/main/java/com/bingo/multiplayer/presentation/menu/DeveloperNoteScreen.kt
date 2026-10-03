@@ -180,7 +180,7 @@ fun DeveloperNoteScreen(
                     Spacer(modifier = Modifier.height(14.dp))
 
                     Text(
-                        text = "— With gratitude & warmth ☕\nVamsi Reddy",
+                        text = "— With gratitude & warmth ☕\nVamsi Reddy Bora",
                         fontSize = 12.5.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = tokens.textMuted
