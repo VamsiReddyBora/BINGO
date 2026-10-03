@@ -45,7 +45,8 @@ import kotlin.math.sin
 enum class StampResultType {
     WON,
     LOST,
-    DRAW
+    DRAW,
+    RUNNER
 }
 
 /**
@@ -63,15 +64,21 @@ private val ChalkSketchFont = FontFamily(
 fun VictoryStampBadge(
     resultType: StampResultType,
     modifier: Modifier = Modifier,
-    animateStampDrop: Boolean = true
+    animateStampDrop: Boolean = true,
+    customText: String? = null
 ) {
     val haptic = LocalHapticFeedback.current
 
-    val (text, mainColor, bgColor) = when (resultType) {
+    val (defaultText, mainColor, bgColor) = when (resultType) {
         StampResultType.WON -> Triple(
             "YOU'VE WON!",
             Color(0xFF15803D), // Forest Stamped Green
             Color(0x1816A34A)
+        )
+        StampResultType.RUNNER -> Triple(
+            "RUNNER!",
+            Color(0xFF2563EB), // Vibrant Blue / Silver Runner
+            Color(0x183B82F6)
         )
         StampResultType.LOST -> Triple(
             "YOU LOST!",
@@ -84,6 +91,7 @@ fun VictoryStampBadge(
             Color(0x18F59E0B)
         )
     }
+    val text = customText?.takeIf { it.isNotBlank() } ?: defaultText
 
     val stampScale = remember { Animatable(if (animateStampDrop) 2.6f else 1.0f) }
     val stampAlpha = remember { Animatable(if (animateStampDrop) 0.0f else 1.0f) }

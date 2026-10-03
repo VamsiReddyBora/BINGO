@@ -34,6 +34,8 @@ data class RoomMessagePacket(
     val turnNumber: Int = 0,
     val seed: Long = 0L,
     val pickedHistory: List<Int> = emptyList(),
+    val pickedByHistory: List<String> = emptyList(),
+    val boardHash: Long = 0L,
     val currentTurnPlayerId: String = "",
     val pingTimestamp: Long = 0L,
     val players: List<Player> = emptyList(),
@@ -42,7 +44,11 @@ data class RoomMessagePacket(
     val targetPlayerId: String = "",
     val readyVersion: Long = 0L,
     val isManualBoard: Boolean = false,
-    val senderInstanceId: String = ""
+    val isDynamicBoard: Boolean = false,
+    val senderInstanceId: String = "",
+    val winnerPlayerId: String = "",
+    val winReason: String = "",
+    val runnerPlayerIds: List<String> = emptyList()
 )
 
 class OnlineRoomSyncManager(
@@ -83,6 +89,45 @@ class OnlineRoomSyncManager(
 
     @Volatile private var isSubscribed: Boolean = false
     @Volatile private var lastStartedMatchSeed: Long = 0L
+
+    private val lastDirectHeartbeatTimestamps = ConcurrentHashMap<String, Long>()
+
+    fun recordDirectHeartbeat(playerId: String, username: String = "") {
+        if (playerId.isBlank()) return
+        val now = System.currentTimeMillis()
+        val cleanId = playerId.trim().lowercase().removePrefix("u_")
+        lastDirectHeartbeatTimestamps[playerId] = now
+        lastDirectHeartbeatTimestamps[cleanId] = now
+        if (username.isNotBlank()) {
+            val cleanUser = username.trim().lowercase().removePrefix("@")
+            lastDirectHeartbeatTimestamps[cleanUser] = now
+        }
+    }
+
+    fun getLastDirectHeartbeat(playerId: String): Long {
+        if (playerId.isBlank()) return 0L
+        val clean = playerId.trim().lowercase().removePrefix("u_")
+        val ts = lastDirectHeartbeatTimestamps[playerId]
+            ?: lastDirectHeartbeatTimestamps[clean]
+        if (ts != null && ts > 0L) return ts
+        playerRegistry.values.firstOrNull { p ->
+            val pClean = p.id.trim().lowercase().removePrefix("u_")
+            val pUser = p.username.trim().lowercase().removePrefix("@")
+            p.id == playerId || pClean == clean || (pUser.isNotBlank() && pUser == clean)
+        }?.let { matched ->
+            return lastDirectHeartbeatTimestamps[matched.id]
+                ?: lastDirectHeartbeatTimestamps[matched.username.trim().lowercase().removePrefix("@")]
+                ?: 0L
+        }
+        return 0L
+    }
+
+    fun resetInGameHeartbeats(participantIds: Collection<String>) {
+        val now = System.currentTimeMillis()
+        participantIds.forEach { id ->
+            recordDirectHeartbeat(id)
+        }
+    }
 
     init {
         activeInstance = this
@@ -176,6 +221,19 @@ class OnlineRoomSyncManager(
                     connectionTimeout = 10
                     keepAliveInterval = 30
                     socketFactory = LowLatencySocketFactory()
+                    try {
+                        val willPacket = RoomMessagePacket(
+                            type = "LEAVE",
+                            playerId = player.id,
+                            displayName = player.displayName,
+                            username = player.username,
+                            isHost = player.isHost,
+                            timestamp = System.currentTimeMillis()
+                        )
+                        val willTopic = "bingo/v3/room/$cleanCode"
+                        val willPayload = FastPacketCodec.encode(willPacket).toByteArray(java.nio.charset.StandardCharsets.UTF_8)
+                        setWill(willTopic, willPayload, 1, false)
+                    } catch (_: Exception) {}
                 }
 
                 client.setCallback(object : MqttCallbackExtended {
@@ -183,6 +241,23 @@ class OnlineRoomSyncManager(
                         scope.launch(Dispatchers.IO) {
                             subscribeToRoom(cleanCode)
                             sendJoinPacket()
+                            // If local player was already toggled to READY before/during connection, immediately broadcast READY_STATUS!
+                            localPlayer?.let { lp ->
+                                if (lp.lobbyReadyStatus == LobbyLifecycleEngine.STATUS_READY) {
+                                    val readyPacket = RoomMessagePacket(
+                                        type = "READY_STATUS",
+                                        playerId = lp.id,
+                                        displayName = lp.displayName,
+                                        username = lp.username,
+                                        isHost = lp.isHost,
+                                        avatarUrl = lp.avatarUrl,
+                                        readyStatus = lp.lobbyReadyStatus,
+                                        readyVersion = lp.readyVersion,
+                                        timestamp = lp.lastSeenTimestamp
+                                    )
+                                    broadcastPacket(readyPacket)
+                                }
+                            }
                             if (!player.isHost) {
                                 delay(500L)
                                 if (playerRegistry.values.none { it.isHost }) {
@@ -226,10 +301,13 @@ class OnlineRoomSyncManager(
             } catch (_: Exception) { }
         }
 
-        // Periodic Presence Heartbeat & Cloud Room Reconciliation (Every 2.0s)
+        // Periodic Presence Heartbeat & Cloud Room Reconciliation (Every 2.5s)
         heartbeatJob = scope.launch(Dispatchers.IO) {
             while (isActive) {
-                delay(2000L)
+                delay(2500L)
+                if (!AppLifecycleObserver.isAppInForeground.value) {
+                    continue
+                }
                 val p = localPlayer ?: continue
                 val code = currentRoomCode ?: continue
 
@@ -270,19 +348,21 @@ class OnlineRoomSyncManager(
             }
         }
 
-        // Periodic Ping loop (Every 2.0s to measure real-time latency)
+        // Periodic Ping loop (Every 1.0s to measure real-time latency)
         pingJob = scope.launch(Dispatchers.IO) {
             while (isActive) {
-                delay(2000L)
-                localPlayer?.let { p ->
-                    broadcastPacket(
-                        RoomMessagePacket(
-                            type = "PING",
-                            playerId = p.id,
-                            pingTimestamp = System.currentTimeMillis()
+                if (AppLifecycleObserver.isAppInForeground.value) {
+                    localPlayer?.let { p ->
+                        broadcastPacket(
+                            RoomMessagePacket(
+                                type = "PING",
+                                playerId = p.id,
+                                pingTimestamp = System.currentTimeMillis()
+                            )
                         )
-                    )
+                    }
                 }
+                delay(1000L)
             }
         }
 
@@ -335,16 +415,18 @@ class OnlineRoomSyncManager(
      */
     fun broadcastPacket(packet: RoomMessagePacket) {
         val code = currentRoomCode ?: return
-        val client = mqttClient ?: return
 
         scope.launch(Dispatchers.IO) {
             try {
                 var retryCount = 0
-                while (!client.isConnected && retryCount < 5) {
+                var client = mqttClient
+                val maxRetries = if (packet.type == "PICK_NUMBER" || packet.type == "PING" || packet.type == "PONG") 5 else 30
+                while ((client == null || !client.isConnected) && retryCount < maxRetries) {
                     delay(100L)
                     retryCount++
+                    client = mqttClient
                 }
-                if (client.isConnected) {
+                if (client != null && client.isConnected) {
                     val outgoing = if (packet.senderInstanceId.isBlank()) packet.copy(senderInstanceId = instanceId) else packet
                     val payload = FastPacketCodec.encode(outgoing)
                     val qosLevel = when (packet.type) {
@@ -398,16 +480,13 @@ class OnlineRoomSyncManager(
                         else -> existing?.displayName ?: "Player"
                     }
 
-                    // If player is host and room heartbeat is alive (< 5 mins), refresh lastSeenTimestamp
+                    // If player is host and room heartbeat is alive (< 5 mins), record host liveness
                     val isHostAlive = (p.isHost && (now - cloudSession.lastHeartbeat) < 300_000L)
-                    // Any player present in the cloud room session is actively connected.
-                    // Refresh their lastSeenTimestamp to now so they show "Online" in the lobby.
                     val effectiveLastSeen = when {
                         isLocal -> now
-                        isHostAlive -> now
-                        // If their cloud lastSeenTimestamp is within 5 minutes, they're actively syncing
-                        (now - p.lastSeenTimestamp) < 300_000L -> now
-                        else -> existing?.lastSeenTimestamp ?: p.lastSeenTimestamp
+                        isHostAlive -> maxOf(existing?.lastSeenTimestamp ?: 0L, cloudSession.lastHeartbeat)
+                        existing != null -> maxOf(existing.lastSeenTimestamp, p.lastSeenTimestamp)
+                        else -> p.lastSeenTimestamp
                     }
 
                     // Prevent status toggling / clobbering via isolated LobbyLifecycleEngine:
@@ -479,6 +558,41 @@ class OnlineRoomSyncManager(
     }
 
     /**
+     * Called when app transitions from background to foreground during an active room/match.
+     * Immediately reconnects MQTT if dropped, resubscribes, sends fresh heartbeat and refreshes state.
+     */
+    fun onForegroundResume() {
+        val code = currentRoomCode ?: return
+        val p = localPlayer ?: return
+        scope.launch(Dispatchers.IO) {
+            val client = mqttClient
+            if (client != null) {
+                if (!client.isConnected) {
+                    try {
+                        client.reconnect()
+                    } catch (_: Exception) {}
+                }
+                if (!isSubscribed) {
+                    subscribeToRoom(code)
+                }
+            }
+            // Send fast presence heartbeat immediately
+            broadcastPacket(
+                RoomMessagePacket(
+                    type = "HEARTBEAT",
+                    playerId = p.id,
+                    displayName = p.displayName,
+                    username = p.username,
+                    isHost = p.isHost,
+                    avatarUrl = p.avatarUrl,
+                    timestamp = System.currentTimeMillis()
+                )
+            )
+            refreshNow()
+        }
+    }
+
+    /**
      * Manual refresh button action: rebroadcasts presence and updates UI state.
      */
     suspend fun refreshNow() {
@@ -487,6 +601,17 @@ class OnlineRoomSyncManager(
         _isRefreshing.value = true
 
         withContext(Dispatchers.IO) {
+            val client = mqttClient
+            if (client != null) {
+                if (!client.isConnected) {
+                    try {
+                        client.reconnect()
+                    } catch (_: Exception) {}
+                }
+                if (!isSubscribed) {
+                    subscribeToRoom(code)
+                }
+            }
             reconcileWithCloud(code, localP)
 
             if (localP.isHost) {
@@ -521,10 +646,8 @@ class OnlineRoomSyncManager(
         }
 
         val pCleanUser = packet.username.trim().lowercase().removePrefix("@")
-        val pCleanDisplay = packet.displayName.trim().lowercase()
         val isSenderKicked = packet.playerId in kickedPlayerIds ||
-                (pCleanUser.isNotBlank() && pCleanUser in kickedPlayerIds) ||
-                (pCleanDisplay.isNotBlank() && pCleanDisplay in kickedPlayerIds)
+                (pCleanUser.isNotBlank() && pCleanUser in kickedPlayerIds)
 
         if (isSenderKicked) {
             if (localPlayer?.isHost == true) {
@@ -537,6 +660,22 @@ class OnlineRoomSyncManager(
                 )
             }
             return
+        }
+
+        // Live Heartbeat/Packet Touch: Any incoming packet confirms player is actively communicating
+        val isDepartOrTimeout = packet.type in listOf("TURN_TIMEOUT", "LEAVE", "HOST_LEFT", "SURRENDER", "KICK_PLAYER")
+        if (!isDepartOrTimeout && packet.playerId.isNotBlank() && packet.playerId != localPlayer?.id) {
+            val now = System.currentTimeMillis()
+            recordDirectHeartbeat(packet.playerId, packet.username)
+            val clean = packet.playerId.trim().lowercase().removePrefix("u_")
+            val pCleanU = packet.username.trim().lowercase().removePrefix("@")
+            playerRegistry.entries.forEach { (k, v) ->
+                val cleanK = k.trim().lowercase().removePrefix("u_")
+                val cleanUser = v.username.trim().lowercase().removePrefix("@")
+                if (k == packet.playerId || cleanK == clean || (pCleanU.isNotBlank() && (cleanUser == pCleanU || cleanK == pCleanU))) {
+                    playerRegistry[k] = v.copy(lastSeenTimestamp = now)
+                }
+            }
         }
 
         when (packet.type) {
@@ -594,7 +733,18 @@ class OnlineRoomSyncManager(
 
             "JOIN", "HEARTBEAT" -> {
                 if (packet.playerId.isNotEmpty()) {
-                    val existing = playerRegistry[packet.playerId]
+                    val clean = packet.playerId.trim().lowercase().removePrefix("u_")
+                    val pCleanU = packet.username.trim().lowercase().removePrefix("@")
+                    val existingKey = if (playerRegistry.containsKey(packet.playerId)) {
+                        packet.playerId
+                    } else {
+                        playerRegistry.entries.firstOrNull { (k, v) ->
+                            val cleanK = k.trim().lowercase().removePrefix("u_")
+                            val cleanUser = v.username.trim().lowercase().removePrefix("@")
+                            cleanK == clean || (pCleanU.isNotBlank() && (cleanUser == pCleanU || cleanK == pCleanU))
+                        }?.key ?: packet.playerId
+                    }
+                    val existing = playerRegistry[existingKey]
 
                     if (!packet.avatarUrl.isNullOrBlank() && packet.avatarUrl != existing?.avatarUrl && packet.playerId != localPlayer?.id) {
                         com.bingo.multiplayer.presentation.common.PlayerAvatarCache.evict(packet.username)
@@ -606,6 +756,9 @@ class OnlineRoomSyncManager(
                     }
 
                     val updated = LobbyLifecycleEngine.onRemotePlayerJoinOrHeartbeat(packet, existing)
+                    if (existingKey != packet.playerId) {
+                        playerRegistry.remove(existingKey)
+                    }
                     playerRegistry[packet.playerId] = updated
                     _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
 
@@ -692,38 +845,20 @@ class OnlineRoomSyncManager(
             }
 
             "PING" -> {
-                if (packet.playerId == localPlayer?.id) {
+                if (packet.playerId == localPlayer?.id || com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(packet.playerId, localPlayer?.id ?: "")) {
                     // Direct broker round-trip echo: provides exact client-to-broker network ping
                     if (packet.pingTimestamp > 0L) {
                         val brokerRtt = (System.currentTimeMillis() - packet.pingTimestamp).coerceAtLeast(1L)
                         val cur = _pingMs.value
-                        val smoothed = if (cur <= 0L) brokerRtt else ((cur * 0.65) + (brokerRtt * 0.35)).toLong().coerceAtLeast(1L)
+                        val smoothed = if (cur <= 0L) brokerRtt else ((cur * 0.60) + (brokerRtt * 0.40)).toLong().coerceAtLeast(1L)
                         _pingMs.value = smoothed
                         NetworkPingMonitor.recordExternalPing(smoothed)
                     }
-                } else {
-                    // Reply immediately with PONG echoing the sender's timestamp
-                    broadcastPacket(
-                        RoomMessagePacket(
-                            type = "PONG",
-                            playerId = localPlayer?.id ?: "",
-                            pingTimestamp = packet.pingTimestamp
-                        )
-                    )
                 }
             }
 
             "PONG" -> {
-                if (packet.playerId != localPlayer?.id && packet.pingTimestamp > 0L) {
-                    // Peer round-trip: elapsed time covers 4 network hops (Sender->Broker->Receiver->Broker->Sender)
-                    // One-way transit latency between players = elapsed / 2
-                    val fullRtt = (System.currentTimeMillis() - packet.pingTimestamp).coerceAtLeast(1L)
-                    val oneWayLatency = (fullRtt / 2).coerceAtLeast(1L)
-                    val cur = _pingMs.value
-                    val smoothed = if (cur <= 0L) oneWayLatency else ((cur * 0.65) + (oneWayLatency * 0.35)).toLong().coerceAtLeast(1L)
-                    _pingMs.value = smoothed
-                    NetworkPingMonitor.recordExternalPing(smoothed)
-                }
+                // Legacy PONG handling ignored to prevent multi-device ping jitter
             }
         }
 
@@ -749,6 +884,12 @@ class OnlineRoomSyncManager(
             timestamp = updated.lastSeenTimestamp
         )
         broadcastPacket(packet)
+        scope.launch(Dispatchers.IO) {
+            delay(150L)
+            broadcastPacket(packet)
+            delay(300L)
+            broadcastPacket(packet)
+        }
         val code = currentRoomCode
         if (code != null) {
             scope.launch(Dispatchers.IO) {
@@ -773,13 +914,8 @@ class OnlineRoomSyncManager(
     fun removePlayer(playerId: String) {
         val targetPlayer = playerRegistry[playerId]
         kickedPlayerIds.add(playerId)
-        if (targetPlayer != null) {
-            if (targetPlayer.username.isNotBlank()) {
-                kickedPlayerIds.add(targetPlayer.username.trim().lowercase().removePrefix("@"))
-            }
-            if (targetPlayer.displayName.isNotBlank()) {
-                kickedPlayerIds.add(targetPlayer.displayName.trim().lowercase())
-            }
+        if (targetPlayer != null && targetPlayer.username.isNotBlank()) {
+            kickedPlayerIds.add(targetPlayer.username.trim().lowercase().removePrefix("@"))
         }
         playerRegistry.remove(playerId)
         _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
@@ -844,9 +980,28 @@ class OnlineRoomSyncManager(
         localPlayer = null
         isSubscribed = false
         lastStartedMatchSeed = 0L
+        lastDirectHeartbeatTimestamps.clear()
         playerRegistry.clear()
         kickedPlayerIds.clear()
         _players.value = emptyList()
+    }
+
+    fun getLastSeenTimestamp(playerId: String): Long {
+        if (playerId.isBlank()) return 0L
+        val clean = playerId.trim().lowercase().removePrefix("u_")
+        var maxTimestamp = 0L
+        playerRegistry.entries.forEach { (k, v) ->
+            val cleanK = k.trim().lowercase().removePrefix("u_")
+            val cleanUser = v.username.trim().lowercase().removePrefix("@")
+            val cleanDisplay = v.displayName.trim().lowercase()
+            if (cleanK == clean || (cleanUser.isNotBlank() && cleanUser == clean) || (cleanDisplay.isNotBlank() && cleanDisplay == clean)) {
+                if (v.lastSeenTimestamp > maxTimestamp) {
+                    maxTimestamp = v.lastSeenTimestamp
+                }
+            }
+        }
+        val direct = getLastDirectHeartbeat(playerId)
+        return maxOf(maxTimestamp, direct)
     }
 
     companion object {

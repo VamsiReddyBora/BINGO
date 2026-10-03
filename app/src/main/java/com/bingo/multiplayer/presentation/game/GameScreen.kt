@@ -65,6 +65,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.graphics.toArgb
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import com.bingo.multiplayer.domain.model.InGameChatMessage
 
@@ -81,8 +82,10 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -100,6 +103,12 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.animation.core.Animatable
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.horizontalScroll
@@ -140,6 +149,8 @@ fun GameScreen(
     isGameOver: Boolean,
     didPlayerWin: Boolean,
     isDraw: Boolean = false,
+    isRunner: Boolean = false,
+    winnerPlayerId: String = "",
     onCellPicked: (Int) -> Unit,
     onPlayAgain: () -> Unit,
     onBackToMenu: () -> Unit,
@@ -161,12 +172,14 @@ fun GameScreen(
     incomingEmoteTimestamp: Long = 0L,
     onSendEmote: (String, Float) -> Unit = { _, _ -> },
     incomingChatMessage: InGameChatMessage? = null,
+    initialChatMessages: List<InGameChatMessage> = emptyList(),
     onSendChatMessage: (String) -> Unit = {},
     pickedNumbersHistory: List<Int> = emptyList(),
     matchSeed: Long = 0L,
     players: List<Player> = emptyList(),
     allPlayerBoards: Map<String, Board> = emptyMap(),
-    currentTurnPlayerId: String = ""
+    currentTurnPlayerId: String = "",
+    disconnectedPlayerIds: List<String> = emptyList()
 ) {
     val tokens = BingoTheme.colors
     val haptic = LocalHapticFeedback.current
@@ -179,23 +192,13 @@ fun GameScreen(
     // ── In-Game WhatsApp Style Chat State ──
     val gameMountTime = remember(matchSeed) { System.currentTimeMillis() }
     var lastHandledChatId by remember(matchSeed) { androidx.compose.runtime.mutableLongStateOf(0L) }
-    var chatMessages by remember(matchSeed) { mutableStateOf(listOf<InGameChatMessage>()) }
+    var chatMessages by remember(matchSeed) { mutableStateOf(initialChatMessages) }
     var customChatInput by remember { mutableStateOf("") }
     var isCustomChatFocused by remember { mutableStateOf(false) }
     var isFullLengthChatActive by remember { mutableStateOf(false) }
     var boardWidthDp by remember { mutableStateOf<androidx.compose.ui.unit.Dp?>(null) }
     val chatFocusRequester = remember { FocusRequester() }
     val coroutineScope = rememberCoroutineScope()
-
-    LaunchedEffect(incomingChatMessage, matchSeed) {
-        if (incomingChatMessage != null &&
-            incomingChatMessage.timestamp >= gameMountTime &&
-            incomingChatMessage.id != lastHandledChatId
-        ) {
-            lastHandledChatId = incomingChatMessage.id
-            chatMessages = chatMessages + incomingChatMessage
-        }
-    }
 
     fun submitCustomChatMessage() {
         val trimmed = customChatInput.trim().take(100)
@@ -210,9 +213,9 @@ fun GameScreen(
             isCustomChatFocused = false
             isFullLengthChatActive = false
 
-            val opponentIsAi = opponentName.contains("ai", ignoreCase = true) ||
-                    opponentUsername?.contains("ai", ignoreCase = true) == true ||
-                    (onReturnToLobby == null && myPlayerId.isBlank())
+            val opponentIsAi = opponentName.contains("ai bot", ignoreCase = true) ||
+                    opponentUsername?.contains("ai_bot", ignoreCase = true) == true ||
+                    players.any { it.isAi || it.id == "ai_bot" || it.username == "ai_bot" }
 
             if (opponentIsAi) {
                 coroutineScope.launch {
@@ -236,6 +239,38 @@ fun GameScreen(
         }
     }
 
+    // ── Ping 1-Second Stabilized Display ──
+    val latestPingMs by rememberUpdatedState(if (pingMs > 0L) pingMs else 28L)
+    var displayedPingMs by remember { mutableLongStateOf(if (pingMs > 0L) pingMs else 28L) }
+    LaunchedEffect(Unit) {
+        while (isActive) {
+            delay(1000L)
+            displayedPingMs = latestPingMs
+        }
+    }
+
+    // ── Turn Status & Keyboard Backlight Breathing ──
+    var dotPhase by remember { mutableIntStateOf(1) }
+    LaunchedEffect(isGameOver) {
+        while (!isGameOver) {
+            delay(500L)
+            dotPhase = (dotPhase % 3) + 1
+        }
+    }
+    val animatedDots = ".".repeat(dotPhase)
+
+
+    val activePlayerName = remember(currentTurnPlayerId, players, isMyTurn, myDisplayName, opponentName) {
+        if (isMyTurn) {
+            myDisplayName?.takeIf { it.isNotBlank() } ?: "You"
+        } else {
+            val found = players.firstOrNull { p ->
+                com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(p.id, currentTurnPlayerId)
+            }
+            found?.displayName?.takeIf { it.isNotBlank() } ?: opponentName.ifBlank { "Opponent" }
+        }
+    }
+
     // ── Floating Emotes State ──
     var activeEmotes by remember(matchSeed) { mutableStateOf(listOf<FloatingEmoteItem>()) }
 
@@ -251,12 +286,39 @@ fun GameScreen(
         )
     }
 
+    LaunchedEffect(incomingChatMessage, matchSeed) {
+        if (incomingChatMessage != null &&
+            incomingChatMessage.timestamp >= (gameMountTime - 15_000L) &&
+            incomingChatMessage.id != lastHandledChatId
+        ) {
+            lastHandledChatId = incomingChatMessage.id
+            if (!chatMessages.any { it.id == incomingChatMessage.id || (it.text == incomingChatMessage.text && kotlin.math.abs(it.timestamp - incomingChatMessage.timestamp) < 2000L) }) {
+                chatMessages = chatMessages + incomingChatMessage
+            }
+            if (incomingChatMessage.isSystemMessage) {
+                spawnEmote(
+                    emoji = incomingChatMessage.text,
+                    isSelf = false,
+                    senderName = null,
+                    scaleMultiplier = 1.05f
+                )
+            }
+        }
+    }
+
     var lastHandledEmoteTimestamp by remember(matchSeed) { androidx.compose.runtime.mutableLongStateOf(0L) }
 
     LaunchedEffect(incomingEmote, incomingEmoteTimestamp, matchSeed) {
         if (!incomingEmote.isNullOrBlank() && incomingEmoteTimestamp > 0L && incomingEmoteTimestamp >= gameMountTime && incomingEmoteTimestamp != lastHandledEmoteTimestamp) {
             lastHandledEmoteTimestamp = incomingEmoteTimestamp
             spawnEmote(incomingEmote, isSelf = false, senderName = opponentName, scaleMultiplier = incomingEmoteScale)
+        }
+    }
+
+    // Quick chat style message "Your turn" when local player's turn arrives
+    LaunchedEffect(isMyTurn, isGameOver) {
+        if (isMyTurn && !isGameOver) {
+            spawnEmote("Your turn", isSelf = true, scaleMultiplier = 1.15f)
         }
     }
 
@@ -552,13 +614,13 @@ fun GameScreen(
                         )
                     }
 
-                    // Item 2: Top Center 🛜 Wifi Icon + Ping (Color varies based on value, perfectly centered!)
+                    // Item 2: Top Center 🛜 Wifi Icon + Ping (Updates once every 1 second, perfectly centered!)
                     val pingColor = when {
-                        pingMs <= 250L -> Color(0xFF16A34A)
-                        pingMs <= 500L -> Color(0xFFEAB308)
+                        displayedPingMs <= 250L -> Color(0xFF16A34A)
+                        displayedPingMs <= 500L -> Color(0xFFEAB308)
                         else -> Color(0xFFDC2626)
                     }
-                    val pingText = if (pingMs > 999L) "999+ms" else "${pingMs}ms"
+                    val pingText = if (displayedPingMs > 999L) "999+ms" else "${displayedPingMs}ms"
 
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -657,22 +719,41 @@ fun GameScreen(
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            val winnersCount = reviewPlayers.count { p ->
-                                val b = allPlayerBoards[p.id] ?: if (p.id == myPlayerId || p.id == "local") board else (opponentBoard ?: board)
-                                b.isBingo
+                            val sortedReviewPlayers = remember(reviewPlayers, allPlayerBoards, winnerPlayerId, disconnectedPlayerIds) {
+                                reviewPlayers.sortedWith(
+                                    compareBy<Player> { p ->
+                                        if (disconnectedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, p.id) }) 1 else 0
+                                    }.thenByDescending { p ->
+                                        val isDisc = disconnectedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, p.id) }
+                                        val isWin = com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(winnerPlayerId, p.id)
+                                        if (isWin && !isDisc) 3
+                                        else {
+                                            val b = allPlayerBoards[p.id] ?: if (p.id == myPlayerId || p.id == "local") board else (opponentBoard ?: board)
+                                            if (b.isBingo && !isDisc) 2 else 1
+                                        }
+                                    }.thenByDescending { p ->
+                                        val b = allPlayerBoards[p.id] ?: if (p.id == myPlayerId || p.id == "local") board else (opponentBoard ?: board)
+                                        b.completedLinesCount
+                                    }
+                                )
                             }
-                            reviewPlayers.forEach { player ->
+                            sortedReviewPlayers.forEach { player ->
                                 val isSelected = (player.id == selectedReviewPlayerId) ||
-                                        (reviewPlayers.size == 1) ||
+                                        (sortedReviewPlayers.size == 1) ||
                                         (selectedReviewPlayerId.isBlank() && (player.id == myPlayerId || player.id == "local"))
                                 val isLocal = (player.id == myPlayerId || player.id == "local")
                                 val playerBoardForTab = allPlayerBoards[player.id]
                                     ?: if (isLocal) board else (opponentBoard ?: board)
                                 val linesCount = playerBoardForTab.completedLinesCount
                                 val isBingo = playerBoardForTab.isBingo
-                                val badgeSuffix = if (isBingo) {
-                                    if (winnersCount > 1) " 🤝" else " 👑"
-                                } else ""
+                                val isDisconnected = disconnectedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, player.id) }
+                                val isWinner = com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(winnerPlayerId, player.id)
+                                val badgeSuffix = when {
+                                    !isDisconnected && isWinner -> " 👑"
+                                    !isDisconnected && isBingo -> " 🥈"
+                                    isDisconnected -> " (Offline)"
+                                    else -> ""
+                                }
 
                                 Surface(
                                     onClick = {
@@ -871,7 +952,7 @@ fun GameScreen(
                     .padding(horizontal = 14.dp, vertical = 6.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Reserved empty space between top bar and Bingo board: Stamped badge on game over
+                // Reserved empty space between top bar and Bingo board: Stamped badge on game over OR turn status
                 Box(
                     modifier = Modifier
                         .weight(0.12f)
@@ -879,18 +960,61 @@ fun GameScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     if (isGameOver && showStampBadge && !isExitingMatch) {
-                        val winnersCount = reviewPlayers.count { p ->
-                            val b = allPlayerBoards[p.id] ?: if (p.id == myPlayerId || p.id == "local") board else (opponentBoard ?: board)
-                            b.isBingo
-                        }
-                        val stampType = if (displayedBoard.isBingo) {
-                            if (winnersCount > 1) StampResultType.DRAW else StampResultType.WON
+                        val isLocalSelected = (selectedReviewPlayerId == myPlayerId || selectedReviewPlayerId == "local" || selectedReviewPlayerId.isBlank() || com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(selectedReviewPlayerId, myPlayerId))
+                        val isLocalDisconnected = disconnectedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, myPlayerId) }
+                        val (stampType, stampText) = if (isLocalSelected) {
+                            when {
+                                isLocalDisconnected -> StampResultType.LOST to "${displayedBoard.completedLinesCount}/${displayedBoard.targetLines} LINES (OFFLINE)"
+                                didPlayerWin -> StampResultType.WON to "YOU'VE WON!"
+                                isRunner -> StampResultType.RUNNER to "RUNNER!"
+                                isDraw -> StampResultType.DRAW to "DRAW!"
+                                else -> StampResultType.LOST to "${displayedBoard.completedLinesCount}/${displayedBoard.targetLines} LINES"
+                            }
                         } else {
-                            StampResultType.LOST
+                            val isSelectedDisconnected = disconnectedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, selectedReviewPlayerId) }
+                            val isWinnerSelected = !isSelectedDisconnected && com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(selectedReviewPlayerId, winnerPlayerId)
+                            val reviewPlayer = players.firstOrNull {
+                                com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it.id, selectedReviewPlayerId)
+                            }
+                            val reviewName = reviewPlayer?.displayName?.takeIf { it.isNotBlank() } ?: reviewPlayer?.username ?: "Player"
+                            when {
+                                isWinnerSelected -> StampResultType.WON to "$reviewName WON!"
+                                !isSelectedDisconnected && displayedBoard.isBingo -> StampResultType.RUNNER to "RUNNER!"
+                                isSelectedDisconnected -> StampResultType.LOST to "${displayedBoard.completedLinesCount}/${displayedBoard.targetLines} LINES (OFFLINE)"
+                                else -> StampResultType.LOST to "${displayedBoard.completedLinesCount}/${displayedBoard.targetLines} LINES"
+                            }
                         }
                         VictoryStampBadge(
                             resultType = stampType,
+                            customText = stampText,
                             animateStampDrop = animateStampDrop
+                        )
+                    } else if (!isGameOver) {
+                        // Dynamic humorous / informative turn status message
+                        val isYou = activePlayerName.equals("You", ignoreCase = true)
+                        val statusMessage = when {
+                            isYou -> when {
+                                turnTimeRemaining > 20 -> "You are choosing$animatedDots"
+                                turnTimeRemaining in 11..20 -> "You are cooking something..."
+                                else -> "let's have some coffee, you are sleeping I think..."
+                            }
+                            else -> when {
+                                turnTimeRemaining > 20 -> "$activePlayerName is choosing$animatedDots"
+                                turnTimeRemaining in 11..20 -> "$activePlayerName is cooking something..."
+                                else -> "let's have some coffee, $activePlayerName is sleeping I think..."
+                            }
+                        }
+                        Text(
+                            text = statusMessage,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = tokens.cellNeutralText.copy(alpha = 0.85f),
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 2.dp)
                         )
                     }
                 }
@@ -898,16 +1022,20 @@ fun GameScreen(
                 // Item 4: 5x5 Bingo Board with B-I-N-G-O letters atop columns & diagonal strikes
                 val isWinningBoard = isGameOver && displayedBoard.isBingo
 
-
-                BingoBoardView(
-                    board = displayedBoard,
-                    isInteractive = isMyTurn && !isGameOver && !isGamePaused,
-                    onCellClicked = onCellPicked,
-                    isWinningBoard = isWinningBoard,
-                    onBoardWidthMeasured = { measuredWidth ->
-                        boardWidthDp = measuredWidth
-                    }
-                )
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    BingoBoardView(
+                        board = displayedBoard,
+                        isInteractive = isMyTurn && !isGameOver && !isGamePaused,
+                        onCellClicked = onCellPicked,
+                        isWinningBoard = isWinningBoard,
+                        onBoardWidthMeasured = { measuredWidth ->
+                            boardWidthDp = measuredWidth
+                        }
+                    )
+                }
 
                 // Breathing room: slightly keep the messages and the board a bit far
                 Spacer(modifier = Modifier.height(14.dp))

@@ -24,7 +24,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.text.font.FontWeight
@@ -46,6 +49,7 @@ fun BingoBoardView(
     onCellClicked: (Int) -> Unit,
     modifier: Modifier = Modifier,
     isWinningBoard: Boolean = false,
+    turnGlowIntensity: Float = 0f,
     onBoardWidthMeasured: ((Dp) -> Unit)? = null
 ) {
     val tokens = BingoTheme.colors

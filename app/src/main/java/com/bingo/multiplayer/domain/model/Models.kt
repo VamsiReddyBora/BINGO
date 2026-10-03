@@ -191,6 +191,7 @@ data class InGameChatMessage(
     val text: String,
     val isSelf: Boolean = true,
     val senderName: String? = null,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val isSystemMessage: Boolean = false
 )
 

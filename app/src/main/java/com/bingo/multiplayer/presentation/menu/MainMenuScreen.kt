@@ -3,6 +3,8 @@ package com.bingo.multiplayer.presentation.menu
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.isActive
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -38,6 +40,7 @@ import com.bingo.multiplayer.core.designsystem.ThemePreferences
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -65,6 +68,10 @@ import com.bingo.multiplayer.domain.model.UserProfile
 import com.bingo.multiplayer.domain.repository.AuthRepository
 import com.bingo.multiplayer.presentation.common.PlayerAvatar
 
+import androidx.compose.foundation.layout.PaddingValues
+import com.bingo.multiplayer.domain.network.OngoingMatchData
+import com.bingo.multiplayer.domain.network.OngoingMatchStore
+
 /**
  * Very minimal, compact Main Menu Screen.
  * The bulky "Verified Google Account" banner has been removed.
@@ -73,11 +80,14 @@ import com.bingo.multiplayer.presentation.common.PlayerAvatar
 @Composable
 fun MainMenuScreen(
     authRepository: AuthRepository,
+    friendsRepository: com.bingo.multiplayer.domain.repository.FriendsRepository? = null,
     onNavigateToSettings: () -> Unit,
     onNavigateToDashboard: () -> Unit = {},
     onPlayAi: (difficulty: AiDifficulty) -> Unit,
     onPlayOnline: () -> Unit,
-    onPlayNearbyNetwork: () -> Unit
+    onPlayNearbyNetwork: () -> Unit,
+    onOpenDeveloperNote: () -> Unit = {},
+    onRejoinMatch: ((OngoingMatchData) -> Unit)? = null
 ) {
     val tokens = BingoTheme.colors
     val context = LocalContext.current
@@ -88,6 +98,49 @@ fun MainMenuScreen(
     )
 
     var selectedAiDifficulty by remember { mutableStateOf(AiDifficulty.EASY) }
+    var ongoingMatch by remember { mutableStateOf(OngoingMatchStore.getOngoingMatch(context)) }
+
+    LaunchedEffect(Unit) {
+        ongoingMatch = OngoingMatchStore.getOngoingMatch(context)
+    }
+
+    // Proactive background down-moment pre-fetching:
+    // Seamlessly load friends, requests, and cloud presence while user is on homescreen
+    LaunchedEffect(userProfile.username) {
+        val cleanUser = userProfile.username.trim().lowercase().removePrefix("@")
+        if (cleanUser.isNotBlank() && cleanUser != "guest") {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    val repo = friendsRepository ?: com.bingo.multiplayer.domain.repository.FriendsRepository.activeInstance
+                    repo?.syncFriendsAndRequests(cleanUser)
+                    val friendUsernames = repo?.friends?.value?.map { it.username }?.filter { it.isNotBlank() } ?: emptyList()
+                    if (friendUsernames.isNotEmpty()) {
+                        com.bingo.multiplayer.domain.network.PresenceManager.fetchCloudPresenceForUsers(friendUsernames)
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    LaunchedEffect(ongoingMatch?.roomCode) {
+        val ongoing = ongoingMatch ?: return@LaunchedEffect
+        while (true) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    val session = com.bingo.multiplayer.domain.network.OnlineRoomRegistry.getRoom(ongoing.roomCode)
+                    val now = System.currentTimeMillis()
+                    // Only clear if the room was successfully queried AND is confirmed closed or dead
+                    if (session != null && (session.status == "CLOSED" || (now - session.lastHeartbeat) > 60_000L || session.players.isEmpty())) {
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            OngoingMatchStore.clearOngoingMatch(context)
+                            ongoingMatch = null
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+            kotlinx.coroutines.delay(5000L)
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -159,6 +212,100 @@ fun MainMenuScreen(
 
             Spacer(modifier = Modifier.height(18.dp))
 
+            // ── Ongoing Match Card (Rejoin) ──
+            if (ongoingMatch != null) {
+                val ongoing = ongoingMatch!!
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = if (tokens.isDark) Color(0xFF1E242B) else Color(0xFFEFF6FF),
+                    border = BorderStroke(1.dp, if (tokens.isDark) Color(0xFF2563EB).copy(alpha = 0.6f) else Color(0xFF93C5FD)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 14.dp)
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        // Top Section: Match In Progress status & Room Code
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .background(Color(0xFF10B981), CircleShape)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "MATCH IN PROGRESS",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 0.5.sp,
+                                    color = Color(0xFF10B981)
+                                )
+                            }
+                            Text(
+                                text = "Room ${ongoing.roomCode}",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = tokens.textPrimary
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Bottom Section: Dismiss and Rejoin buttons side by side
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    OngoingMatchStore.clearOngoingMatch(context)
+                                    ongoingMatch = null
+                                },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(40.dp),
+                                shape = RoundedCornerShape(10.dp),
+                                border = BorderStroke(1.dp, if (tokens.isDark) Color(0xFF475569) else Color(0xFFCBD5E1)),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = "Dismiss",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = tokens.textSecondary
+                                )
+                            }
+
+                            Button(
+                                onClick = {
+                                    onRejoinMatch?.invoke(ongoing)
+                                },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(40.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF2563EB),
+                                    contentColor = Color.White
+                                ),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = "Rejoin",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             // ── Section Header ──
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -203,6 +350,29 @@ fun MainMenuScreen(
                 accentColor = if (tokens.isDark) Color.White else tokens.accentOrange,
                 onClick = onPlayNearbyNetwork
             )
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Developer Note Pill Button
+            Surface(
+                onClick = onOpenDeveloperNote,
+                shape = RoundedCornerShape(50),
+                color = if (tokens.isDark) Color(0xFF18181B) else Color(0xFFF1F5F9),
+                border = BorderStroke(1.dp, tokens.surfaceBorder)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = "developer note ☕",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = tokens.cellNeutralText
+                    )
+                }
+            }
 
             Spacer(modifier = Modifier.height(84.dp))
         }

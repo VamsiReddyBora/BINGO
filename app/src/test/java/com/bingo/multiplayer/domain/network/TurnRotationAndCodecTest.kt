@@ -771,4 +771,62 @@ class TurnRotationAndCodecTest {
         assertEquals(1234567890L, decodedPlayAgainFromMicro.seed)
         assertFalse(decodedPlayAgainFromMicro.isManualBoard)
     }
+
+    @Test
+    fun testFastPacketCodecWithPickedByHistoryAndBoardHash() {
+        val original = RoomMessagePacket(
+            type = "PICK_NUMBER",
+            number = 24,
+            playerId = "player_1",
+            turnNumber = 4,
+            currentTurnPlayerId = "player_2",
+            pickedHistory = listOf(10, 15, 20, 24),
+            pickedByHistory = listOf("player_1", "player_2", "player_3", "player_1"),
+            boardHash = 8877665544332211L,
+            seed = 123456789L,
+            senderInstanceId = "inst_abc"
+        )
+
+        val encoded = FastPacketCodec.encode(original)
+        assertTrue("Encoded payload should start with P|", encoded.startsWith("P|"))
+
+        val decoded = FastPacketCodec.decode(encoded)
+        assertEquals("PICK_NUMBER", decoded.type)
+        assertEquals(24, decoded.number)
+        assertEquals("player_1", decoded.playerId)
+        assertEquals(4, decoded.turnNumber)
+        assertEquals("player_2", decoded.currentTurnPlayerId)
+        assertEquals(listOf(10, 15, 20, 24), decoded.pickedHistory)
+        assertEquals(listOf("player_1", "player_2", "player_3", "player_1"), decoded.pickedByHistory)
+        assertEquals(8877665544332211L, decoded.boardHash)
+        assertEquals(123456789L, decoded.seed)
+        assertEquals("inst_abc", decoded.senderInstanceId)
+    }
+
+    @Test
+    fun testComputeBoardHashDeterministicAndDetectsDiscrepancy() {
+        val engine = BingoEngine()
+        val boardA = engine.generateBoard(5, seed = 42L)
+        val boardB = engine.generateBoard(5, seed = 42L)
+        val boardC = engine.generateBoard(5, seed = 99L)
+
+        // Same seeds start with identical hashes
+        val hashA = engine.computeBoardHash(boardA)
+        val hashB = engine.computeBoardHash(boardB)
+        assertEquals("Identical generated boards must yield identical board hash", hashA, hashB)
+
+        // Different seed yields different hash
+        val hashC = engine.computeBoardHash(boardC)
+        assertNotEquals("Different seed boards must yield different hashes", hashA, hashC)
+
+        // Marking a cell on Board A changes its hash
+        val markedA = engine.markCell(boardA, number = boardA.cells.first().number, pickedByPlayerId = "p1", isOwnPick = true, turnNumber = 1)
+        val hashMarkedA = engine.computeBoardHash(markedA)
+        assertNotEquals("Marking cell must change board hash", hashA, hashMarkedA)
+
+        // Marking same cell on Board B produces identical hash
+        val markedB = engine.markCell(boardB, number = boardB.cells.first().number, pickedByPlayerId = "p1", isOwnPick = true, turnNumber = 1)
+        val hashMarkedB = engine.computeBoardHash(markedB)
+        assertEquals("Identical marks must yield identical hash", hashMarkedA, hashMarkedB)
+    }
 }

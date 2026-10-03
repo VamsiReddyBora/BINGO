@@ -567,8 +567,13 @@ private fun SingleFloatingEmoteBubble(
                     shadowElevation = 3.dp,
                     modifier = Modifier.wrapContentSize()
                 ) {
+                    val displayText = if (item.emoji.startsWith("💬") || item.emoji.startsWith("📢") || item.emoji.startsWith("🟢") || item.emoji.startsWith("👑") || item.emoji == "Your turn") {
+                        item.emoji
+                    } else {
+                        "💬 ${item.emoji}"
+                    }
                     Text(
-                        text = "💬 ${item.emoji}",
+                        text = displayText,
                         fontSize = 12.5.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = tokens.cellNeutralText,

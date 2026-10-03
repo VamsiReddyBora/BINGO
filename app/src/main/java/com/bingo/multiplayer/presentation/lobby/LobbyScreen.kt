@@ -18,6 +18,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -76,7 +77,13 @@ fun LobbyScreen(
     onExpireLobby: () -> Unit = {},
     isManualBoard: Boolean = false,
     onManualBoardChange: ((Boolean) -> Unit)? = null,
+    isDynamicBoard: Boolean = false,
+    onDynamicBoardChange: ((Boolean) -> Unit)? = null,
+    selectedDynamicGridSize: Int = 5,
+    onDynamicGridSizeChange: ((Int) -> Unit)? = null,
     isNearbyNetwork: Boolean = false,
+    hasActiveMatch: Boolean = false,
+    onRejoinMatch: () -> Unit = {},
     onStartGame: () -> Unit,
     onBack: () -> Unit
 ) {
@@ -88,8 +95,13 @@ fun LobbyScreen(
     val localUid = currentUserId.ifBlank { currentUser?.uid ?: "" }
 
     val myPlayer = players.find {
-        (localUid.isNotBlank() && it.id == localUid) ||
-        (currentUser?.username?.isNotBlank() == true && (it.username.equals(currentUser.username, ignoreCase = true) || it.displayName.equals(currentUser.username, ignoreCase = true)))
+        LobbyLifecycleEngine.isPlayerMe(
+            p = it,
+            myUid = localUid,
+            myUsername = currentUser?.username ?: "",
+            myDisplayName = currentUser?.displayName ?: "",
+            isHost = isHost
+        )
     } ?: if (!isHost) players.firstOrNull { !it.isHost } else players.firstOrNull { it.isHost }
 
     var isMyReadyState by remember { mutableStateOf(myPlayer?.lobbyReadyStatus == LobbyLifecycleEngine.STATUS_READY) }
@@ -192,8 +204,8 @@ fun LobbyScreen(
         }
     }
 
-    // Sizing Formula: 2 players = 5x5, 3 players = 6x6, 4 players = 7x7, 5+ players = 8x8
-    val boardSize = (3 + players.size.coerceAtLeast(2)).coerceAtMost(8)
+    // Sizing Formula: Dynamic board (if checked) scales 5x5 (2p), 6x6 (3p), 7x7 (4p), 8x8 (5+p) or selected size. If unchecked, static 5x5.
+    val boardSize = LobbyLifecycleEngine.resolveBoardSize(isDynamicBoard, selectedDynamicGridSize, players.size)
 
     val infiniteTransition = rememberInfiniteTransition(label = "refreshAnim")
     val rotationAngle by infiniteTransition.animateFloat(
@@ -277,7 +289,59 @@ fun LobbyScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(18.dp))
+            if (hasActiveMatch) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = if (tokens.isDark) Color(0xFF1E242B) else Color(0xFFEFF6FF),
+                    border = BorderStroke(1.5.dp, if (tokens.isDark) Color(0xFF2563EB) else Color(0xFF3B82F6)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 14.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .background(Color(0xFF10B981), CircleShape)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "MATCH IN PROGRESS",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 0.5.sp,
+                                    color = Color(0xFF10B981)
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Your game is running! Tap to return.",
+                                fontSize = 12.sp,
+                                color = tokens.cellNeutralText
+                            )
+                        }
+                        Button(
+                            onClick = onRejoinMatch,
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (tokens.isDark) Color(0xFF2563EB) else Color(0xFF1D4ED8),
+                                contentColor = Color.White
+                            ),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                        ) {
+                            Text("Rejoin ➔", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+                    }
+                }
+            }
 
             // ── Room Code Card ──
             Surface(
@@ -460,7 +524,13 @@ fun LobbyScreen(
                                 .padding(vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            val isMe = (localUid.isNotBlank() && player.id == localUid) || (currentUser?.username?.isNotBlank() == true && (player.username.equals(currentUser.username, ignoreCase = true) || player.displayName.equals(currentUser.username, ignoreCase = true)))
+                            val isMe = LobbyLifecycleEngine.isPlayerMe(
+                                p = player,
+                                myUid = localUid,
+                                myUsername = currentUser?.username ?: "",
+                                myDisplayName = currentUser?.displayName ?: "",
+                                isHost = isHost
+                            )
 
                             @OptIn(ExperimentalFoundationApi::class)
                             Row(
@@ -1154,8 +1224,13 @@ fun LobbyScreen(
 
             // ── Action Buttons ──
             val effectivePlayers = players.map { p ->
-                val isThisLocal = (localUid.isNotBlank() && p.id == localUid) ||
-                                  (currentUser?.username?.isNotBlank() == true && (p.username.equals(currentUser.username, ignoreCase = true) || p.displayName.equals(currentUser.username, ignoreCase = true)))
+                val isThisLocal = LobbyLifecycleEngine.isPlayerMe(
+                    p = p,
+                    myUid = localUid,
+                    myUsername = currentUser?.username ?: "",
+                    myDisplayName = currentUser?.displayName ?: "",
+                    isHost = isHost
+                )
                 if (isThisLocal) {
                     p.copy(lobbyReadyStatus = if (isMyReadyState) LobbyLifecycleEngine.STATUS_READY else LobbyLifecycleEngine.STATUS_NOT_READY)
                 } else {
@@ -1166,6 +1241,76 @@ fun LobbyScreen(
             val readyCount = LobbyLifecycleEngine.countReadyPlayers(effectivePlayers)
 
             if (isHost) {
+                // Dynamic board option
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(tokens.surface)
+                        .padding(horizontal = 14.dp, vertical = 8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onDynamicBoardChange?.invoke(!isDynamicBoard) },
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "Dynamic board",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = tokens.cellNeutralText
+                        )
+                        Checkbox(
+                            checked = isDynamicBoard,
+                            onCheckedChange = null,
+                            colors = CheckboxDefaults.colors(
+                                checkedColor = if (tokens.isDark) Color.White else tokens.accentBrand,
+                                uncheckedColor = tokens.surfaceBorder,
+                                checkmarkColor = if (tokens.isDark) Color.Black else Color.White
+                            )
+                        )
+                    }
+
+                    if (isDynamicBoard) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Select Grid Size (${selectedDynamicGridSize}×${selectedDynamicGridSize})",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = tokens.textMuted
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            (5..10).forEach { size ->
+                                val isSelected = (size == selectedDynamicGridSize)
+                                Surface(
+                                    onClick = { onDynamicGridSizeChange?.invoke(size) },
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (isSelected) tokens.accentBrand else tokens.backgroundSecondary,
+                                    border = if (isSelected) null else BorderStroke(0.5.dp, tokens.surfaceBorder)
+                                ) {
+                                    Text(
+                                        text = "${size}×${size}",
+                                        fontSize = 12.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isSelected) (if (tokens.isDark) Color.Black else Color.White) else tokens.cellNeutralText,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Manual designed board option
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1233,6 +1378,36 @@ fun LobbyScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
+                    if (isDynamicBoard) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = tokens.accentBrand.copy(alpha = 0.12f),
+                            border = BorderStroke(1.dp, tokens.accentBrand.copy(alpha = 0.3f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AutoAwesome,
+                                    contentDescription = null,
+                                    tint = tokens.accentBrand,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Dynamic Board enabled by Host (${boardSize}×${boardSize})",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = tokens.accentBrand
+                                )
+                            }
+                        }
+                    }
+
                     if (isManualBoard) {
                         Surface(
                             shape = RoundedCornerShape(10.dp),

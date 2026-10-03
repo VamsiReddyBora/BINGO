@@ -50,6 +50,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.bingo.multiplayer.core.designsystem.BingoTheme
+import com.bingo.multiplayer.core.notification.BingoNotificationHelper
+import com.bingo.multiplayer.core.notification.NotificationAction
+import com.bingo.multiplayer.core.notification.NotificationActionBus
 import com.bingo.multiplayer.domain.engine.ManualBoardEngine
 import com.bingo.multiplayer.presentation.manual.ManualBoardDesignScreen
 import kotlinx.coroutines.delay
@@ -70,6 +73,7 @@ sealed class Screen(val route: String) {
     data object NearbyChoice : Screen("nearby_choice")
     data object NearbyLobby : Screen("nearby_lobby")
     data object ManualBoardDesign : Screen("manual_board_design")
+    data object DeveloperNote : Screen("developer_note")
 }
 
 @Composable
@@ -82,11 +86,24 @@ fun RootNavGraph(
     val engine = remember { BingoEngine() }
     val aiPlayer = remember { BingoAiPlayer() }
     val onlineRoomSync = remember { OnlineRoomSyncManager() }
+    var roomCode by remember { mutableStateOf("") }
+    var isHosting by remember { mutableStateOf(false) }
     val lanP2pSync = remember { com.bingo.multiplayer.domain.network.LanP2pSessionManager() }
     var isUsingP2p by remember { androidx.compose.runtime.mutableStateOf(false) }
     val lanDiscovery = remember { LanDiscoveryManager(context) }
+    var isManualBoard by remember { mutableStateOf(false) }
+    var isDynamicBoard by remember { mutableStateOf(false) }
+    var selectedDynamicGridSize by remember { mutableIntStateOf(5) }
+    var isHostLeftGame by remember { mutableStateOf(false) }
     val broadcastPacket: (RoomMessagePacket) -> Unit = { packet -> if (isUsingP2p) lanP2pSync.broadcastPacket(packet) else onlineRoomSync.broadcastPacket(packet) }
-    val disconnectRoom: () -> Unit = { if (isUsingP2p) lanP2pSync.disconnect() else onlineRoomSync.disconnect() }
+    val disconnectRoom: () -> Unit = { 
+        if (isUsingP2p) lanP2pSync.disconnect() else onlineRoomSync.disconnect()
+        isManualBoard = false
+        isDynamicBoard = false
+        selectedDynamicGridSize = 5
+        roomCode = ""
+        isHostLeftGame = false
+    }
     val coroutineScope = rememberCoroutineScope()
 
     val onlineRealTimePlayers by onlineRoomSync.players.collectAsState()
@@ -113,8 +130,9 @@ fun RootNavGraph(
     var isGameOver by remember { mutableStateOf(false) }
     var didPlayerWin by remember { mutableStateOf(false) }
     var isDrawMatch by remember { mutableStateOf(false) }
+    var isRunnerMatch by remember { mutableStateOf(false) }
+    var winnerPlayerId by remember { mutableStateOf("") }
     var currentMatchSeed by remember { androidx.compose.runtime.mutableLongStateOf(0L) }
-    var isManualBoard by remember { mutableStateOf(false) }
     var isLocalBoardReady by remember { mutableStateOf(false) }
     var isOpponentBoardReady by remember { mutableStateOf(false) }
     var countdownSeconds by remember { mutableIntStateOf(-1) }
@@ -123,18 +141,20 @@ fun RootNavGraph(
     var latestIncomingEmoteScale by remember { mutableFloatStateOf(1.0f) }
     var latestIncomingEmoteTimestamp by remember { androidx.compose.runtime.mutableLongStateOf(0L) }
     var latestIncomingChatMessage by remember { mutableStateOf<InGameChatMessage?>(null) }
+    var matchChatHistory by remember { mutableStateOf<List<InGameChatMessage>>(emptyList()) }
     var opponentPlayerId by remember { mutableStateOf("") }
     var matchParticipants by remember { mutableStateOf<List<Player>>(emptyList()) }
+    var randomizedTurnOrder by remember { mutableStateOf<List<Player>>(emptyList()) }
+    val disconnectedPlayerIds = remember { mutableStateListOf<String>() }
     var isStartingCountdown by remember { mutableStateOf(false) }
 
     // History and Turn Authority (reconciles network packets and prevents stalls)
     val pickedNumbersHistory = remember { mutableStateListOf<Int>() }
+    val pickedByPlayerHistory = remember { mutableStateListOf<String>() }
     var currentTurnPlayerId by remember { mutableStateOf("") }
     var isProcessingTurn by remember { mutableStateOf(false) }
 
     // Online match state
-    var roomCode by remember { mutableStateOf("") }
-    var isHosting by remember { mutableStateOf(false) }
     var wantsToPlayAgainPlayerName by remember { mutableStateOf<String?>(null) }
     var opponentDisconnectMessage by remember { mutableStateOf<String?>(null) }
     var opponentSurrenderMessage by remember { mutableStateOf<String?>(null) }
@@ -160,10 +180,124 @@ fun RootNavGraph(
         return user?.avatarBase64?.takeIf { it.isNotBlank() } ?: user?.avatarUrl
     }
 
+    var lastForegroundResumeTimestamp by remember { androidx.compose.runtime.mutableLongStateOf(System.currentTimeMillis()) }
+
+    fun isPlayerDisconnected(playerId: String): Boolean {
+        if (playerId.isBlank()) return false
+        return disconnectedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, playerId) }
+    }
+
+    fun markPlayerDisconnected(playerId: String) {
+        if (playerId.isBlank()) return
+        if (!isPlayerDisconnected(playerId)) {
+            disconnectedPlayerIds.add(playerId)
+        }
+    }
+
+    fun markPlayerReconnected(playerId: String): Boolean {
+        if (playerId.isBlank()) return false
+        val toRemove = disconnectedPlayerIds.filter { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, playerId) }
+        if (toRemove.isNotEmpty()) {
+            disconnectedPlayerIds.removeAll(toRemove.toSet())
+            return true
+        }
+        return false
+    }
+
+    fun broadcastSystemChatMessage(text: String) {
+        val sysMsg = InGameChatMessage(
+            id = System.currentTimeMillis() + (0..1000).random(),
+            text = text,
+            isSelf = false,
+            senderName = null,
+            timestamp = System.currentTimeMillis(),
+            isSystemMessage = true
+        )
+        latestIncomingChatMessage = sysMsg
+        matchChatHistory = matchChatHistory + sysMsg
+        if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
+            broadcastPacket(
+                RoomMessagePacket(
+                    type = "CHAT_MESSAGE",
+                    playerId = getLocalUid(),
+                    displayName = text,
+                    username = "SYSTEM",
+                    timestamp = System.currentTimeMillis()
+                )
+            )
+        }
+    }
+
+    fun isPlayerMe(p: Player): Boolean {
+        val user = (authRepository.authState.value as? AuthState.Authenticated)?.user
+        return com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerMe(
+            p = p,
+            myUid = getLocalUid(),
+            myUsername = user?.username ?: "",
+            myDisplayName = getPlayerDisplayName(),
+            isHost = isHosting
+        )
+    }
+
+    fun isPlayerMe(playerId: String): Boolean {
+        if (playerId.isBlank()) return false
+        val myUid = getLocalUid()
+        if (com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(playerId, myUid)) return true
+        val user = (authRepository.authState.value as? AuthState.Authenticated)?.user
+        val myUser = user?.username ?: ""
+        if (myUser.isNotBlank() && com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(playerId, myUser)) return true
+        val myDisplay = getPlayerDisplayName()
+        if (myDisplay.isNotBlank() && playerId.equals(myDisplay, ignoreCase = true) && isHosting) return true
+        return false
+    }
+
     var incomingInvite by remember { mutableStateOf<com.bingo.multiplayer.domain.network.GameInvite?>(null) }
     var showLeaveMatchDialog by remember { mutableStateOf(false) }
     val authStateValue by authRepository.authState.collectAsState()
     val currentAuthUser = (authStateValue as? AuthState.Authenticated)?.user
+
+    val pendingNotificationAction by NotificationActionBus.pendingAction.collectAsState()
+
+    // Friend Online Notification Watcher
+    val friendsList by friendsRepository.friends.collectAsState()
+    val presenceMap by com.bingo.multiplayer.domain.network.PresenceManager.presenceFlow.collectAsState()
+    val previouslyOnlineFriends = remember { mutableSetOf<String>() }
+    var isInitialPresenceSnapshot by remember { mutableStateOf(true) }
+
+    LaunchedEffect(currentAuthUser?.username, presenceMap, friendsList) {
+        val myU = currentAuthUser?.username?.trim()?.lowercase()?.removePrefix("@")
+        if (myU.isNullOrBlank()) return@LaunchedEffect
+
+        val friendUsernames = friendsList
+            .map { it.username.trim().lowercase().removePrefix("@") }
+            .filter { it.isNotBlank() && it != myU }
+            .toSet()
+
+        val currentlyOnlineFriendUsernames = friendUsernames.filter { friendU ->
+            val pres = presenceMap[friendU]
+            pres != null && pres.isOnline
+        }.toSet()
+
+        if (isInitialPresenceSnapshot) {
+            previouslyOnlineFriends.addAll(currentlyOnlineFriendUsernames)
+            isInitialPresenceSnapshot = false
+        } else {
+            val newlyOnline = currentlyOnlineFriendUsernames - previouslyOnlineFriends
+            newlyOnline.forEach { friendU ->
+                val friendObj = friendsList.firstOrNull {
+                    it.username.trim().lowercase().removePrefix("@") == friendU
+                }
+                val displayName = friendObj?.displayName?.ifBlank { "@$friendU" } ?: "@$friendU"
+                com.bingo.multiplayer.core.notification.BingoNotificationDaemon.triggerFriendOnlineAlert(
+                    context = context,
+                    friendUsername = friendU,
+                    displayName = displayName
+                )
+            }
+            previouslyOnlineFriends.clear()
+            previouslyOnlineFriends.addAll(currentlyOnlineFriendUsernames)
+        }
+    }
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
@@ -217,6 +351,21 @@ fun RootNavGraph(
             lanDiscovery.stopDiscovering()
             isHosting = false
         } else if (currentRoute == Screen.Game.route) {
+            if (isHosting && currentGameMode == GameMode.ONLINE_ROOM && roomCode.isNotBlank()) {
+                broadcastPacket(
+                    RoomMessagePacket(
+                        type = "HOST_LEFT",
+                        playerId = getLocalUid(),
+                        displayName = getPlayerDisplayName(),
+                        username = currentAuthUser?.username ?: "",
+                        isHost = true
+                    )
+                )
+                coroutineScope.launch {
+                    com.bingo.multiplayer.domain.network.OnlineRoomRegistry.closeRoom(roomCode)
+                }
+            }
+            com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
             disconnectRoom()
             lanDiscovery.stopBroadcasting()
             lanDiscovery.stopDiscovering()
@@ -237,6 +386,7 @@ fun RootNavGraph(
             val inviteListener = com.bingo.multiplayer.domain.network.GameInviteManager.startInviteListener(username) { invite ->
                 if (roomCode != invite.roomCode) {
                     incomingInvite = invite
+                    BingoNotificationHelper.showGameInviteNotification(context, invite, username)
                 }
             }
             val requestListener = friendsRepository.startListeningForRequests(
@@ -253,9 +403,9 @@ fun RootNavGraph(
                     }
                 }
             )
-            // Start presence — managed by AppLifecycleObserver (ProcessLifecycleOwner)
-            // for foreground/background transitions. DO NOT stop on screen transitions.
+            // Start presence and presence watcher for real-time friend status
             com.bingo.multiplayer.domain.network.PresenceManager.startPresence(username)
+            com.bingo.multiplayer.domain.network.PresenceManager.startPresenceWatcher()
 
             onDispose {
                 inviteListener.close()
@@ -263,6 +413,65 @@ fun RootNavGraph(
                 // NOTE: Do NOT call PresenceManager.stopPresence() here!
                 // Presence is managed by AppLifecycleObserver (app foreground/background).
                 // stopPresence() is only called on actual sign-out.
+            }
+        }
+    }
+
+    // Observe App Foreground/Background transitions to handle match resume and prevent false disconnects
+    LaunchedEffect(Unit) {
+        com.bingo.multiplayer.domain.network.AppLifecycleObserver.isAppInForeground.collect { isInForeground ->
+            if (isInForeground) {
+                val now = System.currentTimeMillis()
+                lastForegroundResumeTimestamp = now
+                val currentDest = navController.currentDestination?.route
+                val isInGame = currentDest == Screen.Game.route || currentDest == Screen.ManualBoardDesign.route
+                if (isInGame && !isGameOver && (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK)) {
+                    // 1. Reconnect MQTT if needed and refresh sync
+                    onlineRoomSync.onForegroundResume()
+                    // 2. Clear stale disconnect records accumulated while local device was asleep
+                    disconnectedPlayerIds.clear()
+                    // 3. Refresh heartbeat timestamps on local side for all active participants
+                    val activeIds = (matchParticipants.ifEmpty { realTimePlayers }).map { it.id }.filter { it.isNotBlank() }
+                    onlineRoomSync.resetInGameHeartbeats(activeIds)
+                    lanP2pSync.resetInGameHeartbeats(activeIds)
+
+                    val myUid = getLocalUid()
+                    val myName = getPlayerDisplayName()
+                    val user = (authRepository.authState.value as? AuthState.Authenticated)?.user
+
+                    // 4. Announce rejoin and request game sync to catch up on any turns missed while asleep
+                    broadcastPacket(
+                        RoomMessagePacket(
+                            type = "REJOIN_GAME",
+                            playerId = myUid,
+                            displayName = myName,
+                            username = user?.username ?: "",
+                            seed = currentMatchSeed,
+                            boardSize = boardSize,
+                            turnNumber = turnNumber,
+                            currentTurnPlayerId = currentTurnPlayerId,
+                            timestamp = now
+                        )
+                    )
+                    broadcastPacket(
+                        RoomMessagePacket(
+                            type = "SYNC_REQUEST",
+                            playerId = myUid,
+                            seed = currentMatchSeed,
+                            timestamp = now
+                        )
+                    )
+                    val localReconnected = InGameChatMessage(
+                        id = now,
+                        text = "🟢 $myName reconnected",
+                        isSelf = false,
+                        senderName = null,
+                        timestamp = now,
+                        isSystemMessage = true
+                    )
+                    matchChatHistory = matchChatHistory + localReconnected
+                    latestIncomingChatMessage = localReconnected
+                }
             }
         }
     }
@@ -279,6 +488,7 @@ fun RootNavGraph(
                     val validInvite = pendingInvites.firstOrNull { it.roomCode != roomCode }
                     if (validInvite != null && incomingInvite?.roomCode != validInvite.roomCode) {
                         incomingInvite = validInvite
+                        BingoNotificationHelper.showGameInviteNotification(context, validInvite, u)
                     }
                     friendsRepository.syncFriendsAndRequests(u)
                 } catch (_: Exception) {}
@@ -315,6 +525,8 @@ fun RootNavGraph(
                     currentGameMode = GameMode.ONLINE_ROOM
                     isUsingP2p = false
                     isHosting = false
+                    isManualBoard = result.room.isManualBoard
+                    isDynamicBoard = result.room.isDynamicBoard
                     val returnedPlayer = result.room.players.find { it.id == localJoiner.id }
                     val effJoiner = if (returnedPlayer != null) {
                         localJoiner.copy(readyVersion = returnedPlayer.readyVersion)
@@ -416,6 +628,7 @@ fun RootNavGraph(
             matchTitle = matchTitle,
             isDraw = isDraw
         )
+        com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
     }
 
 
@@ -424,14 +637,81 @@ fun RootNavGraph(
         return (1..6).map { chars.random() }.joinToString("")
     }
 
-    // Dynamic Board Sizing Formula: 2 players -> 5x5, 3-4 players -> 6x6, 5-6 players -> 7x7, 7+ players -> 8x8
-    fun calculateBoardSize(playerCount: Int): Int {
-        return when {
-            playerCount <= 2 -> 5
-            playerCount <= 4 -> 6
-            playerCount <= 6 -> 7
-            else -> 8
+    LaunchedEffect(pendingNotificationAction) {
+        val action = pendingNotificationAction ?: return@LaunchedEffect
+        when (action) {
+            is NotificationAction.SendInvite -> {
+                NotificationActionBus.consumeAction()
+                val user = (authRepository.authState.value as? AuthState.Authenticated)?.user
+                    ?: UserProfile(uid = "guest", displayName = "Player")
+                disconnectRoom()
+                roomCode = generateRoomCode()
+                currentGameMode = GameMode.ONLINE_ROOM
+                isUsingP2p = false
+                isHosting = true
+                val localHost = Player(
+                    id = getLocalUid(),
+                    displayName = getPlayerDisplayName(),
+                    username = user.username,
+                    isHost = true,
+                    avatarUrl = getPlayerAvatarUrl(),
+                    gamesPlayed = user.gamesPlayed,
+                    gamesWon = user.gamesWon,
+                    currentStreak = user.currentStreak,
+                    level = user.level,
+                    lastSeenTimestamp = System.currentTimeMillis()
+                )
+                coroutineScope.launch {
+                    com.bingo.multiplayer.domain.network.OnlineRoomRegistry.createRoom(roomCode, localHost, 5)
+                }
+                onlineRoomSync.connectToRoom(roomCode, localHost)
+                val fromUser = user.username.ifBlank { getLocalUid() }
+                val fromName = user.displayName.ifBlank { getPlayerDisplayName() }
+                coroutineScope.launch {
+                    val success = com.bingo.multiplayer.domain.network.GameInviteManager.sendInvite(
+                        targetUsername = action.friendUsername,
+                        invite = com.bingo.multiplayer.domain.network.GameInvite(
+                            fromUsername = fromUser,
+                            fromDisplayName = fromName,
+                            fromAvatarUrl = null,
+                            roomCode = roomCode
+                        )
+                    )
+                    if (success) {
+                        Toast.makeText(context, "Inviting @${action.friendUsername} to room $roomCode...", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "Invite dispatched to @${action.friendUsername}!", Toast.LENGTH_SHORT).show()
+                    }
+                }
+                navController.navigate(Screen.Lobby.route) {
+                    popUpTo(Screen.MainMenu.route) { inclusive = false }
+                    launchSingleTop = true
+                }
+            }
+            is NotificationAction.AcceptInvite -> {
+                NotificationActionBus.consumeAction()
+                incomingInvite = null
+                BingoNotificationHelper.cancelInviteNotification(context, action.roomCode)
+                coroutineScope.launch {
+                    currentAuthUser?.let { u ->
+                        com.bingo.multiplayer.domain.network.GameInviteManager.removeInvite(u.username, action.roomCode)
+                    }
+                }
+                acceptAndJoinRoom(action.roomCode)
+            }
+            is NotificationAction.InviteDeclined -> {
+                NotificationActionBus.consumeAction()
+                if (incomingInvite?.roomCode == action.roomCode) {
+                    incomingInvite = null
+                }
+                BingoNotificationHelper.cancelInviteNotification(context, action.roomCode)
+            }
         }
+    }
+
+    // Dynamic Board Sizing Formula: 5x5 (classic/unchecked), or 5x5 (2p), 6x6 (3p), 7x7 (4p), 8x8 (5+p) or host-selected size
+    fun calculateBoardSize(playerCount: Int): Int {
+        return com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.resolveBoardSize(isDynamicBoard, selectedDynamicGridSize, playerCount)
     }
 
     fun isGroupMatch(): Boolean {
@@ -456,43 +736,110 @@ fun RootNavGraph(
     data class MatchOutcome(
         val isGameOver: Boolean,
         val didPlayerWin: Boolean,
-        val isDraw: Boolean
+        val isDraw: Boolean,
+        val isRunner: Boolean = false,
+        val winnerPlayerId: String = "",
+        val winReason: String = ""
     )
 
-    fun evaluateMatchOutcome(): MatchOutcome {
+    fun evaluateMatchOutcome(activePickerId: String = ""): MatchOutcome {
         val isGroup = isGroupMatch()
         val myUid = getLocalUid()
 
         if (!isGroup) {
-            // STRICT 2-PLAYER OR AI MATCH LOGIC: strictly isolated, 100% stable
-            val pWon = playerBoard.isBingo
-            val oWon = opponentBoard.isBingo
+            // STRICT 2-PLAYER OR AI MATCH LOGIC
+            val pWon = playerBoard.isBingo && !isPlayerDisconnected(myUid)
+            val oWon = opponentBoard.isBingo && !isPlayerDisconnected(opponentPlayerId)
             return when {
-                pWon && oWon -> MatchOutcome(isGameOver = true, didPlayerWin = false, isDraw = true)
-                pWon -> MatchOutcome(isGameOver = true, didPlayerWin = true, isDraw = false)
-                oWon -> MatchOutcome(isGameOver = true, didPlayerWin = false, isDraw = false)
+                pWon && oWon -> {
+                    // Turn-based priority: Whoever picked the winning number on their turn wins!
+                    if (isPlayerMe(activePickerId)) {
+                        MatchOutcome(isGameOver = true, didPlayerWin = true, isDraw = false, isRunner = false, winnerPlayerId = myUid, winReason = "Turn Pick")
+                    } else if (activePickerId.isNotBlank()) {
+                        val otherId = opponentPlayerId.ifBlank { "opponent" }
+                        MatchOutcome(isGameOver = true, didPlayerWin = false, isDraw = false, isRunner = true, winnerPlayerId = otherId, winReason = "Turn Pick")
+                    } else {
+                        MatchOutcome(isGameOver = true, didPlayerWin = true, isDraw = false, isRunner = false, winnerPlayerId = myUid, winReason = "Turn Pick")
+                    }
+                }
+                pWon -> MatchOutcome(isGameOver = true, didPlayerWin = true, isDraw = false, isRunner = false, winnerPlayerId = myUid, winReason = "Bingo")
+                oWon -> {
+                    val otherId = opponentPlayerId.ifBlank { if (currentGameMode == GameMode.AI_EASY || currentGameMode == GameMode.AI_HARD) "ai_bot" else "opponent" }
+                    MatchOutcome(isGameOver = true, didPlayerWin = false, isDraw = false, isRunner = false, winnerPlayerId = otherId, winReason = "Bingo")
+                }
                 else -> MatchOutcome(isGameOver = false, didPlayerWin = false, isDraw = false)
             }
         } else {
             // 3+ PLAYERS GROUP MATCH LOGIC
             val effBoards = if (allPlayerBoards.containsKey(myUid)) allPlayerBoards else (allPlayerBoards + (myUid to playerBoard))
-            val winners = effBoards.filter { it.value.isBingo }.keys
-            if (winners.isEmpty()) {
+            val completedPlayers = effBoards.filter { it.value.isBingo }.keys
+            if (completedPlayers.isEmpty()) {
                 return MatchOutcome(isGameOver = false, didPlayerWin = false, isDraw = false)
             }
-            val myWon = (myUid in winners) || playerBoard.isBingo
-            return if (myWon) {
-                if (winners.size > 1) {
-                    // Two or three players completed 5 lines at a time -> Draw for the winners
-                    MatchOutcome(isGameOver = true, didPlayerWin = false, isDraw = true)
-                } else {
-                    // Exactly one player completed 5 lines first -> Winner
-                    MatchOutcome(isGameOver = true, didPlayerWin = true, isDraw = false)
+
+            val now = System.currentTimeMillis()
+            fun isPlayerActive(playerId: String): Boolean {
+                if (playerId.isBlank()) return false
+                if (isPlayerMe(playerId)) return !isPlayerDisconnected(myUid)
+                if (isPlayerDisconnected(playerId)) return false
+                val lastHb = if (isUsingP2p) lanP2pSync.getLastDirectHeartbeat(playerId) else onlineRoomSync.getLastDirectHeartbeat(playerId)
+                if (lastHb > 0L && (now - lastHb) >= 10_000L) {
+                    markPlayerDisconnected(playerId)
+                    return false
                 }
-            } else {
-                // Local player did not achieve 5 lines -> Lost
-                MatchOutcome(isGameOver = true, didPlayerWin = false, isDraw = false)
+                return true
             }
+
+            val activeCompletedPlayers = completedPlayers.filter { isPlayerActive(it) }
+            if (activeCompletedPlayers.isEmpty()) {
+                // Inactive/disconnected players may have completed BINGO on this pick, but they are NOT active!
+                // Do NOT end the game or declare them winner; active players must continue playing.
+                return MatchOutcome(isGameOver = false, didPlayerWin = false, isDraw = false)
+            }
+
+            // Winner selection among ACTIVE players only:
+            // 1. If activePickerId completed BINGO on their turn, they are the undisputed WINNER
+            val matchingPickerId = activeCompletedPlayers.firstOrNull { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, activePickerId) }
+            val (winnerId, winReason) = if (activePickerId.isNotBlank() && matchingPickerId != null) {
+                matchingPickerId to "Turn Pick"
+            } else if (activeCompletedPlayers.size == 1) {
+                activeCompletedPlayers.first() to "Solo Bingo"
+            } else {
+                // Multiple completed players on someone else's pick!
+                val maxLines = activeCompletedPlayers.maxOf { effBoards[it]?.completedLinesCount ?: 0 }
+                val topCandidates = activeCompletedPlayers.filter { (effBoards[it]?.completedLinesCount ?: 0) == maxLines }
+                if (topCandidates.size == 1) {
+                    topCandidates.first() to "Line Count"
+                } else {
+                    // Tie in lines! Use Turn-Order Priority based on randomized match order
+                    val turnOrderUids = if (randomizedTurnOrder.isNotEmpty()) {
+                        randomizedTurnOrder.map { it.id }
+                    } else {
+                        val parts = if (matchParticipants.isNotEmpty()) matchParticipants else realTimePlayers
+                        parts.map { it.id }
+                    }
+                    val bestByTurn = topCandidates.minByOrNull { candidateId ->
+                        com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.calculateTurnDistance(
+                            turnOrder = turnOrderUids,
+                            fromPlayerId = activePickerId,
+                            toPlayerId = candidateId
+                        )
+                    } ?: topCandidates.first()
+                    bestByTurn to "Turn Priority"
+                }
+            }
+
+            val isLocalWinner = isPlayerMe(winnerId) && !isPlayerDisconnected(myUid)
+            val isLocalRunner = (!isLocalWinner && !isPlayerDisconnected(myUid) && (activeCompletedPlayers.any { isPlayerMe(it) } || (playerBoard.isBingo && !isPlayerDisconnected(myUid))))
+
+            return MatchOutcome(
+                isGameOver = true,
+                didPlayerWin = isLocalWinner,
+                isDraw = false,
+                isRunner = isLocalRunner,
+                winnerPlayerId = winnerId,
+                winReason = winReason
+            )
         }
     }
 
@@ -503,25 +850,15 @@ fun RootNavGraph(
                 if (currentPickerId == "ai_bot") myUid else "ai_bot"
             }
             GameMode.ONLINE_ROOM, GameMode.NEARBY_NETWORK -> {
-                val activePlayers = realTimePlayers.filter { it.id.isNotBlank() }
-                    .distinctBy { it.id }
-                    .sortedWith(compareByDescending<Player> { it.isHost }.thenBy { it.id })
-                if (activePlayers.size > 2) {
-                    val currentIndex = activePlayers.indexOfFirst { it.id == currentPickerId }
-                    val nextIndex = if (currentIndex != -1) {
-                        (currentIndex + 1) % activePlayers.size
-                    } else 0
-                    activePlayers[nextIndex].id
-                } else {
-                    if (currentPickerId == myUid) {
-                        val other = activePlayers.firstOrNull { it.id != myUid }?.id
-                            ?: opponentPlayerId.takeIf { it.isNotBlank() }
-                            ?: "opponent"
-                        other
-                    } else {
-                        myUid
-                    }
-                }
+                val candidatePlayers = (if (matchParticipants.isNotEmpty()) matchParticipants else realTimePlayers)
+                com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.calculateNextTurnPlayerId(
+                    allParticipants = candidatePlayers,
+                    disconnectedPlayerIds = disconnectedPlayerIds.toSet(),
+                    currentPickerId = currentPickerId,
+                    fallbackPlayerId = myUid,
+                    matchSeed = currentMatchSeed,
+                    customTurnOrder = randomizedTurnOrder
+                )
             }
         }
     }
@@ -541,50 +878,100 @@ fun RootNavGraph(
         val baseSeed = hostSeed ?: kotlin.random.Random.nextLong()
         currentMatchSeed = baseSeed
         val myUid = getLocalUid()
-        val activePlayersList = (if (incomingPlayersList.isNotEmpty()) incomingPlayersList else realTimePlayers)
-            .filter { it.id.isNotBlank() }
-            .distinctBy { it.id }
-            .sortedWith(compareByDescending<Player> { it.isHost }.thenBy { it.id })
+        val user = (authRepository.authState.value as? AuthState.Authenticated)?.user
+        val myUsername = user?.username ?: ""
+        val myDisplay = getPlayerDisplayName()
 
         if (mode == GameMode.ONLINE_ROOM || mode == GameMode.NEARBY_NETWORK) {
-            if (activePlayersList.size > 2) {
-                val newBoards = mutableMapOf<String, Board>()
-                activePlayersList.forEachIndexed { index, p ->
-                    val pSeed = baseSeed + index
-                    val b = engine.generateBoard(size, pSeed)
-                    newBoards[p.id] = b
-                }
-                allPlayerBoards = newBoards
-                playerBoard = newBoards[myUid] ?: engine.generateBoard(size, baseSeed)
-                opponentBoard = newBoards.filter { entry -> entry.key != myUid }.values.firstOrNull() ?: engine.generateBoard(size, baseSeed + 1)
-            } else {
-                if (isHosting) {
-                    playerBoard = engine.generateBoard(size, baseSeed)
-                    opponentBoard = engine.generateBoard(size, baseSeed + 1)
-                } else {
-                    playerBoard = engine.generateBoard(size, baseSeed + 1)
-                    opponentBoard = engine.generateBoard(size, baseSeed)
-                }
-                val otherId = activePlayersList.firstOrNull { it.id != myUid }?.id ?: opponentPlayerId.ifBlank { "opponent" }
-                allPlayerBoards = mapOf(
-                    myUid to playerBoard,
-                    otherId to opponentBoard
+            // 1. Gather all participants from incoming packet, cached match participants, or real-time lobby
+            val rawParticipants = (if (incomingPlayersList.isNotEmpty()) incomingPlayersList else matchParticipants.ifEmpty { realTimePlayers })
+                .filter { it.id.isNotBlank() || it.username.isNotBlank() }
+
+            // 2. Ensure local player is always present in the list
+            val myExisting = rawParticipants.find { isPlayerMe(it) }
+            val myPlayerObj = myExisting ?: Player(
+                id = myUid,
+                displayName = myDisplay,
+                username = myUsername,
+                isHost = isHosting
+            )
+
+            val allParticipants = (rawParticipants + myPlayerObj)
+                .distinctBy { it.username.trim().lowercase().removePrefix("@").takeIf { u -> u.isNotBlank() } ?: it.id.trim().lowercase() }
+                .sortedWith(
+                    compareByDescending<Player> { it.isHost }
+                        .thenBy { it.username.trim().lowercase().removePrefix("@").takeIf { u -> u.isNotBlank() } ?: it.id.trim().lowercase() }
                 )
+            matchParticipants = allParticipants
+
+            // 3. Deterministic, collision-free board generation for every participant
+            val newBoards = mutableMapOf<String, Board>()
+            var myBoardGenerated: Board? = null
+
+            allParticipants.forEachIndexed { index, p ->
+                val pSeed = com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.resolvePlayerBoardSeed(baseSeed, p, index)
+                val b = engine.generateBoard(size, pSeed)
+                newBoards[p.id] = b
+                if (isPlayerMe(p)) {
+                    myBoardGenerated = b
+                }
+            }
+
+            // In case local player was not recognized in loop (should never happen), generate unique local board
+            val finalPlayerBoard = myBoardGenerated ?: run {
+                val mySeed = com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.resolvePlayerBoardSeed(baseSeed, myPlayerObj, if (isHosting) 0 else 1)
+                engine.generateBoard(size, mySeed)
+            }
+            playerBoard = finalPlayerBoard
+            newBoards[myUid] = finalPlayerBoard
+            allPlayerBoards = newBoards
+
+            // Opponent board for 2-player or spotlight review fallback
+            val otherPlayer = allParticipants.firstOrNull { !isPlayerMe(it) }
+            opponentBoard = if (otherPlayer != null) {
+                newBoards[otherPlayer.id]
+                    ?: engine.generateBoard(size, com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.resolvePlayerBoardSeed(baseSeed, otherPlayer, 1))
+            } else {
+                engine.generateBoard(size, baseSeed + 99999L)
             }
         } else {
-            playerBoard = engine.generateBoard(size, baseSeed)
-            opponentBoard = engine.generateBoard(size, baseSeed + 1)
+            // SINGLE PLAYER / AI MODE: mathematically distinct seeds
+            val mySeed = baseSeed xor 0x11111111L
+            val aiSeed = baseSeed xor 0x22222222L
+            playerBoard = engine.generateBoard(size, mySeed)
+            opponentBoard = engine.generateBoard(size, aiSeed)
             allPlayerBoards = mapOf(
                 myUid to playerBoard,
                 "ai_bot" to opponentBoard
             )
         }
 
+        disconnectedPlayerIds.clear()
         pickedNumbersHistory.clear()
+        pickedByPlayerHistory.clear()
+        matchChatHistory = emptyList()
         isProcessingTurn = false
+        isGameOver = false
+        didPlayerWin = false
+        isDrawMatch = false
+        isRunnerMatch = false
+        winnerPlayerId = ""
+
+        val activePlayersList = matchParticipants.ifEmpty { realTimePlayers }
+        val generatedOrder = com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.generateDeterministicTurnOrder(
+            activePlayersList,
+            baseSeed
+        )
+        randomizedTurnOrder = generatedOrder
+
+        val allParticipantIds = activePlayersList.map { it.id }.filter { it.isNotBlank() }
+        onlineRoomSync.resetInGameHeartbeats(allParticipantIds)
+        lanP2pSync.resetInGameHeartbeats(allParticipantIds)
 
         val firstTurnUid = if (!firstTurnPlayerId.isNullOrBlank()) {
             firstTurnPlayerId
+        } else if (generatedOrder.isNotEmpty()) {
+            generatedOrder.first().id
         } else if (mode == GameMode.ONLINE_ROOM || mode == GameMode.NEARBY_NETWORK) {
             val candidateUids = activePlayersList.map { it.id }.filter { it.isNotBlank() }.distinct().sorted()
             val effCandidates = if (candidateUids.size >= 2) candidateUids else {
@@ -600,6 +987,30 @@ fun RootNavGraph(
         currentTurnPlayerId = firstTurnUid
         isMyTurn = (currentTurnPlayerId == myUid)
 
+        if (mode == GameMode.ONLINE_ROOM && roomCode.isNotBlank()) {
+            com.bingo.multiplayer.domain.network.OngoingMatchStore.saveOngoingMatch(
+                context = context,
+                matchData = com.bingo.multiplayer.domain.network.OngoingMatchData(
+                    roomCode = roomCode,
+                    matchSeed = currentMatchSeed,
+                    boardSize = boardSize,
+                    isDynamicBoard = isDynamicBoard,
+                    isManualBoard = isManualBoard,
+                    isHost = isHosting,
+                    participants = matchParticipants,
+                    playerBoard = playerBoard,
+                    opponentBoard = opponentBoard,
+                    allPlayerBoards = allPlayerBoards,
+                    pickedNumbers = emptyList(),
+                    pickedByPlayers = emptyList(),
+                    turnNumber = 1,
+                    currentTurnPlayerId = currentTurnPlayerId,
+                    randomizedTurnOrder = generatedOrder,
+                    chatMessages = emptyList()
+                )
+            )
+        }
+
         turnNumber = 1
         turnTimer = 30
         isGamePaused = false
@@ -608,6 +1019,7 @@ fun RootNavGraph(
         isGameOver = false
         didPlayerWin = false
         isDrawMatch = false
+        isHostLeftGame = false
         wantsToPlayAgainPlayerName = null
         opponentDisconnectMessage = null
         opponentSurrenderMessage = null
@@ -624,14 +1036,22 @@ fun RootNavGraph(
         isStartingCountdown = true
         coroutineScope.launch {
             try {
-                val candidateUids = getActiveParticipants().map { it.id }.filter { it.isNotBlank() }.distinct().sorted()
+                val activeList = getActiveParticipants()
+                val generatedOrder = com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.generateDeterministicTurnOrder(
+                    activeList,
+                    currentMatchSeed
+                )
+                randomizedTurnOrder = generatedOrder
+
+                val candidateUids = activeList.map { it.id }.filter { it.isNotBlank() }.distinct().sorted()
                 val myUid = getLocalUid()
                 val effCandidates = if (candidateUids.size >= 2) candidateUids else {
                     val other = opponentPlayerId.takeIf { it.isNotBlank() } ?: "opponent"
                     listOf(myUid, other).distinct().sorted()
                 }
-                val firstTurnUid = ManualBoardEngine.determineRandomFirstTurn(currentMatchSeed, effCandidates)
-                val assignedPlayer = getActiveParticipants().find { it.id == firstTurnUid }
+                val firstTurnUid = generatedOrder.firstOrNull()?.id
+                    ?: ManualBoardEngine.determineRandomFirstTurn(currentMatchSeed, effCandidates)
+                val assignedPlayer = activeList.find { it.id == firstTurnUid }
                 firstTurnPlayerName = if (firstTurnUid == myUid) "You" else (assignedPlayer?.displayName ?: "Opponent")
 
                 for (s in 5 downTo 1) {
@@ -654,6 +1074,10 @@ fun RootNavGraph(
                 latestIncomingEmoteScale = 1.0f
                 latestIncomingEmoteTimestamp = 0L
                 latestIncomingChatMessage = null
+
+                val allParticipantIds = activeList.map { it.id }.filter { it.isNotBlank() }
+                onlineRoomSync.resetInGameHeartbeats(allParticipantIds)
+                lanP2pSync.resetInGameHeartbeats(allParticipantIds)
 
                 navController.navigate(Screen.Game.route) {
                     popUpTo(Screen.ManualBoardDesign.route) { inclusive = true }
@@ -683,6 +1107,7 @@ fun RootNavGraph(
 
             if (!isTimeoutPass) {
                 pickedNumbersHistory.add(number)
+                pickedByPlayerHistory.add(pickerId)
 
                 val updatedPlayer = engine.markCell(
                     board = playerBoard,
@@ -727,7 +1152,7 @@ fun RootNavGraph(
                 )
             }
 
-            val outcome = if (!isTimeoutPass) evaluateMatchOutcome() else MatchOutcome(false, false, false)
+            val outcome = if (!isTimeoutPass) evaluateMatchOutcome(pickerId) else MatchOutcome(false, false, false)
 
             turnNumber += 1
             turnTimer = 30
@@ -739,13 +1164,39 @@ fun RootNavGraph(
             if (outcome.isGameOver) {
                 isDrawMatch = outcome.isDraw
                 didPlayerWin = outcome.didPlayerWin
+                isRunnerMatch = outcome.isRunner
+                winnerPlayerId = outcome.winnerPlayerId
                 recordFinishedMatch(won = outcome.didPlayerWin, isDraw = outcome.isDraw)
+                com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
             } else {
                 isMyTurn = (nextPlayerId == getLocalUid())
+                if (currentGameMode == GameMode.ONLINE_ROOM && roomCode.isNotBlank()) {
+                    com.bingo.multiplayer.domain.network.OngoingMatchStore.updateMatchGameState(
+                        context = context,
+                        playerBoard = playerBoard,
+                        opponentBoard = opponentBoard,
+                        allPlayerBoards = allPlayerBoards,
+                        pickedNumbers = pickedNumbersHistory.toList(),
+                        pickedByPlayers = pickedByPlayerHistory.toList(),
+                        turnNumber = turnNumber,
+                        currentTurnPlayerId = nextPlayerId,
+                        chatMessages = matchChatHistory
+                    )
+                }
             }
 
             // Broadcast to peer with full picked history to guarantee reconciliation
             if (shouldBroadcast && (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK)) {
+                val currentBoardHash = engine.computeBoardHash(playerBoard)
+                val runnerIds = if (outcome.isGameOver) {
+                    if (isGroupMatch()) {
+                        val effBoards = if (allPlayerBoards.containsKey(getLocalUid())) allPlayerBoards else (allPlayerBoards + (getLocalUid() to playerBoard))
+                        effBoards.filter { it.value.isBingo && !com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it.key, outcome.winnerPlayerId) && !isPlayerDisconnected(it.key) }.keys.toList()
+                    } else {
+                        if (outcome.isRunner) listOf(if (outcome.winnerPlayerId == getLocalUid()) (opponentPlayerId.ifBlank { "opponent" }) else getLocalUid()).filter { !isPlayerDisconnected(it) } else emptyList()
+                    }
+                } else emptyList()
+
                 broadcastPacket(
                     RoomMessagePacket(
                         type = if (isTimeoutPass) "TURN_TIMEOUT" else "PICK_NUMBER",
@@ -753,8 +1204,13 @@ fun RootNavGraph(
                         playerId = pickerId,
                         turnNumber = turnNumber,
                         pickedHistory = pickedNumbersHistory.toList(),
+                        pickedByHistory = pickedByPlayerHistory.toList(),
+                        boardHash = currentBoardHash,
                         currentTurnPlayerId = nextPlayerId,
-                        seed = currentMatchSeed
+                        seed = currentMatchSeed,
+                        winnerPlayerId = if (outcome.isGameOver) outcome.winnerPlayerId else "",
+                        winReason = if (outcome.isGameOver) outcome.winReason else "",
+                        runnerPlayerIds = runnerIds
                     )
                 )
                 if (playerBoard.isBingo) {
@@ -765,7 +1221,12 @@ fun RootNavGraph(
                         displayName = getPlayerDisplayName(),
                         turnNumber = turnNumber,
                         seed = currentMatchSeed,
-                        pickedHistory = pickedNumbersHistory.toList()
+                        pickedHistory = pickedNumbersHistory.toList(),
+                        pickedByHistory = pickedByPlayerHistory.toList(),
+                        boardHash = currentBoardHash,
+                        winnerPlayerId = if (outcome.isGameOver) outcome.winnerPlayerId else getLocalUid(),
+                        winReason = if (outcome.isGameOver) outcome.winReason else "Bingo Claimed",
+                        runnerPlayerIds = runnerIds
                     )
                     broadcastPacket(winPacket)
                     coroutineScope.launch {
@@ -798,6 +1259,8 @@ fun RootNavGraph(
                         type = "GAME_SYNC",
                         turnNumber = turnNumber,
                         pickedHistory = pickedNumbersHistory.toList(),
+                        pickedByHistory = pickedByPlayerHistory.toList(),
+                        boardHash = engine.computeBoardHash(playerBoard),
                         currentTurnPlayerId = currentTurnPlayerId,
                         playerId = getLocalUid(),
                         seed = currentMatchSeed,
@@ -843,6 +1306,7 @@ fun RootNavGraph(
                         return
                     }
                     pickedNumbersHistory.clear()
+                    pickedByPlayerHistory.clear()
                     lanDiscovery.stopBroadcasting()
                     lanDiscovery.stopDiscovering()
                     if (currentGameMode == GameMode.ONLINE_ROOM) {
@@ -853,7 +1317,9 @@ fun RootNavGraph(
                     val activeList = (if (packet.players.isNotEmpty()) packet.players else realTimePlayers)
                         .filter { it.id.isNotBlank() }
                         .distinctBy { it.id }
+                        .sortedWith(compareByDescending<Player> { it.isHost }.thenBy { it.id })
                     matchParticipants = activeList
+                    disconnectedPlayerIds.clear()
                     if (packet.isManualBoard) {
                         isManualBoard = true
                         currentMatchSeed = packet.seed
@@ -864,6 +1330,7 @@ fun RootNavGraph(
                         countdownSeconds = -1
                         firstTurnPlayerName = ""
                         pickedNumbersHistory.clear()
+                        pickedByPlayerHistory.clear()
                         isProcessingTurn = false
                         turnNumber = 1
                         currentTurnPlayerId = ""
@@ -927,10 +1394,13 @@ fun RootNavGraph(
                         return
                     }
                     pickedNumbersHistory.clear()
+                    pickedByPlayerHistory.clear()
                     val activeList = (if (packet.players.isNotEmpty()) packet.players else realTimePlayers)
                         .filter { it.id.isNotBlank() }
                         .distinctBy { it.id }
+                        .sortedWith(compareByDescending<Player> { it.isHost }.thenBy { it.id })
                     matchParticipants = activeList
+                    disconnectedPlayerIds.clear()
                     if (packet.isManualBoard || isManualBoard) {
                         isManualBoard = true
                         currentMatchSeed = packet.seed
@@ -941,6 +1411,7 @@ fun RootNavGraph(
                         countdownSeconds = -1
                         firstTurnPlayerName = ""
                         pickedNumbersHistory.clear()
+                        pickedByPlayerHistory.clear()
                         isProcessingTurn = false
                         turnNumber = 1
                         currentTurnPlayerId = ""
@@ -1006,25 +1477,30 @@ fun RootNavGraph(
                     if (!com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPacketForActiveMatch(packet.seed, currentMatchSeed)) {
                         return
                     }
+                    if (packet.playerId.isNotBlank() && packet.playerId != myUid) {
+                        markPlayerReconnected(packet.playerId)
+                    }
                     var anyNewPick = false
 
                     // 1. Reconcile any missing numbers from packet's history
-                    packet.pickedHistory.forEach { num ->
+                    packet.pickedHistory.forEachIndexed { idx, num ->
                         if (num > 0 && num !in pickedNumbersHistory) {
+                            val origPickerId = packet.pickedByHistory.getOrNull(idx)?.takeIf { it.isNotBlank() } ?: packet.playerId
                             pickedNumbersHistory.add(num)
-                            val isMine = (packet.playerId == myUid)
-                            val isOpponentMine = (packet.playerId != myUid)
+                            pickedByPlayerHistory.add(origPickerId)
+                            val isMine = (origPickerId == myUid)
+                            val isOpponentMine = (origPickerId != myUid)
                             playerBoard = engine.markCell(
                                 board = playerBoard,
                                 number = num,
-                                pickedByPlayerId = packet.playerId,
+                                pickedByPlayerId = origPickerId,
                                 isOwnPick = isMine,
                                 turnNumber = turnNumber
                             )
                             opponentBoard = engine.markCell(
                                 board = opponentBoard,
                                 number = num,
-                                pickedByPlayerId = packet.playerId,
+                                pickedByPlayerId = origPickerId,
                                 isOwnPick = isOpponentMine,
                                 turnNumber = turnNumber
                             )
@@ -1032,12 +1508,12 @@ fun RootNavGraph(
                                 engine.markCell(
                                     board = entry.value,
                                     number = num,
-                                    pickedByPlayerId = packet.playerId,
-                                    isOwnPick = (packet.playerId == entry.key),
+                                    pickedByPlayerId = origPickerId,
+                                    isOwnPick = (origPickerId == entry.key),
                                     turnNumber = turnNumber
                                 )
                             }
-                            recentPick = RecentPick(num, packet.playerId, turnNumber)
+                            recentPick = RecentPick(num, origPickerId, turnNumber)
                             anyNewPick = true
                         }
                     }
@@ -1045,6 +1521,7 @@ fun RootNavGraph(
                     // 2. Direct single pick fallback
                     if (packet.number > 0 && packet.number !in pickedNumbersHistory) {
                         pickedNumbersHistory.add(packet.number)
+                        pickedByPlayerHistory.add(packet.playerId)
                         val isMine = (packet.playerId == myUid)
                         val isOpponentMine = (packet.playerId != myUid)
                         playerBoard = engine.markCell(
@@ -1075,15 +1552,31 @@ fun RootNavGraph(
                     }
 
                     // 3. Evaluate win conditions
-                    val outcome = evaluateMatchOutcome()
+                    val outcome = if (packet.winnerPlayerId.isNotBlank() && !isPlayerDisconnected(packet.winnerPlayerId)) {
+                        val isLocalWinner = isPlayerMe(packet.winnerPlayerId) && !isPlayerDisconnected(myUid)
+                        val isLocalRunner = !isLocalWinner && !isPlayerDisconnected(myUid) && (packet.runnerPlayerIds.filter { !isPlayerDisconnected(it) }.any { isPlayerMe(it) } || (playerBoard.isBingo && !isPlayerDisconnected(myUid)))
+                        MatchOutcome(
+                            isGameOver = true,
+                            didPlayerWin = isLocalWinner,
+                            isDraw = false,
+                            isRunner = isLocalRunner,
+                            winnerPlayerId = packet.winnerPlayerId,
+                            winReason = packet.winReason
+                        )
+                    } else {
+                        evaluateMatchOutcome(packet.playerId)
+                    }
                     if (outcome.isGameOver) {
                         isGameOver = true
                         isDrawMatch = outcome.isDraw
                         didPlayerWin = outcome.didPlayerWin
+                        isRunnerMatch = outcome.isRunner
+                        winnerPlayerId = outcome.winnerPlayerId
                         recordFinishedMatch(won = outcome.didPlayerWin, isDraw = outcome.isDraw)
+                        com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
                     } else {
-                        if (packet.turnNumber >= turnNumber || anyNewPick) {
-                            turnNumber = packet.turnNumber.coerceAtLeast(turnNumber + 1)
+                        if (packet.turnNumber > turnNumber || anyNewPick) {
+                            turnNumber = maxOf(packet.turnNumber, turnNumber + (if (anyNewPick && packet.turnNumber <= turnNumber) 1 else 0))
                             turnTimer = 30
                             val nextId = if (packet.currentTurnPlayerId.isNotBlank()) {
                                 packet.currentTurnPlayerId
@@ -1092,6 +1585,19 @@ fun RootNavGraph(
                             }
                             currentTurnPlayerId = nextId
                             isMyTurn = (currentTurnPlayerId == myUid)
+                            if (currentGameMode == GameMode.ONLINE_ROOM && roomCode.isNotBlank()) {
+                                com.bingo.multiplayer.domain.network.OngoingMatchStore.updateMatchGameState(
+                                    context = context,
+                                    playerBoard = playerBoard,
+                                    opponentBoard = opponentBoard,
+                                    allPlayerBoards = allPlayerBoards,
+                                    pickedNumbers = pickedNumbersHistory.toList(),
+                                    pickedByPlayers = pickedByPlayerHistory.toList(),
+                                    turnNumber = turnNumber,
+                                    currentTurnPlayerId = currentTurnPlayerId,
+                                    chatMessages = matchChatHistory
+                                )
+                            }
                         }
                     }
                 }
@@ -1102,8 +1608,13 @@ fun RootNavGraph(
                     if (!com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPacketForActiveMatch(packet.seed, currentMatchSeed)) {
                         return
                     }
-                    if (packet.turnNumber >= turnNumber) {
-                        turnNumber = packet.turnNumber.coerceAtLeast(turnNumber + 1)
+                    if (packet.playerId.isNotBlank()) {
+                        markPlayerDisconnected(packet.playerId)
+                    }
+                    val shouldAdvance = (packet.turnNumber > turnNumber) ||
+                            (packet.turnNumber == turnNumber && packet.playerId.isNotBlank() && com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(packet.playerId, currentTurnPlayerId))
+                    if (shouldAdvance) {
+                        turnNumber = maxOf(packet.turnNumber, turnNumber + 1)
                         turnTimer = 30
                         val nextId = if (packet.currentTurnPlayerId.isNotBlank()) {
                             packet.currentTurnPlayerId
@@ -1113,6 +1624,24 @@ fun RootNavGraph(
                         currentTurnPlayerId = nextId
                         isMyTurn = (currentTurnPlayerId == myUid)
                         recentPick = RecentPick(number = -1, pickedByPlayerId = packet.playerId, turnNumber = turnNumber)
+
+                        val skippedPlayerName = matchParticipants.find { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it.id, packet.playerId) }?.displayName
+                            ?: realTimePlayers.find { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it.id, packet.playerId) }?.displayName
+                            ?: "Player"
+                        val skipText = "📢 Turn skipped ($skippedPlayerName reconnecting...)"
+                        val alreadyHasMsg = matchChatHistory.any { it.text == skipText && (System.currentTimeMillis() - it.timestamp) < 4000L }
+                        if (!alreadyHasMsg) {
+                            val sysMsg = InGameChatMessage(
+                                id = System.currentTimeMillis() + (0..1000).random(),
+                                text = skipText,
+                                isSelf = false,
+                                senderName = null,
+                                timestamp = System.currentTimeMillis(),
+                                isSystemMessage = true
+                            )
+                            matchChatHistory = matchChatHistory + sysMsg
+                            latestIncomingChatMessage = sysMsg
+                        }
                     }
                 }
             }
@@ -1124,13 +1653,83 @@ fun RootNavGraph(
             }
 
             "CHAT_MESSAGE" -> {
-                latestIncomingChatMessage = InGameChatMessage(
+                val isSys = packet.username == "SYSTEM"
+                val newMsg = InGameChatMessage(
                     id = packet.timestamp,
                     text = packet.displayName,
                     isSelf = false,
-                    senderName = packet.username.takeIf { it.isNotBlank() } ?: "Opponent",
-                    timestamp = packet.timestamp
+                    senderName = if (isSys) null else (packet.username.takeIf { it.isNotBlank() } ?: "Opponent"),
+                    timestamp = packet.timestamp,
+                    isSystemMessage = isSys
                 )
+                val alreadyPresent = matchChatHistory.any {
+                    (it.text == newMsg.text || (isSys && it.text.contains("reconnected", ignoreCase = true) && newMsg.text.contains("reconnected", ignoreCase = true))) &&
+                    kotlin.math.abs(System.currentTimeMillis() - it.timestamp) < 5000L
+                }
+                if (!alreadyPresent) {
+                    latestIncomingChatMessage = newMsg
+                    matchChatHistory = matchChatHistory + newMsg
+                    if (!isGameOver && currentGameMode == GameMode.ONLINE_ROOM && roomCode.isNotBlank()) {
+                        com.bingo.multiplayer.domain.network.OngoingMatchStore.updateMatchGameState(
+                            context = context,
+                            playerBoard = playerBoard,
+                            opponentBoard = opponentBoard,
+                            allPlayerBoards = allPlayerBoards,
+                            pickedNumbers = pickedNumbersHistory.toList(),
+                            pickedByPlayers = pickedByPlayerHistory.toList(),
+                            turnNumber = turnNumber,
+                            currentTurnPlayerId = currentTurnPlayerId,
+                            chatMessages = matchChatHistory
+                        )
+                    }
+                }
+            }
+
+            "REJOIN_GAME" -> {
+                if (packet.playerId.isNotBlank() && packet.playerId != myUid) {
+                    markPlayerReconnected(packet.playerId)
+                    val joinedName = packet.displayName.ifBlank {
+                        matchParticipants.find { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it.id, packet.playerId) }?.displayName
+                            ?: realTimePlayers.find { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it.id, packet.playerId) }?.displayName
+                            ?: packet.username.ifBlank { "A player" }
+                    }
+                    val reconnectedMsg = "🟢 $joinedName reconnected"
+                    val alreadyHasMsg = matchChatHistory.any {
+                        it.text.contains("reconnected", ignoreCase = true) &&
+                        (it.text.contains(joinedName, ignoreCase = true) || it.text == reconnectedMsg) &&
+                        (System.currentTimeMillis() - it.timestamp) < 5000L
+                    }
+                    if (!alreadyHasMsg) {
+                        val sysMsg = InGameChatMessage(
+                            id = System.currentTimeMillis() + (0..1000).random(),
+                            text = reconnectedMsg,
+                            isSelf = false,
+                            senderName = null,
+                            timestamp = System.currentTimeMillis(),
+                            isSystemMessage = true
+                        )
+                        matchChatHistory = matchChatHistory + sysMsg
+                        latestIncomingChatMessage = sysMsg
+                    }
+                    val hostUid = matchParticipants.find { it.isHost }?.id ?: realTimePlayers.find { it.isHost }?.id ?: ""
+                    val isHostGone = isHostLeftGame || disconnectedPlayerIds.contains(hostUid)
+                    val activeRemaining = (matchParticipants.ifEmpty { realTimePlayers }).filter { it.id.isNotBlank() && it.id !in disconnectedPlayerIds }
+                    val isActingHost = isHostGone && activeRemaining.firstOrNull()?.id == myUid
+                    if (isHosting || currentTurnPlayerId == myUid || isActingHost) {
+                        broadcastPacket(
+                            RoomMessagePacket(
+                                type = "GAME_SYNC",
+                                turnNumber = turnNumber,
+                                pickedHistory = pickedNumbersHistory.toList(),
+                                pickedByHistory = pickedByPlayerHistory.toList(),
+                                currentTurnPlayerId = currentTurnPlayerId,
+                                boardHash = engine.computeBoardHash(playerBoard),
+                                seed = currentMatchSeed,
+                                playerId = myUid
+                            )
+                        )
+                    }
+                }
             }
 
             "GAME_SYNC" -> {
@@ -1141,22 +1740,24 @@ fun RootNavGraph(
                     var anyNewPick = false
 
                     // 1. Reconcile missing numbers from packet's history
-                    packet.pickedHistory.forEach { num ->
+                    packet.pickedHistory.forEachIndexed { idx, num ->
                         if (num > 0 && num !in pickedNumbersHistory) {
+                            val origPickerId = packet.pickedByHistory.getOrNull(idx)?.takeIf { it.isNotBlank() } ?: packet.playerId
                             pickedNumbersHistory.add(num)
-                            val isMine = (packet.playerId == myUid)
-                            val isOpponentMine = (packet.playerId != myUid)
+                            pickedByPlayerHistory.add(origPickerId)
+                            val isMine = (origPickerId == myUid)
+                            val isOpponentMine = (origPickerId != myUid)
                             playerBoard = engine.markCell(
                                 board = playerBoard,
                                 number = num,
-                                pickedByPlayerId = packet.playerId,
+                                pickedByPlayerId = origPickerId,
                                 isOwnPick = isMine,
                                 turnNumber = turnNumber
                             )
                             opponentBoard = engine.markCell(
                                 board = opponentBoard,
                                 number = num,
-                                pickedByPlayerId = packet.playerId,
+                                pickedByPlayerId = origPickerId,
                                 isOwnPick = isOpponentMine,
                                 turnNumber = turnNumber
                             )
@@ -1164,30 +1765,46 @@ fun RootNavGraph(
                                 engine.markCell(
                                     board = entry.value,
                                     number = num,
-                                    pickedByPlayerId = packet.playerId,
-                                    isOwnPick = (packet.playerId == entry.key),
+                                    pickedByPlayerId = origPickerId,
+                                    isOwnPick = (origPickerId == entry.key),
                                     turnNumber = turnNumber
                                 )
                             }
-                            recentPick = RecentPick(num, packet.playerId, turnNumber)
+                            recentPick = RecentPick(num, origPickerId, turnNumber)
                             anyNewPick = true
                         }
                     }
 
                     // 2. Evaluate win conditions
-                    val outcome = evaluateMatchOutcome()
+                    val outcome = evaluateMatchOutcome(packet.playerId)
                     if (outcome.isGameOver) {
                         isGameOver = true
                         isDrawMatch = outcome.isDraw
                         didPlayerWin = outcome.didPlayerWin
+                        isRunnerMatch = outcome.isRunner
+                        winnerPlayerId = outcome.winnerPlayerId
                         recordFinishedMatch(won = outcome.didPlayerWin, isDraw = outcome.isDraw)
+                        com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
                     } else if (packet.turnNumber > turnNumber || (anyNewPick && packet.turnNumber >= turnNumber)) {
                         // Strictly newer turn or reconciled missed turn! Reconcile turn authority
-                        turnNumber = packet.turnNumber.coerceAtLeast(turnNumber + 1)
+                        turnNumber = maxOf(packet.turnNumber, turnNumber + (if (anyNewPick && packet.turnNumber == turnNumber) 1 else 0))
                         turnTimer = 30
                         if (packet.currentTurnPlayerId.isNotBlank()) {
                             currentTurnPlayerId = packet.currentTurnPlayerId
                             isMyTurn = (currentTurnPlayerId == myUid)
+                        }
+                        if (currentGameMode == GameMode.ONLINE_ROOM && roomCode.isNotBlank()) {
+                            com.bingo.multiplayer.domain.network.OngoingMatchStore.updateMatchGameState(
+                                context = context,
+                                playerBoard = playerBoard,
+                                opponentBoard = opponentBoard,
+                                allPlayerBoards = allPlayerBoards,
+                                pickedNumbers = pickedNumbersHistory.toList(),
+                                pickedByPlayers = pickedByPlayerHistory.toList(),
+                                turnNumber = turnNumber,
+                                currentTurnPlayerId = currentTurnPlayerId,
+                                chatMessages = matchChatHistory
+                            )
                         }
                     }
                 }
@@ -1218,6 +1835,7 @@ fun RootNavGraph(
                         // Mark final winning number if provided
                         if (packet.number > 0 && packet.number !in pickedNumbersHistory) {
                             pickedNumbersHistory.add(packet.number)
+                            pickedByPlayerHistory.add(packet.playerId)
                             playerBoard = engine.markCell(
                                 board = playerBoard,
                                 number = packet.number,
@@ -1245,17 +1863,34 @@ fun RootNavGraph(
                             recentPick = RecentPick(packet.number, packet.playerId, turnNumber)
                         }
 
-                        val outcome = evaluateMatchOutcome()
+                        val effectiveWinner = if (packet.winnerPlayerId.isNotBlank() && !isPlayerDisconnected(packet.winnerPlayerId)) {
+                            packet.winnerPlayerId
+                        } else if (!isPlayerDisconnected(packet.playerId)) {
+                            packet.playerId
+                        } else ""
+
+                        val outcome = if (effectiveWinner.isNotBlank()) {
+                            val isLocalWinner = isPlayerMe(effectiveWinner) && !isPlayerDisconnected(myUid)
+                            val isLocalRunner = !isLocalWinner && !isPlayerDisconnected(myUid) && (packet.runnerPlayerIds.filter { !isPlayerDisconnected(it) }.any { isPlayerMe(it) } || (playerBoard.isBingo && !isPlayerDisconnected(myUid)))
+                            MatchOutcome(
+                                isGameOver = true,
+                                didPlayerWin = isLocalWinner,
+                                isDraw = false,
+                                isRunner = isLocalRunner,
+                                winnerPlayerId = effectiveWinner,
+                                winReason = packet.winReason.ifBlank { "Bingo Claimed" }
+                            )
+                        } else {
+                            evaluateMatchOutcome(packet.playerId)
+                        }
                         if (outcome.isGameOver) {
                             isGameOver = true
                             didPlayerWin = outcome.didPlayerWin
                             isDrawMatch = outcome.isDraw
+                            isRunnerMatch = outcome.isRunner
+                            winnerPlayerId = outcome.winnerPlayerId
                             recordFinishedMatch(won = outcome.didPlayerWin, isDraw = outcome.isDraw)
-                        } else {
-                            isGameOver = true
-                            didPlayerWin = false
-                            isDrawMatch = false
-                            recordFinishedMatch(won = false, isDraw = false)
+                            com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
                         }
                     }
                 }
@@ -1274,16 +1909,137 @@ fun RootNavGraph(
             "LEAVE", "HOST_LEFT" -> {
                 val destinationRoute = navController.currentDestination?.route
                 val inGame = (destinationRoute == Screen.Game.route)
+                val isSenderHost = packet.isHost || packet.type == "HOST_LEFT" ||
+                        realTimePlayers.find { it.id == packet.playerId }?.isHost == true ||
+                        matchParticipants.find { it.id == packet.playerId }?.isHost == true
+
+                if (isSenderHost && !isHosting) {
+                    val hostName = packet.displayName.ifBlank { packet.username.ifBlank { "Host" } }
+                    if (inGame && !isGameOver) {
+                        isHostLeftGame = true
+                        val hostId = packet.playerId.ifBlank {
+                            matchParticipants.find { it.isHost }?.id ?: realTimePlayers.find { it.isHost }?.id ?: ""
+                        }
+                        if (hostId.isNotBlank()) {
+                            markPlayerDisconnected(hostId)
+                        }
+                        val participants = matchParticipants.ifEmpty { realTimePlayers }
+                        val activeRemaining = participants.filter {
+                            it.id.isNotBlank() && !isPlayerDisconnected(it.id)
+                        }
+                        if (activeRemaining.size <= 1) {
+                            isGameOver = true
+                            val wonByForfeit = activeRemaining.any { it.id == myUid } || participants.size <= 2
+                            didPlayerWin = wonByForfeit
+                            isDrawMatch = false
+                            isRunnerMatch = false
+                            recordFinishedMatch(wonByForfeit)
+                            com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
+                            opponentDisconnectMessage = "All opponents left the game."
+                        } else {
+                            // Host left, but 2+ players remain! Match continues!
+                            val hostMsg = "👑 $hostName (Host) left the game"
+                            broadcastSystemChatMessage(hostMsg)
+                            if (currentTurnPlayerId == hostId) {
+                                val nextId = calculateNextTurnPlayerId(hostId)
+                                currentTurnPlayerId = nextId
+                                turnNumber += 1
+                                turnTimer = 30
+                                isMyTurn = (currentTurnPlayerId == myUid)
+                                val isActingHost = activeRemaining.firstOrNull()?.id == myUid
+                                if (isActingHost) {
+                                    broadcastPacket(
+                                        RoomMessagePacket(
+                                            type = "TURN_TIMEOUT",
+                                            playerId = hostId,
+                                            turnNumber = turnNumber,
+                                            currentTurnPlayerId = nextId,
+                                            seed = currentMatchSeed,
+                                            pickedHistory = pickedNumbersHistory.toList(),
+                                            pickedByHistory = pickedByPlayerHistory.toList()
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    } else if (!inGame) {
+                        Toast.makeText(context, "Host left the lobby.", Toast.LENGTH_LONG).show()
+                        disconnectRoom()
+                        val exitDest = if (currentGameMode == GameMode.NEARBY_NETWORK) Screen.NearbyLobby.route else Screen.MainMenu.route
+                        navController.navigate(exitDest) {
+                            popUpTo(exitDest) { inclusive = false }
+                            launchSingleTop = true
+                        }
+                    }
+                    return@handleIncomingPacket
+                }
+
                 if (inGame && !isGameOver && packet.playerId.isNotBlank() && packet.playerId != myUid) {
-                    isGameOver = true
-                    didPlayerWin = true
-                    val opponent = packet.displayName.ifBlank { "Opponent" }
-                    recordFinishedMatch(true)
-                    opponentDisconnectMessage = "$opponent went offline / left the match! You win by forfeit."
+                    val participants = matchParticipants.ifEmpty { realTimePlayers }
+                    markPlayerDisconnected(packet.playerId)
+                    val activeRemaining = participants.filter {
+                        it.id.isNotBlank() && !isPlayerDisconnected(it.id)
+                    }
+                    if (participants.size <= 2 || activeRemaining.size <= 1) {
+                        isGameOver = true
+                        val wonByForfeit = activeRemaining.any { it.id == myUid } || participants.size <= 2
+                        didPlayerWin = wonByForfeit
+                        isDrawMatch = false
+                        isRunnerMatch = false
+                        recordFinishedMatch(wonByForfeit)
+                        com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
+                        opponentDisconnectMessage = "All opponents left the game."
+                    } else {
+                        // 2+ active players remaining: Game continues without interrupting remaining players!
+                        val hostUid = participants.find { it.isHost }?.id ?: ""
+                        val isHostGone = isHostLeftGame || isPlayerDisconnected(hostUid)
+                        val isActingHost = isHostGone && activeRemaining.firstOrNull()?.id == myUid
+                        val isCoordinator = isHosting || isActingHost
+                        val leftName = packet.displayName.ifBlank { packet.username.ifBlank { "A player" } }
+                        val leftMsg = "$leftName left the game"
+                        if (isCoordinator) {
+                            broadcastSystemChatMessage(leftMsg)
+                        } else {
+                            val alreadyHasMsg = matchChatHistory.any { it.text == leftMsg && (System.currentTimeMillis() - it.timestamp) < 5000L }
+                            if (!alreadyHasMsg) {
+                                val sysMsg = InGameChatMessage(
+                                    id = System.currentTimeMillis() + (0..1000).random(),
+                                    text = leftMsg,
+                                    isSelf = false,
+                                    senderName = null,
+                                    timestamp = System.currentTimeMillis(),
+                                    isSystemMessage = true
+                                )
+                                matchChatHistory = matchChatHistory + sysMsg
+                                latestIncomingChatMessage = sysMsg
+                            }
+                        }
+                        // If it was the departed player's turn, immediately advance to the next player without 30s delay
+                        if (currentTurnPlayerId == packet.playerId) {
+                            val nextId = calculateNextTurnPlayerId(packet.playerId)
+                            currentTurnPlayerId = nextId
+                            turnNumber += 1
+                            turnTimer = 30
+                            isMyTurn = (currentTurnPlayerId == myUid)
+                            if (isCoordinator) {
+                                broadcastPacket(
+                                    RoomMessagePacket(
+                                        type = "TURN_TIMEOUT",
+                                        playerId = packet.playerId,
+                                        turnNumber = turnNumber,
+                                        currentTurnPlayerId = nextId,
+                                        seed = currentMatchSeed,
+                                        pickedHistory = pickedNumbersHistory.toList(),
+                                        pickedByHistory = pickedByPlayerHistory.toList()
+                                    )
+                                )
+                            }
+                        }
+                    }
                 } else if (!inGame) {
                     val isHostSender = packet.isHost || packet.type == "HOST_LEFT" || realTimePlayers.find { it.id == packet.playerId }?.isHost == true
                     if (isHostSender && !isHosting) {
-                        Toast.makeText(context, "Host has left the lobby.", Toast.LENGTH_LONG).show()
+                        Toast.makeText(context, "Host left the lobby.", Toast.LENGTH_LONG).show()
                         disconnectRoom()
                         isHosting = false
                         val exitDest = if (currentGameMode == GameMode.NEARBY_NETWORK) Screen.NearbyLobby.route else Screen.MainMenu.route
@@ -1298,6 +2054,13 @@ fun RootNavGraph(
             "SETTINGS_UPDATE" -> {
                 if (!isHosting) {
                     isManualBoard = packet.isManualBoard
+                    isDynamicBoard = packet.isDynamicBoard
+                    if (packet.boardSize in 5..10) {
+                        boardSize = packet.boardSize
+                        selectedDynamicGridSize = packet.boardSize
+                    } else if (!packet.isDynamicBoard) {
+                        boardSize = 5
+                    }
                 }
             }
 
@@ -1323,6 +2086,9 @@ fun RootNavGraph(
                             type = "GAME_SYNC",
                             turnNumber = turnNumber,
                             pickedHistory = pickedNumbersHistory.toList(),
+                            pickedByHistory = pickedByPlayerHistory.toList(),
+                            boardHash = engine.computeBoardHash(playerBoard),
+                            seed = currentMatchSeed,
                             currentTurnPlayerId = currentTurnPlayerId,
                             playerId = myUid
                         )
@@ -1414,6 +2180,9 @@ fun RootNavGraph(
                         nearbyPermissionLauncher.launch(perms.toTypedArray())
                     }
                 },
+                onOpenDeveloperNote = {
+                    navController.navigate(Screen.DeveloperNote.route)
+                },
                 onSignedOut = {
                     com.bingo.multiplayer.domain.network.PresenceManager.stopPresence()
                     disconnectRoom()
@@ -1469,6 +2238,108 @@ fun RootNavGraph(
                 onAcceptInviteToMatch = { invite ->
                     acceptAndJoinRoom(invite.roomCode)
                 },
+                onRejoinMatch = { matchData ->
+                    coroutineScope.launch {
+                        val activeRoom = com.bingo.multiplayer.domain.network.OnlineRoomRegistry.getRoom(matchData.roomCode)
+                        if (activeRoom == null || activeRoom.status == "CLOSED") {
+                            Toast.makeText(context, "This match has already ended.", Toast.LENGTH_SHORT).show()
+                            com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
+                            return@launch
+                        }
+
+                        Toast.makeText(context, "Rejoining Room ${matchData.roomCode}...", Toast.LENGTH_SHORT).show()
+                        val user = (authRepository.authState.value as? AuthState.Authenticated)?.user
+                        val myUid = getLocalUid()
+                        val me = Player(
+                            id = myUid,
+                            displayName = getPlayerDisplayName(),
+                            username = user?.username ?: "",
+                            avatarUrl = getPlayerAvatarUrl(),
+                            gamesPlayed = user?.gamesPlayed ?: 0,
+                            gamesWon = user?.gamesWon ?: 0,
+                            currentStreak = user?.currentStreak ?: 0,
+                            level = user?.level ?: 1
+                        )
+                        roomCode = matchData.roomCode
+                        isHosting = matchData.isHost
+                        currentGameMode = GameMode.ONLINE_ROOM
+                        boardSize = matchData.boardSize
+                        isDynamicBoard = matchData.isDynamicBoard
+                        isManualBoard = matchData.isManualBoard
+                        currentMatchSeed = matchData.matchSeed
+                        matchParticipants = matchData.participants
+                        randomizedTurnOrder = matchData.randomizedTurnOrder
+                        turnNumber = matchData.turnNumber
+                        currentTurnPlayerId = matchData.currentTurnPlayerId
+                        isMyTurn = (currentTurnPlayerId == myUid)
+                        turnTimer = 30
+                        isGameOver = false
+                        didPlayerWin = false
+                        isDrawMatch = false
+                        isRunnerMatch = false
+                        winnerPlayerId = ""
+                        disconnectedPlayerIds.clear()
+                        lastForegroundResumeTimestamp = System.currentTimeMillis()
+                        val participantIds = matchData.participants.map { it.id }.filter { it.isNotBlank() }
+                        onlineRoomSync.resetInGameHeartbeats(participantIds)
+
+                        if (matchData.playerBoard != null) {
+                            playerBoard = matchData.playerBoard
+                            opponentBoard = matchData.opponentBoard ?: engine.generateBoard(matchData.boardSize)
+                            allPlayerBoards = matchData.allPlayerBoards
+                            pickedNumbersHistory.clear()
+                            pickedNumbersHistory.addAll(matchData.pickedNumbers)
+                            pickedByPlayerHistory.clear()
+                            pickedByPlayerHistory.addAll(matchData.pickedByPlayers)
+                        } else {
+                            startNewGame(
+                                mode = GameMode.ONLINE_ROOM,
+                                size = matchData.boardSize,
+                                hostSeed = matchData.matchSeed,
+                                incomingPlayersList = matchData.participants
+                            )
+                        }
+
+                        if (matchData.chatMessages.isNotEmpty()) {
+                            matchChatHistory = matchData.chatMessages
+                        }
+
+                        onlineRoomSync.connectToRoom(matchData.roomCode, me)
+
+                        navController.navigate(Screen.Game.route)
+
+                        delay(400L)
+                        broadcastPacket(
+                            RoomMessagePacket(
+                                type = "REJOIN_GAME",
+                                playerId = myUid,
+                                displayName = getPlayerDisplayName(),
+                                username = user?.username ?: "",
+                                seed = matchData.matchSeed,
+                                boardSize = matchData.boardSize,
+                                timestamp = System.currentTimeMillis()
+                            )
+                        )
+                        broadcastPacket(
+                            RoomMessagePacket(
+                                type = "SYNC_REQUEST",
+                                playerId = myUid,
+                                seed = matchData.matchSeed
+                            )
+                        )
+                        val now = System.currentTimeMillis()
+                        val localReconnected = InGameChatMessage(
+                            id = now,
+                            text = "🟢 ${getPlayerDisplayName()} reconnected",
+                            isSelf = false,
+                            senderName = null,
+                            timestamp = now,
+                            isSystemMessage = true
+                        )
+                        matchChatHistory = matchChatHistory + localReconnected
+                        latestIncomingChatMessage = localReconnected
+                    }
+                },
                 initialPage = 0
             )
         }
@@ -1496,7 +2367,11 @@ fun RootNavGraph(
                         nearbyPermissionLauncher.launch(perms.toTypedArray())
                     }
                 },
+                onOpenDeveloperNote = {
+                    navController.navigate(Screen.DeveloperNote.route)
+                },
                 onSignedOut = {
+                    com.bingo.multiplayer.core.notification.BingoNotificationDaemon.stop()
                     com.bingo.multiplayer.domain.network.PresenceManager.stopPresence()
                     disconnectRoom()
                     lanDiscovery.stopBroadcasting()
@@ -1578,7 +2453,11 @@ fun RootNavGraph(
                         nearbyPermissionLauncher.launch(perms.toTypedArray())
                     }
                 },
+                onOpenDeveloperNote = {
+                    navController.navigate(Screen.DeveloperNote.route)
+                },
                 onSignedOut = {
+                    com.bingo.multiplayer.core.notification.BingoNotificationDaemon.stop()
                     com.bingo.multiplayer.domain.network.PresenceManager.stopPresence()
                     disconnectRoom()
                     lanDiscovery.stopBroadcasting()
@@ -1634,6 +2513,17 @@ fun RootNavGraph(
                     acceptAndJoinRoom(invite.roomCode)
                 },
                 initialPage = 1
+            )
+        }
+
+        // 3d. Developer Note Screen (Full-Screen Gratitude & Feedback)
+        composable(Screen.DeveloperNote.route) {
+            val user = (authRepository.authState.collectAsState().value as? AuthState.Authenticated)?.user
+            com.bingo.multiplayer.presentation.menu.DeveloperNoteScreen(
+                currentUser = user,
+                onBack = {
+                    navController.popBackStack()
+                }
             )
         }
 
@@ -1718,11 +2608,89 @@ fun RootNavGraph(
                             currentGameMode = GameMode.ONLINE_ROOM
                             isUsingP2p = false
                             isHosting = false
+                            isManualBoard = result.room.isManualBoard
+                            isDynamicBoard = result.room.isDynamicBoard
                             val returnedPlayer = result.room.players.find { it.id == localJoiner.id }
                             val effJoiner = if (returnedPlayer != null) {
                                 localJoiner.copy(readyVersion = returnedPlayer.readyVersion)
                             } else localJoiner
                             onlineRoomSync.connectToRoom(cleanCode, effJoiner, initialPlayers = result.room.players)
+                            if (result.room.status == "PLAYING") {
+                                val matchData = com.bingo.multiplayer.domain.network.OngoingMatchStore.getOngoingMatch(context)
+                                if (matchData != null && matchData.roomCode == cleanCode && matchData.playerBoard != null) {
+                                    boardSize = matchData.boardSize
+                                    currentMatchSeed = matchData.matchSeed
+                                    matchParticipants = matchData.participants
+                                    randomizedTurnOrder = matchData.randomizedTurnOrder
+                                    playerBoard = matchData.playerBoard
+                                    opponentBoard = matchData.opponentBoard ?: engine.generateBoard(matchData.boardSize)
+                                    allPlayerBoards = matchData.allPlayerBoards
+                                    pickedNumbersHistory.clear()
+                                    pickedNumbersHistory.addAll(matchData.pickedNumbers)
+                                    pickedByPlayerHistory.clear()
+                                    pickedByPlayerHistory.addAll(matchData.pickedByPlayers)
+                                    turnNumber = matchData.turnNumber
+                                    currentTurnPlayerId = matchData.currentTurnPlayerId
+                                    isMyTurn = (currentTurnPlayerId == getLocalUid())
+                                    turnTimer = 30
+                                    isGameOver = false
+                                    didPlayerWin = false
+                                    isDrawMatch = false
+                                    isRunnerMatch = false
+                                    winnerPlayerId = ""
+                                    disconnectedPlayerIds.clear()
+                                    lastForegroundResumeTimestamp = System.currentTimeMillis()
+                                    val participantIds = matchData.participants.map { it.id }.filter { it.isNotBlank() }
+                                    onlineRoomSync.resetInGameHeartbeats(participantIds)
+                                    if (matchData.chatMessages.isNotEmpty()) {
+                                        matchChatHistory = matchData.chatMessages
+                                    }
+                                    if (matchData.pickedNumbers.isNotEmpty()) {
+                                        recentPick = RecentPick(
+                                            number = matchData.pickedNumbers.last(),
+                                            pickedByPlayerId = matchData.pickedByPlayers.lastOrNull() ?: "",
+                                            turnNumber = matchData.turnNumber
+                                        )
+                                    }
+                                    navController.navigate(Screen.Game.route) {
+                                        popUpTo(Screen.JoinRoom.route) { inclusive = true }
+                                    }
+                                    coroutineScope.launch {
+                                        delay(400L)
+                                        broadcastPacket(
+                                            RoomMessagePacket(
+                                                type = "REJOIN_GAME",
+                                                playerId = getLocalUid(),
+                                                displayName = getPlayerDisplayName(),
+                                                username = user?.username ?: "",
+                                                seed = matchData.matchSeed,
+                                                currentTurnPlayerId = matchData.currentTurnPlayerId,
+                                                turnNumber = matchData.turnNumber
+                                            )
+                                        )
+                                        delay(300L)
+                                        broadcastPacket(
+                                            RoomMessagePacket(
+                                                type = "SYNC_REQUEST",
+                                                playerId = getLocalUid(),
+                                                turnNumber = matchData.turnNumber
+                                            )
+                                        )
+                                        val now = System.currentTimeMillis()
+                                        val localReconnected = InGameChatMessage(
+                                            id = now,
+                                            text = "🟢 ${getPlayerDisplayName()} reconnected",
+                                            isSelf = false,
+                                            senderName = null,
+                                            timestamp = now,
+                                            isSystemMessage = true
+                                        )
+                                        matchChatHistory = matchChatHistory + localReconnected
+                                        latestIncomingChatMessage = localReconnected
+                                    }
+                                    return@JoinRoomScreen null
+                                }
+                            }
                             navController.navigate(Screen.Lobby.route) {
                                 popUpTo(Screen.JoinRoom.route) { inclusive = true }
                             }
@@ -1780,6 +2748,8 @@ fun RootNavGraph(
                 }
             }
             val user = (authRepository.authState.collectAsState().value as? AuthState.Authenticated)?.user
+            val ongoingMatchData = com.bingo.multiplayer.domain.network.OngoingMatchStore.getOngoingMatch(context)
+            val hasActiveOngoing = (ongoingMatchData != null && ongoingMatchData.roomCode == roomCode && !isGameOver)
             LobbyScreen(
                 roomCode = roomCode,
                 players = realTimePlayers,
@@ -1790,6 +2760,69 @@ fun RootNavGraph(
                 isRefreshing = if (currentGameMode == GameMode.NEARBY_NETWORK) false else isRefreshing,
                 inactivityResetToken = lobbyInactivityResetToken,
                 isNearbyNetwork = (currentGameMode == GameMode.NEARBY_NETWORK),
+                hasActiveMatch = hasActiveOngoing,
+                onRejoinMatch = {
+                    val data = ongoingMatchData ?: return@LobbyScreen
+                    if (data.playerBoard == null) return@LobbyScreen
+                    playerBoard = data.playerBoard
+                    opponentBoard = data.opponentBoard ?: engine.generateBoard(data.boardSize)
+                    allPlayerBoards = data.allPlayerBoards
+                    pickedNumbersHistory.clear()
+                    pickedNumbersHistory.addAll(data.pickedNumbers)
+                    pickedByPlayerHistory.clear()
+                    pickedByPlayerHistory.addAll(data.pickedByPlayers)
+                    turnNumber = data.turnNumber
+                    currentTurnPlayerId = data.currentTurnPlayerId
+                    isMyTurn = (currentTurnPlayerId == getLocalUid())
+                    currentMatchSeed = data.matchSeed
+                    boardSize = data.boardSize
+                    matchParticipants = data.participants
+                    randomizedTurnOrder = data.randomizedTurnOrder
+                    if (data.chatMessages.isNotEmpty()) {
+                        matchChatHistory = data.chatMessages
+                    }
+                    if (data.pickedNumbers.isNotEmpty()) {
+                        recentPick = RecentPick(
+                            number = data.pickedNumbers.last(),
+                            pickedByPlayerId = data.pickedByPlayers.lastOrNull() ?: "",
+                            turnNumber = data.turnNumber
+                        )
+                    }
+                    disconnectedPlayerIds.clear()
+                    lastForegroundResumeTimestamp = System.currentTimeMillis()
+                    val participantIds = (data.participants.ifEmpty { matchParticipants }).map { it.id }.filter { it.isNotBlank() }
+                    onlineRoomSync.resetInGameHeartbeats(participantIds)
+                    broadcastPacket(
+                        RoomMessagePacket(
+                            type = "REJOIN_GAME",
+                            playerId = getLocalUid(),
+                            displayName = getPlayerDisplayName(),
+                            username = user?.username ?: "",
+                            seed = data.matchSeed,
+                            turnNumber = turnNumber,
+                            currentTurnPlayerId = currentTurnPlayerId
+                        )
+                    )
+                    broadcastPacket(
+                        RoomMessagePacket(
+                            type = "SYNC_REQUEST",
+                            playerId = getLocalUid(),
+                            turnNumber = turnNumber
+                        )
+                    )
+                    val now = System.currentTimeMillis()
+                    val localReconnected = InGameChatMessage(
+                        id = now,
+                        text = "🟢 ${getPlayerDisplayName()} reconnected",
+                        isSelf = false,
+                        senderName = null,
+                        timestamp = now,
+                        isSystemMessage = true
+                    )
+                    matchChatHistory = matchChatHistory + localReconnected
+                    latestIncomingChatMessage = localReconnected
+                    navController.navigate(Screen.Game.route)
+                },
                 onExtendLobby = {
                     lobbyInactivityResetToken++
                     broadcastPacket(
@@ -1858,12 +2891,42 @@ fun RootNavGraph(
                         RoomMessagePacket(
                             type = "SETTINGS_UPDATE",
                             playerId = getLocalUid(),
-                            isManualBoard = manual
+                            isManualBoard = manual,
+                            isDynamicBoard = isDynamicBoard
+                        )
+                    )
+                },
+                isDynamicBoard = isDynamicBoard,
+                onDynamicBoardChange = { dynamic ->
+                    isDynamicBoard = dynamic
+                    val effSize = if (dynamic) selectedDynamicGridSize else 5
+                    boardSize = effSize
+                    broadcastPacket(
+                        RoomMessagePacket(
+                            type = "SETTINGS_UPDATE",
+                            playerId = getLocalUid(),
+                            isManualBoard = isManualBoard,
+                            isDynamicBoard = dynamic,
+                            boardSize = effSize
+                        )
+                    )
+                },
+                selectedDynamicGridSize = selectedDynamicGridSize,
+                onDynamicGridSizeChange = { newSize ->
+                    selectedDynamicGridSize = newSize
+                    boardSize = newSize
+                    broadcastPacket(
+                        RoomMessagePacket(
+                            type = "SETTINGS_UPDATE",
+                            playerId = getLocalUid(),
+                            isManualBoard = isManualBoard,
+                            isDynamicBoard = isDynamicBoard,
+                            boardSize = newSize
                         )
                     )
                 },
                 onStartGame = {
-                    val dynamicSize = if (currentGameMode == GameMode.NEARBY_NETWORK && boardSize in 5..8) boardSize else calculateBoardSize(realTimePlayers.size)
+                    val targetSize = com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.resolveBoardSize(isDynamicBoard, selectedDynamicGridSize, realTimePlayers.size)
                     val seed = Random.nextLong().let { if (it == 0L) 1L else it }
                     val myId = getLocalUid()
                     val manualMode = isManualBoard
@@ -1875,7 +2938,8 @@ fun RootNavGraph(
                                 status = "PLAYING",
                                 seed = seed,
                                 isManualBoard = manualMode,
-                                boardSize = dynamicSize
+                                boardSize = targetSize,
+                                isDynamicBoard = isDynamicBoard
                             )
                         }
                         onlineRoomSync.updateLocalReadyStatus("IN_GAME")
@@ -1886,21 +2950,26 @@ fun RootNavGraph(
                     }
 
                     val activeList = realTimePlayers.filter { it.id.isNotBlank() }
-                        .distinctBy { it.id }
-                        .sortedWith(compareByDescending<Player> { it.isHost }.thenBy { it.id })
-                    matchParticipants = activeList
-                    val allUids = activeList.map { it.id }.filter { it.isNotBlank() }.distinct().sorted()
+                        .distinctBy { it.username.trim().lowercase().removePrefix("@").takeIf { u -> u.isNotBlank() } ?: it.id.trim().lowercase() }
+                        .sortedWith(
+                            compareByDescending<Player> { it.isHost }
+                                .thenBy { it.username.trim().lowercase().removePrefix("@").takeIf { u -> u.isNotBlank() } ?: it.id.trim().lowercase() }
+                        )
+                    val sanitizedList = activeList.map { it.copy(avatarUrl = null) }
+                    matchParticipants = sanitizedList
+                    val allUids = sanitizedList.map { it.id }.filter { it.isNotBlank() }.distinct().sorted()
                     val candidateUids = if (allUids.isNotEmpty()) allUids else listOf(myId)
                     val chosenFirstTurnUid = ManualBoardEngine.determineRandomFirstTurn(seed, candidateUids)
 
                     val startPacket = RoomMessagePacket(
                         type = "START_GAME",
-                        boardSize = dynamicSize,
+                        boardSize = targetSize,
                         seed = seed,
                         playerId = myId,
                         currentTurnPlayerId = chosenFirstTurnUid,
                         isManualBoard = manualMode,
-                        players = activeList
+                        isDynamicBoard = isDynamicBoard,
+                        players = sanitizedList
                     )
                     broadcastPacket(startPacket)
                     coroutineScope.launch {
@@ -1911,7 +2980,7 @@ fun RootNavGraph(
                     }
 
                     if (manualMode) {
-                        boardSize = dynamicSize
+                        boardSize = targetSize
                         currentMatchSeed = seed
                         allPlayerBoards = emptyMap()
                         isLocalBoardReady = false
@@ -1935,13 +3004,14 @@ fun RootNavGraph(
                         opponentSurrenderMessage = null
                         navController.navigate(Screen.ManualBoardDesign.route)
                     } else {
+                        boardSize = targetSize
                         startNewGame(
                             mode = if (isUsingP2p) GameMode.NEARBY_NETWORK else GameMode.ONLINE_ROOM,
                             difficulty = AiDifficulty.EASY,
-                            size = dynamicSize,
+                            size = targetSize,
                             firstTurnPlayerId = chosenFirstTurnUid,
                             hostSeed = seed,
-                            incomingPlayersList = activeList
+                            incomingPlayersList = sanitizedList
                         )
                     }
                 },
@@ -2329,13 +3399,77 @@ fun RootNavGraph(
             LaunchedEffect(turnNumber, isMyTurn, isGameOver, isGamePaused) {
                 if (!isGameOver && !isGamePaused) {
                     turnTimer = 30
+                    var skippedDueToDisconnect = false
                     while (turnTimer > 0 && !isGamePaused && !isGameOver) {
                         delay(1000L)
                         if (!isGamePaused && !isGameOver) {
                             turnTimer -= 1
+                            // Check if current active player's connection is dead (> 10s of silence)
+                            val isForeground = com.bingo.multiplayer.domain.network.AppLifecycleObserver.isAppInForeground.value
+                            val now = System.currentTimeMillis()
+                            val isWithinResumeGracePeriod = (now - lastForegroundResumeTimestamp) < 12_000L
+
+                            if (isForeground && !isWithinResumeGracePeriod && !isMyTurn && (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK)) {
+                                val activePicker = currentTurnPlayerId.ifBlank {
+                                    val activeList = if (isUsingP2p) lanP2pSync.players.value else onlineRoomSync.players.value
+                                    activeList.firstOrNull { it.id != getLocalUid() }?.id
+                                }
+                                if (!activePicker.isNullOrBlank()) {
+                                    val lastHeartbeat = if (isUsingP2p) {
+                                        lanP2pSync.getLastDirectHeartbeat(activePicker)
+                                    } else {
+                                        onlineRoomSync.getLastDirectHeartbeat(activePicker)
+                                    }
+                                    // If we have a recorded heartbeat and >= 10s elapsed with zero packets/heartbeats from picker, or picker already in disconnected list
+                                    if (isPlayerDisconnected(activePicker) || (lastHeartbeat > 0L && (now - lastHeartbeat) >= 10_000L)) {
+                                        skippedDueToDisconnect = true
+                                        break
+                                    }
+                                }
+                            }
                         }
                     }
-                    if (isMyTurn && !isGameOver && !isGamePaused && turnTimer == 0) {
+                    if (skippedDueToDisconnect && !isGameOver && !isGamePaused) {
+                        val activeList = if (isUsingP2p) lanP2pSync.players.value else onlineRoomSync.players.value
+                        val activePicker = currentTurnPlayerId.ifBlank {
+                            activeList.firstOrNull { it.id != getLocalUid() }?.id ?: "opponent"
+                        }
+                        markPlayerDisconnected(activePicker)
+
+                        val participants = matchParticipants.ifEmpty { realTimePlayers }
+                        val activeRemaining = participants.filter {
+                            it.id.isNotBlank() && !isPlayerDisconnected(it.id)
+                        }
+
+                        if (activeRemaining.size <= 1) {
+                            // Turn skipping stops: all opponents disconnected/left
+                            isGameOver = true
+                            val wonByForfeit = activeRemaining.any { it.id == getLocalUid() } || participants.size <= 2
+                            didPlayerWin = wonByForfeit
+                            isDrawMatch = false
+                            isRunnerMatch = false
+                            recordFinishedMatch(wonByForfeit)
+                            com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
+                            opponentDisconnectMessage = "All opponents left the game."
+                        } else {
+                            val hostUid = activeList.find { it.isHost }?.id ?: ""
+                            val isHostDisconnected = com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(activePicker, hostUid)
+                            val isHostGone = isHostLeftGame || isPlayerDisconnected(hostUid)
+                            val isActingHost = isHostGone && activeRemaining.firstOrNull()?.id == getLocalUid()
+                            val isAuthorizedSkipper = isHosting || isHostDisconnected || isActingHost
+                            if (isAuthorizedSkipper) {
+                                val pickerName = activeList.find { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it.id, activePicker) }?.displayName ?: "Player"
+                                val skipText = "📢 Turn skipped ($pickerName reconnecting...)"
+                                broadcastSystemChatMessage(skipText)
+                                executePick(
+                                    number = -1,
+                                    isOwnPick = false,
+                                    pickerId = activePicker,
+                                    shouldBroadcast = true
+                                )
+                            }
+                        }
+                    } else if (isMyTurn && !isGameOver && !isGamePaused && turnTimer == 0) {
                         // Pass the turn cleanly with no auto-picked number
                         executePick(
                             number = -1,
@@ -2345,20 +3479,28 @@ fun RootNavGraph(
                         )
                     } else if (!isMyTurn && !isGameOver && !isGamePaused && turnTimer == 0) {
                         // Fail-safe grace period: If peer missed their turn or packet was lost,
-                        // rotate turn to local player after 1.5s so the game never freezes at 0s!
-                        delay(1500L)
+                        // only host or acting host rotates turn so peers don't skip redundantly
+                        delay(2000L)
                         if (!isMyTurn && !isGameOver && !isGamePaused && turnTimer == 0) {
-                            val activePicker = currentTurnPlayerId.ifBlank {
-                                realTimePlayers.firstOrNull { it.id != getLocalUid() }?.id
-                                    ?: opponentPlayerId.takeIf { it.isNotBlank() }
-                                    ?: "opponent"
+                            val activeList = if (isUsingP2p) lanP2pSync.players.value else onlineRoomSync.players.value
+                            val participants = matchParticipants.ifEmpty { realTimePlayers }
+                            val hostUid = activeList.find { it.isHost }?.id ?: ""
+                            val isHostGone = isHostLeftGame || isPlayerDisconnected(hostUid)
+                            val activeRemaining = participants.filter { it.id.isNotBlank() && !isPlayerDisconnected(it.id) }
+                            val isActingHost = isHostGone && activeRemaining.firstOrNull()?.id == getLocalUid()
+                            if (isHosting || isActingHost || activeRemaining.size <= 2) {
+                                val activePicker = currentTurnPlayerId.ifBlank {
+                                    activeList.firstOrNull { it.id != getLocalUid() }?.id
+                                        ?: opponentPlayerId.takeIf { it.isNotBlank() }
+                                        ?: "opponent"
+                                }
+                                executePick(
+                                    number = -1,
+                                    isOwnPick = false,
+                                    pickerId = activePicker,
+                                    shouldBroadcast = true
+                                )
                             }
-                            executePick(
-                                number = -1,
-                                isOwnPick = false,
-                                pickerId = activePicker,
-                                shouldBroadcast = true
-                            )
                         }
                     }
                 }
@@ -2382,8 +3524,9 @@ fun RootNavGraph(
 
             val isCurrentHost = (currentGameMode != GameMode.ONLINE_ROOM) || isHosting
             val realtimeNetworkPing by com.bingo.multiplayer.domain.network.NetworkPingMonitor.pingMs.collectAsState()
+            val realtimeOnlinePing by onlineRoomSync.pingMs.collectAsState()
             val currentPing = when {
-                currentGameMode == GameMode.ONLINE_ROOM && onlinePingMs > 0L -> onlinePingMs
+                currentGameMode == GameMode.ONLINE_ROOM && realtimeOnlinePing > 0L -> realtimeOnlinePing
                 realtimeNetworkPing > 0L -> realtimeNetworkPing
                 else -> 28L
             }
@@ -2391,19 +3534,25 @@ fun RootNavGraph(
             val playerSummaryKeys = remember(realTimePlayers) {
                 realTimePlayers.map { "${it.id}_${it.displayName}_${it.avatarUrl}_${it.isHost}" }
             }
-            val gamePlayers = remember(playerSummaryKeys, currentGameMode, opponentDisplayName) {
+            val gamePlayers = remember(playerSummaryKeys, currentGameMode, opponentDisplayName, randomizedTurnOrder) {
                 when (currentGameMode) {
                     GameMode.ONLINE_ROOM, GameMode.NEARBY_NETWORK -> {
-                        val filtered = realTimePlayers.filter { it.id.isNotBlank() }
-                            .distinctBy { it.id }
-                            .sortedWith(compareByDescending<Player> { it.isHost }.thenBy { it.id })
-                        if (filtered.isNotEmpty()) {
-                            filtered
+                        if (randomizedTurnOrder.isNotEmpty()) {
+                            randomizedTurnOrder.map { rotP ->
+                                realTimePlayers.find { it.id == rotP.id } ?: rotP
+                            }
                         } else {
-                            listOf(
-                                Player(id = getLocalUid(), displayName = getPlayerDisplayName(), avatarUrl = getPlayerAvatarUrl(), username = currentAuthUser?.username ?: ""),
-                                Player(id = opponentPlayerId.ifBlank { "opponent" }, displayName = opponentDisplayName, avatarUrl = opponentAvatarUrl, username = opponentUsername ?: "")
-                            )
+                            val filtered = realTimePlayers.filter { it.id.isNotBlank() }
+                                .distinctBy { it.id }
+                                .sortedWith(compareByDescending<Player> { it.isHost }.thenBy { it.id })
+                            if (filtered.isNotEmpty()) {
+                                filtered
+                            } else {
+                                listOf(
+                                    Player(id = getLocalUid(), displayName = getPlayerDisplayName(), avatarUrl = getPlayerAvatarUrl(), username = currentAuthUser?.username ?: ""),
+                                    Player(id = opponentPlayerId.ifBlank { "opponent" }, displayName = opponentDisplayName, avatarUrl = opponentAvatarUrl, username = opponentUsername ?: "")
+                                )
+                            }
                         }
                     }
                     GameMode.AI_EASY, GameMode.AI_HARD -> {
@@ -2421,6 +3570,7 @@ fun RootNavGraph(
                 allPlayerBoards = allPlayerBoards,
                 players = gamePlayers,
                 currentTurnPlayerId = currentTurnPlayerId,
+                disconnectedPlayerIds = disconnectedPlayerIds.toList(),
                 isMyTurn = isMyTurn,
                 turnTimeRemaining = turnTimer,
 
@@ -2434,6 +3584,8 @@ fun RootNavGraph(
                 isGameOver = isGameOver,
                 didPlayerWin = didPlayerWin,
                 isDraw = isDrawMatch,
+                isRunner = isRunnerMatch,
+                winnerPlayerId = winnerPlayerId,
                 isHost = isCurrentHost,
                 pingMs = currentPing,
                 wantsToPlayAgainName = wantsToPlayAgainPlayerName,
@@ -2454,7 +3606,29 @@ fun RootNavGraph(
                     }
                 },
                 incomingChatMessage = latestIncomingChatMessage,
+                initialChatMessages = matchChatHistory,
                 onSendChatMessage = { messageText ->
+                    val myChat = InGameChatMessage(
+                        id = System.currentTimeMillis() + (0..1000).random(),
+                        text = messageText,
+                        isSelf = true,
+                        senderName = null,
+                        timestamp = System.currentTimeMillis()
+                    )
+                    matchChatHistory = matchChatHistory + myChat
+                    if (currentGameMode == GameMode.ONLINE_ROOM && roomCode.isNotBlank()) {
+                        com.bingo.multiplayer.domain.network.OngoingMatchStore.updateMatchGameState(
+                            context = context,
+                            playerBoard = playerBoard,
+                            opponentBoard = opponentBoard,
+                            allPlayerBoards = allPlayerBoards,
+                            pickedNumbers = pickedNumbersHistory.toList(),
+                            pickedByPlayers = pickedByPlayerHistory.toList(),
+                            turnNumber = turnNumber,
+                            currentTurnPlayerId = currentTurnPlayerId,
+                            chatMessages = matchChatHistory
+                        )
+                    }
                     if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
                         broadcastPacket(
                             RoomMessagePacket(
@@ -2523,6 +3697,16 @@ fun RootNavGraph(
                     if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
                         if (isHosting) {
                             val seed = Random.nextLong().let { if (it == 0L) 1L else it }
+                            val activeList = realTimePlayers.filter { it.id.isNotBlank() }
+                                .distinctBy { it.username.trim().lowercase().removePrefix("@").takeIf { u -> u.isNotBlank() } ?: it.id.trim().lowercase() }
+                                .sortedWith(
+                                    compareByDescending<Player> { it.isHost }
+                                        .thenBy { it.username.trim().lowercase().removePrefix("@").takeIf { u -> u.isNotBlank() } ?: it.id.trim().lowercase() }
+                                )
+                            val sanitizedList = activeList.map { it.copy(avatarUrl = null) }
+                            matchParticipants = sanitizedList
+                            val targetSize = com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.resolveBoardSize(isDynamicBoard, selectedDynamicGridSize, sanitizedList.size)
+                            boardSize = targetSize
                             if (currentGameMode == GameMode.ONLINE_ROOM) {
                                 coroutineScope.launch {
                                     com.bingo.multiplayer.domain.network.OnlineRoomRegistry.updateRoomStatus(
@@ -2530,21 +3714,19 @@ fun RootNavGraph(
                                         status = "PLAYING",
                                         seed = seed,
                                         isManualBoard = isManualBoard,
-                                        boardSize = boardSize
+                                        boardSize = targetSize,
+                                        isDynamicBoard = isDynamicBoard
                                     )
                                 }
                             }
-                            val activeList = realTimePlayers.filter { it.id.isNotBlank() }
-                                .distinctBy { it.id }
-                                .sortedWith(compareByDescending<Player> { it.isHost }.thenBy { it.id })
-                            matchParticipants = activeList
                             val playAgainPacket = RoomMessagePacket(
                                 type = "PLAY_AGAIN",
-                                boardSize = boardSize,
+                                boardSize = targetSize,
                                 seed = seed,
                                 playerId = getLocalUid(),
                                 isManualBoard = isManualBoard,
-                                players = activeList
+                                isDynamicBoard = isDynamicBoard,
+                                players = sanitizedList
                             )
                             broadcastPacket(playAgainPacket)
                             coroutineScope.launch {
@@ -2587,7 +3769,7 @@ fun RootNavGraph(
                                     size = boardSize,
                                     firstTurnPlayerId = null,
                                     hostSeed = seed,
-                                    incomingPlayersList = activeList
+                                    incomingPlayersList = sanitizedList
                                 )
                             }
                         }
@@ -2596,12 +3778,35 @@ fun RootNavGraph(
                     }
                 },
                 onBackToMenu = {
+                    val wasOver = isGameOver
+                    if (isHosting || wasOver) {
+                        com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
+                        if (isHosting && (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK)) {
+                            broadcastPacket(
+                                RoomMessagePacket(
+                                    type = "HOST_LEFT",
+                                    playerId = getLocalUid(),
+                                    displayName = getPlayerDisplayName(),
+                                    username = currentAuthUser?.username ?: "",
+                                    isHost = true
+                                )
+                            )
+                            if (roomCode.isNotBlank()) {
+                                coroutineScope.launch {
+                                    com.bingo.multiplayer.domain.network.OnlineRoomRegistry.closeRoom(roomCode)
+                                }
+                            }
+                        }
+                    }
                     isGameOver = false
                     didPlayerWin = false
                     isDrawMatch = false
+                    isRunnerMatch = false
+                    winnerPlayerId = ""
                     currentMatchSeed = 0L
                     allPlayerBoards = emptyMap()
                     pickedNumbersHistory.clear()
+                    disconnectedPlayerIds.clear()
                     isProcessingTurn = false
                     isMyTurn = false
                     turnNumber = 1
@@ -2619,6 +3824,7 @@ fun RootNavGraph(
                     isLocalBoardReady = false
                     isOpponentBoardReady = false
                     matchParticipants = emptyList()
+                    randomizedTurnOrder = emptyList()
                     isStartingCountdown = false
                     countdownSeconds = -1
                     firstTurnPlayerName = ""
@@ -2630,15 +3836,41 @@ fun RootNavGraph(
                 },
                 onReturnToLobby = if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
                     {
+                        val wasOver = isGameOver
+                        if (isHosting) {
+                            com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
+                            broadcastPacket(
+                                RoomMessagePacket(
+                                    type = "HOST_LEFT",
+                                    playerId = getLocalUid(),
+                                    displayName = getPlayerDisplayName(),
+                                    username = currentAuthUser?.username ?: "",
+                                    isHost = true
+                                )
+                            )
+                        } else {
+                            if (wasOver) {
+                                com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
+                            } else {
+                                // Active match in progress: notify the room immediately!
+                                broadcastPacket(
+                                    RoomMessagePacket(
+                                        type = "LEAVE",
+                                        playerId = getLocalUid(),
+                                        displayName = getPlayerDisplayName(),
+                                        username = currentAuthUser?.username ?: "",
+                                        isHost = false
+                                    )
+                                )
+                            }
+                        }
                         isGameOver = false
                         didPlayerWin = false
                         isDrawMatch = false
-                        currentMatchSeed = 0L
-                        allPlayerBoards = emptyMap()
-                        pickedNumbersHistory.clear()
+                        isRunnerMatch = false
+                        winnerPlayerId = ""
                         isProcessingTurn = false
                         isMyTurn = false
-                        turnNumber = 1
                         turnTimer = 30
                         isGamePaused = false
                         pausedByPlayerName = ""
@@ -2652,30 +3884,39 @@ fun RootNavGraph(
                         latestIncomingChatMessage = null
                         isLocalBoardReady = false
                         isOpponentBoardReady = false
-                        matchParticipants = emptyList()
                         isStartingCountdown = false
                         countdownSeconds = -1
                         firstTurnPlayerName = ""
-                        onlineRoomSync.resetMatchSession()
-                        val targetRoute = Screen.Lobby.route
-                        if (isHosting) {
-                            if (currentGameMode == GameMode.ONLINE_ROOM) {
-                                coroutineScope.launch {
-                                    com.bingo.multiplayer.domain.network.OnlineRoomRegistry.updateRoomStatus(roomCode, "WAITING")
-                                }
-                                onlineRoomSync.updateLocalReadyStatus("READY")
-                            } else {
-                                lanP2pSync.updateLocalReadyStatus("READY")
+                        if (!isHosting && isHostLeftGame) {
+                            Toast.makeText(context, "Host left the lobby.", Toast.LENGTH_LONG).show()
+                            disconnectRoom()
+                            isHosting = false
+                            val exitDest = if (currentGameMode == GameMode.NEARBY_NETWORK) Screen.NearbyLobby.route else Screen.MainMenu.route
+                            navController.navigate(exitDest) {
+                                popUpTo(exitDest) { inclusive = false }
+                                launchSingleTop = true
                             }
                         } else {
-                            if (currentGameMode == GameMode.ONLINE_ROOM) {
-                                onlineRoomSync.updateLocalReadyStatus("NOT_READY")
+                            val targetRoute = Screen.Lobby.route
+                            if (isHosting) {
+                                if (currentGameMode == GameMode.ONLINE_ROOM) {
+                                    coroutineScope.launch {
+                                        com.bingo.multiplayer.domain.network.OnlineRoomRegistry.updateRoomStatus(roomCode, "WAITING")
+                                    }
+                                    onlineRoomSync.updateLocalReadyStatus("READY")
+                                } else {
+                                    lanP2pSync.updateLocalReadyStatus("READY")
+                                }
                             } else {
-                                lanP2pSync.updateLocalReadyStatus("NOT_READY")
+                                if (currentGameMode == GameMode.ONLINE_ROOM) {
+                                    onlineRoomSync.updateLocalReadyStatus("NOT_READY")
+                                } else {
+                                    lanP2pSync.updateLocalReadyStatus("NOT_READY")
+                                }
                             }
-                        }
-                        navController.navigate(targetRoute) {
-                            popUpTo(targetRoute) { inclusive = true }
+                            navController.navigate(targetRoute) {
+                                popUpTo(targetRoute) { inclusive = true }
+                            }
                         }
                     }
                 } else null,
@@ -2689,10 +3930,27 @@ fun RootNavGraph(
         }
     }
 
+    LaunchedEffect(incomingInvite?.roomCode) {
+        if (incomingInvite != null) {
+            try {
+                val vibrator = context.getSystemService(android.content.Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    vibrator?.vibrate(android.os.VibrationEffect.createOneShot(200, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator?.vibrate(200)
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
     val currentInvite = incomingInvite
     if (currentInvite != null) {
         AlertDialog(
-            onDismissRequest = { incomingInvite = null },
+            onDismissRequest = {
+                BingoNotificationHelper.cancelInviteNotification(context, currentInvite.roomCode)
+                incomingInvite = null
+            },
             title = {
                 Text(
                     text = "🎮 Match Invitation",
@@ -2711,6 +3969,7 @@ fun RootNavGraph(
                     onClick = {
                         val inviteToJoin = currentInvite
                         incomingInvite = null
+                        BingoNotificationHelper.cancelInviteNotification(context, inviteToJoin.roomCode)
                         coroutineScope.launch {
                             currentAuthUser?.let { u ->
                                 com.bingo.multiplayer.domain.network.GameInviteManager.removeInvite(u.username, inviteToJoin.roomCode)
@@ -2731,6 +3990,7 @@ fun RootNavGraph(
                     onClick = {
                         val inviteToDecline = currentInvite
                         incomingInvite = null
+                        BingoNotificationHelper.cancelInviteNotification(context, inviteToDecline.roomCode)
                         coroutineScope.launch {
                             currentAuthUser?.let { u ->
                                 com.bingo.multiplayer.domain.network.GameInviteManager.removeInvite(u.username, inviteToDecline.roomCode)
@@ -2833,14 +4093,32 @@ fun RootNavGraph(
                     onClick = {
                         showLeaveMatchDialog = false
                         if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
-                            broadcastPacket(
-                                RoomMessagePacket(
-                                    type = "SURRENDER",
-                                    playerId = getLocalUid(),
-                                    displayName = getPlayerDisplayName()
+                            if (isHosting) {
+                                broadcastPacket(
+                                    RoomMessagePacket(
+                                        type = "HOST_LEFT",
+                                        playerId = getLocalUid(),
+                                        displayName = getPlayerDisplayName(),
+                                        username = currentAuthUser?.username ?: "",
+                                        isHost = true
+                                    )
                                 )
-                            )
+                                if (roomCode.isNotBlank()) {
+                                    coroutineScope.launch {
+                                        com.bingo.multiplayer.domain.network.OnlineRoomRegistry.closeRoom(roomCode)
+                                    }
+                                }
+                            } else {
+                                broadcastPacket(
+                                    RoomMessagePacket(
+                                        type = "SURRENDER",
+                                        playerId = getLocalUid(),
+                                        displayName = getPlayerDisplayName()
+                                    )
+                                )
+                            }
                         }
+                        com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
                         isGameOver = false
                         didPlayerWin = false
                         isLocalBoardReady = false

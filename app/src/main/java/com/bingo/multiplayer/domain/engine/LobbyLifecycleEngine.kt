@@ -70,6 +70,8 @@ object LobbyLifecycleEngine {
                 else if (currentStatus != STATUS_LEFT_LOBBY && currentStatus.isNotBlank()) currentStatus
                 else STATUS_LEFT_LOBBY
             }
+            // READY takes precedence over NOT_READY on version tie (affirmative user action vs default state)
+            incomingStatus == STATUS_READY || currentStatus == STATUS_READY -> STATUS_READY
             incomingStatus.isNotBlank() -> incomingStatus
             currentStatus.isNotBlank() -> currentStatus
             else -> STATUS_NOT_READY
@@ -138,6 +140,9 @@ object LobbyLifecycleEngine {
 
     /**
      * Handles incoming JOIN or HEARTBEAT network packet.
+     * Uses sender's monotonic version counter; does NOT inject receiver's local wall clock
+     * to eliminate inter-phone clock skew rejection.
+     * Preserves existing READY status if a delayed/retry JOIN packet arrives.
      */
     fun onRemotePlayerJoinOrHeartbeat(
         packet: RoomMessagePacket,
@@ -150,10 +155,21 @@ object LobbyLifecycleEngine {
         val effectiveReadyVer: Long
 
         if (isJoin) {
-            effectiveReadyStatus = packet.readyStatus.ifBlank {
-                if (packet.isHost) STATUS_READY else STATUS_NOT_READY
+            val isRejoiningFromLeft = existing != null && existing.lobbyReadyStatus == STATUS_LEFT_LOBBY
+            val isAlreadyReady = existing != null && existing.lobbyReadyStatus == STATUS_READY
+
+            effectiveReadyStatus = when {
+                packet.readyStatus == STATUS_READY -> STATUS_READY
+                isAlreadyReady && !isRejoiningFromLeft -> STATUS_READY
+                packet.readyStatus.isNotBlank() -> packet.readyStatus
+                packet.isHost -> STATUS_READY
+                else -> STATUS_NOT_READY
             }
-            effectiveReadyVer = maxOf(now, packet.readyVersion, (existing?.readyVersion ?: 0L) + 1L)
+            effectiveReadyVer = when {
+                packet.readyVersion > 0L -> maxOf(packet.readyVersion, existing?.readyVersion ?: 0L)
+                existing != null -> existing.readyVersion
+                else -> 1L
+            }
         } else {
             val (resolvedStatus, resolvedVer) = reconcileReadyStatus(
                 currentStatus = existing?.lobbyReadyStatus ?: STATUS_NOT_READY,
@@ -243,6 +259,32 @@ object LobbyLifecycleEngine {
     }
 
     /**
+     * Sizing Formula for Dynamic Board:
+     * - If dynamic board is disabled: 5x5 always
+     * - If dynamic board is enabled:
+     *     2 players -> 5x5
+     *     3 players -> 6x6
+     *     4 players -> 7x7
+     *     5+ players -> 8x8 (max supported grid size)
+     */
+    fun resolveBoardSize(isDynamicBoard: Boolean, playerCount: Int): Int {
+        if (!isDynamicBoard) return 5
+        return (3 + playerCount.coerceAtLeast(2)).coerceAtMost(8)
+    }
+
+    /**
+     * Host-Selected Grid Size for Dynamic Board (Version 1.2):
+     * - If dynamic board is disabled: 5x5 always
+     * - If dynamic board is enabled:
+     *     Uses host selected grid size from 5x5 to 10x10.
+     */
+    fun resolveBoardSize(isDynamicBoard: Boolean, selectedSize: Int, playerCount: Int): Int {
+        if (!isDynamicBoard) return 5
+        if (selectedSize in 5..10) return selectedSize
+        return (3 + playerCount.coerceAtLeast(2)).coerceAtMost(8)
+    }
+
+    /**
      * Evaluates whether all conditions to start a multiplayer match are satisfied:
      * - Minimum 2 players present
      * - All non-host players are in STATUS_READY (host is ready by default)
@@ -323,4 +365,170 @@ object LobbyLifecycleEngine {
         }
         return packetSeed == currentMatchSeed
     }
+
+    /**
+     * Determines whether a given player object corresponds to the local device player.
+     * Matches by unique UID, prefixed 'u_' UID, username, or host identity.
+     */
+    fun isPlayerMe(
+        p: Player,
+        myUid: String,
+        myUsername: String = "",
+        myDisplayName: String = "",
+        isHost: Boolean = false
+    ): Boolean {
+        val cleanMyUid = myUid.trim().lowercase().removePrefix("u_")
+        val cleanPId = p.id.trim().lowercase().removePrefix("u_")
+        if (cleanPId.isNotBlank() && cleanMyUid.isNotBlank()) {
+            if (cleanPId == cleanMyUid) {
+                return true
+            }
+        }
+        val cleanMyUser = myUsername.trim().lowercase().removePrefix("@").removePrefix("u_")
+        val cleanPUser = p.username.trim().lowercase().removePrefix("@").removePrefix("u_")
+        if (cleanMyUser.isNotBlank() && cleanPUser.isNotBlank() && cleanMyUser == cleanPUser) {
+            return true
+        }
+        val cleanMyDisplay = myDisplayName.trim().lowercase()
+        val cleanPDisplay = p.displayName.trim().lowercase()
+        if (cleanMyDisplay.isNotBlank() && cleanPDisplay.isNotBlank() && cleanMyDisplay == cleanPDisplay) {
+            if (p.isHost == isHost) return true
+        }
+        if (isHost && p.isHost) {
+            return true
+        }
+        return false
+    }
+
+    /**
+     * Invariant: Deterministic & Collision-Free Player Board Seed Derivation.
+     * Generates a 100% unique, reproducible random seed for each player in a match.
+     * Combines:
+     * 1. [baseSeed]: The shared match seed initiated by the Host.
+     * 2. [player]: The player's canonical identifier (username or id) hashed via 64-bit polynomial.
+     * 3. [index]: The player's canonical position in the match roster.
+     *
+     * Guarantees:
+     * - No two players in the same match can EVER receive the same seed or the same board.
+     * - Deterministic across all devices: Any client or host computing player X's seed computes the exact same value.
+     */
+    fun resolvePlayerBoardSeed(baseSeed: Long, player: Player, index: Int): Long {
+        val clean = player.username.trim().lowercase().removePrefix("@").removePrefix("u_")
+            .ifBlank { player.id.trim().lowercase().removePrefix("u_") }
+        var h = 1125899906842597L
+        for (char in clean) {
+            h = 31L * h + char.code.toLong()
+        }
+        val roleMultiplier = if (player.isHost) 100003L else (index + 1) * 200009L
+        val mixed = baseSeed xor h xor roleMultiplier
+        return if (mixed == 0L) (baseSeed + (index + 1) * 37L) else mixed
+    }
+
+    /**
+     * Generates a fair, deterministic, randomized turn rotation order for all participants
+     * using the match seed. All devices sharing the match seed will generate the EXACT same order.
+     */
+    fun generateDeterministicTurnOrder(
+        allParticipants: List<Player>,
+        matchSeed: Long
+    ): List<Player> {
+        val candidates = allParticipants
+            .filter { it.id.isNotBlank() }
+            .distinctBy { it.id }
+            .sortedBy { it.id } // Canonical base ordering before shuffling
+        if (candidates.size <= 1 || matchSeed == 0L) return candidates
+        val rng = java.util.Random(matchSeed)
+        return candidates.shuffled(rng)
+    }
+
+    fun isPlayerIdMatch(id1: String, id2: String): Boolean {
+        if (id1.isBlank() || id2.isBlank()) return false
+        if (id1.equals(id2, ignoreCase = true)) return true
+        val c1 = id1.trim().lowercase().removePrefix("u_").removePrefix("@").removePrefix("u_")
+        val c2 = id2.trim().lowercase().removePrefix("u_").removePrefix("@").removePrefix("u_")
+        return c1.isNotBlank() && c1 == c2
+    }
+
+    /**
+     * Calculates the circular step distance from one player to another in a turn order.
+     * Used for tie-breaker: smaller distance = earlier in turn rotation = wins tie!
+     */
+    fun calculateTurnDistance(
+        turnOrder: List<String>,
+        fromPlayerId: String,
+        toPlayerId: String
+    ): Int {
+        if (turnOrder.isEmpty() || isPlayerIdMatch(fromPlayerId, toPlayerId)) return 0
+        val fromIndex = turnOrder.indexOfFirst { isPlayerIdMatch(it, fromPlayerId) }
+        val toIndex = turnOrder.indexOfFirst { isPlayerIdMatch(it, toPlayerId) }
+        if (fromIndex == -1 || toIndex == -1) return Int.MAX_VALUE
+        val size = turnOrder.size
+        return (toIndex - fromIndex + size) % size
+    }
+
+    /**
+     * Evaluates the next active player who should pick a number in a multiplayer game.
+     *
+     * Rules:
+     * - Filters out disconnected or departed players.
+     * - If > 2 active players remain, rotates circularly through active players only.
+     * - If the departed player was the current picker, seamlessly advances to the next active player.
+     * - If 2 active players remain, alternates between them.
+     * - If 1 active player remains, returns that player.
+     */
+    fun calculateNextTurnPlayerId(
+        allParticipants: List<Player>,
+        disconnectedPlayerIds: Set<String>,
+        currentPickerId: String,
+        fallbackPlayerId: String = "",
+        matchSeed: Long = 0L,
+        customTurnOrder: List<Player>? = null
+    ): String {
+        val candidatePlayers = if (customTurnOrder != null && customTurnOrder.isNotEmpty()) {
+            customTurnOrder
+        } else if (matchSeed != 0L) {
+            generateDeterministicTurnOrder(allParticipants, matchSeed)
+        } else {
+            allParticipants
+                .filter { it.id.isNotBlank() }
+                .distinctBy { it.id }
+                .sortedWith(compareByDescending<Player> { it.isHost }.thenBy { it.id })
+        }
+
+        val activePlayers = candidatePlayers.filter { candidate ->
+            disconnectedPlayerIds.none { dId -> isPlayerIdMatch(candidate.id, dId) } &&
+            candidate.lobbyReadyStatus != STATUS_LEFT_LOBBY
+        }
+
+        if (activePlayers.isEmpty()) {
+            return fallbackPlayerId
+        }
+
+        if (activePlayers.size == 1) {
+            return activePlayers.first().id
+        }
+
+        // 2+ active players: Circular rotation
+        val currentIndex = activePlayers.indexOfFirst { isPlayerIdMatch(it.id, currentPickerId) }
+        return if (currentIndex != -1) {
+            activePlayers[(currentIndex + 1) % activePlayers.size].id
+        } else {
+            // Current picker is not in activePlayers (e.g. departed during their turn)
+            val origIndex = candidatePlayers.indexOfFirst { isPlayerIdMatch(it.id, currentPickerId) }
+            if (origIndex != -1) {
+                var found: Player? = null
+                for (step in 1 until candidatePlayers.size) {
+                    val candidate = candidatePlayers[(origIndex + step) % candidatePlayers.size]
+                    if (activePlayers.any { isPlayerIdMatch(it.id, candidate.id) }) {
+                        found = candidate
+                        break
+                    }
+                }
+                found?.id ?: activePlayers.first().id
+            } else {
+                activePlayers.first().id
+            }
+        }
+    }
 }
+

@@ -48,19 +48,59 @@ class LanP2pSessionManager {
 
     private var serverJob: Job? = null
     private var clientReadJob: Job? = null
+    private var clientConnectJob: Job? = null
     private var heartbeatJob: Job? = null
     private var livenessJob: Job? = null
 
     var localPlayer: Player? = null
     var isHostInLobby = false
 
-    private val playerRegistry = mutableMapOf<String, Player>()
+    private val playerRegistry = ConcurrentHashMap<String, Player>()
     private val kickedPlayerIds = ConcurrentHashMap.newKeySet<String>()
     private val _players = MutableStateFlow<List<Player>>(emptyList())
     val players: StateFlow<List<Player>> = _players.asStateFlow()
 
     private val _incomingPackets = MutableSharedFlow<RoomMessagePacket>(replay = 1, extraBufferCapacity = 64)
     val incomingPackets: SharedFlow<RoomMessagePacket> = _incomingPackets.asSharedFlow()
+
+    private val lastDirectHeartbeatTimestamps = ConcurrentHashMap<String, Long>()
+
+    fun recordDirectHeartbeat(playerId: String, username: String = "") {
+        if (playerId.isBlank()) return
+        val now = System.currentTimeMillis()
+        val cleanId = playerId.trim().lowercase().removePrefix("u_")
+        lastDirectHeartbeatTimestamps[playerId] = now
+        lastDirectHeartbeatTimestamps[cleanId] = now
+        if (username.isNotBlank()) {
+            val cleanUser = username.trim().lowercase().removePrefix("@")
+            lastDirectHeartbeatTimestamps[cleanUser] = now
+        }
+    }
+
+    fun getLastDirectHeartbeat(playerId: String): Long {
+        if (playerId.isBlank()) return 0L
+        val clean = playerId.trim().lowercase().removePrefix("u_")
+        val ts = lastDirectHeartbeatTimestamps[playerId]
+            ?: lastDirectHeartbeatTimestamps[clean]
+        if (ts != null && ts > 0L) return ts
+        playerRegistry.values.firstOrNull { p ->
+            val pClean = p.id.trim().lowercase().removePrefix("u_")
+            val pUser = p.username.trim().lowercase().removePrefix("@")
+            p.id == playerId || pClean == clean || (pUser.isNotBlank() && pUser == clean)
+        }?.let { matched ->
+            return lastDirectHeartbeatTimestamps[matched.id]
+                ?: lastDirectHeartbeatTimestamps[matched.username.trim().lowercase().removePrefix("@")]
+                ?: 0L
+        }
+        return 0L
+    }
+
+    fun resetInGameHeartbeats(participantIds: Collection<String>) {
+        val now = System.currentTimeMillis()
+        participantIds.forEach { id ->
+            recordDirectHeartbeat(id)
+        }
+    }
 
     init {
         activeInstance = this
@@ -176,7 +216,8 @@ class LanP2pSessionManager {
         playerRegistry[clientPlayer.id] = clientPlayer
         _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
 
-        scope.launch(Dispatchers.IO) {
+        clientConnectJob?.cancel()
+        clientConnectJob = scope.launch(Dispatchers.IO) {
             val candidateIps = mutableListOf<String>()
             if (hostIp.isNotBlank()) candidateIps.add(hostIp)
             if (fallbackIp.isNotBlank() && !candidateIps.contains(fallbackIp)) candidateIps.add(fallbackIp)
@@ -248,6 +289,9 @@ class LanP2pSessionManager {
         heartbeatJob = scope.launch(Dispatchers.IO) {
             while (isActive) {
                 delay(2000L)
+                if (!AppLifecycleObserver.isAppInForeground.value) {
+                    continue
+                }
                 localPlayer?.let { p ->
                     broadcastPacket(
                         RoomMessagePacket(
@@ -334,6 +378,22 @@ class LanP2pSessionManager {
                 )
             }
             return
+        }
+
+        // Live Heartbeat/Packet Touch: Any incoming packet confirms player is actively communicating
+        val isDepartOrTimeout = packet.type in listOf("TURN_TIMEOUT", "LEAVE", "HOST_LEFT", "SURRENDER", "KICK_PLAYER")
+        if (!isDepartOrTimeout && packet.playerId.isNotBlank() && packet.playerId != localPlayer?.id) {
+            val now = System.currentTimeMillis()
+            recordDirectHeartbeat(packet.playerId, packet.username)
+            val clean = packet.playerId.trim().lowercase().removePrefix("u_")
+            val pCleanU = packet.username.trim().lowercase().removePrefix("@")
+            playerRegistry.entries.forEach { (k, v) ->
+                val cleanK = k.trim().lowercase().removePrefix("u_")
+                val cleanUser = v.username.trim().lowercase().removePrefix("@")
+                if (k == packet.playerId || cleanK == clean || (pCleanU.isNotBlank() && (cleanUser == pCleanU || cleanK == pCleanU))) {
+                    playerRegistry[k] = v.copy(lastSeenTimestamp = now)
+                }
+            }
         }
 
         when (packet.type) {
@@ -496,13 +556,8 @@ class LanP2pSessionManager {
     fun removePlayer(playerId: String) {
         val targetPlayer = playerRegistry[playerId]
         kickedPlayerIds.add(playerId)
-        if (targetPlayer != null) {
-            if (targetPlayer.username.isNotBlank()) {
-                kickedPlayerIds.add(targetPlayer.username.trim().lowercase().removePrefix("@"))
-            }
-            if (targetPlayer.displayName.isNotBlank()) {
-                kickedPlayerIds.add(targetPlayer.displayName.trim().lowercase())
-            }
+        if (targetPlayer != null && targetPlayer.username.isNotBlank()) {
+            kickedPlayerIds.add(targetPlayer.username.trim().lowercase().removePrefix("@"))
         }
         playerRegistry.remove(playerId)
         _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
@@ -534,6 +589,7 @@ class LanP2pSessionManager {
         heartbeatJob?.cancel()
         livenessJob?.cancel()
         clientReadJob?.cancel()
+        clientConnectJob?.cancel()
         serverJob?.cancel()
         clientJobs.forEach { it.cancel() }
         clientJobs.clear()
@@ -541,6 +597,7 @@ class LanP2pSessionManager {
         heartbeatJob = null
         livenessJob = null
         clientReadJob = null
+        clientConnectJob = null
         serverJob = null
 
         try { outWriter?.close() } catch (_: Exception) {}
@@ -565,9 +622,28 @@ class LanP2pSessionManager {
 
         isHostInLobby = false
         localPlayer = null
+        lastDirectHeartbeatTimestamps.clear()
         playerRegistry.clear()
         kickedPlayerIds.clear()
         _players.value = emptyList()
+    }
+
+    fun getLastSeenTimestamp(playerId: String): Long {
+        if (playerId.isBlank()) return 0L
+        val clean = playerId.trim().lowercase().removePrefix("u_")
+        var maxTimestamp = 0L
+        playerRegistry.entries.forEach { (k, v) ->
+            val cleanK = k.trim().lowercase().removePrefix("u_")
+            val cleanUser = v.username.trim().lowercase().removePrefix("@")
+            val cleanDisplay = v.displayName.trim().lowercase()
+            if (cleanK == clean || (cleanUser.isNotBlank() && cleanUser == clean) || (cleanDisplay.isNotBlank() && cleanDisplay == clean)) {
+                if (v.lastSeenTimestamp > maxTimestamp) {
+                    maxTimestamp = v.lastSeenTimestamp
+                }
+            }
+        }
+        val direct = getLastDirectHeartbeat(playerId)
+        return maxOf(maxTimestamp, direct)
     }
 
     companion object {

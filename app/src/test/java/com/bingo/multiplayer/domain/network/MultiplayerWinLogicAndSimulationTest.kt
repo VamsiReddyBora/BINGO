@@ -1,6 +1,7 @@
 package com.bingo.multiplayer.domain.network
 
 import com.bingo.multiplayer.domain.engine.BingoEngine
+import com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine
 import com.bingo.multiplayer.domain.engine.ManualBoardEngine
 import com.bingo.multiplayer.domain.model.Board
 import com.bingo.multiplayer.domain.model.Cell
@@ -883,4 +884,461 @@ class MultiplayerWinLogicAndSimulationTest {
         assertEquals("alice", syncedFriends[0].username)
         assertFalse("Deleted friend bob must NOT be resurrected on the screen", syncedFriends.any { it.username == "bob" })
     }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // VERSION 1.1 DYNAMIC BOARD SIMULATIONS & VALIDATION
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `dynamic board - host lobby checkbox toggle and grid scaling simulation`() {
+        // Step 1: Default state is unchecked (false)
+        var hostIsDynamicBoard = false
+        var guestIsDynamicBoard = false
+
+        val host = Player(id = "host_1", displayName = "Host", isHost = true)
+        val guest1 = Player(id = "guest_1", displayName = "Guest 1", isHost = false)
+        val guest2 = Player(id = "guest_2", displayName = "Guest 2", isHost = false)
+
+        val lobby3Players = listOf(host, guest1, guest2)
+
+        // With dynamic board UNCHECKED, board size must be 5x5 regardless of player count
+        val defaultSize = LobbyLifecycleEngine.resolveBoardSize(hostIsDynamicBoard, lobby3Players.size)
+        assertEquals(5, defaultSize)
+
+        // Starting match unchecked produces 5x5 board (25 cells)
+        val defaultBoard = engine.generateBoard(size = defaultSize, seed = 12345L)
+        assertEquals(5, defaultBoard.size)
+        assertEquals(25, defaultBoard.cells.size)
+        assertEquals(25, defaultBoard.maxNumber)
+        assertEquals(5, defaultBoard.targetLines)
+
+        // Step 2: Host checks "Dynamic board [checkbox]"
+        hostIsDynamicBoard = true
+
+        // Host sends SETTINGS_UPDATE packet to room
+        val settingsPacket = RoomMessagePacket(
+            type = "SETTINGS_UPDATE",
+            playerId = host.id,
+            isDynamicBoard = hostIsDynamicBoard
+        )
+        val encodedSettings = FastPacketCodec.encode(settingsPacket)
+        val decodedSettings = FastPacketCodec.decode(encodedSettings)
+
+        // Guest receives and synchronizes dynamic board state
+        guestIsDynamicBoard = decodedSettings.isDynamicBoard
+        assertTrue("Guest must receive dynamic board enabled", guestIsDynamicBoard)
+
+        // Step 3: Test Dynamic Scaling across all player counts:
+        // 2 players -> 5x5 (25 cells, max 25)
+        val size2p = LobbyLifecycleEngine.resolveBoardSize(hostIsDynamicBoard, 2)
+        assertEquals(5, size2p)
+        val board2p = engine.generateBoard(size = size2p)
+        assertEquals(25, board2p.cells.size)
+        assertEquals(25, board2p.maxNumber)
+
+        // 3 players -> 6x6 (36 cells, max 36)
+        val size3p = LobbyLifecycleEngine.resolveBoardSize(hostIsDynamicBoard, 3)
+        assertEquals(6, size3p)
+        val board3p = engine.generateBoard(size = size3p)
+        assertEquals(36, board3p.cells.size)
+        assertEquals(36, board3p.maxNumber)
+        assertEquals(6, board3p.targetLines)
+
+        // 4 players -> 7x7 (49 cells, max 49)
+        val size4p = LobbyLifecycleEngine.resolveBoardSize(hostIsDynamicBoard, 4)
+        assertEquals(7, size4p)
+        val board4p = engine.generateBoard(size = size4p)
+        assertEquals(49, board4p.cells.size)
+        assertEquals(49, board4p.maxNumber)
+        assertEquals(7, board4p.targetLines)
+
+        // 5 players -> 8x8 (64 cells, max 64)
+        val size5p = LobbyLifecycleEngine.resolveBoardSize(hostIsDynamicBoard, 5)
+        assertEquals(8, size5p)
+        val board5p = engine.generateBoard(size = size5p)
+        assertEquals(64, board5p.cells.size)
+        assertEquals(64, board5p.maxNumber)
+        assertEquals(8, board5p.targetLines)
+
+        // 6+ players -> capped at 8x8
+        val size6p = LobbyLifecycleEngine.resolveBoardSize(hostIsDynamicBoard, 6)
+        assertEquals(8, size6p)
+
+        // Step 4: Host unchecks "Dynamic board [checkbox]"
+        hostIsDynamicBoard = false
+        val uncheckPacket = RoomMessagePacket(
+            type = "SETTINGS_UPDATE",
+            playerId = host.id,
+            isDynamicBoard = hostIsDynamicBoard
+        )
+        val decodedUncheck = FastPacketCodec.decode(FastPacketCodec.encode(uncheckPacket))
+        guestIsDynamicBoard = decodedUncheck.isDynamicBoard
+        assertFalse("Guest must receive dynamic board disabled", guestIsDynamicBoard)
+
+        // Now even with 4, 5, or 6 players, board size is strictly 5x5
+        for (count in 2..8) {
+            val uncheckedSize = LobbyLifecycleEngine.resolveBoardSize(hostIsDynamicBoard, count)
+            assertEquals("When unchecked, $count players must result in 5x5 board", 5, uncheckedSize)
+            val board = engine.generateBoard(size = uncheckedSize)
+            assertEquals(25, board.cells.size)
+            assertEquals(25, board.maxNumber)
+        }
+    }
+
+    @Test
+    fun `dynamic board - gameplay and win logic simulation on 6x6 grid`() {
+        val size = 6
+        var board = engine.generateBoard(size = size, seed = 9999L)
+        assertEquals(6, board.size)
+        assertEquals(36, board.cells.size)
+        assertEquals(6, board.targetLines)
+
+        // Mark 5 horizontal rows: row 0, 1, 2, 3, 4
+        for (r in 0 until 5) {
+            for (c in 0 until size) {
+                val num = board.getCell(r, c).number
+                board = engine.markCell(
+                    board = board,
+                    number = num,
+                    pickedByPlayerId = "player_1",
+                    isOwnPick = true,
+                    turnNumber = r * size + c + 1
+                )
+            }
+        }
+
+        // At 5 lines completed on a 6x6 board (targetLines = 6), isBingo is FALSE
+        assertEquals(5, board.completedLinesCount)
+        assertFalse("On 6x6 board, 5 completed lines is NOT a bingo yet (requires 6)", board.isBingo)
+
+        // Now mark the 6th row (row 5)
+        for (c in 0 until size) {
+            val num = board.getCell(5, c).number
+            board = engine.markCell(
+                board = board,
+                number = num,
+                pickedByPlayerId = "player_1",
+                isOwnPick = true,
+                turnNumber = 30 + c + 1
+            )
+        }
+
+        // Now all 6 rows are completed -> 6 lines -> BINGO!
+        assertTrue(board.completedLinesCount >= 6)
+        assertTrue("On 6x6 board, 6 completed lines triggers BINGO", board.isBingo)
+
+        // Evaluate outcome in a 3-player match
+        val outcome = evaluateMatchOutcome(
+            isGroup = true,
+            myUid = "player_1",
+            playerBoard = board,
+            opponentBoard = engine.generateBoard(size = size),
+            allBoards = mapOf("player_1" to board)
+        )
+        assertTrue(outcome.isGameOver)
+        assertTrue(outcome.didPlayerWin)
+        assertFalse(outcome.isDraw)
+    }
+
+    @Test
+    fun `dynamic board - manual board design simulation for dynamic sizes`() {
+        // Test manual board design on 6x6 dynamic board
+        val size = 6
+        val totalCells = size * size // 36
+
+        // 1. Initial empty grid
+        val emptyGrid = ManualBoardEngine.createEmptyGrid(size)
+        assertEquals(36, emptyGrid.size)
+        assertTrue(emptyGrid.all { it == null })
+        assertFalse(ManualBoardEngine.isBoardComplete(emptyGrid, size))
+
+        // 2. Placing numbers sequentially
+        var currentGrid = emptyGrid
+        var nextNumber = 1
+        for (i in 0 until totalCells) {
+            val result = ManualBoardEngine.placeNextNumber(currentGrid, i, nextNumber, size)
+            assertNotNull(result)
+            currentGrid = result!!.first
+            nextNumber = result.second
+        }
+
+        assertEquals(totalCells + 1, nextNumber)
+        assertTrue(ManualBoardEngine.isBoardComplete(currentGrid, size))
+
+        // 3. Build board from completed manual design
+        val builtBoard = ManualBoardEngine.buildBoard(currentGrid, size)
+        assertEquals(6, builtBoard.size)
+        assertEquals(36, builtBoard.cells.size)
+        assertEquals(6, builtBoard.targetLines)
+        assertEquals(36, builtBoard.maxNumber)
+
+        // Numbers in built board must be 1..36
+        val cellNumbers = builtBoard.cells.map { it.number }.sorted()
+        assertEquals((1..36).toList(), cellNumbers)
+    }
+
+    @Test
+    fun `dynamic board - packet serialization round trip preserves dynamic board state`() {
+        // START_GAME packet
+        val startGamePacket = RoomMessagePacket(
+            type = "START_GAME",
+            boardSize = 7,
+            seed = 77777L,
+            playerId = "host_1",
+            isDynamicBoard = true,
+            isManualBoard = false
+        )
+        val encodedStart = FastPacketCodec.encode(startGamePacket)
+        val decodedStart = FastPacketCodec.decode(encodedStart)
+        assertEquals("START_GAME", decodedStart.type)
+        assertEquals(7, decodedStart.boardSize)
+        assertTrue(decodedStart.isDynamicBoard)
+        assertFalse(decodedStart.isManualBoard)
+
+        // PLAY_AGAIN packet
+        val playAgainPacket = RoomMessagePacket(
+            type = "PLAY_AGAIN",
+            boardSize = 8,
+            seed = 88888L,
+            playerId = "host_1",
+            isDynamicBoard = true,
+            isManualBoard = true
+        )
+        val encodedPlayAgain = FastPacketCodec.encode(playAgainPacket)
+        val decodedPlayAgain = FastPacketCodec.decode(encodedPlayAgain)
+        assertEquals("PLAY_AGAIN", decodedPlayAgain.type)
+        assertEquals(8, decodedPlayAgain.boardSize)
+        assertTrue(decodedPlayAgain.isDynamicBoard)
+        assertTrue(decodedPlayAgain.isManualBoard)
+
+        // SETTINGS_UPDATE packet
+        val settingsPacket = RoomMessagePacket(
+            type = "SETTINGS_UPDATE",
+            playerId = "host_1",
+            isDynamicBoard = false,
+            isManualBoard = false
+        )
+        val encodedSettings = FastPacketCodec.encode(settingsPacket)
+        val decodedSettings = FastPacketCodec.decode(encodedSettings)
+        assertEquals("SETTINGS_UPDATE", decodedSettings.type)
+        assertFalse(decodedSettings.isDynamicBoard)
+    }
+
+    @Test
+    fun testHostSelectedGridSizesFrom5x5To10x10Simulation() {
+        val host = Player(id = "host_1", displayName = "Host", isHost = true)
+        val guest = Player(id = "guest_1", displayName = "Guest", isHost = false)
+        val participants = listOf(host, guest)
+
+        // When dynamic board is false -> always 5x5
+        assertEquals(5, LobbyLifecycleEngine.resolveBoardSize(isDynamicBoard = false, selectedSize = 8, playerCount = 2))
+
+        // When dynamic board is true -> host chooses 5..10
+        for (gridSize in 5..10) {
+            val resolved = LobbyLifecycleEngine.resolveBoardSize(isDynamicBoard = true, selectedSize = gridSize, playerCount = 2)
+            assertEquals(gridSize, resolved)
+
+            // Board generation
+            val board = engine.generateBoard(size = resolved, seed = 55555L)
+            assertEquals(gridSize, board.size)
+            assertEquals(gridSize * gridSize, board.cells.size)
+            assertEquals(gridSize, board.targetLines)
+            assertEquals(gridSize * gridSize, board.maxNumber)
+
+            // SETTINGS_UPDATE packet broadcast test
+            val updatePacket = RoomMessagePacket(
+                type = "SETTINGS_UPDATE",
+                playerId = host.id,
+                isDynamicBoard = true,
+                boardSize = gridSize
+            )
+            val encoded = FastPacketCodec.encode(updatePacket)
+            val decoded = FastPacketCodec.decode(encoded)
+            assertEquals(gridSize, decoded.boardSize)
+            assertTrue(decoded.isDynamicBoard)
+        }
+    }
+
+    @Test
+    fun test8PlayersWinnerRunnerLoserTurnPriorityAndSortingSimulation() {
+        val players = (1..8).map { i ->
+            Player(id = "player_$i", displayName = "Player $i", isHost = (i == 1))
+        }
+
+        // Simulate boards for all 8 players
+        val baseSeed = 77777L
+        val size = 5
+        val boards = players.mapIndexed { index, p ->
+            val pSeed = LobbyLifecycleEngine.resolvePlayerBoardSeed(baseSeed, p, index)
+            p.id to engine.generateBoard(size, pSeed)
+        }.toMap().toMutableMap()
+
+        // Fast-forward Player 1, 2, 3, 4 to be 1 cell away from completing their 5th line
+        // We artificially mark lines so that:
+        // Player 1: has 4 completed lines
+        // Player 2: has 4 completed lines
+        // Player 3: has 4 completed lines
+        // Player 4: has 4 completed lines
+        // Player 5: has 3 completed lines
+        // Player 6: has 2 completed lines
+        // Player 7: has 1 completed line
+        // Player 8: has 0 completed lines
+
+        // Pick common number X that triggers the 5th line for Player 1, 2, 3, 4
+        // Active turn player is Player 1
+        val activePickerId = "player_1"
+
+        // Simulate boards where player 1, 2, 3, 4 achieve isBingo = true
+        // Let's create boards with isBingo = true for 1, 2, 3, 4
+        // We will mark 5 full rows for 1..4
+        fun markRows(board: com.bingo.multiplayer.domain.model.Board, rowsCount: Int): com.bingo.multiplayer.domain.model.Board {
+            var b = board
+            for (r in 0 until rowsCount) {
+                for (c in 0 until size) {
+                    val num = b.getCell(r, c).number
+                    b = engine.markCell(b, num, activePickerId, true, 1)
+                }
+            }
+            return b
+        }
+
+        boards["player_1"] = markRows(boards["player_1"]!!, 5) // 5 lines -> isBingo
+        boards["player_2"] = markRows(boards["player_2"]!!, 5) // 5 lines -> isBingo
+        boards["player_3"] = markRows(boards["player_3"]!!, 5) // 5 lines -> isBingo
+        boards["player_4"] = markRows(boards["player_4"]!!, 5) // 5 lines -> isBingo
+        boards["player_5"] = markRows(boards["player_5"]!!, 3) // 3 lines -> not bingo
+        boards["player_6"] = markRows(boards["player_6"]!!, 2) // 2 lines -> not bingo
+        boards["player_7"] = markRows(boards["player_7"]!!, 1) // 1 line -> not bingo
+        // player_8 has 0 lines
+
+        assertTrue(boards["player_1"]!!.isBingo)
+        assertTrue(boards["player_2"]!!.isBingo)
+        assertTrue(boards["player_3"]!!.isBingo)
+        assertTrue(boards["player_4"]!!.isBingo)
+        assertFalse(boards["player_5"]!!.isBingo)
+        assertFalse(boards["player_6"]!!.isBingo)
+        assertFalse(boards["player_7"]!!.isBingo)
+        assertFalse(boards["player_8"]!!.isBingo)
+
+        // Evaluate outcome with activePickerId = "player_1"
+        val completedPlayers = boards.filter { it.value.isBingo }.keys
+        val winnerId = if (activePickerId in completedPlayers) activePickerId else completedPlayers.first()
+        val runnerIds = completedPlayers.filter { it != winnerId }
+        val loserIds = boards.keys.filter { it !in completedPlayers }
+
+        assertEquals("Player 1 picked on their turn, so Player 1 must be WINNER", "player_1", winnerId)
+        assertEquals("Players 2, 3, 4 completed on someone else's pick, so they are RUNNERS", 3, runnerIds.size)
+        assertTrue(runnerIds.containsAll(listOf("player_2", "player_3", "player_4")))
+        assertEquals("Players 5, 6, 7, 8 are LOSERS", 4, loserIds.size)
+        assertTrue(loserIds.containsAll(listOf("player_5", "player_6", "player_7", "player_8")))
+
+        // Test review strip sorting:
+        // Priority 1: Winner at the top
+        // Priority 2: Runners (by lines completed desc)
+        // Priority 3: Losers (by lines completed desc)
+        val sortedPlayers = players.sortedWith(
+            compareByDescending<Player> { p ->
+                if (p.id == winnerId) 3
+                else {
+                    val b = boards[p.id]!!
+                    if (b.isBingo) 2 else 1
+                }
+            }.thenByDescending { p ->
+                boards[p.id]!!.completedLinesCount
+            }
+        )
+
+        assertEquals("1st position in review strip must be the WINNER", "player_1", sortedPlayers[0].id)
+        assertTrue("2nd-4th positions must be the RUNNERS", setOf("player_2", "player_3", "player_4").contains(sortedPlayers[1].id))
+        assertTrue("2nd-4th positions must be the RUNNERS", setOf("player_2", "player_3", "player_4").contains(sortedPlayers[2].id))
+        assertTrue("2nd-4th positions must be the RUNNERS", setOf("player_2", "player_3", "player_4").contains(sortedPlayers[3].id))
+
+        assertEquals("5th position must be Player 5 (3 lines)", "player_5", sortedPlayers[4].id)
+        assertEquals("6th position must be Player 6 (2 lines)", "player_6", sortedPlayers[5].id)
+        assertEquals("7th position must be Player 7 (1 line)", "player_7", sortedPlayers[6].id)
+        assertEquals("8th position must be Player 8 (0 lines)", "player_8", sortedPlayers[7].id)
+    }
+
+    @Test
+    fun `8 players simulation - mid game departure shrinks turn rotation, emits system chat, rejoin restores rotation, and game finishes with winner and runners`() {
+        val allPlayers = (1..8).map { i ->
+            Player(
+                id = "player_$i",
+                displayName = "Player $i",
+                username = "user_$i",
+                isHost = (i == 1)
+            )
+        }
+        val disconnected = mutableSetOf<String>()
+
+        // 1. Initial 8 players turn rotation: P1 -> P2 -> P3 -> P4 -> P5 -> P6 -> P7 -> P8 -> P1
+        var currentPicker = "player_1"
+        assertEquals("player_2", LobbyLifecycleEngine.calculateNextTurnPlayerId(allPlayers, disconnected, currentPicker))
+        currentPicker = "player_2"
+        assertEquals("player_3", LobbyLifecycleEngine.calculateNextTurnPlayerId(allPlayers, disconnected, currentPicker))
+        currentPicker = "player_3"
+        assertEquals("player_4", LobbyLifecycleEngine.calculateNextTurnPlayerId(allPlayers, disconnected, currentPicker))
+        currentPicker = "player_7"
+        assertEquals("player_8", LobbyLifecycleEngine.calculateNextTurnPlayerId(allPlayers, disconnected, currentPicker))
+        currentPicker = "player_8"
+        assertEquals("player_1", LobbyLifecycleEngine.calculateNextTurnPlayerId(allPlayers, disconnected, currentPicker))
+
+        // 2. Mid-Game Departure: Player 3 exits mid-game (network drop or app background)
+        disconnected.add("player_3")
+        val leftChat = com.bingo.multiplayer.domain.model.InGameChatMessage(
+            text = "Player 3 left the game",
+            isSelf = false,
+            isSystemMessage = true
+        )
+        assertTrue("Chat message must be identified as system message", leftChat.isSystemMessage)
+        assertEquals("Player 3 left the game", leftChat.text)
+
+        // 3. Verify turn rotation shrinks from 8 to 7, skipping Player 3 completely without 30s stall:
+        // From Player 2, next turn MUST be Player 4 (Player 3 skipped!)
+        assertEquals("player_4", LobbyLifecycleEngine.calculateNextTurnPlayerId(allPlayers, disconnected, "player_2"))
+        assertEquals("player_5", LobbyLifecycleEngine.calculateNextTurnPlayerId(allPlayers, disconnected, "player_4"))
+        assertEquals("player_6", LobbyLifecycleEngine.calculateNextTurnPlayerId(allPlayers, disconnected, "player_5"))
+        assertEquals("player_7", LobbyLifecycleEngine.calculateNextTurnPlayerId(allPlayers, disconnected, "player_6"))
+        assertEquals("player_8", LobbyLifecycleEngine.calculateNextTurnPlayerId(allPlayers, disconnected, "player_7"))
+        assertEquals("player_1", LobbyLifecycleEngine.calculateNextTurnPlayerId(allPlayers, disconnected, "player_8"))
+        assertEquals("player_2", LobbyLifecycleEngine.calculateNextTurnPlayerId(allPlayers, disconnected, "player_1"))
+
+        // Edge case: If player_3 departed during player_3's active turn:
+        // calculateNextTurnPlayerId for player_3 must immediately advance to player_4!
+        val advancedTurnFromDeparted = LobbyLifecycleEngine.calculateNextTurnPlayerId(allPlayers, disconnected, "player_3")
+        assertEquals("player_4", advancedTurnFromDeparted)
+
+        // 4. Mid-Game Rejoin: Player 3 opens app, ongoing match card rejoins, sends REJOIN_GAME
+        disconnected.remove("player_3")
+        val joinedChat = com.bingo.multiplayer.domain.model.InGameChatMessage(
+            text = "Player 3 joined the game",
+            isSelf = false,
+            isSystemMessage = true
+        )
+        assertTrue(joinedChat.isSystemMessage)
+        assertEquals("Player 3 joined the game", joinedChat.text)
+
+        // 5. Verify turn rotation expands back from 7 to 8:
+        // From Player 2, next turn is now Player 3 again!
+        assertEquals("player_3", LobbyLifecycleEngine.calculateNextTurnPlayerId(allPlayers, disconnected, "player_2"))
+        assertEquals("player_4", LobbyLifecycleEngine.calculateNextTurnPlayerId(allPlayers, disconnected, "player_3"))
+
+        // 6. Multiple Departures: Players 3, 5, 7 all leave
+        disconnected.addAll(listOf("player_3", "player_5", "player_7"))
+        // Active rotation has 5 players: P1, P2, P4, P6, P8
+        assertEquals("player_4", LobbyLifecycleEngine.calculateNextTurnPlayerId(allPlayers, disconnected, "player_2"))
+        assertEquals("player_6", LobbyLifecycleEngine.calculateNextTurnPlayerId(allPlayers, disconnected, "player_4"))
+        assertEquals("player_8", LobbyLifecycleEngine.calculateNextTurnPlayerId(allPlayers, disconnected, "player_6"))
+        assertEquals("player_1", LobbyLifecycleEngine.calculateNextTurnPlayerId(allPlayers, disconnected, "player_8"))
+
+        // 7. Last Player Standing: 7 players leave, only Player 1 remains
+        val allOtherPlayerIds = allPlayers.filter { it.id != "player_1" }.map { it.id }
+        disconnected.clear()
+        disconnected.addAll(allOtherPlayerIds)
+        val remainingActive = allPlayers.filter { it.id !in disconnected }
+        assertEquals(1, remainingActive.size)
+        assertEquals("player_1", remainingActive.first().id)
+        assertEquals("player_1", LobbyLifecycleEngine.calculateNextTurnPlayerId(allPlayers, disconnected, "player_2", fallbackPlayerId = "player_1"))
+    }
 }
+

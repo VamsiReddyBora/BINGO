@@ -36,7 +36,8 @@ data class OnlineRoomSession(
     val lastHeartbeat: Long = System.currentTimeMillis(),
     val players: List<Player> = emptyList(),
     val currentSeed: Long = 0L,
-    val isManualBoard: Boolean = false
+    val isManualBoard: Boolean = false,
+    val isDynamicBoard: Boolean = false
 )
 
 sealed interface RoomJoinResult {
@@ -267,7 +268,11 @@ object OnlineRoomRegistry {
                 return@withContext RoomJoinResult.NotFound("Room $cleanCode has been closed by the host.")
             }
 
-            if (session.status == "PLAYING") {
+            val existingInSession = session.players.find {
+                it.id == joiner.id || (it.username.isNotBlank() && it.username.equals(joiner.username, ignoreCase = true))
+            }
+
+            if (session.status == "PLAYING" && existingInSession == null) {
                 return@withContext RoomJoinResult.AlreadyStarted("Match in room $cleanCode has already started.")
             }
 
@@ -277,9 +282,6 @@ object OnlineRoomRegistry {
                 return@withContext RoomJoinResult.Expired("Room $cleanCode has expired or the host has left.")
             }
 
-            val existingInSession = session.players.find {
-                it.id == joiner.id || (it.username.isNotBlank() && it.username.equals(joiner.username, ignoreCase = true))
-            }
             val safeJoiner = sanitizePlayer(LobbyLifecycleEngine.onPlayerJoinSession(joiner.copy(isHost = false), existingInSession))
             val isAlreadyInRoom = existingInSession != null
 
@@ -581,7 +583,8 @@ object OnlineRoomRegistry {
         status: String,
         seed: Long = 0L,
         isManualBoard: Boolean = false,
-        boardSize: Int = 5
+        boardSize: Int = 5,
+        isDynamicBoard: Boolean = false
     ) = withContext(Dispatchers.IO) {
         val cleanCode = roomCode.trim().uppercase()
         if (cleanCode.isBlank()) return@withContext
@@ -601,6 +604,7 @@ object OnlineRoomRegistry {
                 currentSeed = if (seed != 0L) seed else if (status == "WAITING") 0L else current.currentSeed,
                 isManualBoard = if (status == "PLAYING") isManualBoard else (if (status == "WAITING") false else current.isManualBoard),
                 boardSize = if (boardSize > 0) boardSize else current.boardSize,
+                isDynamicBoard = if (status == "PLAYING") isDynamicBoard else (if (status == "WAITING") false else current.isDynamicBoard),
                 lastHeartbeat = now,
                 players = updatedPlayers
             )

@@ -244,7 +244,13 @@ object GameInviteManager {
                             try {
                                 val payload = String(message.payload, StandardCharsets.UTF_8)
                                 val invite = json.decodeFromString<GameInvite>(payload)
-                                onInviteReceived(invite)
+                                try {
+                                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                        onInviteReceived(invite)
+                                    }
+                                } catch (_: Exception) {
+                                    onInviteReceived(invite)
+                                }
                             } catch (e: Exception) {
                                 Log.w("GameInviteManager", "Error parsing incoming invite: ${e.message}")
                             }

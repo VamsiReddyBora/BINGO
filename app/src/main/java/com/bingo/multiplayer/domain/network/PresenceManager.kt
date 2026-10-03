@@ -84,7 +84,8 @@ object PresenceManager {
     private var prefs: SharedPreferences? = null
     private var presenceClient: MqttAsyncClient? = null
     private var heartbeatJob: Job? = null
-    private var currentActiveUsername: String? = null
+    var currentActiveUsername: String? = null
+        private set
 
     var currentActivityState: AppActivityState = AppActivityState.ONLINE
         private set

@@ -18,19 +18,27 @@ object FastPacketCodec {
     fun encode(packet: RoomMessagePacket): String {
         return when (packet.type) {
             "PICK_NUMBER" -> {
-                val historyStr = packet.pickedHistory.joinToString(",")
-                if (packet.senderInstanceId.isNotBlank()) {
-                    "P|${packet.number}|${packet.playerId}|${packet.turnNumber}|${packet.currentTurnPlayerId}|$historyStr|${packet.seed}|${packet.senderInstanceId}"
-                } else if (packet.seed != 0L) {
-                    "P|${packet.number}|${packet.playerId}|${packet.turnNumber}|${packet.currentTurnPlayerId}|$historyStr|${packet.seed}"
+                if (packet.winnerPlayerId.isNotBlank()) {
+                    json.encodeToString(packet)
                 } else {
-                    "P|${packet.number}|${packet.playerId}|${packet.turnNumber}|${packet.currentTurnPlayerId}|$historyStr"
+                    val historyStr = packet.pickedHistory.joinToString(",")
+                    val pickedByStr = packet.pickedByHistory.joinToString(",")
+                    if (packet.boardSize != 5) {
+                        "P|${packet.number}|${packet.playerId}|${packet.turnNumber}|${packet.currentTurnPlayerId}|$historyStr|${packet.seed}|${packet.senderInstanceId}|$pickedByStr|${packet.boardHash}|${packet.boardSize}"
+                    } else if (packet.senderInstanceId.isNotBlank() || packet.pickedByHistory.isNotEmpty() || packet.boardHash != 0L) {
+                        "P|${packet.number}|${packet.playerId}|${packet.turnNumber}|${packet.currentTurnPlayerId}|$historyStr|${packet.seed}|${packet.senderInstanceId}|$pickedByStr|${packet.boardHash}"
+                    } else if (packet.seed != 0L) {
+                        "P|${packet.number}|${packet.playerId}|${packet.turnNumber}|${packet.currentTurnPlayerId}|$historyStr|${packet.seed}"
+                    } else {
+                        "P|${packet.number}|${packet.playerId}|${packet.turnNumber}|${packet.currentTurnPlayerId}|$historyStr"
+                    }
                 }
             }
             "TURN_TIMEOUT" -> {
                 val historyStr = packet.pickedHistory.joinToString(",")
-                if (packet.senderInstanceId.isNotBlank()) {
-                    "T|${packet.playerId}|${packet.turnNumber}|${packet.currentTurnPlayerId}|$historyStr|${packet.seed}|${packet.senderInstanceId}"
+                val pickedByStr = packet.pickedByHistory.joinToString(",")
+                if (packet.senderInstanceId.isNotBlank() || packet.pickedByHistory.isNotEmpty()) {
+                    "T|${packet.playerId}|${packet.turnNumber}|${packet.currentTurnPlayerId}|$historyStr|${packet.seed}|${packet.senderInstanceId}|$pickedByStr"
                 } else if (packet.seed != 0L) {
                     "T|${packet.playerId}|${packet.turnNumber}|${packet.currentTurnPlayerId}|$historyStr|${packet.seed}"
                 } else {
@@ -87,8 +95,14 @@ object FastPacketCodec {
                     val historyRaw = parts.getOrNull(5) ?: ""
                     val seed = parts.getOrNull(6)?.toLongOrNull() ?: 0L
                     val senderInstanceId = parts.getOrNull(7) ?: ""
+                    val pickedByRaw = parts.getOrNull(8) ?: ""
+                    val boardHash = parts.getOrNull(9)?.toLongOrNull() ?: 0L
+                    val boardSize = parts.getOrNull(10)?.toIntOrNull() ?: 5
                     val history = if (historyRaw.isNotBlank()) {
                         historyRaw.split(",").mapNotNull { it.toIntOrNull() }
+                    } else emptyList()
+                    val pickedBy = if (pickedByRaw.isNotBlank()) {
+                        pickedByRaw.split(",")
                     } else emptyList()
 
                     RoomMessagePacket(
@@ -98,8 +112,11 @@ object FastPacketCodec {
                         turnNumber = turnNumber,
                         currentTurnPlayerId = currentTurnId,
                         pickedHistory = history,
+                        pickedByHistory = pickedBy,
+                        boardHash = boardHash,
                         seed = seed,
-                        senderInstanceId = senderInstanceId
+                        senderInstanceId = senderInstanceId,
+                        boardSize = boardSize
                     )
                 }
 
@@ -111,8 +128,12 @@ object FastPacketCodec {
                     val historyRaw = parts.getOrNull(4) ?: ""
                     val seed = parts.getOrNull(5)?.toLongOrNull() ?: 0L
                     val senderInstanceId = parts.getOrNull(6) ?: ""
+                    val pickedByRaw = parts.getOrNull(7) ?: ""
                     val history = if (historyRaw.isNotBlank()) {
                         historyRaw.split(",").mapNotNull { it.toIntOrNull() }
+                    } else emptyList()
+                    val pickedBy = if (pickedByRaw.isNotBlank()) {
+                        pickedByRaw.split(",")
                     } else emptyList()
 
                     RoomMessagePacket(
@@ -122,6 +143,7 @@ object FastPacketCodec {
                         turnNumber = turnNumber,
                         currentTurnPlayerId = currentTurnId,
                         pickedHistory = history,
+                        pickedByHistory = pickedBy,
                         seed = seed,
                         senderInstanceId = senderInstanceId
                     )
@@ -230,7 +252,11 @@ object FastPacketCodec {
                 else -> json.decodeFromString<RoomMessagePacket>(trimmed)
             }
         } catch (_: Exception) {
-            json.decodeFromString<RoomMessagePacket>(trimmed)
+            try {
+                json.decodeFromString<RoomMessagePacket>(trimmed)
+            } catch (_: Exception) {
+                RoomMessagePacket(type = "UNKNOWN")
+            }
         }
     }
 }

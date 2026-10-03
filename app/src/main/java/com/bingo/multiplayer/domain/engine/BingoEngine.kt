@@ -53,12 +53,17 @@ class BingoEngine {
         // 1. Mark target cell and reset recent pick flag on others
         val updatedCells = board.cells.map { cell ->
             if (cell.number == number) {
-                cell.copy(
-                    markState = CellMarkState.Marked(
+                val newMarkState = if (cell.isMarked) {
+                    cell.markState
+                } else {
+                    CellMarkState.Marked(
                         pickedByPlayerId = pickedByPlayerId,
                         isOwnPick = isOwnPick,
                         turnNumber = turnNumber
-                    ),
+                    )
+                }
+                cell.copy(
+                    markState = newMarkState,
                     isRecentPick = true
                 )
             } else {
@@ -72,11 +77,7 @@ class BingoEngine {
 
         // 2. Mark winning line cells
         val finalCells = updatedCells.mapIndexed { index, cell ->
-            if (index in winningIndices) {
-                cell.copy(isPartOfCompletedLine = true)
-            } else {
-                cell
-            }
+            cell.copy(isPartOfCompletedLine = index in winningIndices)
         }
 
         return board.copy(
@@ -135,12 +136,43 @@ class BingoEngine {
             board.getCell(i, size - 1 - i).isMarked
         }
         if (isAntiDiagComplete) {
-            lines.add(LineCoordinate(LineType.ANTI_DIAGONAL, 1))
+            lines.add(LineCoordinate(LineType.ANTI_DIAGONAL, 0))
             for (i in 0 until size) {
                 winningIndices.add(i * size + (size - 1 - i))
             }
         }
 
         return Pair(lines, winningIndices)
+    }
+
+    /**
+     * Computes a deterministic 64-bit FNV-1a hash of the board's state.
+     * Evaluates all marked cell coordinates, numbers, and completed lines.
+     * Guaranteed identical across all devices if and only if the marked cells and lines match.
+     */
+    fun computeBoardHash(board: Board): Long {
+        var h = -3750763034362895579L // FNV offset basis
+        val prime = 1099511628211L    // FNV prime
+        val size = board.size
+
+        h = (h xor size.toLong()) * prime
+
+        for (r in 0 until size) {
+            for (c in 0 until size) {
+                val cell = board.getCell(r, c)
+                val cellVal = (r * size + c + 1).toLong() * 10007L + cell.number.toLong()
+                h = (h xor cellVal) * prime
+                if (cell.isMarked) {
+                    h = (h xor (cellVal * 31L + 1L)) * prime
+                }
+            }
+        }
+
+        board.completedLines.sortedWith(compareBy({ it.type.name }, { it.index })).forEach { line ->
+            val lineVal = line.type.ordinal.toLong() * 997L + line.index.toLong() * 31L
+            h = (h xor lineVal) * prime
+        }
+
+        return h
     }
 }

@@ -141,7 +141,34 @@ private fun InGameChatBubble(
     val trimmed = message.text.trim()
     val isEmojiOnly = trimmed.isNotBlank() && trimmed.length <= 8 && !trimmed.any { it.isLetterOrDigit() }
 
-    if (message.isSelf) {
+    if (message.isSystemMessage) {
+        // Centered system notice (e.g. "Player 3 left the game", "Player 3 joined the game")
+        Box(
+            modifier = Modifier.fillMaxWidth(),
+            contentAlignment = Alignment.Center
+        ) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = if (tokens.isDark) Color(0xFF23272A).copy(alpha = 0.85f) else Color(0xFFE2E8F0).copy(alpha = 0.90f),
+                shadowElevation = 0.dp,
+                modifier = Modifier
+                    .graphicsLayer {
+                        scaleX = bounceScale.value
+                        scaleY = bounceScale.value
+                    }
+                    .padding(vertical = 2.dp)
+            ) {
+                Text(
+                    text = message.text,
+                    fontSize = 11.sp,
+                    lineHeight = 14.sp,
+                    color = if (tokens.isDark) Color(0xFFCBD5E1) else Color(0xFF475569),
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                )
+            }
+        }
+    } else if (message.isSelf) {
         // Self message: aligned to the right (WhatsApp style soft green/mint or soft lavender)
         Box(
             modifier = Modifier.fillMaxWidth(),

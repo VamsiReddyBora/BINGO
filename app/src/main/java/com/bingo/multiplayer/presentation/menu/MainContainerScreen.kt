@@ -72,6 +72,8 @@ fun MainContainerScreen(
     onSignedOut: () -> Unit,
     onInviteFriendToMatch: (Friend) -> Unit,
     onAcceptInviteToMatch: (GameInvite) -> Unit,
+    onOpenDeveloperNote: () -> Unit = {},
+    onRejoinMatch: ((com.bingo.multiplayer.domain.network.OngoingMatchData) -> Unit)? = null,
     initialPage: Int = 0
 ) {
     val coroutineScope = rememberCoroutineScope()
@@ -104,12 +106,15 @@ fun MainContainerScreen(
                 0 -> {
                     MainMenuScreen(
                         authRepository = authRepository,
+                        friendsRepository = friendsRepository,
                         onNavigateToSettings = {
                             coroutineScope.launch { pagerState.animateScrollToPage(2) }
                         },
                         onPlayAi = onPlayAi,
                         onPlayOnline = onPlayOnline,
-                        onPlayNearbyNetwork = onPlayNearbyNetwork
+                        onPlayNearbyNetwork = onPlayNearbyNetwork,
+                        onOpenDeveloperNote = onOpenDeveloperNote,
+                        onRejoinMatch = onRejoinMatch
                     )
                 }
                 1 -> {

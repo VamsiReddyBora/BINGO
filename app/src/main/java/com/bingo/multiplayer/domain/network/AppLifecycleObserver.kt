@@ -26,12 +26,14 @@ object AppLifecycleObserver : DefaultLifecycleObserver {
     private val _lastBackgroundTimestamp = MutableStateFlow(0L)
     val lastBackgroundTimestamp: StateFlow<Long> = _lastBackgroundTimestamp.asStateFlow()
 
+    @Volatile
     private var initialized = false
 
     /**
      * Must be called once from Application.onCreate() or MainActivity.onCreate().
      * Registers this observer with ProcessLifecycleOwner.
      */
+    @Synchronized
     fun init() {
         if (initialized) return
         initialized = true
@@ -40,12 +42,14 @@ object AppLifecycleObserver : DefaultLifecycleObserver {
     }
 
     fun onForegroundImmediate() {
+        if (_isAppInForeground.value) return
         _isAppInForeground.value = true
         Log.d(TAG, "App is now in FOREGROUND (immediate)")
         PresenceManager.onAppForeground()
     }
 
     fun onBackgroundImmediate() {
+        if (!_isAppInForeground.value) return
         val now = System.currentTimeMillis()
         _isAppInForeground.value = false
         _lastBackgroundTimestamp.value = now

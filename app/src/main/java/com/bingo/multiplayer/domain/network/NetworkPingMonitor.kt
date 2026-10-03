@@ -38,7 +38,7 @@ object NetworkPingMonitor {
             while (isActive) {
                 val measuredRtt = measureRealtimePing()
                 updateSmoothedPing(measuredRtt)
-                delay(1800L)
+                delay(1000L)
             }
         }
     }
