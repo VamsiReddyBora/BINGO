@@ -2073,6 +2073,30 @@ fun SettingsScreen(
                 )
             }
 
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // ── App Version Details ──
+            val appVersionName = remember {
+                try {
+                    val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+                    pInfo.versionName ?: "1.1"
+                } catch (e: Exception) {
+                    "1.1"
+                }
+            }
+
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "Version $appVersionName",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = tokens.textMuted
+                )
+            }
+
             Spacer(modifier = Modifier.height(84.dp))
         }
 
