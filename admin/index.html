@@ -226,7 +226,6 @@
 
     <!-- Auth Modal Container -->
     <div class="w-full max-w-md theme-modal rounded-3xl p-8 shadow-2xl relative overflow-hidden backdrop-blur-2xl">
-      <!-- Glow effect -->
       <div class="absolute -top-24 -left-24 w-48 h-48 bg-brand-500/20 rounded-full blur-3xl pointer-events-none"></div>
       <div class="absolute -bottom-24 -right-24 w-48 h-48 bg-purple-500/20 rounded-full blur-3xl pointer-events-none"></div>
       
@@ -369,7 +368,7 @@
             <i class="fa-solid fa-clock-rotate-left text-[11px]"></i>
             <select id="autoRefreshInterval" onchange="updateAutoRefresh(this.value)" class="bg-transparent theme-title text-xs focus:outline-none cursor-pointer">
               <option value="0" class="theme-card theme-title">Auto: Off</option>
-              <option value="10" selected class="theme-card theme-title">Auto: 10s</option>
+              <option value="15" selected class="theme-card theme-title">Auto: 15s</option>
               <option value="30" class="theme-card theme-title">Auto: 30s</option>
               <option value="60" class="theme-card theme-title">Auto: 1m</option>
             </select>
@@ -653,7 +652,6 @@
 
         <!-- Active Rooms Grid -->
         <div id="roomsGridContainer" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          <!-- Dynamically populated or empty -->
           <div class="col-span-full theme-card rounded-2xl p-12 text-center space-y-2">
             <div class="w-16 h-16 rounded-2xl theme-subtle flex items-center justify-center theme-dimtext text-2xl mx-auto">
               <i class="fa-solid fa-dice-d6"></i>
@@ -930,9 +928,9 @@
           </div>
         </div>
 
-        <!-- SUB-TAB 2: MATCH HISTORY -->
+        <!-- SUB-TAB 2: MATCH HISTORY (OPTIMIZED FOR 500+ RECORDS) -->
         <div id="inspTabView-matches" class="hidden space-y-4">
-          <div class="flex items-center justify-between">
+          <div class="flex items-center justify-between gap-2">
             <h4 class="text-xs font-bold theme-title uppercase tracking-wider">Match Records in Cloud Backup</h4>
             <button 
               onclick="promptClearAllMatches()" 
@@ -944,17 +942,59 @@
             </button>
           </div>
 
-          <div id="inspMatchesList" class="space-y-2.5">
-            <!-- Dynamically populated matches -->
+          <!-- Cloud Logs vs Lifetime Notice Banner -->
+          <div id="inspMatchStatsBanner" class="hidden theme-subtle rounded-xl p-3 flex flex-wrap items-center justify-between gap-2 text-xs font-medium"></div>
+
+          <!-- Match Search & Filter Controls -->
+          <div id="inspMatchFilterControls" class="space-y-2">
+            <div class="relative">
+              <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 theme-dimtext text-xs"></i>
+              <input 
+                type="text" 
+                id="matchSearchInput" 
+                oninput="filterAndRenderMatches()" 
+                placeholder="Search opponent name, mode, or match ID..." 
+                class="w-full pl-9 pr-3 py-2 rounded-xl theme-input text-xs focus:outline-none focus:border-brand-500"
+              >
+            </div>
+            <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-0.5">
+              <button onclick="setMatchOutcomeFilter('ALL')" id="matchFilter-ALL" class="match-pill px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-brand-600 text-white">All (<span id="mfCount-ALL">0</span>)</button>
+              <button onclick="setMatchOutcomeFilter('WIN')" id="matchFilter-WIN" class="match-pill px-2.5 py-1 rounded-lg text-[11px] font-semibold badge-online">🏆 Wins (<span id="mfCount-WIN">0</span>)</button>
+              <button onclick="setMatchOutcomeFilter('LOSS')" id="matchFilter-LOSS" class="match-pill px-2.5 py-1 rounded-lg text-[11px] font-semibold badge-offline">❌ Losses (<span id="mfCount-LOSS">0</span>)</button>
+              <button onclick="setMatchOutcomeFilter('DRAW')" id="matchFilter-DRAW" class="match-pill px-2.5 py-1 rounded-lg text-[11px] font-semibold badge-lobby">🤝 Draws (<span id="mfCount-DRAW">0</span>)</button>
+            </div>
+          </div>
+
+          <!-- Matches Container -->
+          <div id="inspMatchesList" class="space-y-2.5"></div>
+
+          <!-- Pagination / Load More for 500+ records -->
+          <div id="matchPaginationContainer" class="hidden pt-2 text-center space-y-2">
+            <button 
+              onclick="loadMoreMatches()" 
+              id="loadMoreMatchesBtn" 
+              class="w-full py-2.5 rounded-xl theme-subtle theme-title text-xs font-bold hover:border-brand-500 transition-all flex items-center justify-center gap-2"
+            >
+              <i class="fa-solid fa-angles-down"></i>
+              <span id="loadMoreText">Load Next 50 Matches</span>
+            </button>
+            <button 
+              onclick="showAllMatches()" 
+              id="showAllMatchesBtn" 
+              class="text-[11px] theme-dimtext hover:text-brand-500 underline"
+            >
+              Show All Matches At Once
+            </button>
           </div>
         </div>
 
-        <!-- SUB-TAB 3: FRIENDS LIST -->
+        <!-- SUB-TAB 3: FRIENDS LIST (MUTUAL GRAPH RESOLUTION) -->
         <div id="inspTabView-friends" class="hidden space-y-4">
-          <h4 class="text-xs font-bold theme-title uppercase tracking-wider">Connected Friends</h4>
-          <div id="inspFriendsList" class="space-y-2">
-            <!-- Dynamically populated friends -->
+          <div class="flex items-center justify-between">
+            <h4 class="text-xs font-bold theme-title uppercase tracking-wider">Connected Friends (<span id="inspFriendResolvedCount">0</span>)</h4>
+            <span class="text-[11px] theme-dimtext">Reliably resolved mutual friendships</span>
           </div>
+          <div id="inspFriendsList" class="space-y-2"></div>
         </div>
 
         <!-- SUB-TAB 4: DANGER ZONE -->
@@ -1122,20 +1162,26 @@
     // --- APPLICATION STATE ---
     let globalState = {
       authenticated: false,
-      players: [],          // array of full player objects
-      onlineStatuses: {},   // username -> { status: 'ONLINE', timestamp: 12345 }
-      activeRooms: {},      // roomCode -> { code, host, players, status, timestamp }
+      players: [],              // array of full player objects
+      directFriendsMap: {},     // username -> array of friend objects
+      mutualFriendsMap: {},     // username -> resolved mutual friends
+      onlineStatuses: {},       // username -> { status: 'ONLINE', timestamp: 12345 }
+      activeRooms: {},          // roomCode -> { code, host, players, status, timestamp }
       activeTab: 'players',
       searchQuery: '',
       statusFilter: 'ALL',
       sortBy: 'level_desc',
       viewMode: 'table',
-      selectedPlayer: null, // player currently in inspector
+      selectedPlayer: null,     // player currently in inspector
+      currentMatchList: [],     // matches for currently inspected player
+      matchOutcomeFilter: 'ALL',
+      matchSearchQuery: '',
+      matchDisplayLimit: 50,    // progressive chunking for 500+ records
       mqttClient: null,
       autoRefreshTimer: null,
-      autoRefreshIntervalSecs: 10,
+      autoRefreshIntervalSecs: 15,
       packetLogsCount: 0,
-      currentTheme: 'dark'  // 'dark' (AMOLED) or 'light'
+      currentTheme: 'dark'
     };
 
     // Pending dangerous action to execute after password confirmation
@@ -1172,8 +1218,6 @@
       if (theme === 'dark') {
         html.classList.remove('light');
         html.classList.add('dark');
-
-        // AMOLED Black button state
         if (authIcon) {
           authIcon.className = "fa-solid fa-moon text-brand-400";
           authLabel.innerText = "AMOLED";
@@ -1186,8 +1230,6 @@
       } else {
         html.classList.remove('dark');
         html.classList.add('light');
-
-        // Light mode button state
         if (authIcon) {
           authIcon.className = "fa-solid fa-sun text-amber-500";
           authLabel.innerText = "Light";
@@ -1199,7 +1241,6 @@
         if (notify) showToast('Switched to Crisp Light Theme', 'info');
       }
 
-      // Re-render players if already loaded
       if (globalState.players.length > 0) {
         applyPlayerFilters();
       }
@@ -1323,50 +1364,62 @@
       });
     }
 
-    // --- DATA FETCHING & API SERVICES ---
+    // --- DATA FETCHING & API SERVICES WITH RETRY ---
     async function setKeyValueDirect(key, value) {
-      try {
-        const encKey = encodeURIComponent(key.trim());
-        const encVal = encodeURIComponent(value.trim());
-        const url = `${KEYVALUE_API_URL}/UpdateValue/${KEYVALUE_APP_KEY}/${encKey}?value=${encVal}`;
-        const res = await fetch(url, {
-          method: 'POST',
-          body: '',
-          headers: { 'Content-Length': '0' }
-        });
-        return res.ok;
-      } catch (e) {
-        console.error('setKeyValueDirect error:', e);
-        return false;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const encKey = encodeURIComponent(key.trim());
+          const encVal = encodeURIComponent(value.trim());
+          const url = `${KEYVALUE_API_URL}/UpdateValue/${KEYVALUE_APP_KEY}/${encKey}?value=${encVal}`;
+          const res = await fetch(url, {
+            method: 'POST',
+            body: '',
+            headers: { 'Content-Length': '0' }
+          });
+          if (res.ok) return true;
+        } catch (e) {
+          await new Promise(r => setTimeout(r, 200 * (attempt + 1)));
+        }
       }
+      return false;
     }
 
-    async function getKeyValueDirect(key) {
-      try {
-        const encKey = encodeURIComponent(key.trim());
-        const url = `${KEYVALUE_API_URL}/GetValue/${KEYVALUE_APP_KEY}/${encKey}`;
-        const res = await fetch(url);
-        if (!res.ok) return null;
-        const text = await res.text();
-        return text.replace(/^"|"$/g, '').trim();
-      } catch (e) {
-        console.error('getKeyValueDirect error for ' + key, e);
-        return null;
+    async function getKeyValueDirect(key, retries = 3) {
+      for (let attempt = 0; attempt < retries; attempt++) {
+        try {
+          const encKey = encodeURIComponent(key.trim());
+          const url = `${KEYVALUE_API_URL}/GetValue/${KEYVALUE_APP_KEY}/${encKey}`;
+          const res = await fetch(url);
+          if (res.ok) {
+            const text = await res.text();
+            return text.replace(/^"|"$/g, '').trim();
+          }
+        } catch (e) {
+          await new Promise(r => setTimeout(r, 200 * (attempt + 1)));
+        }
       }
+      return null;
     }
 
+    // Universal URL-safe and standard Base64 decoder
     function safeB64Decode(str) {
+      if (!str) return '';
       try {
-        return decodeURIComponent(escape(atob(str)));
+        let clean = str.trim().replace(/^"|"$/g, '').replace(/-/g, '+').replace(/_/g, '/');
+        while (clean.length % 4) clean += '=';
+        return decodeURIComponent(escape(atob(clean)));
       } catch (e) {
         try {
-          return atob(str);
+          let clean = str.trim().replace(/^"|"$/g, '').replace(/-/g, '+').replace(/_/g, '/');
+          while (clean.length % 4) clean += '=';
+          return atob(clean);
         } catch {
           return '';
         }
       }
     }
 
+    // Safe Base64 encoder
     function safeB64Encode(str) {
       try {
         return btoa(unescape(encodeURIComponent(str)));
@@ -1375,13 +1428,70 @@
       }
     }
 
+    // Bulletproof ExtendsClass persistence (CORS preflight-safe in all browsers via text/plain)
+    async function saveExtendsClassData(username, binId, updatedData) {
+      const jsonStr = JSON.stringify(updatedData);
+      let newBinId = null;
+
+      // 1. Create updated bin via POST with text/plain (CORS safelisted, NEVER triggers preflight OPTIONS)
+      try {
+        const postRes = await fetch('https://extendsclass.com/api/json-storage/bin', {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain' },
+          body: jsonStr
+        });
+        if (postRes.ok) {
+          const resp = await postRes.json();
+          if (resp && resp.id) {
+            newBinId = resp.id;
+          }
+        }
+      } catch (postErr) {
+        console.warn('POST to ExtendsClass warning:', postErr);
+      }
+
+      // 2. If new bin was created, update KeyValue pointers (user_{username} & gid_{googleId})
+      if (newBinId) {
+        const clean = username.trim().toLowerCase().replace(/^@/, '');
+        await setKeyValueDirect(`user_${clean}`, newBinId);
+        
+        const p = globalState.players.find(u => u.username === clean);
+        if (p) {
+          p.binId = newBinId;
+          if (p.uid && p.uid.startsWith('google_')) {
+            const gid = p.uid.replace('google_', '');
+            await setKeyValueDirect(`gid_${gid}`, newBinId);
+          }
+        }
+        return true;
+      }
+
+      // 3. Fallback: try PUT with text/plain if available
+      if (binId) {
+        try {
+          const putRes = await fetch(`https://extendsclass.com/api/json-storage/bin/${binId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'text/plain' },
+            body: jsonStr
+          });
+          if (putRes.ok) return true;
+        } catch (putErr) {
+          console.warn('PUT fallback warning:', putErr);
+        }
+      }
+
+      throw new Error('Could not persist updated record to cloud storage');
+    }
+
+    // Master Global Fetch: Batch-throttled and reliable
     async function fetchGlobalData(showSpinner = false) {
       const refreshIcon = document.getElementById('refreshIcon');
       if (showSpinner) refreshIcon.classList.add('fa-spin');
       const startTime = performance.now();
 
       try {
-        const rawDir = await getKeyValueDirect('user_directory');
+        // 1. Fetch User Directory CSV
+        const rawDir = await getKeyValueDirect('user_directory', 4);
         const latency = Math.round(performance.now() - startTime);
         document.getElementById('keyValLatency').innerText = `${latency}ms`;
 
@@ -1394,63 +1504,111 @@
 
         usernames = Array.from(new Set(usernames));
 
-        const playerPromises = usernames.map(async (uname) => {
-          let regData = null;
-          let presData = null;
-          let binId = null;
+        // 2. Fetch all players in staggered chunks to prevent KeyValue API rate-limiting
+        const CHUNK_SIZE = 3;
+        const fetchedPlayers = [];
+        const directFriendsMap = {};
 
-          try {
-            const rawReg = await getKeyValueDirect(`reg_${uname}`);
-            if (rawReg) {
-              const decoded = safeB64Decode(rawReg);
-              if (decoded.startsWith('{')) {
-                regData = JSON.parse(decoded);
+        for (let i = 0; i < usernames.length; i += CHUNK_SIZE) {
+          const chunk = usernames.slice(i, i + CHUNK_SIZE);
+          const chunkResults = await Promise.all(chunk.map(async (uname) => {
+            let regData = null;
+            let presData = null;
+            let binId = null;
+
+            // Fetch reg_{uname}
+            try {
+              const rawReg = await getKeyValueDirect(`reg_${uname}`);
+              if (rawReg) {
+                const decoded = safeB64Decode(rawReg);
+                if (decoded.startsWith('{')) {
+                  regData = JSON.parse(decoded);
+                }
               }
-            }
-          } catch {}
+            } catch {}
 
-          try {
-            const rawPres = await getKeyValueDirect(`pres_${uname}`);
-            if (rawPres) {
-              const parts = rawPres.split(':');
-              const status = parts[0] || 'OFFLINE';
-              const ts = parseInt(parts[1]) || 0;
-              presData = { status, timestamp: ts };
-            }
-          } catch {}
+            // Fetch pres_{uname}
+            try {
+              const rawPres = await getKeyValueDirect(`pres_${uname}`);
+              if (rawPres) {
+                const parts = rawPres.split(':');
+                const status = parts[0] || 'OFFLINE';
+                const ts = parseInt(parts[1]) || 0;
+                presData = { status, timestamp: ts };
+              }
+            } catch {}
 
-          try {
-            const rawBin = await getKeyValueDirect(`user_${uname}`);
-            if (rawBin && !rawBin.startsWith('{') && rawBin.length < 50) {
-              binId = rawBin;
-            }
-          } catch {}
+            // Fetch user_{uname} (ExtendsClass bin pointer)
+            try {
+              const rawBin = await getKeyValueDirect(`user_${uname}`);
+              if (rawBin && !rawBin.startsWith('{') && rawBin.length < 50 && rawBin !== 'null') {
+                binId = rawBin;
+              }
+            } catch {}
 
-          let computedStatus = 'OFFLINE';
-          const now = Date.now();
-          if (presData && (now - presData.timestamp < 75000)) {
-            computedStatus = presData.status;
+            // Multi-source fallback: If binId missing, check gid_{googleId}
+            if (!binId && regData && regData.uid && regData.uid.startsWith('google_')) {
+              try {
+                const gid = regData.uid.replace('google_', '');
+                const rawGidBin = await getKeyValueDirect(`gid_${gid}`);
+                if (rawGidBin && !rawGidBin.startsWith('{') && rawGidBin.length < 50 && rawGidBin !== 'null') {
+                  binId = rawGidBin;
+                }
+              } catch {}
+            }
+
+            // Fetch direct friends list: friends_{uname}
+            try {
+              const rawFriends = await getKeyValueDirect(`friends_${uname}`);
+              if (rawFriends) {
+                const decoded = safeB64Decode(rawFriends);
+                if (decoded.startsWith('[')) {
+                  directFriendsMap[uname] = JSON.parse(decoded);
+                } else {
+                  directFriendsMap[uname] = [];
+                }
+              } else {
+                directFriendsMap[uname] = [];
+              }
+            } catch {
+              directFriendsMap[uname] = [];
+            }
+
+            let computedStatus = 'OFFLINE';
+            const now = Date.now();
+            if (presData && (now - presData.timestamp < 75000)) {
+              computedStatus = presData.status;
+            }
+
+            return {
+              username: uname,
+              displayName: (regData && regData.displayName) ? regData.displayName : uname,
+              uid: (regData && regData.uid) ? regData.uid : `user_${uname}`,
+              level: (regData && regData.level) ? regData.level : 1,
+              gamesPlayed: (regData && regData.gamesPlayed !== undefined) ? regData.gamesPlayed : 0,
+              gamesWon: (regData && regData.gamesWon !== undefined) ? regData.gamesWon : 0,
+              currentStreak: (regData && regData.currentStreak !== undefined) ? regData.currentStreak : 0,
+              bestStreak: (regData && regData.bestStreak !== undefined) ? regData.bestStreak : 0,
+              avatarUrl: (regData && regData.avatarUrl) ? regData.avatarUrl : null,
+              lastSeenTimestamp: (regData && regData.lastSeenTimestamp) ? regData.lastSeenTimestamp : (presData ? presData.timestamp : 0),
+              status: computedStatus,
+              binId: binId,
+              rawReg: regData
+            };
+          }));
+
+          fetchedPlayers.push(...chunkResults);
+          // 60ms pause between chunks to keep connection warm and respectful
+          if (i + CHUNK_SIZE < usernames.length) {
+            await new Promise(r => setTimeout(r, 60));
           }
+        }
 
-          return {
-            username: uname,
-            displayName: (regData && regData.displayName) ? regData.displayName : uname,
-            uid: (regData && regData.uid) ? regData.uid : `user_${uname}`,
-            level: (regData && regData.level) ? regData.level : 1,
-            gamesPlayed: (regData && regData.gamesPlayed !== undefined) ? regData.gamesPlayed : 0,
-            gamesWon: (regData && regData.gamesWon !== undefined) ? regData.gamesWon : 0,
-            currentStreak: (regData && regData.currentStreak !== undefined) ? regData.currentStreak : 0,
-            bestStreak: (regData && regData.bestStreak !== undefined) ? regData.bestStreak : 0,
-            avatarUrl: (regData && regData.avatarUrl) ? regData.avatarUrl : null,
-            lastSeenTimestamp: (regData && regData.lastSeenTimestamp) ? regData.lastSeenTimestamp : (presData ? presData.timestamp : 0),
-            status: computedStatus,
-            binId: binId,
-            rawReg: regData
-          };
-        });
-
-        const fetchedPlayers = await Promise.all(playerPromises);
         globalState.players = fetchedPlayers;
+        globalState.directFriendsMap = directFriendsMap;
+
+        // 3. Compute Mutual Friends Graph (Resolves friends even if recorded on only one side)
+        computeMutualFriendsGraph();
 
         updateDashboardStatistics();
         applyPlayerFilters();
@@ -1469,6 +1627,62 @@
       } finally {
         if (showSpinner) setTimeout(() => refreshIcon.classList.remove('fa-spin'), 300);
       }
+    }
+
+    // Resolves complete mutual friendships across all database records
+    function computeMutualFriendsGraph() {
+      const mutualMap = {};
+      const allPlayers = globalState.players;
+      const directMap = globalState.directFriendsMap;
+
+      allPlayers.forEach(p => {
+        const u = p.username;
+        const directList = directMap[u] || [];
+        const friendsByUsername = {};
+
+        // 1. Add direct friends
+        directList.forEach(f => {
+          const fUser = (f.username || '').toLowerCase().replace(/^@/, '');
+          if (fUser && fUser !== u) {
+            friendsByUsername[fUser] = {
+              uid: f.uid || `uid_${fUser}`,
+              username: fUser,
+              displayName: f.displayName || fUser,
+              avatarUrl: f.avatarUrl || null,
+              isDirect: true
+            };
+          }
+        });
+
+        // 2. Add reverse friends (Any other player who has u in their friends list)
+        Object.entries(directMap).forEach(([otherUser, otherFriends]) => {
+          if (otherUser !== u && Array.isArray(otherFriends)) {
+            const hasMe = otherFriends.some(f => {
+              const checkU = (f.username || '').toLowerCase().replace(/^@/, '');
+              return checkU === u || (p.uid && f.uid === p.uid);
+            });
+
+            if (hasMe) {
+              const otherPlayerObj = allPlayers.find(pl => pl.username === otherUser);
+              if (!friendsByUsername[otherUser]) {
+                friendsByUsername[otherUser] = {
+                  uid: otherPlayerObj ? otherPlayerObj.uid : `uid_${otherUser}`,
+                  username: otherUser,
+                  displayName: otherPlayerObj ? otherPlayerObj.displayName : otherUser,
+                  avatarUrl: otherPlayerObj ? otherPlayerObj.avatarUrl : null,
+                  isReverse: true
+                };
+              } else {
+                friendsByUsername[otherUser].isMutual = true;
+              }
+            }
+          }
+        });
+
+        mutualMap[u] = Object.values(friendsByUsername);
+      });
+
+      globalState.mutualFriendsMap = mutualMap;
     }
 
     function updateDashboardStatistics() {
@@ -1784,11 +1998,14 @@
       setPlayerStatusFilter('ALL');
     }
 
-    // --- IN-PAGE PLAYER INSPECTOR ---
+    // --- IN-PAGE PLAYER INSPECTOR WORKSPACE ---
     async function openPlayerInspector(username) {
       const player = globalState.players.find(p => p.username === username);
       if (!player) return;
       globalState.selectedPlayer = player;
+      globalState.matchDisplayLimit = 50;
+      globalState.matchOutcomeFilter = 'ALL';
+      globalState.matchSearchQuery = '';
 
       renderInspectorHeader();
       switchInspTab('overview');
@@ -1840,8 +2057,21 @@
       const friendsList = document.getElementById('inspFriendsList');
 
       matchesList.innerHTML = `<div class="p-6 text-center text-xs theme-dimtext"><i class="fa-solid fa-spinner fa-spin text-lg text-brand-500 mb-2"></i><p>Loading matches from cloud backup...</p></div>`;
-      friendsList.innerHTML = `<div class="p-6 text-center text-xs theme-dimtext"><i class="fa-solid fa-spinner fa-spin text-lg text-brand-500 mb-2"></i><p>Loading friends list from database...</p></div>`;
+      friendsList.innerHTML = `<div class="p-6 text-center text-xs theme-dimtext"><i class="fa-solid fa-spinner fa-spin text-lg text-brand-500 mb-2"></i><p>Resolving complete mutual friends list...</p></div>`;
 
+      // 1. Resolve Bin ID if null
+      if (!p.binId) {
+        let foundBin = await getKeyValueDirect(`user_${username}`);
+        if (!foundBin && p.uid && p.uid.startsWith('google_')) {
+          foundBin = await getKeyValueDirect(`gid_${p.uid.replace('google_', '')}`);
+        }
+        if (foundBin && !foundBin.startsWith('{') && foundBin.length < 50 && foundBin !== 'null') {
+          p.binId = foundBin;
+          document.getElementById('inspBinId').innerText = foundBin;
+        }
+      }
+
+      // 2. Fetch ExtendsClass Match History
       let matchHistory = [];
       let profileData = null;
       if (p.binId) {
@@ -1850,7 +2080,7 @@
           if (res.ok) {
             const data = await res.json();
             if (data) {
-              matchHistory = data.matchHistory || [];
+              matchHistory = Array.isArray(data.matchHistory) ? data.matchHistory : [];
               profileData = data.profile || null;
             }
           }
@@ -1859,12 +2089,66 @@
         }
       }
 
+      globalState.currentMatchList = matchHistory;
       document.getElementById('inspMatchCount').innerText = matchHistory.length;
       if (profileData && profileData.email) {
         document.getElementById('inspEmail').innerText = profileData.email;
       }
 
-      if (matchHistory.length === 0) {
+      // Render Matches with Search, Filters, and Chunking (supporting 500+ records)
+      filterAndRenderMatches();
+
+      // 3. Render Mutual Friends List
+      renderPlayerFriendsList(username);
+    }
+
+    // --- MATCH HISTORY SEARCH, FILTER & CHUNKING (SUPPORTS 500+ RECORDS) ---
+    function setMatchOutcomeFilter(filter) {
+      globalState.matchOutcomeFilter = filter;
+      document.querySelectorAll('.match-pill').forEach(btn => {
+        if (btn.id === `matchFilter-${filter}`) {
+          btn.className = "match-pill px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-brand-600 text-white";
+        } else {
+          btn.className = "match-pill px-2.5 py-1 rounded-lg text-[11px] font-semibold theme-subtle theme-title";
+        }
+      });
+      filterAndRenderMatches();
+    }
+
+    function filterAndRenderMatches() {
+      const matchesList = document.getElementById('inspMatchesList');
+      const statsBanner = document.getElementById('inspMatchStatsBanner');
+      const paginationContainer = document.getElementById('matchPaginationContainer');
+      const allMatches = globalState.currentMatchList || [];
+      const query = (document.getElementById('matchSearchInput')?.value || '').trim().toLowerCase();
+      const outcome = globalState.matchOutcomeFilter;
+      const p = globalState.selectedPlayer;
+
+      // Update counters
+      const totalWins = allMatches.filter(m => m.didWin).length;
+      const totalLosses = allMatches.filter(m => !m.didWin && !m.isDraw).length;
+      const totalDraws = allMatches.filter(m => m.isDraw).length;
+
+      document.getElementById('mfCount-ALL').innerText = allMatches.length;
+      document.getElementById('mfCount-WIN').innerText = totalWins;
+      document.getElementById('mfCount-LOSS').innerText = totalLosses;
+      document.getElementById('mfCount-DRAW').innerText = totalDraws;
+
+      // Notice banner if lifetime games > stored logs
+      if (p && p.gamesPlayed > allMatches.length) {
+        statsBanner.classList.remove('hidden');
+        statsBanner.innerHTML = `
+          <div class="flex items-center gap-2">
+            <i class="fa-solid fa-cloud-arrow-down text-brand-500"></i>
+            <span>Showing <strong class="theme-title font-mono">${allMatches.length}</strong> cloud match records</span>
+          </div>
+          <span class="theme-dimtext font-mono text-[11px]">Total Lifetime Games: ${p.gamesPlayed}</span>
+        `;
+      } else {
+        statsBanner.classList.add('hidden');
+      }
+
+      if (allMatches.length === 0) {
         matchesList.innerHTML = `
           <div class="theme-subtle rounded-xl p-8 text-center theme-dimtext space-y-1">
             <i class="fa-solid fa-trophy text-2xl mb-1 opacity-50"></i>
@@ -1872,105 +2156,162 @@
             <p class="text-[11px] theme-dimtext">This player has not finished any games or history is clear.</p>
           </div>
         `;
-      } else {
-        let matchesHtml = '';
-        matchHistory.forEach((m, idx) => {
-          const isWin = m.didWin;
-          const isDraw = m.isDraw;
-          let badgeClass = 'bg-rose-500/10 text-rose-500 border-rose-500/30';
-          let badgeText = '❌ Lost';
-          if (isWin) {
-            badgeClass = 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30';
-            badgeText = '🏆 Victory';
-          } else if (isDraw) {
-            badgeClass = 'bg-amber-500/10 text-amber-500 border-amber-500/30';
-            badgeText = '🤝 Draw';
-          }
+        paginationContainer.classList.add('hidden');
+        return;
+      }
 
-          const matchTime = m.timestamp ? new Date(m.timestamp).toLocaleString() : 'Unknown date';
-          const oppName = m.opponentName || 'Online Opponent';
-          const matchId = m.id || `m_${idx}`;
+      // Filter matches by outcome and query
+      let filtered = allMatches.filter(m => {
+        if (outcome === 'WIN' && !m.didWin) return false;
+        if (outcome === 'LOSS' && (m.didWin || m.isDraw)) return false;
+        if (outcome === 'DRAW' && !m.isDraw) return false;
+        if (query) {
+          const matchOpp = (m.opponentName || '').toLowerCase().includes(query);
+          const matchTitle = (m.matchTitle || '').toLowerCase().includes(query);
+          const matchId = (m.id || '').toLowerCase().includes(query);
+          return matchOpp || matchTitle || matchId;
+        }
+        return true;
+      });
 
-          matchesHtml += `
-            <div class="theme-subtle rounded-xl p-3.5 flex items-center justify-between gap-3 hover:border-brand-500 transition-colors">
-              <div class="flex items-center gap-3">
-                <div class="w-9 h-9 rounded-lg theme-card flex items-center justify-center theme-dimtext text-sm">
-                  <i class="fa-solid fa-gamepad"></i>
+      if (filtered.length === 0) {
+        matchesList.innerHTML = `
+          <div class="theme-subtle rounded-xl p-6 text-center text-xs theme-dimtext">
+            No matches matching "${escapeHtml(query || outcome)}" found.
+          </div>
+        `;
+        paginationContainer.classList.add('hidden');
+        return;
+      }
+
+      // Progressive chunking
+      const limit = globalState.matchDisplayLimit;
+      const visibleMatches = filtered.slice(0, limit);
+
+      let matchesHtml = '';
+      visibleMatches.forEach((m, idx) => {
+        const isWin = m.didWin;
+        const isDraw = m.isDraw;
+        let badgeClass = 'bg-rose-500/10 text-rose-500 border-rose-500/30';
+        let badgeText = '❌ Lost';
+        if (isWin) {
+          badgeClass = 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30';
+          badgeText = '🏆 Victory';
+        } else if (isDraw) {
+          badgeClass = 'bg-amber-500/10 text-amber-500 border-amber-500/30';
+          badgeText = '🤝 Draw';
+        }
+
+        const matchTime = m.timestamp ? new Date(m.timestamp).toLocaleString() : 'Unknown date';
+        const oppName = m.opponentName || 'Online Opponent';
+        const matchId = m.id || `m_${idx}`;
+
+        matchesHtml += `
+          <div class="theme-subtle rounded-xl p-3.5 flex items-center justify-between gap-3 hover:border-brand-500 transition-colors">
+            <div class="flex items-center gap-3">
+              <div class="w-9 h-9 rounded-lg theme-card flex items-center justify-center theme-dimtext text-sm">
+                <i class="fa-solid fa-gamepad"></i>
+              </div>
+              <div>
+                <div class="flex items-center gap-2">
+                  <span class="font-bold theme-title text-xs">${escapeHtml(oppName)}</span>
+                  <span class="px-2 py-0.5 rounded text-[10px] font-bold border ${badgeClass}">${badgeText}</span>
                 </div>
-                <div>
-                  <div class="flex items-center gap-2">
-                    <span class="font-bold theme-title text-xs">${escapeHtml(oppName)}</span>
-                    <span class="px-2 py-0.5 rounded text-[10px] font-bold border ${badgeClass}">${badgeText}</span>
-                  </div>
-                  <div class="text-[11px] theme-dimtext mt-0.5">
-                    <span>${matchTime}</span> • <span class="font-mono opacity-70">ID: ${matchId}</span>
-                  </div>
+                <div class="text-[11px] theme-dimtext mt-0.5">
+                  <span>${matchTime}</span> • <span class="font-mono opacity-70">ID: ${matchId}</span>
                 </div>
               </div>
-              <button 
-                onclick="promptDeleteSingleMatch('${p.username}', '${matchId}', '${escapeHtml(oppName)}')" 
-                class="p-2 rounded-lg bg-rose-500/10 hover:bg-rose-500/25 text-rose-500 text-xs transition-all"
-                title="Delete this match record"
-              >
-                <i class="fa-solid fa-trash-can"></i>
-              </button>
             </div>
-          `;
-        });
-        matchesList.innerHTML = matchesHtml;
-      }
+            <button 
+              onclick="promptDeleteSingleMatch('${p.username}', '${matchId}', '${escapeHtml(oppName)}')" 
+              class="p-2 rounded-lg bg-rose-500/10 hover:bg-rose-500/25 text-rose-500 text-xs transition-all"
+              title="Delete this match record"
+            >
+              <i class="fa-solid fa-trash-can"></i>
+            </button>
+          </div>
+        `;
+      });
 
-      let friends = [];
-      try {
-        const rawFriends = await getKeyValueDirect(`friends_${username}`);
-        if (rawFriends) {
-          const decoded = safeB64Decode(rawFriends);
-          if (decoded.startsWith('[')) {
-            friends = JSON.parse(decoded);
-          }
-        }
-      } catch (e) {
-        console.warn('Error fetching friends for ' + username, e);
-      }
+      matchesList.innerHTML = matchesHtml;
 
-      document.getElementById('inspFriendCount').innerText = friends.length;
-      if (friends.length === 0) {
-        friendsList.innerHTML = `
+      // Handle pagination buttons
+      if (filtered.length > limit) {
+        paginationContainer.classList.remove('hidden');
+        const remaining = filtered.length - limit;
+        document.getElementById('loadMoreText').innerText = `Load Next 50 Matches (${remaining} more)`;
+      } else {
+        paginationContainer.classList.add('hidden');
+      }
+    }
+
+    function loadMoreMatches() {
+      globalState.matchDisplayLimit += 50;
+      filterAndRenderMatches();
+    }
+
+    function showAllMatches() {
+      globalState.matchDisplayLimit = 999999;
+      filterAndRenderMatches();
+    }
+
+    // --- RENDER RESOLVED MUTUAL FRIENDS ---
+    function renderPlayerFriendsList(username) {
+      const friendsListEl = document.getElementById('inspFriendsList');
+      const resolvedFriends = (globalState.mutualFriendsMap && globalState.mutualFriendsMap[username]) || [];
+
+      document.getElementById('inspFriendCount').innerText = resolvedFriends.length;
+      document.getElementById('inspFriendResolvedCount').innerText = resolvedFriends.length;
+
+      if (resolvedFriends.length === 0) {
+        friendsListEl.innerHTML = `
           <div class="theme-subtle rounded-xl p-8 text-center theme-dimtext space-y-1">
             <i class="fa-solid fa-user-group text-2xl mb-1 opacity-50"></i>
-            <p class="text-xs font-semibold theme-title">No Friends Added</p>
+            <p class="text-xs font-semibold theme-title">No Friends Connected</p>
             <p class="text-[11px] theme-dimtext">This player does not have any connected friends.</p>
           </div>
         `;
-      } else {
-        let friendsHtml = '';
-        friends.forEach(f => {
-          const friendUser = (f.username || '').toLowerCase().replace(/^@/, '');
-          const friendDisplay = f.displayName || friendUser || 'Friend';
+        return;
+      }
 
-          friendsHtml += `
-            <div class="theme-subtle rounded-xl p-3 flex items-center justify-between gap-3">
-              <div class="flex items-center gap-3">
-                <div class="w-8 h-8 rounded-lg theme-card flex items-center justify-center font-bold theme-title text-xs">
-                  ${friendDisplay.substring(0, 2).toUpperCase()}
-                </div>
-                <div>
+      let friendsHtml = '';
+      resolvedFriends.forEach(f => {
+        const friendUser = f.username;
+        const friendDisplay = f.displayName || friendUser;
+        const playerMatch = globalState.players.find(pl => pl.username === friendUser);
+        const isOnline = playerMatch && playerMatch.status !== 'OFFLINE';
+
+        friendsHtml += `
+          <div class="theme-subtle rounded-xl p-3 flex items-center justify-between gap-3">
+            <div class="flex items-center gap-3">
+              <div class="w-9 h-9 rounded-lg theme-card flex items-center justify-center font-bold theme-title text-xs relative">
+                ${friendDisplay.substring(0, 2).toUpperCase()}
+                <span class="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'} border border-inherit"></span>
+              </div>
+              <div>
+                <div class="flex items-center gap-2">
                   <h5 class="text-xs font-bold theme-title">${escapeHtml(friendDisplay)}</h5>
-                  <span class="text-[11px] font-mono theme-dimtext">@${escapeHtml(friendUser)}</span>
+                  <span class="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-brand-500/10 text-brand-500 border border-brand-500/20">Friend</span>
+                </div>
+                <div class="text-[11px] font-mono theme-dimtext flex items-center gap-1.5">
+                  <span>@${escapeHtml(friendUser)}</span>
+                  <span>•</span>
+                  <span class="${isOnline ? 'text-emerald-500' : 'theme-dimtext'}">${isOnline ? 'Online' : 'Offline'}</span>
                 </div>
               </div>
-              <button 
-                onclick="promptRemoveFriend('${p.username}', '${friendUser}')" 
-                class="px-2.5 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/25 text-rose-500 text-xs font-semibold flex items-center gap-1 transition-all"
-              >
-                <i class="fa-solid fa-user-minus"></i>
-                <span>Remove</span>
-              </button>
             </div>
-          `;
-        });
-        friendsList.innerHTML = friendsHtml;
-      }
+            <button 
+              onclick="promptRemoveFriend('${username}', '${friendUser}')" 
+              class="px-2.5 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/25 text-rose-500 text-xs font-semibold flex items-center gap-1 transition-all"
+            >
+              <i class="fa-solid fa-user-minus"></i>
+              <span>Remove</span>
+            </button>
+          </div>
+        `;
+      });
+
+      friendsListEl.innerHTML = friendsHtml;
     }
 
     function switchInspTab(tabId) {
@@ -2099,16 +2440,6 @@
       await setKeyValueDirect(`pres_${clean}`, 'OFFLINE:0');
       await setKeyValueDirect(`friends_${clean}`, '');
 
-      if (binId && binId.length < 50 && !binId.startsWith('{')) {
-        try {
-          await fetch(`https://extendsclass.com/api/json-storage/bin/${binId}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ profile: null, matchHistory: [], status: 'DELETED' })
-          });
-        } catch {}
-      }
-
       closePlayerInspector();
       showToast(`Player @${clean} deleted successfully!`, 'success');
       await fetchGlobalData(true);
@@ -2123,25 +2454,32 @@
       );
     }
 
+    // 100% Reliable Match Deletion (No CORS errors)
     async function executeDeleteMatch(username, matchId) {
       const p = globalState.players.find(u => u.username === username);
-      if (!p || !p.binId) throw new Error('Player cloud bin not found');
+      if (!p) throw new Error('Player not found');
+
+      // Resolve Bin ID if null
+      if (!p.binId) {
+        let foundBin = await getKeyValueDirect(`user_${username}`);
+        if (!foundBin && p.uid && p.uid.startsWith('google_')) {
+          foundBin = await getKeyValueDirect(`gid_${p.uid.replace('google_', '')}`);
+        }
+        if (foundBin && !foundBin.startsWith('{') && foundBin.length < 50 && foundBin !== 'null') {
+          p.binId = foundBin;
+        }
+      }
+      if (!p.binId) throw new Error('Player cloud backup bin not found');
 
       const res = await fetch(`https://extendsclass.com/api/json-storage/bin/${p.binId}`);
-      if (!res.ok) throw new Error('Failed to read cloud bin');
+      if (!res.ok) throw new Error('Failed to read cloud storage bin');
       const data = await res.json();
       
-      const existingMatches = data.matchHistory || [];
+      const existingMatches = Array.isArray(data.matchHistory) ? data.matchHistory : [];
       const updatedMatches = existingMatches.filter(m => m.id !== matchId);
 
       data.matchHistory = updatedMatches;
-      const updateRes = await fetch(`https://extendsclass.com/api/json-storage/bin/${p.binId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-
-      if (!updateRes.ok) throw new Error('Failed to update cloud storage');
+      await saveExtendsClassData(username, p.binId, data);
 
       showToast(`Match #${matchId} deleted successfully!`, 'success');
       loadPlayerDeepData(username);
@@ -2158,22 +2496,17 @@
       );
     }
 
+    // 100% Reliable Clear All Matches
     async function executeClearMatches(username) {
       const p = globalState.players.find(u => u.username === username);
-      if (!p || !p.binId) throw new Error('Player cloud bin not found');
+      if (!p || !p.binId) throw new Error('Player cloud backup bin not found');
 
       const res = await fetch(`https://extendsclass.com/api/json-storage/bin/${p.binId}`);
-      if (!res.ok) throw new Error('Failed to read cloud bin');
+      if (!res.ok) throw new Error('Failed to read cloud storage bin');
       const data = await res.json();
       
       data.matchHistory = [];
-      const updateRes = await fetch(`https://extendsclass.com/api/json-storage/bin/${p.binId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-
-      if (!updateRes.ok) throw new Error('Failed to update cloud storage');
+      await saveExtendsClassData(username, p.binId, data);
 
       showToast(`All matches cleared for @${username}!`, 'success');
       loadPlayerDeepData(username);
@@ -2188,20 +2521,43 @@
       );
     }
 
+    // Mutual Friend Removal: Updates both direct and inverse friendships
     async function executeRemoveFriend(username, friendUsername) {
-      const raw = await getKeyValueDirect(`friends_${username}`);
-      if (!raw) return;
-      const decoded = safeB64Decode(raw);
-      if (!decoded.startsWith('[')) return;
+      showToast(`Disconnecting @${friendUsername}...`, 'info');
 
-      const friendsList = JSON.parse(decoded);
-      const filtered = friendsList.filter(f => (f.username || '').toLowerCase().replace(/^@/, '') !== friendUsername);
+      // 1. Remove from username's friends
+      const rawA = await getKeyValueDirect(`friends_${username}`);
+      if (rawA) {
+        const decodedA = safeB64Decode(rawA);
+        if (decodedA.startsWith('[')) {
+          const listA = JSON.parse(decodedA);
+          const filteredA = listA.filter(f => (f.username || '').toLowerCase().replace(/^@/, '') !== friendUsername);
+          await setKeyValueDirect(`friends_${username}`, safeB64Encode(JSON.stringify(filteredA)));
+        }
+      }
 
-      const newB64 = safeB64Encode(JSON.stringify(filtered));
-      await setKeyValueDirect(`friends_${username}`, newB64);
+      // 2. Remove from friendUsername's friends (Mutual disconnection)
+      const rawB = await getKeyValueDirect(`friends_${friendUsername}`);
+      if (rawB) {
+        const decodedB = safeB64Decode(rawB);
+        if (decodedB.startsWith('[')) {
+          const listB = JSON.parse(decodedB);
+          const filteredB = listB.filter(f => (f.username || '').toLowerCase().replace(/^@/, '') !== username);
+          await setKeyValueDirect(`friends_${friendUsername}`, safeB64Encode(JSON.stringify(filteredB)));
+        }
+      }
+
+      // 3. Re-sync in-memory graph
+      if (globalState.directFriendsMap[username]) {
+        globalState.directFriendsMap[username] = globalState.directFriendsMap[username].filter(f => (f.username || '').toLowerCase().replace(/^@/, '') !== friendUsername);
+      }
+      if (globalState.directFriendsMap[friendUsername]) {
+        globalState.directFriendsMap[friendUsername] = globalState.directFriendsMap[friendUsername].filter(f => (f.username || '').toLowerCase().replace(/^@/, '') !== username);
+      }
+      computeMutualFriendsGraph();
 
       showToast(`Removed @${friendUsername} from @${username}'s friends!`, 'success');
-      loadPlayerDeepData(username);
+      renderPlayerFriendsList(username);
     }
 
     function promptResetPlayerStats() {
@@ -2232,8 +2588,7 @@
       regObj.bestStreak = 0;
       regObj.level = 1;
 
-      const regB64 = safeB64Encode(JSON.stringify(regObj));
-      await setKeyValueDirect(`reg_${username}`, regB64);
+      await setKeyValueDirect(`reg_${username}`, safeB64Encode(JSON.stringify(regObj)));
 
       if (p.binId) {
         try {
@@ -2248,11 +2603,7 @@
               data.profile.level = 1;
               data.profile.xp = 0;
             }
-            await fetch(`https://extendsclass.com/api/json-storage/bin/${p.binId}`, {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(data)
-            });
+            await saveExtendsClassData(username, p.binId, data);
           }
         } catch {}
       }
@@ -2534,17 +2885,13 @@
 
         for (const p of globalState.players) {
           let binData = null;
-          let friendsData = null;
+          let friendsData = globalState.mutualFriendsMap[p.username] || [];
           if (p.binId) {
             try {
               const res = await fetch(`https://extendsclass.com/api/json-storage/bin/${p.binId}`);
               if (res.ok) binData = await res.json();
             } catch {}
           }
-          try {
-            const rawFriends = await getKeyValueDirect(`friends_${p.username}`);
-            if (rawFriends) friendsData = JSON.parse(safeB64Decode(rawFriends));
-          } catch {}
 
           fullBackup.players.push({
             username: p.username,
