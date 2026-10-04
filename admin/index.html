@@ -673,28 +673,127 @@
       <!-- ==================================================== -->
       <section id="tabView-mqtt" class="hidden space-y-5">
         
-        <!-- Broadcast System Message to All Players -->
-        <div class="theme-card rounded-2xl p-5 space-y-3">
-          <h3 class="text-sm font-bold theme-title flex items-center gap-2">
-            <i class="fa-solid fa-bullhorn text-amber-500"></i>
-            <span>Global System Announcement Dispatcher</span>
-          </h3>
-          <p class="text-xs theme-dimtext">Broadcast live notice banners to all connected players across Android and Web apps.</p>
-          
-          <div class="flex flex-col sm:flex-row gap-2">
-            <input 
-              type="text" 
-              id="broadcastMsgInput" 
-              placeholder="e.g. Server maintenance scheduled at 12:00 AM UTC..." 
-              class="flex-1 px-4 py-2.5 rounded-xl theme-input text-sm placeholder:theme-dimtext focus:outline-none focus:border-amber-500"
-            >
-            <button 
-              onclick="dispatchSystemNotice()" 
-              class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-semibold text-xs shadow-lg shadow-amber-600/20 active:scale-95 transition-all flex items-center justify-center gap-2"
-            >
-              <i class="fa-solid fa-paper-plane"></i>
-              <span>Send Broadcast</span>
+        <!-- Broadcast & Direct Message Announcement Manager -->
+        <div class="theme-card rounded-2xl p-5 space-y-4">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div class="flex items-center gap-2.5">
+              <div class="w-8 h-8 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-500 text-sm">
+                <i class="fa-solid fa-bullhorn"></i>
+              </div>
+              <div>
+                <h3 class="text-sm font-bold theme-title">Broadcast & Direct Message Manager</h3>
+                <p class="text-[11px] theme-dimtext">Transmit announcements to all mobile apps or send targeted notices to a specific player.</p>
+              </div>
+            </div>
+            <button onclick="fetchCurrentCloudBroadcast()" class="self-start sm:self-auto px-3 py-1.5 rounded-lg theme-subtle theme-title text-xs font-semibold flex items-center gap-1.5 hover:border-amber-500 transition-all cursor-pointer">
+              <i class="fa-solid fa-arrows-rotate text-[10px]"></i>
+              <span>Refresh Status</span>
             </button>
+          </div>
+
+          <!-- Live Cloud Broadcast Status Card -->
+          <div id="liveBroadcastStatusCard" class="p-3.5 rounded-xl border border-dashed border-neutral-700/60 bg-neutral-900/40 space-y-2">
+            <div class="flex items-center justify-between">
+              <span class="text-[10px] font-mono uppercase tracking-wider text-neutral-400 font-bold flex items-center gap-1.5">
+                <span id="liveBroadcastDot" class="w-2 h-2 rounded-full bg-neutral-500"></span>
+                <span>Active Cloud Announcement</span>
+              </span>
+              <span id="liveBroadcastBadge" class="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-neutral-800 text-neutral-400">CHECKING...</span>
+            </div>
+            <div id="liveBroadcastContent" class="text-xs theme-dimtext italic">
+              Loading current status from cloud...
+            </div>
+          </div>
+
+          <!-- Broadcast Form Inputs -->
+          <div class="space-y-3 pt-1">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label class="block text-[11px] font-semibold theme-title mb-1">Announcement Title</label>
+                <input 
+                  type="text" 
+                  id="broadcastTitleInput" 
+                  placeholder="e.g. Server Maintenance Notice" 
+                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs placeholder:theme-dimtext focus:outline-none focus:border-amber-500"
+                >
+              </div>
+              <div>
+                <label class="block text-[11px] font-semibold theme-title mb-1">Message Type</label>
+                <select 
+                  id="broadcastTypeSelect" 
+                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs focus:outline-none focus:border-amber-500 cursor-pointer"
+                >
+                  <option value="INFO">📢 Info / Announcement</option>
+                  <option value="ALERT">⚠️ Critical Alert / Warning</option>
+                  <option value="MAINTENANCE">🛠️ Server Maintenance / Fix</option>
+                  <option value="DIRECT">💜 Direct Player Notice</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-[11px] font-semibold theme-title mb-1">Message Content (Appears as themed popup on player startup)</label>
+              <textarea 
+                id="broadcastMsgInput" 
+                rows="3" 
+                placeholder="Type the message body to display on players' screens on app launch..." 
+                class="w-full px-3.5 py-2 rounded-xl theme-input text-xs placeholder:theme-dimtext focus:outline-none focus:border-amber-500"
+              ></textarea>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label class="block text-[11px] font-semibold theme-title mb-1">
+                  Target Player <span class="theme-dimtext font-normal">(Leave empty or ALL for everyone)</span>
+                </label>
+                <input 
+                  type="text" 
+                  id="broadcastTargetInput" 
+                  oninput="onBroadcastTargetChanged()" 
+                  placeholder="All Players (or type @username)" 
+                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs placeholder:theme-dimtext focus:outline-none focus:border-amber-500 font-mono"
+                >
+              </div>
+              <div>
+                <label class="block text-[11px] font-semibold theme-title mb-1">Author / Sender Signature</label>
+                <input 
+                  type="text" 
+                  id="broadcastAuthorInput" 
+                  value="Admin / Bora" 
+                  placeholder="Admin / Bora" 
+                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs placeholder:theme-dimtext focus:outline-none focus:border-amber-500"
+                >
+              </div>
+            </div>
+
+            <!-- Buttons: Send, Clear, Preview -->
+            <div class="flex flex-wrap items-center gap-2 pt-2">
+              <button 
+                onclick="dispatchEnhancedBroadcast()" 
+                id="btnDispatchBroadcast"
+                class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-semibold text-xs shadow-lg shadow-amber-600/20 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <i class="fa-solid fa-paper-plane"></i>
+                <span id="btnDispatchText">Transmit Broadcast 🚀</span>
+              </button>
+
+              <button 
+                onclick="clearCloudBroadcast()" 
+                id="btnClearBroadcast"
+                class="px-4 py-2.5 rounded-xl border border-rose-500/40 text-rose-400 hover:bg-rose-500/10 font-semibold text-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <i class="fa-solid fa-trash-can text-[11px]"></i>
+                <span>Clear Active</span>
+              </button>
+
+              <button 
+                onclick="previewBroadcastModal()" 
+                class="px-4 py-2.5 rounded-xl border border-neutral-700 theme-title hover:border-amber-500/50 font-semibold text-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <i class="fa-solid fa-eye text-[11px] text-amber-500"></i>
+                <span>Preview Popup</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -1152,6 +1251,41 @@
         <button onclick="closeAddPlayerModal()" class="px-4 py-2 rounded-xl theme-subtle theme-title text-xs font-semibold">Cancel</button>
         <button onclick="submitNewPlayer()" class="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white text-xs font-semibold">Create Player</button>
       </div>
+  </div>
+
+  <!-- ======================================================== -->
+  <!-- 5B. BROADCAST MESSAGE PREVIEW MODAL                      -->
+  <!-- ======================================================== -->
+  <div id="broadcastPreviewModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+    <div class="w-full max-w-md theme-modal rounded-3xl p-6 sm:p-7 shadow-2xl border border-neutral-700/80 space-y-4 relative">
+      <div class="flex items-center justify-between">
+        <span id="previewModalBadge" class="px-2.5 py-1 rounded-full text-[11px] font-bold font-mono tracking-wider bg-brand-500/20 text-brand-400 border border-brand-500/30">
+          📢 ANNOUNCEMENT
+        </span>
+        <button onclick="closeBroadcastPreviewModal()" class="theme-dimtext hover:theme-title text-sm cursor-pointer">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <div class="space-y-2">
+        <h3 id="previewModalTitle" class="text-base sm:text-lg font-black theme-title">
+          Announcement Title
+        </h3>
+        <p id="previewModalMessage" class="text-xs sm:text-sm theme-dimtext whitespace-pre-wrap leading-relaxed">
+          This is what players will see in their in-game popup when they launch the Bingo app.
+        </p>
+      </div>
+
+      <div class="pt-2 border-t border-neutral-800/80 flex items-center justify-between text-[11px] theme-dimtext">
+        <span id="previewModalTarget" class="font-mono font-semibold text-brand-400">Target: ALL PLAYERS</span>
+        <span id="previewModalAuthor" class="font-medium">From: Admin / Bora</span>
+      </div>
+
+      <div class="pt-2">
+        <button onclick="closeBroadcastPreviewModal()" class="w-full py-2.5 rounded-xl bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 text-white font-bold text-xs shadow-lg active:scale-95 transition-all cursor-pointer">
+          Acknowledge
+        </button>
+      </div>
     </div>
   </div>
 
@@ -1410,6 +1544,14 @@
           return;
         }
 
+        // 2B. Broadcast Preview Modal
+        const bcastModal = document.getElementById('broadcastPreviewModal');
+        if (bcastModal && !bcastModal.classList.contains('hidden')) {
+          closeBroadcastPreviewModal(false);
+          window.history.pushState({ screen: 'app', tab: globalState.activeTab || 'mqtt' }, '');
+          return;
+        }
+
         // 3. Player Inspector Drawer
         const drawer = document.getElementById('playerInspectorDrawer');
         if (drawer && !drawer.classList.contains('hidden')) {
@@ -1457,6 +1599,9 @@
           btn.className = "nav-tab px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all whitespace-nowrap theme-dimtext hover:text-brand-500 flex-shrink-0";
         }
       });
+      if (tabId === 'mqtt') {
+        fetchCurrentCloudBroadcast();
+      }
     }
 
     // --- DATA FETCHING & API SERVICES WITH RETRY ---
@@ -2935,7 +3080,8 @@
             client.subscribe('bingo/v3/room_meta/#');
             client.subscribe('bingo/v3/presence/#');
             client.subscribe('bingo/v3/system/notice');
-            logMqttEvent("SUBSCRIBE", "Subscribed to bingo/v3/# topics");
+            client.subscribe('bingo/global/broadcast');
+            logMqttEvent("SUBSCRIBE", "Subscribed to bingo topics including bingo/global/broadcast");
           },
           onFailure: (err) => {
             mqttDot.className = "w-2 h-2 rounded-full bg-rose-500";
@@ -2950,6 +3096,13 @@
 
     function handleIncomingMqttMessage(topic, payload) {
       logMqttEvent(topic, payload);
+
+      if (topic === 'bingo/global/broadcast') {
+        try {
+          const bcast = JSON.parse(payload);
+          updateLiveBroadcastCardUI(bcast);
+        } catch {}
+      }
 
       if (topic.startsWith('bingo/v3/room_meta/')) {
         const roomCode = topic.replace('bingo/v3/room_meta/', '');
@@ -3042,27 +3195,290 @@
       showToast('Purged stale room references', 'info');
     }
 
-    function dispatchSystemNotice() {
-      const input = document.getElementById('broadcastMsgInput');
-      const text = input.value.trim();
-      if (!text) {
-        showToast('Please type an announcement message', 'error');
+    // --- BROADCAST & DIRECT MESSAGE ANNOUNCEMENT SERVICES ---
+    let currentActiveBroadcastData = null;
+
+    function onBroadcastTargetChanged() {
+      const targetInput = document.getElementById('broadcastTargetInput');
+      const val = targetInput ? targetInput.value.trim() : '';
+      const btnText = document.getElementById('btnDispatchText');
+      if (!btnText) return;
+
+      const clean = val.replace(/^@/, '');
+      if (clean && clean.toUpperCase() !== 'ALL') {
+        btnText.innerText = `Transmit to @${clean} 🚀`;
+      } else {
+        btnText.innerText = 'Transmit Broadcast to All Players 🚀';
+      }
+    }
+
+    async function fetchCurrentCloudBroadcast() {
+      const targetInput = document.getElementById('broadcastTargetInput');
+      const rawTarget = targetInput ? targetInput.value.trim() : '';
+      const clean = rawTarget.replace(/^@/, '').toLowerCase();
+      const isDirect = clean && clean !== 'all';
+      const storageKey = isDirect ? `user_msg_${clean}` : 'global_broadcast_message';
+
+      const dot = document.getElementById('liveBroadcastDot');
+      const badge = document.getElementById('liveBroadcastBadge');
+      const content = document.getElementById('liveBroadcastContent');
+
+      if (badge) {
+        badge.className = "px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-neutral-800 text-neutral-400";
+        badge.innerText = "FETCHING...";
+      }
+
+      try {
+        const raw = await getKeyValueDirect(storageKey);
+        if (!raw || raw === '""' || raw === 'null') {
+          updateLiveBroadcastCardUI(null, isDirect ? `@${clean}` : 'ALL');
+          return;
+        }
+
+        let cleanStr = raw.trim();
+        if (cleanStr.startsWith('"') && cleanStr.endsWith('"') && cleanStr.length >= 2) {
+          cleanStr = cleanStr.substring(1, cleanStr.length - 1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+        }
+        const bcast = JSON.parse(cleanStr);
+        updateLiveBroadcastCardUI(bcast, isDirect ? `@${clean}` : 'ALL');
+      } catch (e) {
+        updateLiveBroadcastCardUI(null, isDirect ? `@${clean}` : 'ALL');
+      }
+    }
+
+    function updateLiveBroadcastCardUI(bcast, currentTargetScope = 'ALL') {
+      currentActiveBroadcastData = bcast;
+      const dot = document.getElementById('liveBroadcastDot');
+      const badge = document.getElementById('liveBroadcastBadge');
+      const content = document.getElementById('liveBroadcastContent');
+      if (!dot || !badge || !content) return;
+
+      if (bcast && bcast.active && bcast.message && bcast.message.trim().length > 0) {
+        dot.className = "w-2 h-2 rounded-full bg-emerald-500 animate-pulse";
+        
+        let typeBadge = "📢 INFO";
+        let typeClass = "bg-brand-500/20 text-brand-400 border border-brand-500/30";
+        if (bcast.type === 'ALERT') {
+          typeBadge = "⚠️ ALERT";
+          typeClass = "bg-rose-500/20 text-rose-400 border border-rose-500/30";
+        } else if (bcast.type === 'MAINTENANCE') {
+          typeBadge = "🛠️ MAINTENANCE";
+          typeClass = "bg-amber-500/20 text-amber-400 border border-amber-500/30";
+        } else if (bcast.type === 'DIRECT' || (bcast.targetUsername && bcast.targetUsername !== 'ALL')) {
+          typeBadge = "💜 DIRECT";
+          typeClass = "bg-purple-500/20 text-purple-400 border border-purple-500/30";
+        }
+
+        badge.className = `px-2 py-0.5 rounded text-[10px] font-mono font-bold ${typeClass}`;
+        badge.innerText = `● ACTIVE (${typeBadge})`;
+
+        const targetLabel = (bcast.targetUsername && bcast.targetUsername !== 'ALL') ? bcast.targetUsername : 'ALL PLAYERS';
+        const dateStr = bcast.timestamp ? new Date(bcast.timestamp).toLocaleString() : 'Recent';
+
+        content.className = "text-xs space-y-1.5";
+        content.innerHTML = `
+          <div class="flex items-center justify-between">
+            <span class="font-bold theme-title text-sm">${escapeHtml(bcast.title || 'Untitled Notice')}</span>
+            <span class="text-[10px] theme-dimtext">${dateStr}</span>
+          </div>
+          <p class="theme-dimtext leading-relaxed bg-neutral-950/40 p-2.5 rounded-lg border border-neutral-800/60">${escapeHtml(bcast.message)}</p>
+          <div class="flex items-center justify-between text-[11px] pt-1">
+            <span class="font-semibold text-brand-400 font-mono">Target: ${escapeHtml(targetLabel)}</span>
+            <span class="theme-dimtext">From: <strong class="theme-title">${escapeHtml(bcast.author || 'Admin')}</strong></span>
+          </div>
+        `;
+      } else {
+        dot.className = "w-2 h-2 rounded-full bg-neutral-500";
+        badge.className = "px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-neutral-800 text-neutral-400";
+        badge.innerText = "○ IDLE";
+
+        content.className = "text-xs theme-dimtext";
+        content.innerHTML = `<span>No active announcement currently broadcasted for <strong>${escapeHtml(currentTargetScope)}</strong>. Player apps will not display any notice banner on startup.</span>`;
+      }
+    }
+
+    async function dispatchEnhancedBroadcast() {
+      const titleInput = document.getElementById('broadcastTitleInput');
+      const msgInput = document.getElementById('broadcastMsgInput');
+      const typeSelect = document.getElementById('broadcastTypeSelect');
+      const targetInput = document.getElementById('broadcastTargetInput');
+      const authorInput = document.getElementById('broadcastAuthorInput');
+      const btnDispatch = document.getElementById('btnDispatchBroadcast');
+
+      const title = titleInput.value.trim();
+      const message = msgInput.value.trim();
+      const type = typeSelect ? typeSelect.value : 'INFO';
+      const rawTarget = targetInput ? targetInput.value.trim() : '';
+      const author = (authorInput ? authorInput.value.trim() : '') || 'Admin / Bora';
+
+      if (!title || !message) {
+        showToast('Please provide both an announcement title and message content', 'error');
         return;
       }
-      if (globalState.mqttClient && globalState.mqttClient.isConnected()) {
-        const payload = JSON.stringify({
-          type: 'SYSTEM_NOTICE',
-          sender: 'SERVER_ADMIN',
-          text: text,
-          timestamp: Date.now()
-        });
-        const msg = new Paho.MQTT.Message(payload);
-        msg.destinationName = 'bingo/v3/system/notice';
-        globalState.mqttClient.send(msg);
-        input.value = '';
-        showToast('Broadcast dispatched globally to all apps!', 'success');
+
+      const cleanTarget = rawTarget.replace(/^@/, '').trim();
+      const isDirect = cleanTarget && cleanTarget.toUpperCase() !== 'ALL';
+      const targetUsername = isDirect ? `@${cleanTarget}` : 'ALL';
+      const storageKey = isDirect ? `user_msg_${cleanTarget.toLowerCase()}` : 'global_broadcast_message';
+
+      const payloadObj = {
+        id: 'bcast_' + Math.random().toString(36).substring(2, 10),
+        title: title,
+        message: message,
+        type: type,
+        author: author,
+        targetUsername: targetUsername,
+        timestamp: Date.now(),
+        active: true
+      };
+
+      const jsonStr = JSON.stringify(payloadObj);
+
+      if (btnDispatch) {
+        btnDispatch.disabled = true;
+        btnDispatch.classList.add('opacity-60');
+      }
+      showToast('Dispatching broadcast to cloud and MQTT...', 'info');
+
+      try {
+        // 1. Write persistent key to KeyValue cloud store
+        const kvSuccess = await setKeyValueDirect(storageKey, jsonStr);
+
+        // 2. Publish real-time MQTT message to bingo/global/broadcast
+        if (globalState.mqttClient && globalState.mqttClient.isConnected()) {
+          const mqttMsg = new Paho.MQTT.Message(jsonStr);
+          mqttMsg.destinationName = 'bingo/global/broadcast';
+          mqttMsg.retained = true;
+          globalState.mqttClient.send(mqttMsg);
+
+          // Also publish legacy notice for backwards web compatibility
+          try {
+            const legacyNotice = new Paho.MQTT.Message(JSON.stringify({
+              type: 'SYSTEM_NOTICE',
+              sender: author,
+              text: `[${title}] ${message}`,
+              timestamp: Date.now()
+            }));
+            legacyNotice.destinationName = 'bingo/v3/system/notice';
+            globalState.mqttClient.send(legacyNotice);
+          } catch {}
+        }
+
+        if (kvSuccess) {
+          showToast(`Broadcast dispatched ${isDirect ? 'to @' + cleanTarget : 'globally to ALL players'}! 🚀`, 'success');
+          updateLiveBroadcastCardUI(payloadObj, targetUsername);
+        } else {
+          showToast('Dispatched via MQTT! Cloud persistence had a delay.', 'info');
+          updateLiveBroadcastCardUI(payloadObj, targetUsername);
+        }
+      } catch (err) {
+        showToast('Error sending broadcast: ' + err.message, 'error');
+      } finally {
+        if (btnDispatch) {
+          btnDispatch.disabled = false;
+          btnDispatch.classList.remove('opacity-60');
+        }
+      }
+    }
+
+    // Keep dispatchSystemNotice as alias for any legacy callers
+    function dispatchSystemNotice() {
+      dispatchEnhancedBroadcast();
+    }
+
+    async function clearCloudBroadcast() {
+      const targetInput = document.getElementById('broadcastTargetInput');
+      const rawTarget = targetInput ? targetInput.value.trim() : '';
+      const cleanTarget = rawTarget.replace(/^@/, '').trim();
+      const isDirect = cleanTarget && cleanTarget.toUpperCase() !== 'ALL';
+      const targetUsername = isDirect ? `@${cleanTarget}` : 'ALL';
+      const storageKey = isDirect ? `user_msg_${cleanTarget.toLowerCase()}` : 'global_broadcast_message';
+
+      const clearPayload = {
+        id: '',
+        title: '',
+        message: '',
+        type: 'INFO',
+        author: 'Admin',
+        targetUsername: targetUsername,
+        timestamp: Date.now(),
+        active: false
+      };
+      const jsonStr = JSON.stringify(clearPayload);
+
+      showToast('Clearing active broadcast from cloud...', 'info');
+      try {
+        await setKeyValueDirect(storageKey, jsonStr);
+
+        if (globalState.mqttClient && globalState.mqttClient.isConnected()) {
+          const mqttMsg = new Paho.MQTT.Message(jsonStr);
+          mqttMsg.destinationName = 'bingo/global/broadcast';
+          mqttMsg.retained = true;
+          globalState.mqttClient.send(mqttMsg);
+        }
+
+        updateLiveBroadcastCardUI(null, targetUsername);
+        showToast(`Broadcast cleared ${isDirect ? 'for @' + cleanTarget : 'for all players'}!`, 'success');
+      } catch (err) {
+        showToast('Error clearing broadcast: ' + err.message, 'error');
+      }
+    }
+
+    function previewBroadcastModal() {
+      const titleInput = document.getElementById('broadcastTitleInput');
+      const msgInput = document.getElementById('broadcastMsgInput');
+      const typeSelect = document.getElementById('broadcastTypeSelect');
+      const targetInput = document.getElementById('broadcastTargetInput');
+      const authorInput = document.getElementById('broadcastAuthorInput');
+
+      const title = (titleInput ? titleInput.value.trim() : '') || 'Sample Announcement';
+      const msg = (msgInput ? msgInput.value.trim() : '') || 'This is how your broadcast message dialog appears on Android player screens on app startup.';
+      const type = typeSelect ? typeSelect.value : 'INFO';
+      const rawTarget = targetInput ? targetInput.value.trim() : '';
+      const author = (authorInput ? authorInput.value.trim() : '') || 'Admin / Bora';
+
+      const cleanTarget = rawTarget.replace(/^@/, '').trim();
+      const isDirect = cleanTarget && cleanTarget.toUpperCase() !== 'ALL';
+
+      const badgeEl = document.getElementById('previewModalBadge');
+      const titleEl = document.getElementById('previewModalTitle');
+      const msgEl = document.getElementById('previewModalMessage');
+      const targetEl = document.getElementById('previewModalTarget');
+      const authorEl = document.getElementById('previewModalAuthor');
+      const modal = document.getElementById('broadcastPreviewModal');
+
+      if (!modal) return;
+
+      if (isDirect) {
+        badgeEl.className = "px-2.5 py-1 rounded-full text-[11px] font-bold font-mono tracking-wider bg-purple-500/20 text-purple-400 border border-purple-500/30";
+        badgeEl.innerText = "💜 PERSONAL MESSAGE";
+      } else if (type === 'ALERT') {
+        badgeEl.className = "px-2.5 py-1 rounded-full text-[11px] font-bold font-mono tracking-wider bg-rose-500/20 text-rose-400 border border-rose-500/30";
+        badgeEl.innerText = "⚠️ IMPORTANT NOTICE";
+      } else if (type === 'MAINTENANCE') {
+        badgeEl.className = "px-2.5 py-1 rounded-full text-[11px] font-bold font-mono tracking-wider bg-amber-500/20 text-amber-400 border border-amber-500/30";
+        badgeEl.innerText = "🛠️ MAINTENANCE";
       } else {
-        showToast('MQTT is not connected', 'error');
+        badgeEl.className = "px-2.5 py-1 rounded-full text-[11px] font-bold font-mono tracking-wider bg-brand-500/20 text-brand-400 border border-brand-500/30";
+        badgeEl.innerText = "📢 ANNOUNCEMENT";
+      }
+
+      titleEl.innerText = title;
+      msgEl.innerText = msg;
+      targetEl.innerText = isDirect ? `Target: @${cleanTarget}` : 'Target: ALL PLAYERS';
+      authorEl.innerText = `From: ${author}`;
+
+      try {
+        window.history.pushState({ screen: 'broadcastPreviewModal' }, '');
+      } catch {}
+      modal.classList.remove('hidden');
+    }
+
+    function closeBroadcastPreviewModal(shouldPopHistory = true) {
+      const modal = document.getElementById('broadcastPreviewModal');
+      if (modal) modal.classList.add('hidden');
+      if (shouldPopHistory && !isHandlingPopState && window.history.state && window.history.state.screen === 'broadcastPreviewModal') {
+        window.history.back();
       }
     }
 
