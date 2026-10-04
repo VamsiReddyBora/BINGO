@@ -64,6 +64,9 @@ import com.bingo.multiplayer.core.designsystem.ThemePreferences
 import com.bingo.multiplayer.core.designsystem.computeContrastText
 import com.bingo.multiplayer.domain.network.EmojiPreferences
 import com.bingo.multiplayer.presentation.components.AnimatedEmoji
+import com.bingo.multiplayer.domain.network.AppUpdateManager
+import com.bingo.multiplayer.domain.network.UpdateState
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -2075,15 +2078,16 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // ── App Version Details ──
+            // ── App Version & In-App Updates ──
             val appVersionName = remember {
                 try {
                     val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-                    pInfo.versionName ?: "1.2"
+                    pInfo.versionName ?: "1.3"
                 } catch (e: Exception) {
-                    "1.2"
+                    "1.3"
                 }
             }
+            val updateState by AppUpdateManager.updateState.collectAsState()
 
             Column(
                 modifier = Modifier.fillMaxWidth(),
@@ -2095,6 +2099,57 @@ fun SettingsScreen(
                     fontWeight = FontWeight.Medium,
                     color = tokens.textMuted
                 )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                OutlinedButton(
+                    onClick = { AppUpdateManager.checkForUpdates(context, manual = true) },
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, tokens.cellNeutralBorder.copy(alpha = 0.4f)),
+                    modifier = Modifier.height(38.dp)
+                ) {
+                    if (updateState is UpdateState.Checking) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            color = tokens.accentBrand,
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Checking...", fontSize = 12.sp, color = tokens.cellNeutralText)
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.SystemUpdate,
+                            contentDescription = null,
+                            tint = tokens.accentBrand,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Check for Updates", fontSize = 12.sp, color = tokens.cellNeutralText, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+
+                if (updateState is UpdateState.UpToDate) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "✓ You are running the latest version",
+                        fontSize = 11.sp,
+                        color = Color(0xFF10B981),
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                // Verification trigger for testing the download & installer prompt
+                TextButton(
+                    onClick = { AppUpdateManager.triggerVerificationTest(context) }
+                ) {
+                    Text(
+                        text = "Test Update Installer",
+                        fontSize = 11.sp,
+                        color = tokens.accentBrand.copy(alpha = 0.75f)
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(84.dp))

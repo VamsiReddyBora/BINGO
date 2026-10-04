@@ -11,9 +11,11 @@ import androidx.core.view.WindowCompat
 import com.bingo.multiplayer.core.designsystem.BingoAppTheme
 import com.bingo.multiplayer.core.designsystem.ThemePreferences
 import com.bingo.multiplayer.domain.network.AppLifecycleObserver
+import com.bingo.multiplayer.domain.network.AppUpdateManager
 import com.bingo.multiplayer.domain.network.PresenceManager
 import com.bingo.multiplayer.domain.repository.AuthRepository
 import com.bingo.multiplayer.domain.repository.FriendsRepository
+import com.bingo.multiplayer.presentation.components.AppUpdateDialog
 import com.bingo.multiplayer.presentation.navigation.RootNavGraph
 
 class MainActivity : ComponentActivity() {
@@ -47,6 +49,9 @@ class MainActivity : ComponentActivity() {
 
         authRepository = AuthRepository(applicationContext)
         friendsRepository = FriendsRepository(applicationContext)
+
+        // Asynchronously check for app updates in the background
+        AppUpdateManager.checkForUpdates(applicationContext, manual = false)
 
         setContent {
             val isDark = ThemePreferences.isDarkTheme.value
@@ -88,6 +93,7 @@ class MainActivity : ComponentActivity() {
                     authRepository = authRepository,
                     friendsRepository = friendsRepository
                 )
+                AppUpdateDialog()
             }
         }
     }
