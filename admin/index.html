@@ -1169,9 +1169,11 @@
     // --- CONSTANTS & CONFIGURATION ---
     const KEYVALUE_API_URL = 'https://keyvalue.immanuel.co/api/KeyVal';
     const KEYVALUE_APP_KEY = '2464j24f';
-    const MQTT_BROKER_HOST = 'broker.emqx.io';
+    const MQTT_BROKER_HOST = 'p0812f88.ala.asia-southeast1.emqxsl.com';
     const MQTT_BROKER_PORT = 8084;
     const MQTT_PATH = '/mqtt';
+    const MQTT_USERNAME = 'Bora';
+    const MQTT_PASSWORD = 'bora7989';
     const DEFAULT_ADMIN_PASS = 'bingo2026';
 
     // --- APPLICATION STATE ---
@@ -2924,6 +2926,8 @@
         client.connect({
           useSSL: true,
           timeout: 10,
+          userName: MQTT_USERNAME,
+          password: MQTT_PASSWORD,
           onSuccess: () => {
             mqttDot.className = "w-2 h-2 rounded-full bg-emerald-500 animate-pulse";
             mqttStatusText.innerText = "Online";
