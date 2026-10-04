@@ -58,32 +58,37 @@ C_BLUE = "\033[94m"
 
 def fetch_keyval_user(username):
     clean = username.strip().lower().lstrip("@")
-    try:
-        url = f"{KEYVALUE_API_URL}/GetValue/{KEYVALUE_APP_KEY}/reg_{clean}"
-        req = urllib.request.Request(url, headers={'User-Agent': 'BingoAdminCLI/2.0'})
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            if resp.status == 200:
-                raw = resp.read().decode('utf-8').strip().strip('"')
-                if raw and raw != "null":
+    for _ in range(2):
+        try:
+            url = f"{KEYVALUE_API_URL}/GetValue/{KEYVALUE_APP_KEY}/reg_{clean}"
+            req = urllib.request.Request(url, headers={'User-Agent': 'BingoAdminCLI/2.0'})
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                if resp.status == 200:
+                    raw = resp.read().decode('utf-8').strip().strip('"')
+                    if not raw or raw == "null":
+                        return {}  # Confirmed deleted / not found
                     decoded = base64.b64decode(raw).decode('utf-8')
                     return json.loads(decoded)
-    except Exception:
-        pass
-    return None
+        except Exception:
+            time.sleep(0.3)
+    return None  # Transient network error
 
 def fetch_keyval_presence(username):
     clean = username.strip().lower().lstrip("@")
-    try:
-        url = f"{KEYVALUE_API_URL}/GetValue/{KEYVALUE_APP_KEY}/pres_{clean}"
-        req = urllib.request.Request(url, headers={'User-Agent': 'BingoAdminCLI/2.0'})
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            if resp.status == 200:
-                raw = resp.read().decode('utf-8').strip().strip('"')
-                if raw and ":" in raw:
-                    parts = raw.split(":", 1)
-                    return {"username": clean, "status": parts[0], "timestamp": int(parts[1])}
-    except Exception:
-        pass
+    for _ in range(2):
+        try:
+            url = f"{KEYVALUE_API_URL}/GetValue/{KEYVALUE_APP_KEY}/pres_{clean}"
+            req = urllib.request.Request(url, headers={'User-Agent': 'BingoAdminCLI/2.0'})
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                if resp.status == 200:
+                    raw = resp.read().decode('utf-8').strip().strip('"')
+                    if not raw or raw == "null":
+                        return {}
+                    if ":" in raw:
+                        parts = raw.split(":", 1)
+                        return {"username": clean, "status": parts[0], "timestamp": int(parts[1])}
+        except Exception:
+            time.sleep(0.3)
     return None
 
 def fetch_keyval_directory():
@@ -123,6 +128,23 @@ def clear_keyval_key(key):
             return resp.status == 200
     except Exception:
         return False
+
+def fetch_keyval_friends(username):
+    clean = username.strip().lower().lstrip("@")
+    try:
+        url = f"{KEYVALUE_API_URL}/GetValue/{KEYVALUE_APP_KEY}/friends_{clean}"
+        req = urllib.request.Request(url, headers={'User-Agent': 'BingoAdminCLI/2.0'})
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            if resp.status == 200:
+                raw = resp.read().decode('utf-8').strip().strip('"')
+                if raw and raw != "null":
+                    decoded = base64.b64decode(raw).decode('utf-8')
+                    flist = json.loads(decoded)
+                    return [f.get("username", "").strip().lower() for f in flist if f.get("username")]
+    except Exception:
+        pass
+    return []
+
 
 def fetch_live_data(timeout=2.5):
     """
@@ -208,6 +230,7 @@ def fetch_live_data(timeout=2.5):
     def hydrate_user(u):
         p_data = None
         pr_data = None
+        flist = []
         # If user data missing or has 0 games, try KeyValue
         if u not in players or players[u].get("gamesPlayed", 0) == 0:
             p_data = fetch_keyval_user(u)
@@ -216,27 +239,49 @@ def fetch_live_data(timeout=2.5):
         if u not in presences or presences[u].get("timestamp", 0) == 0:
             pr_data = fetch_keyval_presence(u)
             
-        return u, p_data, pr_data
+        flist = fetch_keyval_friends(u)
+        return u, p_data, pr_data, flist
 
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        for u, p_data, pr_data in executor.map(hydrate_user, all_known_users):
-            if p_data:
+    discovered_friends = set()
+    pruned_deleted = set()
+
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        for u, p_data, pr_data, flist in executor.map(hydrate_user, all_known_users):
+            if isinstance(p_data, dict) and p_data.get("username"):
                 existing = players.get(u, {})
                 if p_data.get("gamesPlayed", 0) >= existing.get("gamesPlayed", 0):
                     players[u] = p_data
-            elif u not in players:
-                players[u] = {"username": u, "displayName": u.capitalize(), "level": 1, "gamesPlayed": 0, "gamesWon": 0}
+            elif p_data == {} and (pr_data == {} or pr_data is None) and u not in players:
+                # Confirmed deleted on the server (key returned empty string)
+                pruned_deleted.add(u)
                 
-            if pr_data:
+            if isinstance(pr_data, dict) and pr_data.get("status"):
                 existing_ts = presences.get(u, {}).get("timestamp", 0)
                 if pr_data.get("timestamp", 0) > existing_ts:
                     presences[u] = pr_data
 
-    # 5. If new users were discovered that are not in cloud directory, sync them to KeyValue
-    new_users = [u for u in all_known_users if u not in cloud_users]
-    if new_users:
-        merged_dir = sorted(set(cloud_users + all_known_users))
-        update_keyval_directory(merged_dir)
+            for fu in flist:
+                if fu and fu not in all_known_users:
+                    discovered_friends.add(fu)
+
+    # 4b. Hydrate any newly discovered friends from social connections
+    if discovered_friends:
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            for fu, fp_data, fpr_data, _ in executor.map(hydrate_user, list(discovered_friends)):
+                if isinstance(fp_data, dict) and fp_data.get("username"):
+                    players[fu] = fp_data
+                if isinstance(fpr_data, dict) and fpr_data.get("status"):
+                    presences[fu] = fpr_data
+
+    # 5. Remove pruned/deleted users from local state
+    for du in pruned_deleted:
+        players.pop(du, None)
+        presences.pop(du, None)
+
+    # 6. Reconcile verified active users with cloud directory
+    active_user_set = sorted(set([u for u in (list(players.keys()) + list(presences.keys())) if u not in pruned_deleted]))
+    if active_user_set and set(active_user_set) != set(cloud_users):
+        update_keyval_directory(active_user_set)
 
 # ─────────────────────────────────────────────────────────────
 # LIVE PRESENCE & STATUS RESOLVER
@@ -480,7 +525,7 @@ def inspect_player(target_username=None, from_menu=False):
         raw_user = input(f"\n{C_BOLD}Enter username to inspect (e.g. @bob): {C_RESET}").strip()
         target_username = raw_user.lstrip("@").lower()
 
-    clean = target_username.strip().lower()
+    clean = target_username.strip().lower().lstrip("@")
     if not clean:
         return
 
@@ -621,6 +666,7 @@ def remove_player(target_username=None):
         clear_keyval_key(f"reg_{clean}")
         clear_keyval_key(f"pres_{clean}")
         clear_keyval_key(f"user_{clean}")
+        clear_keyval_key(f"friends_{clean}")
         
         # Remove from directory
         all_dir = fetch_keyval_directory()
