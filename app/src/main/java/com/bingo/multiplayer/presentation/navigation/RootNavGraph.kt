@@ -1733,7 +1733,8 @@ fun RootNavGraph(
                     val isHostGone = isHostLeftGame || (hostUid.isNotBlank() && disconnectedPlayerIds.contains(hostUid))
                     val activeRemaining = (matchParticipants.ifEmpty { realTimePlayers }).filter { it.id.isNotBlank() && it.id !in disconnectedPlayerIds }
                     val isActingHost = isHostGone && activeRemaining.firstOrNull()?.id == myUid
-                    if (isHosting || currentTurnPlayerId == myUid || isActingHost) {
+                    val isSeniorActivePeer = activeRemaining.firstOrNull { !com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it.id, packet.playerId) }?.id == myUid
+                    if (isHosting || currentTurnPlayerId == myUid || isActingHost || isSeniorActivePeer) {
                         broadcastPacket(
                             RoomMessagePacket(
                                 type = "GAME_SYNC",
@@ -1942,34 +1943,37 @@ fun RootNavGraph(
                             it.id.isNotBlank() && !isPlayerDisconnected(it.id)
                         }
 
-                        if (activeRemaining.size <= 1) {
-                            isGameOver = true
-                            val wonByForfeit = activeRemaining.any { it.id == myUid } || participants.size <= 2
-                            didPlayerWin = wonByForfeit
-                            isDrawMatch = false
-                            isRunnerMatch = false
-                            recordFinishedMatch(wonByForfeit)
-                            com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
-                            opponentDisconnectMessage = "All opponents left the game."
-                        } else {
-                            val leftName = packet.displayName.ifBlank { packet.username.ifBlank { "A player" } }
-                            val leftMsg = if (isHostSender) "👑 $leftName (Host) disconnected (in lobby)" else "🔴 $leftName disconnected (in lobby)"
-                            val alreadyHasMsg = matchChatHistory.any { it.text == leftMsg && (System.currentTimeMillis() - it.timestamp) < 5000L }
-                            if (!alreadyHasMsg) {
-                                val sysMsg = InGameChatMessage(
-                                    id = System.currentTimeMillis() + (0..1000).random(),
-                                    text = leftMsg,
-                                    isSelf = false,
-                                    senderName = null,
-                                    timestamp = System.currentTimeMillis(),
-                                    isSystemMessage = true
-                                )
-                                matchChatHistory = matchChatHistory + sysMsg
-                                latestIncomingChatMessage = sysMsg
-                            }
+                        val leftName = packet.displayName.ifBlank { packet.username.ifBlank { "A player" } }
+                        val leftMsg = if (isHostSender) "👑 $leftName (Host) disconnected (in lobby)" else "🔴 $leftName disconnected (in lobby)"
+                        val alreadyHasMsg = matchChatHistory.any { it.text == leftMsg && (System.currentTimeMillis() - it.timestamp) < 5000L }
+                        if (!alreadyHasMsg) {
+                            val sysMsg = InGameChatMessage(
+                                id = System.currentTimeMillis() + (0..1000).random(),
+                                text = leftMsg,
+                                isSelf = false,
+                                senderName = null,
+                                timestamp = System.currentTimeMillis(),
+                                isSystemMessage = true
+                            )
+                            matchChatHistory = matchChatHistory + sysMsg
+                            latestIncomingChatMessage = sysMsg
+                        }
 
-                            // If it was the departed player's turn, advance turn immediately
-                            if (currentTurnPlayerId == packet.playerId) {
+                        // If it was the departed player's turn, advance turn immediately so active peer doesn't wait
+                        if (currentTurnPlayerId == packet.playerId) {
+                            val misses = (consecutiveMissedTurns[packet.playerId] ?: 0) + 1
+                            consecutiveMissedTurns[packet.playerId] = misses
+
+                            if (activeRemaining.size <= 1 && misses >= 3) {
+                                isGameOver = true
+                                val wonByForfeit = activeRemaining.any { it.id == myUid } || participants.size <= 2
+                                didPlayerWin = wonByForfeit
+                                isDrawMatch = false
+                                isRunnerMatch = false
+                                recordFinishedMatch(wonByForfeit)
+                                com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
+                                opponentDisconnectMessage = "Opponent disconnected. You win by forfeit!"
+                            } else {
                                 val nextId = calculateNextTurnPlayerId(packet.playerId)
                                 currentTurnPlayerId = nextId
                                 turnNumber += 1
@@ -2703,6 +2707,10 @@ fun RootNavGraph(
                                 val matchData = com.bingo.multiplayer.domain.network.OngoingMatchStore.getOngoingMatch(context)
                                 if (matchData != null && matchData.roomCode == cleanCode && matchData.playerBoard != null) {
                                     boardSize = matchData.boardSize
+                                    isHosting = matchData.isHost
+                                    if (matchData.isHost) {
+                                        isHostLeftGame = false
+                                    }
                                     currentMatchSeed = matchData.matchSeed
                                     matchParticipants = matchData.participants
                                     randomizedTurnOrder = matchData.randomizedTurnOrder

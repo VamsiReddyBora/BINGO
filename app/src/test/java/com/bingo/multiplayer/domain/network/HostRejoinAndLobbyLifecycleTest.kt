@@ -269,4 +269,135 @@ class HostRejoinAndLobbyLifecycleTest {
         val nextMatchChat = matchChatHistory
         assertEquals("Next match starts with zero stale chat messages", 0, nextMatchChat.size)
     }
+
+    @Test
+    fun `test PLAYER_DISCONNECTED in 1v1 match does not prematurely forfeit and allows rejoin`() {
+        val host = Player(id = "alice_host", displayName = "Alice", isHost = true)
+        val guest = Player(id = "bob_guest", displayName = "Bob", isHost = false)
+        val participants = listOf(host, guest)
+
+        val disconnectedPlayerIds = mutableSetOf<String>()
+        val consecutiveMissedTurns = mutableMapOf<String, Int>()
+        var isGameOver = false
+        var currentTurnPlayerId = "bob_guest"
+        var turnNumber = 5
+
+        // Bob exits cleanly to lobby via door icon
+        val disconnectPacket = RoomMessagePacket(
+            type = "PLAYER_DISCONNECTED",
+            playerId = guest.id,
+            displayName = guest.displayName,
+            isHost = false
+        )
+
+        // Host processes PLAYER_DISCONNECTED
+        disconnectedPlayerIds.add(disconnectPacket.playerId)
+        val activeRemaining = participants.filter { it.id !in disconnectedPlayerIds }
+        assertEquals("Only Alice remains active", 1, activeRemaining.size)
+
+        // Without our fix, activeRemaining.size <= 1 immediately set isGameOver = true!
+        // With our fix:
+        val misses = (consecutiveMissedTurns[disconnectPacket.playerId] ?: 0) + 1
+        consecutiveMissedTurns[disconnectPacket.playerId] = misses
+
+        if (activeRemaining.size <= 1 && misses >= 3) {
+            isGameOver = true
+        } else {
+            val nextId = LobbyLifecycleEngine.calculateNextTurnPlayerId(
+                allParticipants = participants,
+                disconnectedPlayerIds = disconnectedPlayerIds,
+                currentPickerId = disconnectPacket.playerId
+            )
+            currentTurnPlayerId = nextId
+            turnNumber += 1
+        }
+
+        assertFalse("Game must NOT be forfeited immediately upon door exit (misses = 1)", isGameOver)
+        assertEquals("Turn advanced to Alice immediately", "alice_host", currentTurnPlayerId)
+        assertEquals("Turn number incremented", 6, turnNumber)
+
+        // Now Bob taps 'Rejoin Game' from the lobby
+        val rejoinPacket = RoomMessagePacket(
+            type = "REJOIN_GAME",
+            playerId = guest.id,
+            displayName = guest.displayName,
+            isHost = false
+        )
+        disconnectedPlayerIds.remove(rejoinPacket.playerId)
+        consecutiveMissedTurns.remove(rejoinPacket.playerId)
+
+        assertFalse("Bob is no longer disconnected", disconnectedPlayerIds.contains("bob_guest"))
+        assertEquals("Bob's missed turns are reset", 0, consecutiveMissedTurns["bob_guest"] ?: 0)
+        assertFalse("Game continues active with both players", isGameOver)
+    }
+
+    @Test
+    fun `test host rejoin on host turn triggers senior active guest GAME_SYNC response`() {
+        val host = Player(id = "host_1", displayName = "Host Bob", isHost = true)
+        val guest1 = Player(id = "guest_1", displayName = "Alice", isHost = false)
+        val guest2 = Player(id = "guest_2", displayName = "Charlie", isHost = false)
+        val participants = listOf(host, guest1, guest2)
+
+        val disconnectedPlayerIds = mutableSetOf<String>()
+        var isHostLeftGame = false
+        var currentTurnPlayerId = "host_1" // Host disconnected on their own turn!
+
+        // Host disconnects
+        disconnectedPlayerIds.add("host_1")
+        isHostLeftGame = true
+
+        // Host reconnects and sends REJOIN_GAME
+        val rejoinPacket = RoomMessagePacket(
+            type = "REJOIN_GAME",
+            playerId = "host_1",
+            displayName = "Host Bob",
+            isHost = true
+        )
+
+        // Guest 1 and Guest 2 process REJOIN_GAME
+        disconnectedPlayerIds.remove(rejoinPacket.playerId)
+        isHostLeftGame = false
+
+        val hostUid = "host_1"
+        val isHostGone = isHostLeftGame || disconnectedPlayerIds.contains(hostUid)
+        val activeRemaining = participants.filter { it.id !in disconnectedPlayerIds }
+        val isActingHostGuest1 = isHostGone && activeRemaining.firstOrNull()?.id == "guest_1"
+        val isActingHostGuest2 = isHostGone && activeRemaining.firstOrNull()?.id == "guest_2"
+
+        // Evaluate whether Guest 1 or Guest 2 should broadcast GAME_SYNC
+        // Guest 1 evaluation:
+        val isSeniorActivePeerGuest1 = activeRemaining.firstOrNull { it.id != rejoinPacket.playerId }?.id == "guest_1"
+        val guest1ShouldSync = false /* isHosting */ || currentTurnPlayerId == "guest_1" || isActingHostGuest1 || isSeniorActivePeerGuest1
+        assertTrue("Senior active peer Guest 1 MUST send GAME_SYNC to returning host", guest1ShouldSync)
+
+        // Guest 2 evaluation:
+        val isSeniorActivePeerGuest2 = activeRemaining.firstOrNull { it.id != rejoinPacket.playerId }?.id == "guest_2"
+        val guest2ShouldSync = false /* isHosting */ || currentTurnPlayerId == "guest_2" || isActingHostGuest2 || isSeniorActivePeerGuest2
+        assertFalse("Junior peer Guest 2 MUST NOT send redundant GAME_SYNC", guest2ShouldSync)
+    }
+
+    @Test
+    fun `test calculateNextTurnPlayerId in 1v1 seamlessly advances turn to active player when peer disconnects`() {
+        val playerA = Player(id = "playerA", displayName = "Alice", isHost = true)
+        val playerB = Player(id = "playerB", displayName = "Bob", isHost = false)
+        val participants = listOf(playerA, playerB)
+        val disconnectedPlayerIds = setOf("playerB")
+
+        // 1. When Bob disconnects or misses turn, next player is Alice
+        val nextAfterBob = LobbyLifecycleEngine.calculateNextTurnPlayerId(
+            allParticipants = participants,
+            disconnectedPlayerIds = disconnectedPlayerIds,
+            currentPickerId = "playerB"
+        )
+        assertEquals("When Bob is disconnected, Alice gets the turn immediately", "playerA", nextAfterBob)
+
+        // 2. While Bob remains in lobby, Alice can continue making picks without stalling
+        val nextAfterAlice = LobbyLifecycleEngine.calculateNextTurnPlayerId(
+            allParticipants = participants,
+            disconnectedPlayerIds = disconnectedPlayerIds,
+            currentPickerId = "playerA"
+        )
+        assertEquals("Alice continues playing while match remains open for Bob to rejoin", "playerA", nextAfterAlice)
+    }
 }
+
