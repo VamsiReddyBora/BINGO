@@ -233,7 +233,7 @@
         class="px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl flex items-center gap-2 text-xs font-bold shadow-lg transition-all active:scale-95 border theme-subtle hover:scale-105"
         title="Toggle Theme (AMOLED Black / Light)"
       >
-        <i id="authThemeIcon" class="fa-solid fa-moon text-neutral-400"></i>
+        <i id="authThemeIcon" class="fa-solid fa-moon text-indigo-400"></i>
         <span id="authThemeLabel" class="font-mono text-xs theme-title">AMOLED</span>
       </button>
     </div>
@@ -268,13 +268,13 @@
               class="absolute right-3.5 top-1/2 -translate-y-1/2 theme-dimtext hover:theme-title transition-colors"
               title="Show/Hide Password"
             >
-              <i id="pinEyeIcon" class="fa-solid fa-eye-slash text-sm"></i>
+              <i id="pinEyeIcon" class="fa-solid fa-eye-slash text-sm text-neutral-400"></i>
             </button>
           </div>
 
           <!-- Error Message Banner -->
           <div id="authErrorMsg" class="hidden text-xs theme-title bg-neutral-100 dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg py-2 px-3 text-center font-medium">
-            <i class="fa-solid fa-circle-exclamation mr-1"></i> Incorrect Admin Password. Try again.
+            <i class="fa-solid fa-circle-exclamation mr-1 text-rose-500"></i> Incorrect Admin Password. Try again.
           </div>
 
           <!-- Quick Touch Keypad for Mobile -->
@@ -290,7 +290,7 @@
             <button onclick="appendPin('9')" class="py-2 sm:py-2.5 rounded-xl theme-keypad-btn font-mono text-base font-bold active:scale-95 transition-all">9</button>
             <button onclick="clearPin()" class="py-2 sm:py-2.5 rounded-xl theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title font-mono text-xs font-bold active:scale-95 transition-all border border-inherit">CLR</button>
             <button onclick="appendPin('0')" class="py-2 sm:py-2.5 rounded-xl theme-keypad-btn font-mono text-base font-bold active:scale-95 transition-all">0</button>
-            <button onclick="backspacePin()" class="py-2 sm:py-2.5 rounded-xl theme-keypad-btn font-mono text-sm active:scale-95 transition-all"><i class="fa-solid fa-delete-left"></i></button>
+            <button onclick="backspacePin()" class="py-2 sm:py-2.5 rounded-xl theme-keypad-btn font-mono text-sm active:scale-95 transition-all"><i class="fa-solid fa-delete-left text-neutral-300"></i></button>
           </div>
 
           <div class="flex items-center justify-between text-xs theme-dimtext pt-1 px-1">
@@ -298,7 +298,7 @@
               <input type="checkbox" id="rememberSessionCheck" class="rounded border-neutral-400 dark:border-neutral-700 bg-transparent text-neutral-900 dark:text-white focus:ring-0 mr-2">
               <span>Keep unlocked</span>
             </label>
-            <span class="text-[11px] opacity-70"><i class="fa-solid fa-lock mr-1"></i>Protected Session</span>
+            <span class="text-[11px] opacity-70"><i class="fa-solid fa-lock mr-1 text-amber-500"></i>Protected Session</span>
           </div>
 
           <!-- Submit Unlock Button -->
@@ -307,7 +307,7 @@
             onclick="validateAndUnlock()" 
             class="w-full mt-3 py-3 sm:py-3.5 px-4 rounded-xl bg-neutral-900 text-white dark:bg-white dark:text-black hover:bg-neutral-800 dark:hover:bg-neutral-200 font-semibold text-sm active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer"
           >
-            <i class="fa-solid fa-unlock-keyhole"></i>
+            <i class="fa-solid fa-unlock-keyhole text-emerald-400"></i>
             <span>Unlock Admin Console</span>
           </button>
         </div>
@@ -339,78 +339,58 @@
           </div>
         </div>
 
-        <!-- Middle: Connectivity Status Indicators (Visible on Desktop & Mobile) -->
-        <div class="flex items-center gap-1.5 sm:gap-2 md:gap-4 text-xs font-medium">
-          <!-- KeyVal API / Latency Ping Status (Mobile & Desktop) -->
+        <!-- Right: Actions (Strictly Ping, Refresh, Theme, Settings) -->
+        <div class="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
+          <!-- Latency Ping Indicator -->
           <div 
             id="statusKeyVal" 
             onclick="measureCloudPing(true)" 
-            class="flex items-center gap-1.5 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full badge-online cursor-pointer transition-all active:scale-95" 
-            title="Cloud Database Ping & Latency (Tap to re-test)"
+            class="flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-xl theme-subtle border theme-border cursor-pointer transition-all active:scale-95" 
+            title="Cloud Ping & Latency (Tap to re-test)"
           >
-            <span class="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-neutral-900 dark:bg-white"></span>
-            <span class="text-[10px] sm:text-[11px] font-semibold">Ping:</span>
-            <span class="text-[10px] sm:text-[11px] font-mono font-bold flex items-center gap-0.5">
-              <span id="keyValLatency">--ms</span>
-            </span>
+            <i class="fa-solid fa-bolt text-amber-500 text-[11px]"></i>
+            <span class="text-[11px] sm:text-xs font-mono font-bold theme-title" id="keyValLatency">--ms</span>
           </div>
 
-          <!-- MQTT Broker Status -->
-          <div id="statusMqtt" class="flex items-center gap-1 px-1.5 py-0.5 sm:px-2.5 sm:py-1 rounded-full theme-subtle transition-all" title="EMQX MQTT WebSocket Status">
-            <span id="mqttDot" class="w-1.5 h-1.5 rounded-full bg-neutral-500"></span>
-            <span class="text-[10px] sm:text-[11px] hidden lg:inline font-semibold">MQTT:</span>
-            <span class="text-[10px] sm:text-[11px] font-mono font-bold hidden sm:inline" id="mqttStatusText">Connecting...</span>
-          </div>
-        </div>
+          <!-- Refresh Button -->
+          <button 
+            onclick="fetchGlobalData(true)" 
+            id="refreshBtn" 
+            class="p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 border theme-border active:scale-95 transition-all flex items-center justify-center cursor-pointer"
+            title="Refresh Database (Auto-refreshes every 3s)"
+          >
+            <i id="refreshIcon" class="fa-solid fa-arrows-rotate text-emerald-500 text-xs sm:text-sm"></i>
+          </button>
 
-        <!-- Right: Actions, Theme Switch & Lock -->
-        <div class="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
-          
-          <!-- Theme Toggle Switch Inside Admin Screen -->
+          <!-- Theme Toggle Button -->
           <button 
             type="button"
             onclick="toggleTheme()" 
             id="adminThemeToggleBtn"
-            class="p-2 sm:px-3 sm:py-1.5 rounded-lg theme-subtle theme-title text-xs font-bold active:scale-95 transition-all flex items-center gap-1.5 hover:border-brand-500"
-            title="Toggle Theme (AMOLED Black / Light)"
+            class="p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 border theme-border active:scale-95 transition-all flex items-center justify-center cursor-pointer"
+            title="Toggle AMOLED Dark / Light Theme"
           >
-            <i id="adminThemeIcon" class="fa-solid fa-moon text-neutral-400"></i>
-            <span id="adminThemeLabel" class="hidden sm:inline font-mono">AMOLED</span>
+            <i id="adminThemeIcon" class="fa-solid fa-moon text-indigo-400 text-xs sm:text-sm"></i>
           </button>
 
-          <!-- Auto-Refresh Toggle -->
-          <div class="flex items-center gap-1 sm:gap-1.5 theme-subtle rounded-lg px-2 sm:px-2.5 py-1 sm:py-1.5 text-xs theme-dimtext">
-            <i class="fa-solid fa-clock-rotate-left text-[11px] theme-dimtext"></i>
-            <select id="autoRefreshInterval" onchange="updateAutoRefresh(this.value)" class="bg-transparent theme-title text-xs focus:outline-none cursor-pointer">
-              <option value="0" class="theme-card theme-title">Auto: Off</option>
-              <option value="3" selected class="theme-card theme-title">Auto: 3s</option>
-              <option value="5" class="theme-card theme-title">Auto: 5s</option>
-              <option value="15" class="theme-card theme-title">Auto: 15s</option>
-              <option value="30" class="theme-card theme-title">Auto: 30s</option>
-            </select>
-          </div>
-
-          <!-- Manual Refresh Button -->
+          <!-- Settings Button -->
           <button 
-            onclick="fetchGlobalData(true)" 
-            id="refreshBtn" 
-            class="p-2 sm:px-3 sm:py-1.5 rounded-lg theme-subtle theme-title text-xs font-semibold active:scale-95 transition-all flex items-center gap-1.5"
-            title="Reload Database"
+            type="button"
+            onclick="switchTab('settings')" 
+            id="adminSettingsBtn" 
+            class="p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 border theme-border active:scale-95 transition-all flex items-center justify-center cursor-pointer"
+            title="Server & OTA Settings"
           >
-            <i id="refreshIcon" class="fa-solid fa-arrows-rotate"></i>
-            <span class="hidden sm:inline">Refresh</span>
-          </button>
-
-          <!-- Lock Button -->
-          <button 
-            onclick="lockConsole()" 
-            class="p-2 sm:px-3 sm:py-1.5 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title text-xs font-bold border theme-border active:scale-95 transition-all flex items-center gap-1.5"
-            title="Lock Console"
-          >
-            <i class="fa-solid fa-lock"></i>
-            <span class="hidden sm:inline">Lock</span>
+            <i class="fa-solid fa-gear text-purple-400 text-xs sm:text-sm"></i>
           </button>
         </div>
+      </div>
+
+      <!-- Background Compatibility Placeholders -->
+      <div class="hidden">
+        <div id="statusMqtt"><span id="mqttDot"></span><span id="mqttStatusText"></span></div>
+        <select id="autoRefreshInterval"><option value="3" selected>3s</option></select>
+        <span id="adminThemeLabel"></span>
       </div>
 
       <!-- Navigation Tabs -->
@@ -420,7 +400,7 @@
           id="tabBtn-players" 
           class="nav-tab active-tab px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all whitespace-nowrap bg-neutral-900 text-white dark:bg-white dark:text-black flex-shrink-0"
         >
-          <i class="fa-solid fa-users"></i>
+          <i class="fa-solid fa-users text-sky-400"></i>
           <span>Players Directory</span>
           <span id="navPlayersBadge" class="ml-1 px-1.5 py-0.2 rounded-full bg-neutral-700 text-white dark:bg-neutral-200 dark:text-black text-[10px] font-mono">0</span>
         </button>
@@ -428,9 +408,9 @@
         <button 
           onclick="switchTab('rooms')" 
           id="tabBtn-rooms" 
-          class="nav-tab px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all whitespace-nowrap theme-dimtext hover:text-brand-500 flex-shrink-0"
+          class="nav-tab px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all whitespace-nowrap theme-dimtext hover:text-neutral-900 dark:hover:text-white flex-shrink-0"
         >
-          <i class="fa-solid fa-gamepad"></i>
+          <i class="fa-solid fa-gamepad text-purple-400"></i>
           <span>Live Game Rooms</span>
           <span id="navRoomsBadge" class="ml-1 px-1.5 py-0.2 rounded-full theme-subtle text-[10px] font-mono">0</span>
         </button>
@@ -438,18 +418,18 @@
         <button 
           onclick="switchTab('mqtt')" 
           id="tabBtn-mqtt" 
-          class="nav-tab px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all whitespace-nowrap theme-dimtext hover:text-brand-500 flex-shrink-0"
+          class="nav-tab px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all whitespace-nowrap theme-dimtext hover:text-neutral-900 dark:hover:text-white flex-shrink-0"
         >
-          <i class="fa-solid fa-tower-broadcast"></i>
+          <i class="fa-solid fa-tower-broadcast text-amber-500"></i>
           <span>Live Telemetry & Broadcast</span>
         </button>
 
         <button 
           onclick="switchTab('ota')" 
           id="tabBtn-ota" 
-          class="nav-tab px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all whitespace-nowrap theme-dimtext hover:text-brand-500 flex-shrink-0"
+          class="nav-tab px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all whitespace-nowrap theme-dimtext hover:text-neutral-900 dark:hover:text-white flex-shrink-0"
         >
-          <i class="fa-solid fa-cloud-arrow-down"></i>
+          <i class="fa-solid fa-cloud-arrow-down text-emerald-400"></i>
           <span>App Updates & OTA</span>
           <span id="navOtaBadge" class="ml-1 px-1.5 py-0.2 rounded-full theme-subtle text-[10px] font-mono">v1.3</span>
         </button>
@@ -457,9 +437,9 @@
         <button 
           onclick="switchTab('settings')" 
           id="tabBtn-settings" 
-          class="nav-tab px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all whitespace-nowrap theme-dimtext hover:text-brand-500 flex-shrink-0"
+          class="nav-tab px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all whitespace-nowrap theme-dimtext hover:text-neutral-900 dark:hover:text-white flex-shrink-0"
         >
-          <i class="fa-solid fa-sliders"></i>
+          <i class="fa-solid fa-sliders text-indigo-400"></i>
           <span>Server Settings & Backup</span>
         </button>
       </div>
@@ -478,8 +458,8 @@
         <div class="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
           <!-- Total Players -->
           <div class="theme-card rounded-xl p-4 flex items-center gap-3.5">
-            <div class="w-12 h-12 rounded-xl theme-subtle border theme-border flex items-center justify-center theme-title text-xl flex-shrink-0">
-              <i class="fa-solid fa-users-viewfinder"></i>
+            <div class="w-12 h-12 rounded-xl theme-subtle border theme-border flex items-center justify-center text-xl flex-shrink-0">
+              <i class="fa-solid fa-users-viewfinder text-sky-400"></i>
             </div>
             <div>
               <p class="text-[11px] font-semibold theme-dimtext uppercase tracking-wider">Total Registered</p>
@@ -489,8 +469,8 @@
 
           <!-- Online Now -->
           <div class="theme-card rounded-xl p-4 flex items-center gap-3.5">
-            <div class="w-12 h-12 rounded-xl theme-subtle border theme-border flex items-center justify-center theme-title text-xl flex-shrink-0">
-              <i class="fa-solid fa-signal"></i>
+            <div class="w-12 h-12 rounded-xl theme-subtle border theme-border flex items-center justify-center text-xl flex-shrink-0">
+              <i class="fa-solid fa-signal text-emerald-400"></i>
             </div>
             <div>
               <p class="text-[11px] font-semibold theme-dimtext uppercase tracking-wider">Online Now</p>
@@ -503,8 +483,8 @@
 
           <!-- Total Matches Tracked -->
           <div class="theme-card rounded-xl p-4 flex items-center gap-3.5">
-            <div class="w-12 h-12 rounded-xl theme-subtle border theme-border flex items-center justify-center theme-title text-xl flex-shrink-0">
-              <i class="fa-solid fa-trophy"></i>
+            <div class="w-12 h-12 rounded-xl theme-subtle border theme-border flex items-center justify-center text-xl flex-shrink-0">
+              <i class="fa-solid fa-trophy text-amber-400"></i>
             </div>
             <div>
               <p class="text-[11px] font-semibold theme-dimtext uppercase tracking-wider">Total Games Played</p>
@@ -514,8 +494,8 @@
 
           <!-- Highest Level Player -->
           <div class="theme-card rounded-xl p-4 flex items-center gap-3.5">
-            <div class="w-12 h-12 rounded-xl theme-subtle border theme-border flex items-center justify-center theme-title text-xl flex-shrink-0">
-              <i class="fa-solid fa-crown"></i>
+            <div class="w-12 h-12 rounded-xl theme-subtle border theme-border flex items-center justify-center text-xl flex-shrink-0">
+              <i class="fa-solid fa-crown text-yellow-400"></i>
             </div>
             <div class="overflow-hidden">
               <p class="text-[11px] font-semibold theme-dimtext uppercase tracking-wider">Top Player</p>
@@ -530,18 +510,18 @@
             
             <!-- Search Bar -->
             <div class="relative flex-1 max-w-md">
-              <i class="fa-solid fa-magnifying-glass absolute left-3.5 top-1/2 -translate-y-1/2 theme-dimtext text-sm"></i>
+              <i class="fa-solid fa-magnifying-glass absolute left-3.5 top-1/2 -translate-y-1/2 text-sky-400 text-sm"></i>
               <input 
                 type="text" 
                 id="playerSearchInput" 
                 oninput="applyPlayerFilters()" 
                 placeholder="Search username, display name, UID..." 
-                class="w-full pl-10 pr-4 py-2.5 rounded-xl theme-input text-sm placeholder:theme-dimtext focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 transition-all"
+                class="w-full pl-10 pr-4 py-2.5 rounded-xl theme-input text-sm placeholder:theme-dimtext focus:outline-none focus:border-neutral-900 dark:focus:border-white transition-all"
               >
               <button 
                 onclick="clearPlayerSearch()" 
                 id="clearSearchBtn" 
-                class="hidden absolute right-3 top-1/2 -translate-y-1/2 theme-dimtext hover:text-brand-500"
+                class="hidden absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-rose-400"
               >
                 <i class="fa-solid fa-xmark text-xs"></i>
               </button>
@@ -551,7 +531,7 @@
             <div class="flex items-center gap-2 flex-wrap">
               <!-- Sort Selector -->
               <div class="flex items-center gap-1.5 theme-subtle rounded-xl px-3 py-2 text-xs">
-                <i class="fa-solid fa-arrow-down-wide-short theme-dimtext"></i>
+                <i class="fa-solid fa-arrow-down-wide-short text-indigo-400"></i>
                 <span class="theme-dimtext hidden sm:inline">Sort:</span>
                 <select id="playerSortBy" onchange="applyPlayerFilters()" class="bg-transparent theme-title text-xs font-semibold focus:outline-none cursor-pointer">
                   <option value="name_asc" class="theme-card theme-title">Name (A → Z)</option>
@@ -573,7 +553,7 @@
                   class="px-2.5 py-1 rounded-lg text-white dark:text-black bg-neutral-900 dark:bg-white transition-all" 
                   title="Table View"
                 >
-                  <i class="fa-solid fa-table-list"></i>
+                  <i class="fa-solid fa-table-list text-sky-400"></i>
                 </button>
                 <button 
                   onclick="setPlayerViewMode('grid')" 
@@ -581,7 +561,7 @@
                   class="px-2.5 py-1 rounded-lg theme-dimtext hover:theme-title transition-all" 
                   title="Cards Grid"
                 >
-                  <i class="fa-solid fa-grip"></i>
+                  <i class="fa-solid fa-grip text-purple-400"></i>
                 </button>
               </div>
 
@@ -590,7 +570,7 @@
                 onclick="openAddPlayerModal()" 
                 class="px-3 py-2 rounded-xl theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-900 dark:text-white border theme-border text-xs font-bold flex items-center gap-1.5 active:scale-95 transition-all cursor-pointer"
               >
-                <i class="fa-solid fa-user-plus"></i>
+                <i class="fa-solid fa-user-plus text-emerald-400"></i>
                 <span>Add Player</span>
               </button>
 
@@ -600,7 +580,7 @@
                 class="px-3 py-2 rounded-xl theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-900 dark:text-white text-xs font-bold flex items-center gap-1.5 border theme-border active:scale-95 transition-all cursor-pointer" 
                 title="Export filtered players to CSV"
               >
-                <i class="fa-solid fa-file-csv theme-title"></i>
+                <i class="fa-solid fa-file-csv text-emerald-400"></i>
                 <span class="hidden sm:inline">Export CSV</span>
               </button>
             </div>
@@ -638,7 +618,7 @@
                 <!-- Dynamically generated player rows -->
                 <tr>
                   <td colspan="9" class="py-12 text-center theme-dimtext">
-                    <i class="fa-solid fa-spinner fa-spin text-2xl text-brand-500 mb-2"></i>
+                    <i class="fa-solid fa-spinner fa-spin text-2xl text-sky-400 mb-2"></i>
                     <p class="text-xs">Loading global players database...</p>
                   </td>
                 </tr>
@@ -654,8 +634,8 @@
 
         <!-- Empty State Message -->
         <div id="playersEmptyState" class="hidden theme-card rounded-2xl p-12 text-center space-y-3">
-          <div class="w-16 h-16 rounded-2xl theme-subtle flex items-center justify-center theme-dimtext text-2xl mx-auto">
-            <i class="fa-solid fa-user-slash"></i>
+          <div class="w-16 h-16 rounded-2xl theme-subtle flex items-center justify-center text-2xl mx-auto">
+            <i class="fa-solid fa-user-slash text-neutral-400"></i>
           </div>
           <h4 class="text-base font-bold theme-title">No Players Found</h4>
           <p class="text-xs theme-dimtext max-w-sm mx-auto">No player records match your search query or status filter. Try clearing filters.</p>
@@ -672,16 +652,16 @@
         <div class="theme-card rounded-2xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
             <h2 class="text-lg font-bold theme-title flex items-center gap-2">
-              <i class="fa-solid fa-gamepad text-brand-500"></i>
+              <i class="fa-solid fa-gamepad text-purple-400"></i>
               <span>Active Multiplayer Game Rooms</span>
             </h2>
-            <p class="text-xs theme-dimtext mt-0.5">Live game sessions monitored via EMQX MQTT topic <code class="text-brand-500 font-mono">bingo/v3/room_meta/#</code></p>
+            <p class="text-xs theme-dimtext mt-0.5">Live game sessions monitored via EMQX MQTT topic <code class="theme-title font-mono font-bold">bingo/v3/room_meta/#</code></p>
           </div>
           <button 
             onclick="purgeExpiredRooms()" 
             class="px-3.5 py-2 rounded-xl theme-subtle theme-title text-xs font-semibold active:scale-95 transition-all flex items-center gap-2"
           >
-            <i class="fa-solid fa-broom"></i>
+            <i class="fa-solid fa-broom text-amber-500"></i>
             <span>Scan & Clean Stale Rooms</span>
           </button>
         </div>
@@ -690,7 +670,7 @@
         <div id="roomsGridContainer" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           <div class="col-span-full theme-card rounded-2xl p-12 text-center space-y-2">
             <div class="w-16 h-16 rounded-2xl theme-subtle flex items-center justify-center theme-dimtext text-2xl mx-auto">
-              <i class="fa-solid fa-dice-d6"></i>
+              <i class="fa-solid fa-dice-d6 text-cyan-400"></i>
             </div>
             <h4 class="text-base font-bold theme-title">No Active Rooms Right Now</h4>
             <p class="text-xs theme-dimtext max-w-sm mx-auto">Whenever players create or host rooms in Android or Web apps, they will stream here in real time.</p>
@@ -708,8 +688,8 @@
         <div class="theme-card rounded-2xl p-5 space-y-4">
           <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div class="flex items-center gap-2.5">
-              <div class="w-8 h-8 rounded-xl theme-subtle border theme-border flex items-center justify-center theme-title text-sm">
-                <i class="fa-solid fa-bullhorn"></i>
+              <div class="w-8 h-8 rounded-xl theme-subtle border theme-border flex items-center justify-center text-sm">
+                <i class="fa-solid fa-bullhorn text-amber-500"></i>
               </div>
               <div>
                 <h3 class="text-sm font-bold theme-title">Broadcast & Direct Message Manager</h3>
@@ -717,7 +697,7 @@
               </div>
             </div>
             <button onclick="fetchCurrentCloudBroadcast()" class="self-start sm:self-auto px-3 py-1.5 rounded-lg theme-subtle theme-title text-xs font-semibold flex items-center gap-1.5 hover:border-neutral-400 dark:hover:border-neutral-600 transition-all cursor-pointer">
-              <i class="fa-solid fa-arrows-rotate text-[10px]"></i>
+              <i class="fa-solid fa-arrows-rotate text-[10px] text-emerald-500"></i>
               <span>Refresh Status</span>
             </button>
           </div>
@@ -741,7 +721,7 @@
             <!-- Quick Preset Templates Bar -->
             <div class="space-y-1.5 pb-1">
               <span class="text-[11px] font-semibold theme-dimtext flex items-center gap-1.5">
-                <i class="fa-solid fa-wand-magic-sparkles theme-title"></i>
+                <i class="fa-solid fa-wand-magic-sparkles text-purple-400"></i>
                 <span>Quick Message Presets (Click to autofill):</span>
               </span>
               <div class="flex items-center gap-1.5 flex-wrap">
@@ -750,35 +730,35 @@
                   onclick="applyBroadcastTemplate('maintenance')" 
                   class="px-2.5 py-1 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-800 dark:text-neutral-200 border theme-border text-[11px] font-medium flex items-center gap-1 transition-all cursor-pointer"
                 >
-                  <i class="fa-solid fa-screwdriver-wrench text-[10px]"></i> Server Maintenance
+                  <i class="fa-solid fa-screwdriver-wrench text-[10px] text-amber-500"></i> Server Maintenance
                 </button>
                 <button 
                   type="button" 
                   onclick="applyBroadcastTemplate('event_xp')" 
                   class="px-2.5 py-1 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-800 dark:text-neutral-200 border theme-border text-[11px] font-medium flex items-center gap-1 transition-all cursor-pointer"
                 >
-                  <i class="fa-solid fa-star text-[10px]"></i> Double XP Weekend
+                  <i class="fa-solid fa-star text-[10px] text-yellow-400"></i> Double XP Weekend
                 </button>
                 <button 
                   type="button" 
                   onclick="applyBroadcastTemplate('app_update')" 
                   class="px-2.5 py-1 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-800 dark:text-neutral-200 border theme-border text-[11px] font-medium flex items-center gap-1 transition-all cursor-pointer"
                 >
-                  <i class="fa-solid fa-rocket text-[10px]"></i> New App Update
+                  <i class="fa-solid fa-rocket text-[10px] text-sky-400"></i> New App Update
                 </button>
                 <button 
                   type="button" 
                   onclick="applyBroadcastTemplate('warning')" 
                   class="px-2.5 py-1 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-800 dark:text-neutral-200 border theme-border text-[11px] font-medium flex items-center gap-1 transition-all cursor-pointer"
                 >
-                  <i class="fa-solid fa-shield-halved text-[10px]"></i> Fair Play Warning
+                  <i class="fa-solid fa-shield-halved text-[10px] text-emerald-400"></i> Fair Play Warning
                 </button>
                 <button 
                   type="button" 
                   onclick="applyBroadcastTemplate('welcome')" 
                   class="px-2.5 py-1 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-800 dark:text-neutral-200 border theme-border text-[11px] font-medium flex items-center gap-1 transition-all cursor-pointer"
                 >
-                  <i class="fa-solid fa-hand-wave text-[10px]"></i> Welcome Notice
+                  <i class="fa-solid fa-hand-wave text-[10px] text-amber-400"></i> Welcome Notice
                 </button>
               </div>
             </div>
@@ -872,7 +852,7 @@
                 id="btnDispatchBroadcast"
                 class="px-5 py-2.5 rounded-xl bg-neutral-900 text-white dark:bg-white dark:text-black hover:bg-neutral-800 dark:hover:bg-neutral-200 font-semibold text-xs active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
               >
-                <i class="fa-solid fa-paper-plane"></i>
+                <i class="fa-solid fa-paper-plane text-sky-400"></i>
                 <span id="btnDispatchText">Transmit Broadcast 🚀</span>
               </button>
 
@@ -881,7 +861,7 @@
                 id="btnClearBroadcast"
                 class="px-4 py-2.5 rounded-xl theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border font-semibold text-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
               >
-                <i class="fa-solid fa-trash-can text-[11px]"></i>
+                <i class="fa-solid fa-trash-can text-[11px] text-rose-500"></i>
                 <span>Clear Active</span>
               </button>
 
@@ -889,7 +869,7 @@
                 onclick="previewBroadcastModal()" 
                 class="px-4 py-2.5 rounded-xl theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border font-semibold text-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
               >
-                <i class="fa-solid fa-eye text-[11px]"></i>
+                <i class="fa-solid fa-eye text-[11px] text-sky-400"></i>
                 <span>Preview Popup</span>
               </button>
             </div>
@@ -900,7 +880,7 @@
         <div class="theme-card rounded-2xl p-5 space-y-3">
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-2">
-              <i class="fa-solid fa-clock-rotate-left theme-title"></i>
+              <i class="fa-solid fa-clock-rotate-left text-indigo-400"></i>
               <h3 class="text-sm font-bold theme-title">Recent Sent Broadcasts History</h3>
             </div>
             <button 
@@ -942,7 +922,7 @@
         <div class="theme-card rounded-2xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div class="flex items-center gap-3">
             <div class="w-10 h-10 rounded-xl bg-neutral-900 text-white dark:bg-white dark:text-black flex items-center justify-center text-lg flex-shrink-0">
-              <i class="fa-solid fa-cloud-arrow-down"></i>
+              <i class="fa-solid fa-cloud-arrow-down text-emerald-400"></i>
             </div>
             <div>
               <h2 class="text-lg font-bold theme-title flex items-center gap-2">
@@ -955,16 +935,16 @@
           <div class="flex items-center gap-2 flex-wrap">
             <button 
               onclick="fetchCurrentOtaReleaseStatus()" 
-              class="px-3.5 py-2 rounded-xl theme-subtle theme-title text-xs font-semibold flex items-center gap-1.5 hover:border-brand-500 transition-all cursor-pointer"
+              class="px-3.5 py-2 rounded-xl theme-subtle theme-title text-xs font-semibold flex items-center gap-1.5 hover:border-neutral-400 dark:hover:border-neutral-600 transition-all cursor-pointer"
             >
-              <i id="otaRefreshIcon" class="fa-solid fa-arrows-rotate text-[11px]"></i>
+              <i id="otaRefreshIcon" class="fa-solid fa-arrows-rotate text-[11px] text-emerald-500"></i>
               <span>Refresh Status</span>
             </button>
             <button 
               onclick="testOtaEndpointsLatency()" 
-              class="px-3.5 py-2 rounded-xl theme-subtle theme-title text-xs font-semibold flex items-center gap-1.5 hover:border-brand-500 transition-all cursor-pointer"
+              class="px-3.5 py-2 rounded-xl theme-subtle theme-title text-xs font-semibold flex items-center gap-1.5 hover:border-neutral-400 dark:hover:border-neutral-600 transition-all cursor-pointer"
             >
-              <i class="fa-solid fa-gauge-high text-[11px] theme-title"></i>
+              <i class="fa-solid fa-gauge-high text-[11px] text-amber-500"></i>
               <span>Ping CDNs</span>
             </button>
           </div>
@@ -974,7 +954,7 @@
         <div class="theme-card rounded-2xl p-5 space-y-4">
           <div class="flex items-center justify-between flex-wrap gap-2">
             <h3 class="text-sm font-bold theme-title flex items-center gap-2">
-              <i class="fa-solid fa-circle-check theme-title"></i>
+              <i class="fa-solid fa-circle-check text-emerald-500"></i>
               <span>Current Live Release in Cloud (KeyValue & CDN)</span>
             </h3>
             <div class="flex items-center gap-1.5">
@@ -1014,7 +994,7 @@
         <div class="theme-card rounded-2xl p-5 space-y-3">
           <div class="flex items-center justify-between">
             <h3 class="text-sm font-bold theme-title flex items-center gap-2">
-              <i class="fa-solid fa-network-wired theme-title"></i>
+              <i class="fa-solid fa-network-wired text-sky-400"></i>
               <span>Multi-Tier CDN Distribution Health</span>
             </h3>
             <span class="text-[11px] theme-dimtext font-mono">4-Tier Resilient Failover</span>
@@ -1068,7 +1048,7 @@
         <div class="theme-card rounded-2xl p-5 space-y-4">
           <div class="flex items-center justify-between flex-wrap gap-2">
             <h3 class="text-sm font-bold theme-title flex items-center gap-2">
-              <i class="fa-solid fa-upload text-brand-500"></i>
+              <i class="fa-solid fa-upload text-sky-400"></i>
               <span>Deploy New OTA Update to Cloud</span>
             </h3>
             <div class="flex items-center gap-2">
@@ -1079,7 +1059,7 @@
                 class="px-2.5 py-1 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border text-[11px] font-medium transition-all cursor-pointer"
                 title="Fill form with test version 1.3.1"
               >
-                <i class="fa-solid fa-flask-vial text-[10px]"></i> Quick Test 1.3.1
+                <i class="fa-solid fa-flask-vial text-[10px] text-purple-400"></i> Quick Test 1.3.1
               </button>
               <button 
                 type="button" 
@@ -1087,7 +1067,7 @@
                 class="px-2.5 py-1 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border text-[11px] font-medium transition-all cursor-pointer"
                 title="Reset to official 1.3"
               >
-                <i class="fa-solid fa-shield-halved text-[10px]"></i> Reset to v1.3
+                <i class="fa-solid fa-shield-halved text-[10px] text-amber-500"></i> Reset to v1.3
               </button>
             </div>
           </div>
@@ -1101,7 +1081,7 @@
                   id="otaInputVersionName" 
                   placeholder="e.g. 1.3.1 or 1.4" 
                   oninput="onOtaVersionNameInputChanged()" 
-                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs font-mono focus:outline-none focus:border-brand-500"
+                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs font-mono focus:outline-none focus:border-neutral-900 dark:focus:border-white"
                 >
               </div>
               <div>
@@ -1110,7 +1090,7 @@
                   type="number" 
                   id="otaInputVersionCode" 
                   placeholder="e.g. 37" 
-                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs font-mono focus:outline-none focus:border-brand-500"
+                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs font-mono focus:outline-none focus:border-neutral-900 dark:focus:border-white"
                 >
               </div>
               <div>
@@ -1119,7 +1099,7 @@
                   type="text" 
                   id="otaInputTagName" 
                   placeholder="e.g. v1.3.1" 
-                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs font-mono focus:outline-none focus:border-brand-500"
+                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs font-mono focus:outline-none focus:border-neutral-900 dark:focus:border-white"
                 >
               </div>
             </div>
@@ -1131,7 +1111,7 @@
                   type="text" 
                   id="otaInputDownloadUrl" 
                   placeholder="https://github.com/VamsiReddyBora/BINGO/releases/download/v1.3/Bingo.apk" 
-                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs font-mono focus:outline-none focus:border-brand-500"
+                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs font-mono focus:outline-none focus:border-neutral-900 dark:focus:border-white"
                 >
               </div>
               <div>
@@ -1140,7 +1120,7 @@
                   type="number" 
                   id="otaInputApkSize" 
                   placeholder="5497848" 
-                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs font-mono focus:outline-none focus:border-brand-500"
+                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs font-mono focus:outline-none focus:border-neutral-900 dark:focus:border-white"
                 >
               </div>
             </div>
@@ -1151,7 +1131,7 @@
                 id="otaInputReleaseNotes" 
                 rows="4" 
                 placeholder="• Feature 1\n• Feature 2\n• Bug fixes" 
-                class="w-full px-3.5 py-2 rounded-xl theme-input text-xs font-mono focus:outline-none focus:border-brand-500"
+                class="w-full px-3.5 py-2 rounded-xl theme-input text-xs font-mono focus:outline-none focus:border-neutral-900 dark:focus:border-white"
               ></textarea>
             </div>
 
@@ -1162,7 +1142,7 @@
                 id="btnPublishOta" 
                 class="px-5 py-2.5 rounded-xl bg-neutral-900 text-white dark:bg-white dark:text-black hover:bg-neutral-800 dark:hover:bg-neutral-200 font-semibold text-xs active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
               >
-                <i class="fa-solid fa-cloud-arrow-up"></i>
+                <i class="fa-solid fa-cloud-arrow-up text-emerald-400"></i>
                 <span>Publish Update to Cloud KeyValue 🚀</span>
               </button>
 
@@ -1171,7 +1151,7 @@
                 class="px-4 py-2.5 rounded-xl theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border font-semibold text-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                 title="Download version.json for GitHub Pages"
               >
-                <i class="fa-solid fa-file-arrow-down text-[11px]"></i>
+                <i class="fa-solid fa-file-arrow-down text-[11px] text-emerald-400"></i>
                 <span>Download version.json</span>
               </button>
 
@@ -1179,7 +1159,7 @@
                 onclick="copyOtaJsonPayload()" 
                 class="px-4 py-2.5 rounded-xl theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border font-semibold text-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
               >
-                <i class="fa-regular fa-copy text-[11px]"></i>
+                <i class="fa-regular fa-copy text-[11px] text-sky-400"></i>
                 <span>Copy JSON</span>
               </button>
             </div>
@@ -1196,7 +1176,7 @@
         <!-- Admin Password Configuration -->
         <div class="theme-card rounded-2xl p-5 space-y-4">
           <h3 class="text-sm font-bold theme-title flex items-center gap-2">
-            <i class="fa-solid fa-key theme-title"></i>
+            <i class="fa-solid fa-key text-amber-500"></i>
             <span>Admin Master Password Security</span>
           </h3>
           <p class="text-xs theme-dimtext">Change the master password used to authorize access and perform player or match deletions.</p>
@@ -1208,7 +1188,7 @@
                 type="password" 
                 id="newAdminPassInput" 
                 placeholder="Enter new password" 
-                class="w-full px-3.5 py-2 rounded-xl theme-input text-xs focus:outline-none focus:border-brand-500"
+                class="w-full px-3.5 py-2 rounded-xl theme-input text-xs focus:outline-none focus:border-neutral-900 dark:focus:border-white"
               >
             </div>
             <div>
@@ -1217,7 +1197,7 @@
                 type="password" 
                 id="confirmAdminPassInput" 
                 placeholder="Confirm new password" 
-                class="w-full px-3.5 py-2 rounded-xl theme-input text-xs focus:outline-none focus:border-brand-500"
+                class="w-full px-3.5 py-2 rounded-xl theme-input text-xs focus:outline-none focus:border-neutral-900 dark:focus:border-white"
               >
             </div>
           </div>
@@ -1225,13 +1205,13 @@
           <div class="flex items-center gap-2 pt-1">
             <button 
               onclick="updateAdminPassword()" 
-              class="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold text-xs transition-all active:scale-95"
+              class="px-4 py-2 rounded-xl bg-neutral-900 text-white dark:bg-white dark:text-black hover:bg-neutral-800 dark:hover:bg-neutral-200 font-semibold text-xs transition-all active:scale-95 cursor-pointer"
             >
               Update Password
             </button>
             <button 
               onclick="resetToDefaultPassword()" 
-              class="px-4 py-2 rounded-xl theme-subtle theme-title font-semibold text-xs transition-all"
+              class="px-4 py-2 rounded-xl theme-subtle theme-title font-semibold text-xs transition-all cursor-pointer"
             >
               Reset to Default Password
             </button>
@@ -1241,7 +1221,7 @@
         <!-- Full Database Backup Export -->
         <div class="theme-card rounded-2xl p-5 space-y-3">
           <h3 class="text-sm font-bold theme-title flex items-center gap-2">
-            <i class="fa-solid fa-file-export theme-title"></i>
+            <i class="fa-solid fa-file-export text-emerald-400"></i>
             <span>Database Backup & Snapshot Export</span>
           </h3>
           <p class="text-xs theme-dimtext">Download a full JSON backup of all registered players, their cloud storage bins, match histories, and friends lists.</p>
@@ -1250,7 +1230,7 @@
             onclick="exportFullDatabaseJson()" 
             class="px-4 py-2.5 rounded-xl theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border text-xs font-semibold flex items-center gap-2 active:scale-95 transition-all cursor-pointer"
           >
-            <i class="fa-solid fa-cloud-arrow-down"></i>
+            <i class="fa-solid fa-cloud-arrow-down text-emerald-400"></i>
             <span>Download Complete Database JSON</span>
           </button>
         </div>
@@ -1258,7 +1238,7 @@
         <!-- Raw KeyValue Explorer -->
         <div class="theme-card rounded-2xl p-5 space-y-3">
           <h3 class="text-sm font-bold theme-title flex items-center gap-2">
-            <i class="fa-solid fa-database theme-title"></i>
+            <i class="fa-solid fa-database text-cyan-400"></i>
             <span>Direct KeyValue Inspector</span>
           </h3>
           <p class="text-xs theme-dimtext">Inspect or query any raw key stored under KeyValue App Key <code class="theme-title font-mono font-bold">2464j24f</code>.</p>
@@ -1330,7 +1310,7 @@
         <!-- Close Button -->
         <button 
           onclick="closePlayerInspector()" 
-          class="w-8 h-8 sm:w-9 sm:h-9 rounded-xl theme-subtle theme-title hover:text-brand-500 flex items-center justify-center transition-all flex-shrink-0"
+          class="w-8 h-8 sm:w-9 sm:h-9 rounded-xl theme-subtle theme-title hover:text-neutral-900 dark:hover:text-white flex items-center justify-center transition-all flex-shrink-0 cursor-pointer"
           title="Close Inspector (Esc / Back)"
         >
           <i class="fa-solid fa-xmark text-sm sm:text-base"></i>
@@ -1339,17 +1319,17 @@
 
       <!-- Drawer Sub-Navigation Tabs -->
       <div class="flex items-center px-2 sm:px-4 theme-subtle border-b border-inherit gap-1 overflow-x-auto no-scrollbar flex-shrink-0">
-        <button onclick="switchInspTab('overview')" id="inspTabBtn-overview" class="insp-tab active px-3 sm:px-3.5 py-2.5 text-xs font-semibold theme-title border-b-2 border-neutral-900 dark:border-white whitespace-nowrap flex-shrink-0">
-          <i class="fa-solid fa-chart-pie mr-1 sm:mr-1.5"></i> Overview & Stats
+        <button onclick="switchInspTab('overview')" id="inspTabBtn-overview" class="insp-tab active px-3 sm:px-3.5 py-2.5 text-xs font-semibold theme-title border-b-2 border-neutral-900 dark:border-white whitespace-nowrap flex-shrink-0 cursor-pointer">
+          <i class="fa-solid fa-chart-pie mr-1 sm:mr-1.5 text-sky-400"></i> Overview & Stats
         </button>
-        <button onclick="switchInspTab('matches')" id="inspTabBtn-matches" class="insp-tab px-3 sm:px-3.5 py-2.5 text-xs font-semibold theme-dimtext hover:theme-title border-b-2 border-transparent whitespace-nowrap flex-shrink-0">
-          <i class="fa-solid fa-trophy mr-1 sm:mr-1.5"></i> Matches (<span id="inspMatchCount">0</span>)
+        <button onclick="switchInspTab('matches')" id="inspTabBtn-matches" class="insp-tab px-3 sm:px-3.5 py-2.5 text-xs font-semibold theme-dimtext hover:theme-title border-b-2 border-transparent whitespace-nowrap flex-shrink-0 cursor-pointer">
+          <i class="fa-solid fa-trophy mr-1 sm:mr-1.5 text-amber-400"></i> Matches (<span id="inspMatchCount">0</span>)
         </button>
-        <button onclick="switchInspTab('friends')" id="inspTabBtn-friends" class="insp-tab px-3 sm:px-3.5 py-2.5 text-xs font-semibold theme-dimtext hover:theme-title border-b-2 border-transparent whitespace-nowrap flex-shrink-0">
-          <i class="fa-solid fa-user-group mr-1 sm:mr-1.5"></i> Friends (<span id="inspFriendCount">0</span>)
+        <button onclick="switchInspTab('friends')" id="inspTabBtn-friends" class="insp-tab px-3 sm:px-3.5 py-2.5 text-xs font-semibold theme-dimtext hover:theme-title border-b-2 border-transparent whitespace-nowrap flex-shrink-0 cursor-pointer">
+          <i class="fa-solid fa-user-group mr-1 sm:mr-1.5 text-emerald-400"></i> Friends (<span id="inspFriendCount">0</span>)
         </button>
-        <button onclick="switchInspTab('danger')" id="inspTabBtn-danger" class="insp-tab px-3.5 py-2.5 text-xs font-semibold theme-dimtext hover:theme-title border-b-2 border-transparent whitespace-nowrap flex-shrink-0">
-          <i class="fa-solid fa-triangle-exclamation mr-1 sm:mr-1.5"></i> Danger
+        <button onclick="switchInspTab('danger')" id="inspTabBtn-danger" class="insp-tab px-3.5 py-2.5 text-xs font-semibold theme-dimtext hover:theme-title border-b-2 border-transparent whitespace-nowrap flex-shrink-0 cursor-pointer">
+          <i class="fa-solid fa-triangle-exclamation mr-1 sm:mr-1.5 text-rose-500"></i> Danger
         </button>
       </div>
 
@@ -1374,7 +1354,7 @@
             </div>
             <div class="theme-subtle p-3 rounded-xl">
               <span class="text-[11px] theme-dimtext uppercase font-semibold">Win Rate</span>
-              <p id="inspWinRate" class="text-xl font-bold font-mono text-brand-500 mt-1">0%</p>
+              <p id="inspWinRate" class="text-xl font-bold font-mono theme-title mt-1">0%</p>
             </div>
             <div class="theme-subtle p-3 rounded-xl">
               <span class="text-[11px] theme-dimtext uppercase font-semibold">Current Streak</span>
@@ -1384,14 +1364,16 @@
               <span class="text-[11px] theme-dimtext uppercase font-semibold">Best Streak</span>
               <p id="inspBestStreak" class="text-xl font-bold font-mono theme-title mt-1">0</p>
             </div>
+          </div>
+
           <!-- Player Actions Toolbar -->
           <div class="flex items-center gap-2 flex-wrap">
             <button 
               type="button"
               onclick="openEditPlayerModalForCurrent()" 
-              class="px-3.5 py-2 rounded-xl bg-brand-600/15 hover:bg-brand-600/25 text-brand-600 dark:text-brand-300 border border-brand-500/40 text-xs font-bold flex items-center gap-1.5 active:scale-95 transition-all cursor-pointer"
+              class="px-3.5 py-2 rounded-xl bg-neutral-900 text-white dark:bg-white dark:text-black hover:bg-neutral-800 dark:hover:bg-neutral-200 text-xs font-bold flex items-center gap-1.5 active:scale-95 transition-all cursor-pointer"
             >
-              <i class="fa-solid fa-user-pen"></i>
+              <i class="fa-solid fa-user-pen text-amber-400"></i>
               <span>Edit Profile & Level</span>
             </button>
             <button 
@@ -1399,7 +1381,7 @@
               onclick="quickMessagePlayer(globalState.selectedPlayer ? globalState.selectedPlayer.username : '')" 
               class="px-3.5 py-2 rounded-xl theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-900 dark:text-white border theme-border text-xs font-bold flex items-center gap-1.5 active:scale-95 transition-all cursor-pointer"
             >
-              <i class="fa-solid fa-paper-plane"></i>
+              <i class="fa-solid fa-paper-plane text-indigo-400"></i>
               <span>Send Direct In-Game Message</span>
             </button>
           </div>
@@ -1413,7 +1395,7 @@
                 <div class="flex items-center gap-1.5">
                   <span id="inspUid" class="font-mono theme-title truncate select-all">None</span>
                   <button onclick="copyToClipboard(document.getElementById('inspUid').innerText)" class="theme-dimtext hover:theme-title" title="Copy UID">
-                    <i class="fa-regular fa-copy"></i>
+                    <i class="fa-regular fa-copy text-sky-400"></i>
                   </button>
                 </div>
               </div>
@@ -1423,7 +1405,7 @@
               </div>
               <div>
                 <span class="theme-dimtext block mb-0.5">Cloud Storage Bin ID:</span>
-                <span id="inspBinId" class="font-mono text-brand-500">None</span>
+                <span id="inspBinId" class="font-mono theme-title">None</span>
               </div>
               <div>
                 <span class="theme-dimtext block mb-0.5">Last Seen:</span>
@@ -1442,7 +1424,7 @@
               id="clearAllMatchesBtn" 
               class="px-3 py-1.5 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
             >
-              <i class="fa-solid fa-trash-can"></i>
+              <i class="fa-solid fa-trash-can text-rose-500"></i>
               <span>Clear All Matches</span>
             </button>
           </div>
@@ -1453,17 +1435,17 @@
           <!-- Match Search & Filter Controls -->
           <div id="inspMatchFilterControls" class="space-y-2">
             <div class="relative">
-              <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 theme-dimtext text-xs"></i>
+              <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-sky-400 text-xs"></i>
               <input 
                 type="text" 
                 id="matchSearchInput" 
                 oninput="filterAndRenderMatches()" 
                 placeholder="Search opponent name, mode, or match ID..." 
-                class="w-full pl-9 pr-3 py-2 rounded-xl theme-input text-xs focus:outline-none focus:border-brand-500"
+                class="w-full pl-9 pr-3 py-2 rounded-xl theme-input text-xs focus:outline-none focus:border-neutral-900 dark:focus:border-white"
               >
             </div>
             <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-0.5">
-              <button onclick="setMatchOutcomeFilter('ALL')" id="matchFilter-ALL" class="match-pill px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-brand-600 text-white">All (<span id="mfCount-ALL">0</span>)</button>
+              <button onclick="setMatchOutcomeFilter('ALL')" id="matchFilter-ALL" class="match-pill px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-neutral-900 text-white dark:bg-white dark:text-black">All (<span id="mfCount-ALL">0</span>)</button>
               <button onclick="setMatchOutcomeFilter('WIN')" id="matchFilter-WIN" class="match-pill px-2.5 py-1 rounded-lg text-[11px] font-semibold badge-online">🏆 Wins (<span id="mfCount-WIN">0</span>)</button>
               <button onclick="setMatchOutcomeFilter('LOSS')" id="matchFilter-LOSS" class="match-pill px-2.5 py-1 rounded-lg text-[11px] font-semibold badge-offline">❌ Losses (<span id="mfCount-LOSS">0</span>)</button>
               <button onclick="setMatchOutcomeFilter('DRAW')" id="matchFilter-DRAW" class="match-pill px-2.5 py-1 rounded-lg text-[11px] font-semibold badge-lobby">🤝 Draws (<span id="mfCount-DRAW">0</span>)</button>
@@ -1508,7 +1490,7 @@
           <!-- Reset Player Stats -->
           <div class="p-4 rounded-xl border theme-border theme-subtle space-y-2">
             <h4 class="text-sm font-bold theme-title flex items-center gap-2">
-              <i class="fa-solid fa-rotate-left"></i>
+              <i class="fa-solid fa-rotate-left text-amber-500"></i>
               <span>Reset Player Statistics</span>
             </h4>
             <p class="text-xs theme-dimtext">Zero out all games played, wins, streaks, and XP for this player without deleting their account or friends list.</p>
@@ -1523,7 +1505,7 @@
           <!-- Permanently Delete Player -->
           <div class="p-4 rounded-xl border theme-border theme-subtle space-y-2">
             <h4 class="text-sm font-bold theme-title flex items-center gap-2">
-              <i class="fa-solid fa-user-xmark"></i>
+              <i class="fa-solid fa-user-xmark text-rose-500"></i>
               <span>Delete Player Entirely</span>
             </h4>
             <p class="text-xs theme-dimtext">Permanently remove this player from the global directory, purge registration, wipe their cloud storage bin, and disconnect all friends.</p>
@@ -1531,7 +1513,7 @@
               onclick="promptDeleteCurrentPlayer()" 
               class="px-4 py-2 rounded-xl bg-neutral-900 text-white dark:bg-white dark:text-black hover:bg-neutral-800 dark:hover:bg-neutral-200 text-xs font-bold transition-all active:scale-95 flex items-center gap-2 cursor-pointer"
             >
-              <i class="fa-solid fa-trash-can"></i>
+              <i class="fa-solid fa-trash-can text-rose-500"></i>
               <span>Delete Player from Database</span>
             </button>
           </div>
@@ -1550,8 +1532,8 @@
       
       <!-- Top Warning Badge -->
       <div class="flex items-center gap-3.5">
-        <div class="w-12 h-12 rounded-2xl theme-subtle border theme-border flex items-center justify-center theme-title text-xl flex-shrink-0">
-          <i class="fa-solid fa-triangle-exclamation"></i>
+        <div class="w-12 h-12 rounded-2xl theme-subtle border theme-border flex items-center justify-center text-xl flex-shrink-0">
+          <i class="fa-solid fa-triangle-exclamation text-amber-500"></i>
         </div>
         <div>
           <h3 id="confirmModalTitle" class="text-base sm:text-lg font-black theme-title">Authorize Action</h3>
@@ -1579,11 +1561,11 @@
             onclick="toggleConfirmPassVisibility()" 
             class="absolute right-3 top-1/2 -translate-y-1/2 theme-dimtext hover:theme-title"
           >
-            <i id="confirmPassEyeIcon" class="fa-solid fa-eye-slash text-xs"></i>
+            <i id="confirmPassEyeIcon" class="fa-solid fa-eye-slash text-xs text-neutral-400"></i>
           </button>
         </div>
-        <div id="confirmModalError" class="hidden text-xs theme-title font-medium">
-          <i class="fa-solid fa-circle-exclamation mr-1"></i> Incorrect Admin Password.
+        <div id="confirmModalError" class="hidden text-xs text-rose-500 font-medium">
+          <i class="fa-solid fa-circle-exclamation mr-1 text-rose-500"></i> Incorrect Admin Password.
         </div>
       </div>
 
@@ -1591,7 +1573,7 @@
       <div class="flex items-center justify-end gap-2.5 pt-2">
         <button 
           onclick="closeConfirmModal()" 
-          class="px-4 py-2.5 rounded-xl theme-subtle theme-title text-xs font-bold transition-all"
+          class="px-4 py-2.5 rounded-xl theme-subtle theme-title text-xs font-bold transition-all cursor-pointer"
         >
           Cancel
         </button>
@@ -1600,7 +1582,7 @@
           onclick="executeConfirmedAction()" 
           class="px-5 py-2.5 rounded-xl bg-neutral-900 text-white dark:bg-white dark:text-black hover:bg-neutral-800 dark:hover:bg-neutral-200 text-xs font-bold flex items-center gap-2 transition-all active:scale-95 cursor-pointer"
         >
-          <i class="fa-solid fa-trash-can"></i>
+          <i class="fa-solid fa-trash-can text-rose-500"></i>
           <span id="confirmBtnText">Confirm Delete</span>
         </button>
       </div>
@@ -1616,31 +1598,31 @@
     <div class="w-full max-w-md theme-modal rounded-3xl p-6 shadow-2xl border border-inherit space-y-4">
       <div class="flex items-center justify-between">
         <h3 class="text-base font-bold theme-title flex items-center gap-2">
-          <i class="fa-solid fa-user-plus text-brand-500"></i>
+          <i class="fa-solid fa-user-plus text-emerald-400"></i>
           <span>Register New Player</span>
         </h3>
-        <button onclick="closeAddPlayerModal()" class="theme-dimtext hover:theme-title">
-          <i class="fa-solid fa-xmark"></i>
+        <button onclick="closeAddPlayerModal()" class="theme-dimtext hover:theme-title cursor-pointer p-1">
+          <i class="fa-solid fa-xmark text-neutral-400 hover:text-white"></i>
         </button>
       </div>
       
       <div class="space-y-3 text-xs">
         <div>
           <label class="font-semibold theme-dimtext block mb-1">Username (without @)</label>
-          <input type="text" id="newPlayerUsername" placeholder="e.g. warrior77" class="w-full px-3 py-2 rounded-xl theme-input focus:outline-none focus:border-brand-500">
+          <input type="text" id="newPlayerUsername" placeholder="e.g. warrior77" class="w-full px-3 py-2 rounded-xl theme-input focus:outline-none focus:border-neutral-900 dark:focus:border-white">
         </div>
         <div>
           <label class="font-semibold theme-dimtext block mb-1">Display Name</label>
-          <input type="text" id="newPlayerDisplayName" placeholder="e.g. Warrior" class="w-full px-3 py-2 rounded-xl theme-input focus:outline-none focus:border-brand-500">
+          <input type="text" id="newPlayerDisplayName" placeholder="e.g. Warrior" class="w-full px-3 py-2 rounded-xl theme-input focus:outline-none focus:border-neutral-900 dark:focus:border-white">
         </div>
         <div>
           <label class="font-semibold theme-dimtext block mb-1">Starting Level</label>
-          <input type="number" id="newPlayerLevel" value="1" min="1" max="100" class="w-full px-3 py-2 rounded-xl theme-input focus:outline-none focus:border-brand-500">
+          <input type="number" id="newPlayerLevel" value="1" min="1" max="100" class="w-full px-3 py-2 rounded-xl theme-input focus:outline-none focus:border-neutral-900 dark:focus:border-white">
         </div>
       </div>
 
       <div class="flex items-center justify-end gap-2 pt-2">
-        <button onclick="closeAddPlayerModal()" class="px-4 py-2 rounded-xl theme-subtle theme-title text-xs font-semibold">Cancel</button>
+        <button onclick="closeAddPlayerModal()" class="px-4 py-2 rounded-xl theme-subtle theme-title text-xs font-semibold cursor-pointer">Cancel</button>
         <button onclick="submitNewPlayer()" class="px-4 py-2 rounded-xl bg-neutral-900 text-white dark:bg-white dark:text-black hover:bg-neutral-800 dark:hover:bg-neutral-200 text-xs font-semibold cursor-pointer">Create Player</button>
       </div>
     </div>
@@ -1653,7 +1635,7 @@
     <div id="broadcastPreviewBox" class="w-full max-w-md theme-modal rounded-3xl p-6 sm:p-7 shadow-2xl border border-neutral-700/80 space-y-4 relative transition-all duration-200">
       <div class="flex items-center justify-between flex-wrap gap-2">
         <div class="flex items-center gap-1.5 flex-wrap">
-          <span id="previewModalBadge" class="px-2.5 py-1 rounded-full text-[11px] font-bold font-mono tracking-wider bg-brand-500/20 text-brand-400 border border-brand-500/30">
+          <span id="previewModalBadge" class="px-2.5 py-1 rounded-full text-[11px] font-bold font-mono tracking-wider theme-subtle theme-title border theme-border">
             📢 ANNOUNCEMENT
           </span>
           <span id="previewModalModeBadge" class="px-2 py-0.5 rounded text-[10px] font-mono font-bold theme-subtle theme-title border theme-border">
@@ -1664,7 +1646,7 @@
           </span>
         </div>
         <button onclick="closeBroadcastPreviewModal()" class="theme-dimtext hover:theme-title text-sm cursor-pointer p-1">
-          <i class="fa-solid fa-xmark"></i>
+          <i class="fa-solid fa-xmark text-neutral-400 hover:text-white"></i>
         </button>
       </div>
 
@@ -1678,7 +1660,7 @@
       </div>
 
       <div class="pt-2 border-t border-neutral-800/80 flex items-center justify-between text-[11px] theme-dimtext">
-        <span id="previewModalTarget" class="font-mono font-semibold text-brand-400">Target: ALL PLAYERS</span>
+        <span id="previewModalTarget" class="font-mono font-semibold theme-title">Target: ALL PLAYERS</span>
         <span id="previewModalAuthor" class="font-medium">From: Admin / Bora</span>
       </div>
 
@@ -1698,11 +1680,11 @@
     <div class="w-full max-w-md theme-modal rounded-3xl p-6 shadow-2xl border border-inherit space-y-4">
       <div class="flex items-center justify-between">
         <h3 class="text-base font-bold theme-title flex items-center gap-2">
-          <i class="fa-solid fa-user-pen text-brand-500"></i>
+          <i class="fa-solid fa-user-pen text-sky-400"></i>
           <span>Edit Player Profile & Stats</span>
         </h3>
         <button onclick="closeEditPlayerModal()" class="theme-dimtext hover:theme-title cursor-pointer p-1">
-          <i class="fa-solid fa-xmark"></i>
+          <i class="fa-solid fa-xmark text-neutral-400 hover:text-white"></i>
         </button>
       </div>
 
@@ -1713,26 +1695,26 @@
         </div>
         <div>
           <label class="font-semibold theme-dimtext block mb-1">Display Name</label>
-          <input type="text" id="editPlayerDisplayName" class="w-full px-3 py-2 rounded-xl theme-input focus:outline-none focus:border-brand-500">
+          <input type="text" id="editPlayerDisplayName" class="w-full px-3 py-2 rounded-xl theme-input focus:outline-none focus:border-neutral-900 dark:focus:border-white">
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div>
             <label class="font-semibold theme-dimtext block mb-1">Player Level (1 - 100)</label>
-            <input type="number" id="editPlayerLevel" min="1" max="100" class="w-full px-3 py-2 rounded-xl theme-input focus:outline-none focus:border-brand-500 font-mono">
+            <input type="number" id="editPlayerLevel" min="1" max="100" class="w-full px-3 py-2 rounded-xl theme-input focus:outline-none focus:border-neutral-900 dark:focus:border-white font-mono">
           </div>
           <div>
             <label class="font-semibold theme-dimtext block mb-1">Current Streak</label>
-            <input type="number" id="editPlayerStreak" min="0" class="w-full px-3 py-2 rounded-xl theme-input focus:outline-none focus:border-brand-500 font-mono">
+            <input type="number" id="editPlayerStreak" min="0" class="w-full px-3 py-2 rounded-xl theme-input focus:outline-none focus:border-neutral-900 dark:focus:border-white font-mono">
           </div>
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div>
             <label class="font-semibold theme-dimtext block mb-1">Games Played</label>
-            <input type="number" id="editPlayerGamesPlayed" min="0" class="w-full px-3 py-2 rounded-xl theme-input focus:outline-none focus:border-brand-500 font-mono">
+            <input type="number" id="editPlayerGamesPlayed" min="0" class="w-full px-3 py-2 rounded-xl theme-input focus:outline-none focus:border-neutral-900 dark:focus:border-white font-mono">
           </div>
           <div>
             <label class="font-semibold theme-dimtext block mb-1">Games Won</label>
-            <input type="number" id="editPlayerGamesWon" min="0" class="w-full px-3 py-2 rounded-xl theme-input focus:outline-none focus:border-brand-500 font-mono">
+            <input type="number" id="editPlayerGamesWon" min="0" class="w-full px-3 py-2 rounded-xl theme-input focus:outline-none focus:border-neutral-900 dark:focus:border-white font-mono">
           </div>
         </div>
       </div>
@@ -1754,11 +1736,11 @@
     <div class="w-full max-w-md theme-modal rounded-3xl p-6 shadow-2xl border border-inherit space-y-4">
       <div class="flex items-center justify-between">
         <h3 class="text-base font-bold theme-title flex items-center gap-2">
-          <i class="fa-solid fa-gamepad text-brand-500"></i>
-          <span>Room Moderation: <span id="roomModalCode" class="font-mono text-brand-500">#000000</span></span>
+          <i class="fa-solid fa-gamepad text-purple-400"></i>
+          <span>Room Moderation: <span id="roomModalCode" class="font-mono theme-title">#000000</span></span>
         </h3>
         <button onclick="closeRoomDetailsModal()" class="theme-dimtext hover:theme-title cursor-pointer p-1">
-          <i class="fa-solid fa-xmark"></i>
+          <i class="fa-solid fa-xmark text-neutral-400 hover:text-white"></i>
         </button>
       </div>
 
@@ -1795,7 +1777,7 @@
 
       <div class="flex items-center justify-between gap-2 pt-2 border-t border-inherit">
         <button onclick="forceCloseRoomFromModal()" class="px-3.5 py-2 rounded-xl theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border text-xs font-bold flex items-center gap-1.5 cursor-pointer">
-          <i class="fa-solid fa-ban"></i>
+          <i class="fa-solid fa-ban text-rose-500"></i>
           <span>Force Close Room</span>
         </button>
         <button onclick="closeRoomDetailsModal()" class="px-4 py-2 rounded-xl theme-subtle theme-title text-xs font-semibold cursor-pointer">
@@ -1894,11 +1876,11 @@
         html.classList.remove('light');
         html.classList.add('dark');
         if (authIcon) {
-          authIcon.className = "fa-solid fa-moon text-neutral-400";
+          authIcon.className = "fa-solid fa-moon text-indigo-400";
           authLabel.innerText = "AMOLED";
         }
         if (adminIcon) {
-          adminIcon.className = "fa-solid fa-moon text-neutral-400";
+          adminIcon.className = "fa-solid fa-moon text-indigo-400";
           adminLabel.innerText = "AMOLED";
         }
         if (notify) showToast('Switched to Pure AMOLED Dark Theme', 'info');
@@ -1906,11 +1888,11 @@
         html.classList.remove('dark');
         html.classList.add('light');
         if (authIcon) {
-          authIcon.className = "fa-solid fa-sun text-neutral-600";
+          authIcon.className = "fa-solid fa-sun text-amber-500";
           authLabel.innerText = "Light";
         }
         if (adminIcon) {
-          adminIcon.className = "fa-solid fa-sun text-neutral-600";
+          adminIcon.className = "fa-solid fa-sun text-amber-500";
           adminLabel.innerText = "Light";
         }
         if (notify) showToast('Switched to Crisp Light Theme', 'info');
@@ -2211,17 +2193,26 @@
           latencyEl.innerText = `${ms}ms`;
           const statusBox = document.getElementById('statusKeyVal');
           if (statusBox) {
-            if (ms < 350) {
-              statusBox.className = "flex items-center gap-1 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full badge-online cursor-pointer transition-all active:scale-95";
-            } else if (ms < 850) {
-              statusBox.className = "flex items-center gap-1 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full badge-lobby cursor-pointer transition-all active:scale-95";
-            } else {
-              statusBox.className = "flex items-center gap-1 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full badge-playing cursor-pointer transition-all active:scale-95";
+            statusBox.className = "flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-xl theme-subtle border theme-border cursor-pointer transition-all active:scale-95";
+            const boltIcon = statusBox.querySelector('i');
+            if (boltIcon) {
+              if (ms < 350) {
+                boltIcon.className = "fa-solid fa-bolt text-emerald-500 text-[11px]";
+              } else if (ms < 850) {
+                boltIcon.className = "fa-solid fa-bolt text-amber-500 text-[11px]";
+              } else {
+                boltIcon.className = "fa-solid fa-bolt text-rose-500 text-[11px]";
+              }
             }
           }
           if (manual) showToast(`Live cloud ping: ${ms}ms`, 'info');
         }
       } catch (err) {
+        const statusBox = document.getElementById('statusKeyVal');
+        if (statusBox) {
+          const boltIcon = statusBox.querySelector('i');
+          if (boltIcon) boltIcon.className = "fa-solid fa-bolt text-rose-500 text-[11px]";
+        }
         if (manual) showToast('Cloud database ping failed', 'error');
       }
     }
@@ -2660,9 +2651,9 @@
       globalState.statusFilter = status;
       document.querySelectorAll('.status-filter-pill').forEach(btn => {
         if (btn.id === `filterStatus-${status}`) {
-          btn.classList.add('bg-brand-600', 'text-white');
+          btn.className = 'status-filter-pill px-3 py-1 rounded-lg text-xs font-semibold bg-neutral-900 text-white dark:bg-white dark:text-black whitespace-nowrap';
         } else {
-          btn.classList.remove('bg-brand-600', 'text-white');
+          btn.className = 'status-filter-pill px-3 py-1 rounded-lg text-xs font-semibold theme-subtle theme-subtext border theme-border whitespace-nowrap';
         }
       });
       applyPlayerFilters();
@@ -2780,7 +2771,7 @@
               <div class="flex items-center gap-3 cursor-pointer" onclick="openPlayerInspector('${p.username}')">
                 ${avatarHtml}
                 <div>
-                  <div class="font-bold theme-title group-hover:text-brand-500 transition-colors">${escapeHtml(p.displayName)}</div>
+                  <div class="font-bold theme-title group-hover:text-neutral-900 dark:group-hover:text-white transition-colors">${escapeHtml(p.displayName)}</div>
                   <div class="text-xs font-mono theme-dimtext">@${escapeHtml(p.username)}</div>
                 </div>
               </div>
@@ -2824,21 +2815,21 @@
                   class="p-2 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border transition-all text-xs cursor-pointer" 
                   title="Send Direct In-Game Message"
                 >
-                  <i class="fa-solid fa-paper-plane"></i>
+                  <i class="fa-solid fa-paper-plane text-indigo-400"></i>
                 </button>
                 <button 
                   onclick="openPlayerInspector('${p.username}')" 
                   class="p-2 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border transition-all text-xs cursor-pointer" 
                   title="Inspect Full Details"
                 >
-                  <i class="fa-solid fa-eye"></i>
+                  <i class="fa-solid fa-eye text-sky-400"></i>
                 </button>
                 <button 
                   onclick="promptDeletePlayer('${p.username}')" 
                   class="p-2 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border transition-all text-xs cursor-pointer" 
                   title="Delete Player"
                 >
-                  <i class="fa-solid fa-trash-can"></i>
+                  <i class="fa-solid fa-trash-can text-rose-500"></i>
                 </button>
               </div>
             </td>
@@ -2870,7 +2861,7 @@
               <div class="flex items-center gap-3 cursor-pointer" onclick="openPlayerInspector('${p.username}')">
                 ${avatarHtml}
                 <div>
-                  <h4 class="font-bold theme-title group-hover:text-brand-500 transition-colors">${escapeHtml(p.displayName)}</h4>
+                  <h4 class="font-bold theme-title group-hover:text-neutral-900 dark:group-hover:text-white transition-colors">${escapeHtml(p.displayName)}</h4>
                   <span class="text-xs font-mono theme-dimtext">@${escapeHtml(p.username)}</span>
                 </div>
               </div>
@@ -2900,20 +2891,20 @@
                   class="p-1.5 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border text-xs cursor-pointer" 
                   title="Send Direct In-Game Message"
                 >
-                  <i class="fa-solid fa-paper-plane"></i>
+                  <i class="fa-solid fa-paper-plane text-indigo-400"></i>
                 </button>
                 <button 
                   onclick="openPlayerInspector('${p.username}')" 
                   class="px-2.5 py-1 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border font-medium text-xs flex items-center gap-1.5 cursor-pointer"
                 >
-                  <i class="fa-solid fa-eye text-[11px]"></i> Details
+                  <i class="fa-solid fa-eye text-sky-400 text-[11px]"></i> Details
                 </button>
                 <button 
                   onclick="promptDeletePlayer('${p.username}')" 
                   class="p-1.5 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border text-xs cursor-pointer" 
                   title="Delete Player"
                 >
-                  <i class="fa-solid fa-trash-can"></i>
+                  <i class="fa-solid fa-trash-can text-rose-500"></i>
                 </button>
               </div>
             </div>
@@ -3061,8 +3052,8 @@
       const matchesList = document.getElementById('inspMatchesList');
       const friendsList = document.getElementById('inspFriendsList');
 
-      matchesList.innerHTML = `<div class="p-6 text-center text-xs theme-dimtext"><i class="fa-solid fa-spinner fa-spin text-lg text-brand-500 mb-2"></i><p>Loading matches from cloud backup...</p></div>`;
-      friendsList.innerHTML = `<div class="p-6 text-center text-xs theme-dimtext"><i class="fa-solid fa-spinner fa-spin text-lg text-brand-500 mb-2"></i><p>Resolving complete mutual friends list...</p></div>`;
+      matchesList.innerHTML = `<div class="p-6 text-center text-xs theme-dimtext"><i class="fa-solid fa-spinner fa-spin text-lg text-sky-400 mb-2"></i><p>Loading matches from cloud backup...</p></div>`;
+      friendsList.innerHTML = `<div class="p-6 text-center text-xs theme-dimtext"><i class="fa-solid fa-spinner fa-spin text-lg text-sky-400 mb-2"></i><p>Resolving complete mutual friends list...</p></div>`;
 
       // 1. Resolve Bin ID if null
       if (!p.binId) {
@@ -3192,9 +3183,9 @@
       globalState.matchCurrentPage = 1;
       document.querySelectorAll('.match-pill').forEach(btn => {
         if (btn.id === `matchFilter-${filter}`) {
-          btn.className = "match-pill px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-brand-600 text-white";
+          btn.className = "match-pill px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-neutral-900 text-white dark:bg-white dark:text-black";
         } else {
-          btn.className = "match-pill px-2.5 py-1 rounded-lg text-[11px] font-semibold theme-subtle theme-title";
+          btn.className = "match-pill px-2.5 py-1 rounded-lg text-[11px] font-semibold theme-subtle theme-title border theme-border";
         }
       });
       filterAndRenderMatches();
@@ -3246,7 +3237,7 @@
         statsBanner.classList.remove('hidden');
         statsBanner.innerHTML = `
           <div class="flex items-center gap-2">
-            <i class="fa-solid fa-cloud-arrow-down text-brand-500"></i>
+            <i class="fa-solid fa-cloud-arrow-down text-sky-400"></i>
             <span>Showing <strong class="theme-title font-mono">${allMatches.length}</strong> cloud match records</span>
           </div>
           <span class="theme-dimtext font-mono text-[11px]">Total Lifetime Games: ${p.gamesPlayed}</span>
@@ -3258,7 +3249,7 @@
       if (allMatches.length === 0) {
         matchesList.innerHTML = `
           <div class="theme-subtle rounded-xl p-8 text-center theme-dimtext space-y-1">
-            <i class="fa-solid fa-trophy text-2xl mb-1 opacity-50"></i>
+            <i class="fa-solid fa-trophy text-2xl mb-1 text-amber-400"></i>
             <p class="text-xs font-semibold theme-title">No Matches Recorded</p>
             <p class="text-[11px] theme-dimtext">This player has not finished any games or history is clear.</p>
           </div>
@@ -3323,10 +3314,10 @@
         const matchId = m.id || `m_${startIdx + idx}`;
 
         matchesHtml += `
-          <div class="theme-subtle rounded-xl p-3.5 flex items-center justify-between gap-3 hover:border-brand-500 transition-colors">
+          <div class="theme-subtle rounded-xl p-3.5 flex items-center justify-between gap-3 hover:border-neutral-500 dark:hover:border-neutral-400 transition-colors">
             <div class="flex items-center gap-3 min-w-0">
               <div class="w-9 h-9 rounded-lg theme-card flex items-center justify-center theme-dimtext text-sm flex-shrink-0">
-                <i class="fa-solid fa-gamepad"></i>
+                <i class="fa-solid fa-gamepad text-purple-400"></i>
               </div>
               <div class="min-w-0">
                 <div class="flex items-center gap-2">
@@ -3343,7 +3334,7 @@
               class="p-2 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border text-xs transition-all flex-shrink-0 cursor-pointer"
               title="Delete this match record"
             >
-              <i class="fa-solid fa-trash-can"></i>
+              <i class="fa-solid fa-trash-can text-rose-500"></i>
             </button>
           </div>
         `;
@@ -3368,10 +3359,10 @@
         btnsHtml += `
           <button 
             onclick="setMatchPage(${currentPage - 1})" 
-            ${currentPage === 1 ? 'disabled class="px-2.5 py-1 rounded-lg theme-subtle opacity-40 cursor-not-allowed text-xs font-semibold"' : 'class="px-2.5 py-1 rounded-lg theme-subtle hover:border-brand-500 theme-title text-xs font-semibold transition-all cursor-pointer"'} 
+            ${currentPage === 1 ? 'disabled class="px-2.5 py-1 rounded-lg theme-subtle opacity-40 cursor-not-allowed text-xs font-semibold"' : 'class="px-2.5 py-1 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border text-xs font-semibold transition-all cursor-pointer"'} 
             title="Previous Page"
           >
-            <i class="fa-solid fa-chevron-left text-[10px]"></i>
+            <i class="fa-solid fa-chevron-left text-[10px] text-sky-400"></i>
           </button>
         `;
 
@@ -3409,10 +3400,10 @@
         btnsHtml += `
           <button 
             onclick="setMatchPage(${currentPage + 1})" 
-            ${currentPage === totalPages ? 'disabled class="px-2.5 py-1 rounded-lg theme-subtle opacity-40 cursor-not-allowed text-xs font-semibold"' : 'class="px-2.5 py-1 rounded-lg theme-subtle hover:border-brand-500 theme-title text-xs font-semibold transition-all cursor-pointer"'} 
+            ${currentPage === totalPages ? 'disabled class="px-2.5 py-1 rounded-lg theme-subtle opacity-40 cursor-not-allowed text-xs font-semibold"' : 'class="px-2.5 py-1 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border text-xs font-semibold transition-all cursor-pointer"'} 
             title="Next Page"
           >
-            <i class="fa-solid fa-chevron-right text-[10px]"></i>
+            <i class="fa-solid fa-chevron-right text-[10px] text-sky-400"></i>
           </button>
         `;
 
@@ -3425,7 +3416,10 @@
     // --- RENDER RESOLVED MUTUAL FRIENDS ---
     function renderPlayerFriendsList(username) {
       const friendsListEl = document.getElementById('inspFriendsList');
-      const resolvedFriends = (globalState.mutualFriendsMap && globalState.mutualFriendsMap[username]) || [];
+      let resolvedFriends = (globalState.mutualFriendsMap && globalState.mutualFriendsMap[username]) || [];
+      if ((!resolvedFriends || resolvedFriends.length === 0) && globalState.directFriendsMap && globalState.directFriendsMap[username]) {
+        resolvedFriends = globalState.directFriendsMap[username];
+      }
 
       document.getElementById('inspFriendCount').innerText = resolvedFriends.length;
       document.getElementById('inspFriendResolvedCount').innerText = resolvedFriends.length;
@@ -3433,7 +3427,7 @@
       if (resolvedFriends.length === 0) {
         friendsListEl.innerHTML = `
           <div class="theme-subtle rounded-xl p-8 text-center theme-dimtext space-y-1">
-            <i class="fa-solid fa-user-group text-2xl mb-1 opacity-50"></i>
+            <i class="fa-solid fa-user-group text-2xl mb-1 text-sky-400 opacity-60"></i>
             <p class="text-xs font-semibold theme-title">No Friends Connected</p>
             <p class="text-[11px] theme-dimtext">This player does not have any connected friends.</p>
           </div>
@@ -3443,7 +3437,7 @@
 
       let friendsHtml = '';
       resolvedFriends.forEach(f => {
-        const friendUser = f.username;
+        const friendUser = (f.username || '').toLowerCase().replace(/^@/, '');
         const playerMatch = globalState.players.find(pl => pl.username === friendUser);
         const friendDisplay = (playerMatch && playerMatch.displayName) ? playerMatch.displayName : (f.displayName || friendUser);
         const friendObj = playerMatch || {
@@ -3461,7 +3455,7 @@
         const statusLabel = isOnline ? (friendObj.status === 'ONLINE' ? 'Online' : friendObj.status) : (friendObj.lastSeenTimestamp ? `Last seen ${formatRelativeTime(friendObj.lastSeenTimestamp)}` : 'Offline');
 
         friendsHtml += `
-          <div class="theme-subtle rounded-xl p-3 sm:p-3.5 flex items-center justify-between gap-3 hover:border-brand-500 transition-colors">
+          <div class="theme-subtle rounded-xl p-3 sm:p-3.5 flex items-center justify-between gap-3 hover:border-neutral-500 dark:hover:border-neutral-400 transition-colors">
             <div class="flex items-center gap-3 min-w-0">
               <div class="relative flex-shrink-0">
                 ${avatarHtml}
@@ -3470,7 +3464,7 @@
               <div class="min-w-0">
                 <div class="flex items-center gap-2">
                   <h5 class="text-xs sm:text-sm font-bold theme-title truncate">${escapeHtml(friendDisplay)}</h5>
-                  <span class="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-brand-500/10 text-brand-500 border border-brand-500/20 flex-shrink-0">Friend</span>
+                  <span class="px-1.5 py-0.5 rounded text-[9px] font-semibold theme-subtle theme-title border theme-border flex-shrink-0">Friend</span>
                 </div>
                 <div class="text-[11px] font-mono theme-dimtext flex items-center gap-1.5 truncate mt-0.5">
                   <span class="truncate">@${escapeHtml(friendUser)}</span>
@@ -3482,17 +3476,17 @@
             <div class="flex items-center gap-1.5 flex-shrink-0">
               <button 
                 onclick="openPlayerInspector('${friendUser}')" 
-                class="p-2 rounded-lg theme-card theme-title hover:text-brand-500 text-xs transition-all" 
+                class="p-2 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border text-xs transition-all cursor-pointer" 
                 title="Inspect Friend"
               >
-                <i class="fa-solid fa-eye"></i>
+                <i class="fa-solid fa-eye text-sky-400"></i>
               </button>
               <button 
                 onclick="promptRemoveFriend('${username}', '${friendUser}')" 
                 class="px-2.5 py-1.5 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border text-xs font-semibold flex items-center gap-1 transition-all cursor-pointer" 
                 title="Remove Friend"
               >
-                <i class="fa-solid fa-user-minus"></i>
+                <i class="fa-solid fa-user-minus text-rose-500"></i>
                 <span class="hidden sm:inline">Remove</span>
               </button>
             </div>
@@ -3507,16 +3501,20 @@
       ['overview', 'matches', 'friends', 'danger'].forEach(t => {
         const view = document.getElementById(`inspTabView-${t}`);
         const btn = document.getElementById(`inspTabBtn-${t}`);
+        if (!view || !btn) return;
         if (t === tabId) {
           view.classList.remove('hidden');
-          btn.classList.add('theme-title', 'border-brand-500');
-          btn.classList.remove('theme-dimtext', 'border-transparent');
+          btn.className = "insp-tab active px-3 sm:px-3.5 py-2.5 text-xs font-semibold theme-title border-b-2 border-neutral-900 dark:border-white whitespace-nowrap flex-shrink-0 cursor-pointer";
         } else {
           view.classList.add('hidden');
-          btn.classList.remove('theme-title', 'border-brand-500');
-          btn.classList.add('theme-dimtext', 'border-transparent');
+          btn.className = "insp-tab px-3 sm:px-3.5 py-2.5 text-xs font-semibold theme-dimtext hover:theme-title border-b-2 border-transparent whitespace-nowrap flex-shrink-0 cursor-pointer";
         }
       });
+      if (tabId === 'matches') {
+        filterAndRenderMatches();
+      } else if (tabId === 'friends' && globalState.selectedPlayer) {
+        renderPlayerFriendsList(globalState.selectedPlayer.username);
+      }
     }
 
     function closePlayerInspector(shouldPopHistory = true) {
@@ -3681,7 +3679,7 @@
     function promptDeleteSingleMatch(username, matchId, opponent) {
       openConfirmModal(
         'Delete Match Record',
-        `Are you sure you want to delete match <strong class="text-brand-500 font-mono">#${matchId}</strong> against <strong class="theme-title">${opponent}</strong> for player <strong class="theme-title">@${username}</strong>?`,
+        `Are you sure you want to delete match <strong class="theme-title font-mono">#${matchId}</strong> against <strong class="theme-title">${opponent}</strong> for player <strong class="theme-title">@${username}</strong>?`,
         'DELETE_MATCH',
         { username, matchId }
       );
@@ -3748,7 +3746,7 @@
     function promptRemoveFriend(username, friendUsername) {
       openConfirmModal(
         'Remove Friend',
-        `Are you sure you want to remove <strong class="theme-title font-mono">@${friendUsername}</strong> from <strong class="text-brand-500 font-mono">@${username}</strong>'s friends list?`,
+        `Are you sure you want to remove <strong class="theme-title font-mono">@${friendUsername}</strong> from <strong class="theme-title font-mono">@${username}</strong>'s friends list?`,
         'REMOVE_FRIEND',
         { username, friendUsername }
       );
@@ -4273,8 +4271,8 @@
       if (rooms.length === 0) {
         roomsGrid.innerHTML = `
           <div class="col-span-full theme-card rounded-2xl p-12 text-center space-y-2">
-            <div class="w-16 h-16 rounded-2xl theme-subtle flex items-center justify-center theme-dimtext text-2xl mx-auto">
-              <i class="fa-solid fa-dice-d6"></i>
+            <div class="w-16 h-16 rounded-2xl theme-subtle flex items-center justify-center text-2xl mx-auto">
+              <i class="fa-solid fa-dice-d6 text-cyan-400"></i>
             </div>
             <h4 class="text-base font-bold theme-title">No Active Rooms Right Now</h4>
             <p class="text-xs theme-dimtext max-w-sm mx-auto">Whenever players create or host rooms in Android or Web apps, they will stream here in real time.</p>
@@ -4292,7 +4290,7 @@
                 <span class="w-2.5 h-2.5 rounded-full bg-neutral-900 dark:bg-white"></span>
                 <span class="font-mono font-bold theme-title text-base">#${r.code}</span>
               </div>
-              <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-brand-500/20 text-brand-500 border border-brand-500/30">
+              <span class="px-2 py-0.5 rounded-full text-[10px] font-bold theme-subtle theme-title border theme-border">
                 ${r.status || 'WAITING'}
               </span>
             </div>
@@ -4306,16 +4304,16 @@
             <div class="grid grid-cols-2 gap-2 pt-1">
               <button 
                 onclick="inspectRoomDetails('${r.code}')" 
-                class="py-2 rounded-xl theme-subtle hover:border-brand-500 theme-title text-xs font-semibold border border-inherit transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                class="py-2 rounded-xl theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title text-xs font-semibold border theme-border transition-all flex items-center justify-center gap-1.5 cursor-pointer"
               >
-                <i class="fa-solid fa-circle-info text-brand-500"></i>
+                <i class="fa-solid fa-circle-info text-sky-400"></i>
                 <span>Details</span>
               </button>
               <button 
                 onclick="forceCloseRoom('${r.code}')" 
                 class="py-2 rounded-xl theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title text-xs font-bold border theme-border transition-all flex items-center justify-center gap-1.5 cursor-pointer"
               >
-                <i class="fa-solid fa-ban"></i>
+                <i class="fa-solid fa-ban text-rose-500"></i>
                 <span>Close</span>
               </button>
             </div>
@@ -4466,7 +4464,7 @@
           </div>
           <p class="theme-dimtext leading-relaxed bg-neutral-950/40 p-2.5 rounded-lg border border-neutral-800/60">${escapeHtml(bcast.message)}</p>
           <div class="flex items-center justify-between text-[11px] pt-1">
-            <span class="font-semibold text-brand-400 font-mono">Target: ${escapeHtml(targetLabel)}</span>
+            <span class="font-semibold theme-title font-mono">Target: ${escapeHtml(targetLabel)}</span>
             <span class="theme-dimtext">From: <strong class="theme-title">${escapeHtml(bcast.author || 'Admin')}</strong></span>
           </div>
         `;
@@ -4478,7 +4476,7 @@
         content.className = "text-xs theme-dimtext space-y-1.5";
         content.innerHTML = `
           <div class="flex items-center gap-1.5 theme-title font-medium">
-            <i class="fa-solid fa-circle-check"></i>
+            <i class="fa-solid fa-circle-check text-emerald-400"></i>
             <span>Message Delivered & Acknowledged (Auto-Expired)</span>
           </div>
           <p>Target <strong>${escapeHtml(currentTargetScope)}</strong> has received and dismissed this notice. It is now inactive in the cloud.</p>
@@ -4826,12 +4824,12 @@
               </div>
               <p class="text-xs theme-dimtext line-clamp-2">${escapeHtml(item.message || '')}</p>
               <div class="flex items-center justify-between pt-1 text-[11px]">
-                <span class="font-mono text-brand-400 font-semibold">${escapeHtml(targetStr)}</span>
+                <span class="font-mono theme-title font-semibold">${escapeHtml(targetStr)}</span>
                 <div class="flex items-center gap-1.5">
                   <button 
                     type="button" 
                     onclick="loadBroadcastFromHistory(${idx})" 
-                    class="px-2 py-0.5 rounded theme-card theme-title hover:text-brand-500 text-[10px] font-semibold border border-inherit transition-all cursor-pointer"
+                    class="px-2 py-0.5 rounded theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title text-[10px] font-semibold border theme-border transition-all cursor-pointer"
                   >
                     Load
                   </button>
@@ -4840,7 +4838,7 @@
                     onclick="deleteBroadcastFromHistory(${idx})" 
                     class="px-2 py-0.5 rounded theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title text-[10px] font-semibold transition-all cursor-pointer"
                   >
-                    <i class="fa-solid fa-trash-can"></i>
+                    <i class="fa-solid fa-trash-can text-rose-500"></i>
                   </button>
                 </div>
               </div>
@@ -5425,7 +5423,7 @@
       div.className = "flex items-start gap-2 py-0.5 border-b border-neutral-900";
       div.innerHTML = `
         <span class="text-neutral-500 shrink-0">[${time}]</span>
-        <span class="text-brand-400 font-semibold shrink-0">${escapeHtml(topic)}:</span>
+        <span class="theme-title font-mono font-semibold shrink-0">${escapeHtml(topic)}:</span>
         <span class="text-slate-300 break-all">${escapeHtml(payload.substring(0, 200))}</span>
       `;
       terminal.appendChild(div);
@@ -5587,11 +5585,11 @@
       const toast = document.createElement('div');
       
       let borderClass = 'theme-card border theme-border text-neutral-900 dark:text-white';
-      let icon = 'fa-circle-info theme-title';
+      let icon = 'fa-circle-info text-sky-400';
       if (type === 'success') {
-        icon = 'fa-circle-check theme-title';
+        icon = 'fa-circle-check text-emerald-400';
       } else if (type === 'error') {
-        icon = 'fa-circle-exclamation theme-title';
+        icon = 'fa-circle-exclamation text-rose-500';
       }
 
       toast.className = `p-3.5 rounded-xl border shadow-xl flex items-center gap-2.5 text-xs font-bold backdrop-blur-md pointer-events-auto transition-all transform duration-300 translate-y-2 opacity-0 ${borderClass}`;
