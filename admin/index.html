@@ -2,7 +2,7 @@
 <html lang="en" class="dark">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>BINGO Server | Master Admin Console</title>
   <link rel="icon" type="image/jpeg" href="../icon.jpg">
   
@@ -102,6 +102,11 @@
       background-color: var(--page-bg) !important;
       color: var(--text-sub);
       transition: background-color 0.25s ease, color 0.25s ease;
+      touch-action: pan-y;
+    }
+
+    button, a, input, select {
+      touch-action: manipulation;
     }
 
     /* Custom scrollbars */
@@ -208,15 +213,15 @@
   <!-- ======================================================== -->
   <!-- 1. FULLSCREEN PASSWORD GATE SCREEN                       -->
   <!-- ======================================================== -->
-  <div id="authGate" class="fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div id="authGate" class="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4">
     
     <!-- Theme Toggle Switch on Login Screen (Top Right) -->
-    <div class="absolute top-5 right-5 z-20">
+    <div class="absolute top-4 right-4 sm:top-5 sm:right-5 z-20">
       <button 
         type="button"
         onclick="toggleTheme()" 
         id="authThemeToggleBtn"
-        class="px-3.5 py-2 rounded-xl flex items-center gap-2 text-xs font-bold shadow-lg transition-all active:scale-95 border theme-subtle hover:scale-105"
+        class="px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl flex items-center gap-2 text-xs font-bold shadow-lg transition-all active:scale-95 border theme-subtle hover:scale-105"
         title="Toggle Theme (AMOLED Black / Light)"
       >
         <i id="authThemeIcon" class="fa-solid fa-moon text-brand-400"></i>
@@ -225,32 +230,32 @@
     </div>
 
     <!-- Auth Modal Container -->
-    <div class="w-full max-w-md theme-modal rounded-3xl p-8 shadow-2xl relative overflow-hidden backdrop-blur-2xl">
+    <div class="w-full max-w-md theme-modal rounded-3xl p-6 sm:p-8 shadow-2xl relative overflow-hidden backdrop-blur-2xl max-h-[92vh] overflow-y-auto">
       <div class="absolute -top-24 -left-24 w-48 h-48 bg-brand-500/20 rounded-full blur-3xl pointer-events-none"></div>
       <div class="absolute -bottom-24 -right-24 w-48 h-48 bg-purple-500/20 rounded-full blur-3xl pointer-events-none"></div>
       
       <div class="text-center relative z-10">
         <!-- Logo Badge -->
-        <div class="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-gradient-to-tr from-brand-600 via-indigo-500 to-purple-600 p-1 shadow-lg shadow-brand-600/30 mb-5">
+        <div class="inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-gradient-to-tr from-brand-600 via-indigo-500 to-purple-600 p-1 shadow-lg shadow-brand-600/30 mb-4 sm:mb-5">
           <div class="w-full h-full theme-card rounded-[14px] flex items-center justify-center">
-            <span class="text-3xl font-black bg-gradient-to-r from-brand-400 via-purple-300 to-emerald-400 bg-clip-text text-transparent">B</span>
-            <i class="fa-solid fa-shield-halved text-brand-400 text-2xl ml-1"></i>
+            <span class="text-2xl sm:text-3xl font-black bg-gradient-to-r from-brand-400 via-purple-300 to-emerald-400 bg-clip-text text-transparent">B</span>
+            <i class="fa-solid fa-shield-halved text-brand-400 text-xl sm:text-2xl ml-1"></i>
           </div>
         </div>
 
-        <h1 class="text-2xl font-black tracking-tight theme-title mb-1">BINGO SERVER ADMIN</h1>
-        <p class="text-xs theme-dimtext mb-6 font-medium tracking-wide uppercase">Operator Authorization Gateway</p>
+        <h1 class="text-xl sm:text-2xl font-black tracking-tight theme-title mb-1">BINGO SERVER ADMIN</h1>
+        <p class="text-xs theme-dimtext mb-4 sm:mb-6 font-medium tracking-wide uppercase">Operator Authorization Gateway</p>
 
         <!-- PIN / Password Form -->
-        <div id="authForm" class="space-y-4">
+        <div id="authForm" class="space-y-3 sm:space-y-4">
           <div class="relative">
             <input 
               type="password" 
               id="adminPinInput" 
               maxlength="32" 
-              placeholder="Enter Admin Password / PIN" 
+              placeholder="Enter Admin Password" 
               autocomplete="current-password"
-              class="w-full py-3.5 px-4 theme-input text-center text-lg font-mono tracking-widest rounded-xl focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/30 transition-all placeholder:text-slate-400 placeholder:text-sm placeholder:tracking-normal"
+              class="w-full py-3 sm:py-3.5 px-4 theme-input text-center text-base sm:text-lg font-mono tracking-widest rounded-xl focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/30 transition-all placeholder:text-slate-400 placeholder:text-sm placeholder:tracking-normal"
             >
             <button 
               type="button" 
@@ -268,19 +273,19 @@
           </div>
 
           <!-- Quick Touch Keypad for Mobile -->
-          <div class="grid grid-cols-3 gap-2 pt-2">
-            <button onclick="appendPin('1')" class="py-2.5 rounded-xl theme-keypad-btn font-mono text-base font-bold active:scale-95 transition-all">1</button>
-            <button onclick="appendPin('2')" class="py-2.5 rounded-xl theme-keypad-btn font-mono text-base font-bold active:scale-95 transition-all">2</button>
-            <button onclick="appendPin('3')" class="py-2.5 rounded-xl theme-keypad-btn font-mono text-base font-bold active:scale-95 transition-all">3</button>
-            <button onclick="appendPin('4')" class="py-2.5 rounded-xl theme-keypad-btn font-mono text-base font-bold active:scale-95 transition-all">4</button>
-            <button onclick="appendPin('5')" class="py-2.5 rounded-xl theme-keypad-btn font-mono text-base font-bold active:scale-95 transition-all">5</button>
-            <button onclick="appendPin('6')" class="py-2.5 rounded-xl theme-keypad-btn font-mono text-base font-bold active:scale-95 transition-all">6</button>
-            <button onclick="appendPin('7')" class="py-2.5 rounded-xl theme-keypad-btn font-mono text-base font-bold active:scale-95 transition-all">7</button>
-            <button onclick="appendPin('8')" class="py-2.5 rounded-xl theme-keypad-btn font-mono text-base font-bold active:scale-95 transition-all">8</button>
-            <button onclick="appendPin('9')" class="py-2.5 rounded-xl theme-keypad-btn font-mono text-base font-bold active:scale-95 transition-all">9</button>
-            <button onclick="clearPin()" class="py-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-500 font-mono text-xs font-bold active:scale-95 transition-all border border-rose-500/20">CLR</button>
-            <button onclick="appendPin('0')" class="py-2.5 rounded-xl theme-keypad-btn font-mono text-base font-bold active:scale-95 transition-all">0</button>
-            <button onclick="backspacePin()" class="py-2.5 rounded-xl theme-keypad-btn font-mono text-sm active:scale-95 transition-all"><i class="fa-solid fa-delete-left"></i></button>
+          <div class="grid grid-cols-3 gap-1.5 sm:gap-2 pt-1">
+            <button onclick="appendPin('1')" class="py-2 sm:py-2.5 rounded-xl theme-keypad-btn font-mono text-base font-bold active:scale-95 transition-all">1</button>
+            <button onclick="appendPin('2')" class="py-2 sm:py-2.5 rounded-xl theme-keypad-btn font-mono text-base font-bold active:scale-95 transition-all">2</button>
+            <button onclick="appendPin('3')" class="py-2 sm:py-2.5 rounded-xl theme-keypad-btn font-mono text-base font-bold active:scale-95 transition-all">3</button>
+            <button onclick="appendPin('4')" class="py-2 sm:py-2.5 rounded-xl theme-keypad-btn font-mono text-base font-bold active:scale-95 transition-all">4</button>
+            <button onclick="appendPin('5')" class="py-2 sm:py-2.5 rounded-xl theme-keypad-btn font-mono text-base font-bold active:scale-95 transition-all">5</button>
+            <button onclick="appendPin('6')" class="py-2 sm:py-2.5 rounded-xl theme-keypad-btn font-mono text-base font-bold active:scale-95 transition-all">6</button>
+            <button onclick="appendPin('7')" class="py-2 sm:py-2.5 rounded-xl theme-keypad-btn font-mono text-base font-bold active:scale-95 transition-all">7</button>
+            <button onclick="appendPin('8')" class="py-2 sm:py-2.5 rounded-xl theme-keypad-btn font-mono text-base font-bold active:scale-95 transition-all">8</button>
+            <button onclick="appendPin('9')" class="py-2 sm:py-2.5 rounded-xl theme-keypad-btn font-mono text-base font-bold active:scale-95 transition-all">9</button>
+            <button onclick="clearPin()" class="py-2 sm:py-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-500 font-mono text-xs font-bold active:scale-95 transition-all border border-rose-500/20">CLR</button>
+            <button onclick="appendPin('0')" class="py-2 sm:py-2.5 rounded-xl theme-keypad-btn font-mono text-base font-bold active:scale-95 transition-all">0</button>
+            <button onclick="backspacePin()" class="py-2 sm:py-2.5 rounded-xl theme-keypad-btn font-mono text-sm active:scale-95 transition-all"><i class="fa-solid fa-delete-left"></i></button>
           </div>
 
           <div class="flex items-center justify-between text-xs theme-dimtext pt-1 px-1">
@@ -288,14 +293,14 @@
               <input type="checkbox" id="rememberSessionCheck" class="rounded border-slate-700 bg-transparent text-brand-600 focus:ring-brand-500 mr-2">
               <span>Keep unlocked</span>
             </label>
-            <span class="text-[11px]">Default: <span class="font-mono font-bold text-brand-500">bingo2026</span></span>
+            <span class="text-[11px] opacity-70"><i class="fa-solid fa-lock mr-1"></i>Protected Session</span>
           </div>
 
           <!-- Submit Unlock Button -->
           <button 
             type="button" 
             onclick="validateAndUnlock()" 
-            class="w-full mt-3 py-3.5 px-4 rounded-xl bg-gradient-to-r from-brand-600 via-indigo-600 to-purple-600 hover:from-brand-500 hover:to-purple-500 text-white font-semibold text-sm shadow-lg shadow-brand-600/30 active:scale-[0.98] transition-all flex items-center justify-center gap-2"
+            class="w-full mt-3 py-3 sm:py-3.5 px-4 rounded-xl bg-gradient-to-r from-brand-600 via-indigo-600 to-purple-600 hover:from-brand-500 hover:to-purple-500 text-white font-semibold text-sm shadow-lg shadow-brand-600/30 active:scale-[0.98] transition-all flex items-center justify-center gap-2"
           >
             <i class="fa-solid fa-unlock-keyhole"></i>
             <span>Unlock Admin Console</span>
@@ -312,27 +317,27 @@
   <div id="adminApp" class="hidden min-h-screen flex flex-col pb-16">
     
     <!-- Top Sticky Header -->
-    <header class="sticky top-0 z-40 theme-header px-4 sm:px-6 py-3 backdrop-blur-xl">
-      <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
+    <header class="sticky top-0 z-40 theme-header px-3 sm:px-6 py-2.5 sm:py-3 backdrop-blur-xl">
+      <div class="max-w-7xl mx-auto flex items-center justify-between gap-2 sm:gap-3">
         
         <!-- Left: Logo & Branding -->
-        <div class="flex items-center gap-3">
-          <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-brand-600 to-purple-600 p-0.5 shadow-md shadow-brand-600/20 flex-shrink-0">
+        <div class="flex items-center gap-2 sm:gap-3 min-w-0">
+          <div class="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-brand-600 to-purple-600 p-0.5 shadow-md shadow-brand-600/20 flex-shrink-0">
             <div class="w-full h-full theme-card rounded-[10px] flex items-center justify-center">
-              <span class="text-lg font-black bg-gradient-to-r from-brand-400 to-purple-400 bg-clip-text text-transparent">B</span>
+              <span class="text-base sm:text-lg font-black bg-gradient-to-r from-brand-400 to-purple-400 bg-clip-text text-transparent">B</span>
             </div>
           </div>
-          <div>
-            <div class="flex items-center gap-2">
-              <h1 class="text-base sm:text-lg font-black tracking-tight theme-title">BINGO SERVER</h1>
-              <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-brand-500/15 text-brand-500 border border-brand-500/30 uppercase tracking-wide">Admin v2.0</span>
+          <div class="min-w-0">
+            <div class="flex items-center gap-1.5 sm:gap-2">
+              <h1 class="text-sm sm:text-lg font-black tracking-tight theme-title truncate">BINGO SERVER</h1>
+              <span class="text-[9px] sm:text-[10px] font-bold px-1.5 py-0.2 rounded bg-brand-500/15 text-brand-500 border border-brand-500/30 uppercase tracking-wide flex-shrink-0">Admin v2.0</span>
             </div>
-            <p class="text-[11px] theme-dimtext hidden sm:block">Realtime Global Control & Player Management</p>
+            <p class="text-[11px] theme-dimtext hidden md:block">Realtime Global Control & Player Management</p>
           </div>
         </div>
 
-        <!-- Middle: Connectivity Status Indicators -->
-        <div class="flex items-center gap-2 sm:gap-4 text-xs font-medium">
+        <!-- Middle: Connectivity Status Indicators (Desktop / Tablet) -->
+        <div class="hidden sm:flex items-center gap-2 md:gap-4 text-xs font-medium">
           <!-- KeyVal API Status -->
           <div id="statusKeyVal" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full badge-online" title="KeyValue Cloud Database Status">
             <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
@@ -349,7 +354,7 @@
         </div>
 
         <!-- Right: Actions, Theme Switch & Lock -->
-        <div class="flex items-center gap-2">
+        <div class="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
           
           <!-- Theme Toggle Switch Inside Admin Screen -->
           <button 
@@ -363,8 +368,8 @@
             <span id="adminThemeLabel" class="hidden sm:inline font-mono">AMOLED</span>
           </button>
 
-          <!-- Auto-Refresh Toggle -->
-          <div class="hidden sm:flex items-center gap-1.5 theme-subtle rounded-lg px-2.5 py-1.5 text-xs theme-dimtext">
+          <!-- Auto-Refresh Toggle (Tablet / Desktop) -->
+          <div class="hidden md:flex items-center gap-1.5 theme-subtle rounded-lg px-2.5 py-1.5 text-xs theme-dimtext">
             <i class="fa-solid fa-clock-rotate-left text-[11px]"></i>
             <select id="autoRefreshInterval" onchange="updateAutoRefresh(this.value)" class="bg-transparent theme-title text-xs focus:outline-none cursor-pointer">
               <option value="0" class="theme-card theme-title">Auto: Off</option>
@@ -402,7 +407,7 @@
         <button 
           onclick="switchTab('players')" 
           id="tabBtn-players" 
-          class="nav-tab active-tab px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all whitespace-nowrap bg-brand-600 text-white shadow-md shadow-brand-600/30"
+          class="nav-tab active-tab px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all whitespace-nowrap bg-brand-600 text-white shadow-md shadow-brand-600/30 flex-shrink-0"
         >
           <i class="fa-solid fa-users"></i>
           <span>Players Directory</span>
@@ -412,7 +417,7 @@
         <button 
           onclick="switchTab('rooms')" 
           id="tabBtn-rooms" 
-          class="nav-tab px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all whitespace-nowrap theme-dimtext hover:text-brand-500"
+          class="nav-tab px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all whitespace-nowrap theme-dimtext hover:text-brand-500 flex-shrink-0"
         >
           <i class="fa-solid fa-gamepad"></i>
           <span>Live Game Rooms</span>
@@ -422,7 +427,7 @@
         <button 
           onclick="switchTab('mqtt')" 
           id="tabBtn-mqtt" 
-          class="nav-tab px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all whitespace-nowrap theme-dimtext hover:text-brand-500"
+          class="nav-tab px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all whitespace-nowrap theme-dimtext hover:text-brand-500 flex-shrink-0"
         >
           <i class="fa-solid fa-tower-broadcast"></i>
           <span>Live Telemetry & Broadcast</span>
@@ -431,7 +436,7 @@
         <button 
           onclick="switchTab('settings')" 
           id="tabBtn-settings" 
-          class="nav-tab px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all whitespace-nowrap theme-dimtext hover:text-brand-500"
+          class="nav-tab px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all whitespace-nowrap theme-dimtext hover:text-brand-500 flex-shrink-0"
         >
           <i class="fa-solid fa-sliders"></i>
           <span>Server Settings & Backup</span>
@@ -756,7 +761,7 @@
               onclick="resetToDefaultPassword()" 
               class="px-4 py-2 rounded-xl theme-subtle theme-title font-semibold text-xs transition-all"
             >
-              Reset to Default (bingo2026)
+              Reset to Default Password
             </button>
           </div>
         </div>
@@ -813,29 +818,39 @@
   <!-- 3. IN-PAGE PLAYER INSPECTOR DRAWER / MODAL               -->
   <!-- ======================================================== -->
   <div id="playerInspectorDrawer" class="hidden fixed inset-0 z-50 flex justify-end bg-black/70 backdrop-blur-sm transition-opacity">
-    <div class="w-full max-w-2xl h-full theme-drawer flex flex-col shadow-2xl overflow-hidden animate-slide-left">
+    <div class="w-full sm:max-w-xl md:max-w-2xl h-full theme-drawer flex flex-col shadow-2xl overflow-hidden animate-slide-left">
       
       <!-- Drawer Top Bar -->
-      <div class="p-4 sm:p-5 border-b border-inherit theme-header flex items-center justify-between gap-3 flex-shrink-0">
-        <div class="flex items-center gap-3">
+      <div class="p-3 sm:p-5 border-b border-inherit theme-header flex items-center justify-between gap-2 sm:gap-3 flex-shrink-0">
+        <div class="flex items-center gap-2 sm:gap-3 min-w-0">
+          <!-- Back button on mobile -->
+          <button 
+            type="button"
+            onclick="closePlayerInspector()" 
+            class="sm:hidden w-8 h-8 rounded-xl theme-subtle theme-title flex items-center justify-center flex-shrink-0 active:scale-90 transition-all mr-0.5"
+            title="Back to players list"
+          >
+            <i class="fa-solid fa-arrow-left text-sm"></i>
+          </button>
+
           <!-- Big Avatar -->
-          <div id="inspAvatarContainer" class="w-14 h-14 rounded-2xl bg-gradient-to-tr from-brand-600 to-purple-600 p-0.5 relative flex-shrink-0">
-            <div id="inspAvatarInner" class="w-full h-full rounded-[14px] theme-card overflow-hidden flex items-center justify-center text-2xl font-bold theme-title">
+          <div id="inspAvatarContainer" class="w-11 h-11 sm:w-14 sm:h-14 rounded-2xl bg-gradient-to-tr from-brand-600 to-purple-600 p-0.5 relative flex-shrink-0">
+            <div id="inspAvatarInner" class="w-full h-full rounded-[14px] theme-card overflow-hidden flex items-center justify-center text-xl sm:text-2xl font-bold theme-title">
               ?
             </div>
-            <span id="inspStatusDot" class="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-emerald-500 border-2 border-inherit"></span>
+            <span id="inspStatusDot" class="absolute -bottom-1 -right-1 w-3.5 h-3.5 sm:w-4 sm:h-4 rounded-full bg-emerald-500 border-2 border-inherit"></span>
           </div>
 
           <!-- Names & Status -->
-          <div class="overflow-hidden">
-            <div class="flex items-center gap-2">
-              <h2 id="inspDisplayName" class="text-lg font-black theme-title truncate">Player Name</h2>
-              <span id="inspLevelBadge" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-500 border border-amber-500/30">Lvl 1</span>
+          <div class="overflow-hidden min-w-0">
+            <div class="flex items-center gap-1.5 sm:gap-2">
+              <h2 id="inspDisplayName" class="text-base sm:text-lg font-black theme-title truncate">Player Name</h2>
+              <span id="inspLevelBadge" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-500 border border-amber-500/30 flex-shrink-0">Lvl 1</span>
             </div>
-            <div class="flex items-center gap-2 mt-0.5 text-xs theme-dimtext">
-              <span id="inspUsername" class="font-mono text-brand-500">@username</span>
+            <div class="flex items-center gap-1.5 sm:gap-2 mt-0.5 text-xs theme-dimtext truncate">
+              <span id="inspUsername" class="font-mono text-brand-500 truncate">@username</span>
               <span>•</span>
-              <span id="inspStatusText" class="text-emerald-500 font-semibold">Online</span>
+              <span id="inspStatusText" class="text-emerald-500 font-semibold flex-shrink-0">Online</span>
             </div>
           </div>
         </div>
@@ -843,31 +858,31 @@
         <!-- Close Button -->
         <button 
           onclick="closePlayerInspector()" 
-          class="w-9 h-9 rounded-xl theme-subtle theme-title hover:text-brand-500 flex items-center justify-center transition-all"
-          title="Close Inspector (Esc)"
+          class="w-8 h-8 sm:w-9 sm:h-9 rounded-xl theme-subtle theme-title hover:text-brand-500 flex items-center justify-center transition-all flex-shrink-0"
+          title="Close Inspector (Esc / Back)"
         >
-          <i class="fa-solid fa-xmark text-base"></i>
+          <i class="fa-solid fa-xmark text-sm sm:text-base"></i>
         </button>
       </div>
 
       <!-- Drawer Sub-Navigation Tabs -->
-      <div class="flex items-center px-4 theme-subtle border-b border-inherit gap-1 overflow-x-auto no-scrollbar flex-shrink-0">
-        <button onclick="switchInspTab('overview')" id="inspTabBtn-overview" class="insp-tab active px-3.5 py-2.5 text-xs font-semibold theme-title border-b-2 border-brand-500">
-          <i class="fa-solid fa-chart-pie mr-1.5"></i> Overview & Stats
+      <div class="flex items-center px-2 sm:px-4 theme-subtle border-b border-inherit gap-1 overflow-x-auto no-scrollbar flex-shrink-0">
+        <button onclick="switchInspTab('overview')" id="inspTabBtn-overview" class="insp-tab active px-3 sm:px-3.5 py-2.5 text-xs font-semibold theme-title border-b-2 border-brand-500 whitespace-nowrap flex-shrink-0">
+          <i class="fa-solid fa-chart-pie mr-1 sm:mr-1.5"></i> Overview & Stats
         </button>
-        <button onclick="switchInspTab('matches')" id="inspTabBtn-matches" class="insp-tab px-3.5 py-2.5 text-xs font-semibold theme-dimtext hover:theme-title border-b-2 border-transparent">
-          <i class="fa-solid fa-trophy mr-1.5"></i> Matches History (<span id="inspMatchCount">0</span>)
+        <button onclick="switchInspTab('matches')" id="inspTabBtn-matches" class="insp-tab px-3 sm:px-3.5 py-2.5 text-xs font-semibold theme-dimtext hover:theme-title border-b-2 border-transparent whitespace-nowrap flex-shrink-0">
+          <i class="fa-solid fa-trophy mr-1 sm:mr-1.5"></i> Matches (<span id="inspMatchCount">0</span>)
         </button>
-        <button onclick="switchInspTab('friends')" id="inspTabBtn-friends" class="insp-tab px-3.5 py-2.5 text-xs font-semibold theme-dimtext hover:theme-title border-b-2 border-transparent">
-          <i class="fa-solid fa-user-group mr-1.5"></i> Friends List (<span id="inspFriendCount">0</span>)
+        <button onclick="switchInspTab('friends')" id="inspTabBtn-friends" class="insp-tab px-3 sm:px-3.5 py-2.5 text-xs font-semibold theme-dimtext hover:theme-title border-b-2 border-transparent whitespace-nowrap flex-shrink-0">
+          <i class="fa-solid fa-user-group mr-1 sm:mr-1.5"></i> Friends (<span id="inspFriendCount">0</span>)
         </button>
-        <button onclick="switchInspTab('danger')" id="inspTabBtn-danger" class="insp-tab px-3.5 py-2.5 text-xs font-semibold text-rose-500 hover:text-rose-400 border-b-2 border-transparent">
-          <i class="fa-solid fa-triangle-exclamation mr-1.5"></i> Danger Zone
+        <button onclick="switchInspTab('danger')" id="inspTabBtn-danger" class="insp-tab px-3.5 py-2.5 text-xs font-semibold text-rose-500 hover:text-rose-400 border-b-2 border-transparent whitespace-nowrap flex-shrink-0">
+          <i class="fa-solid fa-triangle-exclamation mr-1 sm:mr-1.5"></i> Danger
         </button>
       </div>
 
       <!-- Drawer Content Scroll Area -->
-      <div class="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
+      <div class="flex-1 overflow-y-auto p-3.5 sm:p-6 space-y-4 sm:space-y-5">
         
         <!-- SUB-TAB 1: OVERVIEW -->
         <div id="inspTabView-overview" class="space-y-4">
@@ -1065,7 +1080,7 @@
           <input 
             type="password" 
             id="confirmPasswordInput" 
-            placeholder="Enter password (default: bingo2026)" 
+            placeholder="Enter admin password" 
             class="w-full py-2.5 px-3.5 rounded-xl theme-input text-sm focus:outline-none focus:border-rose-500 focus:ring-1 focus:ring-rose-500 transition-all"
           >
           <button 
@@ -1332,6 +1347,14 @@
       globalState.authenticated = true;
       document.getElementById('authGate').classList.add('hidden');
       document.getElementById('adminApp').classList.remove('hidden');
+
+      // Initialize navigation history state for mobile back buttons & swipe gestures
+      initNavigationHistory();
+
+      // Adapt view mode based on screen resolution (cards on mobile, table on laptop)
+      const isMobile = window.innerWidth < 768;
+      setPlayerViewMode(isMobile ? 'grid' : 'table');
+
       initMqtt();
       fetchGlobalData(true);
       startAutoRefresh();
@@ -1348,18 +1371,88 @@
       showToast('Console Locked', 'info');
     }
 
+    // --- MOBILE BACK BUTTON & SWIPE GESTURE ROUTING (HTML5 HISTORY) ---
+    let lastBackPressTime = 0;
+    let isHandlingPopState = false;
+    let navigationHistoryInitialized = false;
+
+    function initNavigationHistory() {
+      if (navigationHistoryInitialized) return;
+      navigationHistoryInitialized = true;
+      try {
+        window.history.replaceState({ screen: 'home', tab: 'players' }, '');
+        window.history.pushState({ screen: 'app', tab: 'players' }, '');
+      } catch (e) {}
+
+      window.addEventListener('popstate', (e) => {
+        handleBackNavigation(e);
+      });
+    }
+
+    function handleBackNavigation(e) {
+      isHandlingPopState = true;
+      try {
+        // 1. Confirm Modal
+        const confirmModal = document.getElementById('confirmActionModal');
+        if (confirmModal && !confirmModal.classList.contains('hidden')) {
+          closeConfirmModal(false);
+          window.history.pushState({ screen: 'app', tab: globalState.activeTab || 'players' }, '');
+          return;
+        }
+
+        // 2. Add Player Modal
+        const addModal = document.getElementById('addPlayerModal');
+        if (addModal && !addModal.classList.contains('hidden')) {
+          closeAddPlayerModal(false);
+          window.history.pushState({ screen: 'app', tab: globalState.activeTab || 'players' }, '');
+          return;
+        }
+
+        // 3. Player Inspector Drawer
+        const drawer = document.getElementById('playerInspectorDrawer');
+        if (drawer && !drawer.classList.contains('hidden')) {
+          closePlayerInspector(false);
+          window.history.pushState({ screen: 'app', tab: globalState.activeTab || 'players' }, '');
+          return;
+        }
+
+        // 4. If on another tab, return to players directory (Home screen)
+        if (globalState.activeTab && globalState.activeTab !== 'players') {
+          switchTab('players', false);
+          window.history.pushState({ screen: 'app', tab: 'players' }, '');
+          return;
+        }
+
+        // 5. Already on Home Screen (Players Directory) with nothing open
+        const now = Date.now();
+        if (now - lastBackPressTime < 2000) {
+          window.history.back();
+        } else {
+          lastBackPressTime = now;
+          window.history.pushState({ screen: 'home', tab: 'players' }, '');
+          showToast('Swipe back again to exit', 'info');
+        }
+      } finally {
+        isHandlingPopState = false;
+      }
+    }
+
     // --- TAB SWITCHING ---
-    function switchTab(tabId) {
+    function switchTab(tabId, pushHistory = true) {
+      if (globalState.activeTab === tabId) return;
       globalState.activeTab = tabId;
+      if (pushHistory && !isHandlingPopState && tabId !== 'players') {
+        window.history.pushState({ screen: 'tab', tab: tabId }, '');
+      }
       ['players', 'rooms', 'mqtt', 'settings'].forEach(t => {
         const view = document.getElementById(`tabView-${t}`);
         const btn = document.getElementById(`tabBtn-${t}`);
         if (t === tabId) {
           view.classList.remove('hidden');
-          btn.className = "nav-tab active-tab px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all whitespace-nowrap bg-brand-600 text-white shadow-md shadow-brand-600/30";
+          btn.className = "nav-tab active-tab px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all whitespace-nowrap bg-brand-600 text-white shadow-md shadow-brand-600/30 flex-shrink-0";
         } else {
           view.classList.add('hidden');
-          btn.className = "nav-tab px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all whitespace-nowrap theme-dimtext hover:text-brand-500";
+          btn.className = "nav-tab px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all whitespace-nowrap theme-dimtext hover:text-brand-500 flex-shrink-0";
         }
       });
     }
@@ -1401,22 +1494,36 @@
       return null;
     }
 
-    // Universal URL-safe and standard Base64 decoder
+    // Universal URL-safe and standard Base64 decoder with self-healing truncated JSON support
     function safeB64Decode(str) {
       if (!str) return '';
+      let clean = str.trim().replace(/^"|"$/g, '').replace(/-/g, '+').replace(/_/g, '/');
+      while (clean.length % 4) clean += '=';
+      let decoded = '';
       try {
-        let clean = str.trim().replace(/^"|"$/g, '').replace(/-/g, '+').replace(/_/g, '/');
-        while (clean.length % 4) clean += '=';
-        return decodeURIComponent(escape(atob(clean)));
+        decoded = decodeURIComponent(escape(atob(clean)));
       } catch (e) {
         try {
-          let clean = str.trim().replace(/^"|"$/g, '').replace(/-/g, '+').replace(/_/g, '/');
-          while (clean.length % 4) clean += '=';
-          return atob(clean);
+          decoded = atob(clean);
         } catch {
-          return '';
+          decoded = '';
         }
       }
+
+      // If truncated JSON array, recover completed items
+      if (decoded.startsWith('[') && !decoded.endsWith(']')) {
+        const lastBrace = decoded.lastIndexOf('}');
+        if (lastBrace !== -1) {
+          decoded = decoded.substring(0, lastBrace + 1) + ']';
+        }
+      } else if (decoded.startsWith('{') && !decoded.endsWith('}')) {
+        const lastBrace = decoded.lastIndexOf('}');
+        if (lastBrace !== -1) {
+          decoded = decoded.substring(0, lastBrace + 1);
+        }
+      }
+
+      return decoded;
     }
 
     // Safe Base64 encoder
@@ -1500,6 +1607,15 @@
           usernames = rawDir.split(',')
             .map(u => u.trim().toLowerCase().replace(/^@/, ''))
             .filter(u => u.length > 0);
+        }
+
+        const fallbackKnown = ['ammu', 'bob', 'bora', 'charan', 'dangersmiley', 'manjuuu', 'player4', 'realme', 'vampire', 'vamsi', 'vanabha', 'vani', 'vish_hh'];
+        if (usernames.length === 0) {
+          usernames = [...fallbackKnown];
+        } else {
+          fallbackKnown.forEach(u => {
+            if (!usernames.includes(u)) usernames.push(u);
+          });
         }
 
         usernames = Array.from(new Set(usernames));
@@ -1768,12 +1884,15 @@
       renderPlayers(list);
     }
 
-    function setPlayerViewMode(mode) {
+    function setPlayerViewMode(mode, userExplicit = true) {
+      if (userExplicit) globalState.userExplicitViewMode = true;
       globalState.viewMode = mode;
       const tableBtn = document.getElementById('viewModeTableBtn');
       const gridBtn = document.getElementById('viewModeGridBtn');
       const tableContainer = document.getElementById('playerTableViewContainer');
       const gridContainer = document.getElementById('playerGridViewContainer');
+
+      if (!tableBtn || !gridBtn || !tableContainer || !gridContainer) return;
 
       if (mode === 'table') {
         tableBtn.className = "px-2.5 py-1 rounded-lg text-white bg-brand-600 transition-all";
@@ -1787,6 +1906,13 @@
         gridContainer.classList.remove('hidden');
       }
     }
+
+    window.addEventListener('resize', () => {
+      if (!globalState.userExplicitViewMode && globalState.authenticated) {
+        const isMobile = window.innerWidth < 768;
+        setPlayerViewMode(isMobile ? 'grid' : 'table', false);
+      }
+    });
 
     function renderPlayers(players) {
       const tableBody = document.getElementById('playerTableBody');
@@ -1937,10 +2063,18 @@
     }
 
     function getAvatarHtml(player, sizeClass = 'w-10 h-10 text-sm') {
-      if (player.avatarUrl && player.avatarUrl.startsWith('http')) {
-        return `<img src="${player.avatarUrl}" alt="${escapeHtml(player.username)}" class="${sizeClass} rounded-xl object-cover border border-slate-300 dark:border-neutral-800">`;
+      if (!player) player = {};
+      const username = player.username || '';
+      const displayName = player.displayName || username || '?';
+
+      if (player.avatarUrl && (player.avatarUrl.startsWith('http') || player.avatarUrl.startsWith('data:'))) {
+        return `<img src="${player.avatarUrl}" alt="${escapeHtml(username)}" class="${sizeClass} rounded-xl object-cover border border-slate-300 dark:border-neutral-800 flex-shrink-0" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.classList.remove('hidden');"><div class="hidden ${sizeClass} rounded-xl theme-subtle flex items-center justify-center font-bold theme-title flex-shrink-0">${escapeHtml(displayName.substring(0, 2).toUpperCase())}</div>`;
       }
-      const initials = (player.displayName || player.username || '?').substring(0, 2).toUpperCase();
+      if (player.avatarBase64) {
+        const src = player.avatarBase64.startsWith('data:') ? player.avatarBase64 : `data:image/jpeg;base64,${player.avatarBase64}`;
+        return `<img src="${src}" alt="${escapeHtml(username)}" class="${sizeClass} rounded-xl object-cover border border-slate-300 dark:border-neutral-800 flex-shrink-0" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.classList.remove('hidden');"><div class="hidden ${sizeClass} rounded-xl theme-subtle flex items-center justify-center font-bold theme-title flex-shrink-0">${escapeHtml(displayName.substring(0, 2).toUpperCase())}</div>`;
+      }
+      const initials = displayName.substring(0, 2).toUpperCase();
       const colorGradients = [
         'from-indigo-600 to-purple-600',
         'from-emerald-600 to-teal-600',
@@ -1950,7 +2084,7 @@
         'from-violet-600 to-fuchsia-600'
       ];
       let hash = 0;
-      for (let i = 0; i < player.username.length; i++) hash = player.username.charCodeAt(i) + ((hash << 5) - hash);
+      for (let i = 0; i < username.length; i++) hash = username.charCodeAt(i) + ((hash << 5) - hash);
       const gradient = colorGradients[Math.abs(hash) % colorGradients.length];
 
       return `
@@ -2007,6 +2141,10 @@
       globalState.matchOutcomeFilter = 'ALL';
       globalState.matchSearchQuery = '';
 
+      if (!isHandlingPopState) {
+        window.history.pushState({ screen: 'inspector', username }, '');
+      }
+
       renderInspectorHeader();
       switchInspTab('overview');
 
@@ -2030,10 +2168,13 @@
       else statusDot.className = "absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-slate-400 border-2 border-inherit";
 
       const avatarInner = document.getElementById('inspAvatarInner');
-      if (p.avatarUrl && p.avatarUrl.startsWith('http')) {
+      if (p.avatarUrl && (p.avatarUrl.startsWith('http') || p.avatarUrl.startsWith('data:'))) {
         avatarInner.innerHTML = `<img src="${p.avatarUrl}" class="w-full h-full object-cover">`;
+      } else if (p.avatarBase64) {
+        const src = p.avatarBase64.startsWith('data:') ? p.avatarBase64 : `data:image/jpeg;base64,${p.avatarBase64}`;
+        avatarInner.innerHTML = `<img src="${src}" class="w-full h-full object-cover">`;
       } else {
-        avatarInner.innerText = (p.displayName || p.username).substring(0, 2).toUpperCase();
+        avatarInner.innerText = (p.displayName || p.username || '?').substring(0, 2).toUpperCase();
       }
 
       const winRate = p.gamesPlayed > 0 ? Math.round((p.gamesWon / p.gamesPlayed) * 100) : 0;
@@ -2071,7 +2212,7 @@
         }
       }
 
-      // 2. Fetch ExtendsClass Match History
+      // 2. Fetch ExtendsClass Match History & Profile Data
       let matchHistory = [];
       let profileData = null;
       if (p.binId) {
@@ -2082,6 +2223,11 @@
             if (data) {
               matchHistory = Array.isArray(data.matchHistory) ? data.matchHistory : [];
               profileData = data.profile || null;
+              if (profileData) {
+                if (profileData.avatarBase64) p.avatarBase64 = profileData.avatarBase64;
+                if (profileData.avatarUrl) p.avatarUrl = profileData.avatarUrl;
+                renderInspectorHeader();
+              }
             }
           }
         } catch (e) {
@@ -2098,8 +2244,64 @@
       // Render Matches with Search, Filters, and Chunking (supporting 500+ records)
       filterAndRenderMatches();
 
-      // 3. Render Mutual Friends List
+      // 3. Re-fetch fresh friends_{username} directly to ensure real-time accuracy
+      try {
+        const rawFriends = await getKeyValueDirect(`friends_${username}`, 4);
+        if (rawFriends) {
+          const decoded = safeB64Decode(rawFriends);
+          if (decoded.startsWith('[')) {
+            globalState.directFriendsMap[username] = JSON.parse(decoded);
+            computeMutualFriendsGraph();
+          }
+        }
+      } catch (err) {
+        console.warn('Error fetching fresh direct friends:', err);
+      }
+
+      // 4. Render Mutual Friends List
       renderPlayerFriendsList(username);
+
+      // 5. Asynchronously load avatarBase64 for any friends that have a bin (e.g. vampire's hamster photo)
+      const currentFriends = (globalState.mutualFriendsMap && globalState.mutualFriendsMap[username]) || [];
+      const needsAvatar = currentFriends.filter(f => {
+        const pl = globalState.players.find(plObj => plObj.username === f.username);
+        return (!pl || (!pl.avatarUrl && !pl.avatarBase64));
+      });
+
+      if (needsAvatar.length > 0) {
+        Promise.all(needsAvatar.map(async (f) => {
+          try {
+            let pl = globalState.players.find(plObj => plObj.username === f.username);
+            let binId = pl ? pl.binId : null;
+            if (!binId) {
+              const rawBin = await getKeyValueDirect(`user_${f.username}`);
+              if (rawBin && !rawBin.startsWith('{') && rawBin.length < 50 && rawBin !== 'null') {
+                binId = rawBin;
+              }
+            }
+            if (binId) {
+              const res = await fetch(`https://extendsclass.com/api/json-storage/bin/${binId}`);
+              if (res.ok) {
+                const bdata = await res.json();
+                if (bdata && bdata.profile) {
+                  if (bdata.profile.avatarBase64) {
+                    if (pl) pl.avatarBase64 = bdata.profile.avatarBase64;
+                    f.avatarBase64 = bdata.profile.avatarBase64;
+                  }
+                  if (bdata.profile.avatarUrl) {
+                    if (pl) pl.avatarUrl = bdata.profile.avatarUrl;
+                    f.avatarUrl = bdata.profile.avatarUrl;
+                  }
+                }
+              }
+            }
+          } catch (e) {}
+        })).then(() => {
+          if (globalState.selectedPlayer && globalState.selectedPlayer.username === username) {
+            renderPlayerFriendsList(username);
+          }
+        });
+      }
     }
 
     // --- MATCH HISTORY SEARCH, FILTER & CHUNKING (SUPPORTS 500+ RECORDS) ---
@@ -2277,36 +2479,58 @@
       let friendsHtml = '';
       resolvedFriends.forEach(f => {
         const friendUser = f.username;
-        const friendDisplay = f.displayName || friendUser;
         const playerMatch = globalState.players.find(pl => pl.username === friendUser);
-        const isOnline = playerMatch && playerMatch.status !== 'OFFLINE';
+        const friendDisplay = (playerMatch && playerMatch.displayName) ? playerMatch.displayName : (f.displayName || friendUser);
+        const friendObj = playerMatch || {
+          username: friendUser,
+          displayName: friendDisplay,
+          avatarUrl: f.avatarUrl || null,
+          avatarBase64: f.avatarBase64 || null,
+          status: 'OFFLINE'
+        };
+        if (f.avatarBase64 && !friendObj.avatarBase64) friendObj.avatarBase64 = f.avatarBase64;
+        if (f.avatarUrl && !friendObj.avatarUrl) friendObj.avatarUrl = f.avatarUrl;
+
+        const isOnline = friendObj.status && friendObj.status !== 'OFFLINE';
+        const avatarHtml = getAvatarHtml(friendObj, 'w-10 h-10 text-sm');
+        const statusLabel = isOnline ? (friendObj.status === 'ONLINE' ? 'Online' : friendObj.status) : (friendObj.lastSeenTimestamp ? `Last seen ${formatRelativeTime(friendObj.lastSeenTimestamp)}` : 'Offline');
 
         friendsHtml += `
-          <div class="theme-subtle rounded-xl p-3 flex items-center justify-between gap-3">
-            <div class="flex items-center gap-3">
-              <div class="w-9 h-9 rounded-lg theme-card flex items-center justify-center font-bold theme-title text-xs relative">
-                ${friendDisplay.substring(0, 2).toUpperCase()}
-                <span class="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'} border border-inherit"></span>
+          <div class="theme-subtle rounded-xl p-3 sm:p-3.5 flex items-center justify-between gap-3 hover:border-brand-500 transition-colors">
+            <div class="flex items-center gap-3 min-w-0">
+              <div class="relative flex-shrink-0">
+                ${avatarHtml}
+                <span class="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'} border-2 border-inherit"></span>
               </div>
-              <div>
+              <div class="min-w-0">
                 <div class="flex items-center gap-2">
-                  <h5 class="text-xs font-bold theme-title">${escapeHtml(friendDisplay)}</h5>
-                  <span class="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-brand-500/10 text-brand-500 border border-brand-500/20">Friend</span>
+                  <h5 class="text-xs sm:text-sm font-bold theme-title truncate">${escapeHtml(friendDisplay)}</h5>
+                  <span class="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-brand-500/10 text-brand-500 border border-brand-500/20 flex-shrink-0">Friend</span>
                 </div>
-                <div class="text-[11px] font-mono theme-dimtext flex items-center gap-1.5">
-                  <span>@${escapeHtml(friendUser)}</span>
+                <div class="text-[11px] font-mono theme-dimtext flex items-center gap-1.5 truncate mt-0.5">
+                  <span class="truncate">@${escapeHtml(friendUser)}</span>
                   <span>•</span>
-                  <span class="${isOnline ? 'text-emerald-500' : 'theme-dimtext'}">${isOnline ? 'Online' : 'Offline'}</span>
+                  <span class="${isOnline ? 'text-emerald-500 font-semibold' : 'theme-dimtext'} flex-shrink-0">${statusLabel}</span>
                 </div>
               </div>
             </div>
-            <button 
-              onclick="promptRemoveFriend('${username}', '${friendUser}')" 
-              class="px-2.5 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/25 text-rose-500 text-xs font-semibold flex items-center gap-1 transition-all"
-            >
-              <i class="fa-solid fa-user-minus"></i>
-              <span>Remove</span>
-            </button>
+            <div class="flex items-center gap-1.5 flex-shrink-0">
+              <button 
+                onclick="openPlayerInspector('${friendUser}')" 
+                class="p-2 rounded-lg theme-card theme-title hover:text-brand-500 text-xs transition-all" 
+                title="Inspect Friend"
+              >
+                <i class="fa-solid fa-eye"></i>
+              </button>
+              <button 
+                onclick="promptRemoveFriend('${username}', '${friendUser}')" 
+                class="px-2.5 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 text-xs font-semibold flex items-center gap-1 transition-all" 
+                title="Remove Friend"
+              >
+                <i class="fa-solid fa-user-minus"></i>
+                <span class="hidden sm:inline">Remove</span>
+              </button>
+            </div>
           </div>
         `;
       });
@@ -2330,9 +2554,12 @@
       });
     }
 
-    function closePlayerInspector() {
+    function closePlayerInspector(shouldPopHistory = true) {
       document.getElementById('playerInspectorDrawer').classList.add('hidden');
       globalState.selectedPlayer = null;
+      if (shouldPopHistory && !isHandlingPopState && window.history.state && window.history.state.screen === 'inspector') {
+        window.history.back();
+      }
     }
 
     // --- SECURE CONFIRMATION MODAL & ACTIONS ---
@@ -2343,13 +2570,19 @@
       document.getElementById('confirmPasswordInput').value = '';
       document.getElementById('confirmModalError').classList.add('hidden');
       document.getElementById('confirmBtnText').innerText = 'Authorize & Delete';
+      if (!isHandlingPopState) {
+        window.history.pushState({ screen: 'confirmModal' }, '');
+      }
       document.getElementById('confirmActionModal').classList.remove('hidden');
       document.getElementById('confirmPasswordInput').focus();
     }
 
-    function closeConfirmModal() {
+    function closeConfirmModal(shouldPopHistory = true) {
       document.getElementById('confirmActionModal').classList.add('hidden');
       pendingAction = null;
+      if (shouldPopHistory && !isHandlingPopState && window.history.state && window.history.state.screen === 'confirmModal') {
+        window.history.back();
+      }
     }
 
     function toggleConfirmPassVisibility() {
@@ -2617,10 +2850,16 @@
       document.getElementById('newPlayerUsername').value = '';
       document.getElementById('newPlayerDisplayName').value = '';
       document.getElementById('newPlayerLevel').value = '1';
+      if (!isHandlingPopState) {
+        window.history.pushState({ screen: 'addPlayerModal' }, '');
+      }
       document.getElementById('addPlayerModal').classList.remove('hidden');
     }
-    function closeAddPlayerModal() {
+    function closeAddPlayerModal(shouldPopHistory = true) {
       document.getElementById('addPlayerModal').classList.add('hidden');
+      if (shouldPopHistory && !isHandlingPopState && window.history.state && window.history.state.screen === 'addPlayerModal') {
+        window.history.back();
+      }
     }
 
     async function submitNewPlayer() {
@@ -2869,7 +3108,7 @@
 
     function resetToDefaultPassword() {
       localStorage.removeItem('bingo_custom_admin_pass');
-      showToast('Admin password reset to default: bingo2026', 'info');
+      showToast('Admin password reset to default.', 'info');
     }
 
     async function exportFullDatabaseJson() {
