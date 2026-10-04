@@ -66,7 +66,15 @@ import com.bingo.multiplayer.domain.network.EmojiPreferences
 import com.bingo.multiplayer.presentation.components.AnimatedEmoji
 import com.bingo.multiplayer.domain.network.AppUpdateManager
 import com.bingo.multiplayer.domain.network.UpdateState
+import com.bingo.multiplayer.domain.network.BroadcastMessage
+import com.bingo.multiplayer.domain.network.BroadcastMessageManager
 import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.Campaign
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.AdminPanelSettings
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -176,6 +184,20 @@ fun SettingsScreen(
         mutableStateOf(EmojiPreferences.getFavoriteEmojis(context))
     }
     var showAddFavoriteEmojiDialog by remember { mutableStateOf(false) }
+
+    var isAdminUnlocked by remember { mutableStateOf(false) }
+    var showAdminPasswordDialog by remember { mutableStateOf(false) }
+    var adminPasswordInput by remember { mutableStateOf("") }
+    var adminPasswordVisible by remember { mutableStateOf(false) }
+    var adminPasswordError by remember { mutableStateOf<String?>(null) }
+
+    var showAdminConsoleDialog by remember { mutableStateOf(false) }
+    var broadcastTitleInput by remember { mutableStateOf("") }
+    var broadcastMessageInput by remember { mutableStateOf("") }
+    var broadcastTypeInput by remember { mutableStateOf("INFO") }
+    var broadcastAuthorInput by remember(user.displayName) { mutableStateOf(if (user.username.isNotBlank()) user.username else "Admin") }
+    var isTransmittingBroadcast by remember { mutableStateOf(false) }
+    var currentLiveBroadcast by remember { mutableStateOf<BroadcastMessage?>(null) }
 
     // System Image Picker launcher for picking photo from local storage
     val photoPickerLauncher = rememberLauncherForActivityResult(
@@ -2150,9 +2172,443 @@ fun SettingsScreen(
                         color = tokens.accentBrand.copy(alpha = 0.75f)
                     )
                 }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // ── Admin Broadcast Console Button ──
+                OutlinedButton(
+                    onClick = {
+                        if (isAdminUnlocked || user.username.equals("Bora", ignoreCase = true)) {
+                            showAdminConsoleDialog = true
+                        } else {
+                            showAdminPasswordDialog = true
+                        }
+                    },
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, tokens.cellNeutralBorder.copy(alpha = 0.4f)),
+                    modifier = Modifier.height(38.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Campaign,
+                        contentDescription = null,
+                        tint = tokens.accentBrand,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Admin Broadcast Console",
+                        fontSize = 12.sp,
+                        color = tokens.cellNeutralText,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(84.dp))
+        }
+
+        // ── Admin Password Authentication Dialog ──
+        if (showAdminPasswordDialog) {
+            AlertDialog(
+                onDismissRequest = {
+                    showAdminPasswordDialog = false
+                    adminPasswordInput = ""
+                    adminPasswordError = null
+                },
+                shape = RoundedCornerShape(20.dp),
+                containerColor = tokens.surface,
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.AdminPanelSettings,
+                            contentDescription = null,
+                            tint = tokens.accentBrand,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Admin Authentication",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 17.sp,
+                            color = tokens.cellNeutralText
+                        )
+                    }
+                },
+                text = {
+                    Column {
+                        Text(
+                            text = "Enter the administrator password to access the global broadcast console:",
+                            fontSize = 13.sp,
+                            color = tokens.textMuted
+                        )
+                        Spacer(modifier = Modifier.height(14.dp))
+                        OutlinedTextField(
+                            value = adminPasswordInput,
+                            onValueChange = {
+                                adminPasswordInput = it
+                                adminPasswordError = null
+                            },
+                            singleLine = true,
+                            label = { Text("Admin Password") },
+                            visualTransformation = if (adminPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                            trailingIcon = {
+                                IconButton(onClick = { adminPasswordVisible = !adminPasswordVisible }) {
+                                    Icon(
+                                        imageVector = if (adminPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                        contentDescription = null,
+                                        tint = tokens.textMuted
+                                    )
+                                }
+                            },
+                            isError = adminPasswordError != null,
+                            supportingText = if (adminPasswordError != null) { { Text(adminPasswordError!!) } } else null,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = tokens.accentBrand,
+                                cursorColor = tokens.accentBrand
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            val input = adminPasswordInput.trim()
+                            if (input == "bora7989" || (user.username.equals("Bora", ignoreCase = true) && input.isNotBlank())) {
+                                isAdminUnlocked = true
+                                showAdminPasswordDialog = false
+                                adminPasswordInput = ""
+                                adminPasswordError = null
+                                showAdminConsoleDialog = true
+                                Toast.makeText(context, "Admin console unlocked!", Toast.LENGTH_SHORT).show()
+                            } else {
+                                adminPasswordError = "Incorrect password"
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = tokens.accentBrand)
+                    ) {
+                        Text("Unlock", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        showAdminPasswordDialog = false
+                        adminPasswordInput = ""
+                        adminPasswordError = null
+                    }) {
+                        Text("Cancel", color = tokens.cellNeutralText)
+                    }
+                }
+            )
+        }
+
+        // ── Admin Broadcast Console Dialog ──
+        if (showAdminConsoleDialog) {
+            LaunchedEffect(Unit) {
+                currentLiveBroadcast = BroadcastMessageManager.fetchCurrentActiveBroadcast()
+            }
+
+            AlertDialog(
+                onDismissRequest = {
+                    if (!isTransmittingBroadcast) showAdminConsoleDialog = false
+                },
+                shape = RoundedCornerShape(24.dp),
+                containerColor = tokens.surface,
+                title = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Campaign,
+                                contentDescription = null,
+                                tint = tokens.accentBrand,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Broadcast Console",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 18.sp,
+                                color = tokens.cellNeutralText
+                            )
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = Color(0xFF10B981).copy(alpha = 0.15f)
+                        ) {
+                            Text(
+                                text = "Admin",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF10B981),
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                },
+                text = {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(420.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        // Active Broadcast Status
+                        val activeMsg = currentLiveBroadcast
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = tokens.backgroundSecondary,
+                            border = BorderStroke(1.dp, tokens.surfaceBorder),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        text = "LIVE CLOUD STATUS",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        letterSpacing = 0.8.sp,
+                                        color = tokens.textMuted
+                                    )
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = if (activeMsg != null && activeMsg.active) Color(0xFF10B981).copy(alpha = 0.2f) else Color.Gray.copy(alpha = 0.2f)
+                                    ) {
+                                        Text(
+                                            text = if (activeMsg != null && activeMsg.active) "● ACTIVE" else "○ IDLE",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (activeMsg != null && activeMsg.active) Color(0xFF10B981) else Color.Gray,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                                if (activeMsg != null && activeMsg.active) {
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = activeMsg.title,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = tokens.cellNeutralText
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = activeMsg.message,
+                                        fontSize = 12.sp,
+                                        color = tokens.textMuted,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                } else {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "No active broadcast running",
+                                        fontSize = 11.sp,
+                                        color = tokens.textMuted
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        Text(
+                            text = "COMPOSE NEW BROADCAST",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.8.sp,
+                            color = tokens.textMuted
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        OutlinedTextField(
+                            value = broadcastTitleInput,
+                            onValueChange = { broadcastTitleInput = it },
+                            singleLine = true,
+                            label = { Text("Title") },
+                            placeholder = { Text("e.g. Server Maintenance Notice") },
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        OutlinedTextField(
+                            value = broadcastMessageInput,
+                            onValueChange = { broadcastMessageInput = it },
+                            minLines = 3,
+                            maxLines = 5,
+                            label = { Text("Message Body") },
+                            placeholder = { Text("Enter the announcement for all players...") },
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Text(
+                            text = "ANNOUNCEMENT TYPE",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.8.sp,
+                            color = tokens.textMuted
+                        )
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            val types = listOf(
+                                Triple("INFO", "📢 Info", tokens.accentBrand),
+                                Triple("ALERT", "⚠️ Alert", Color(0xFFEF4444)),
+                                Triple("MAINTENANCE", "🛠️ Fix", Color(0xFFF59E0B))
+                            )
+                            types.forEach { (typeKey, label, color) ->
+                                val isSelected = broadcastTypeInput == typeKey
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (isSelected) color.copy(alpha = 0.2f) else tokens.backgroundSecondary,
+                                    border = BorderStroke(
+                                        width = if (isSelected) 1.5.dp else 0.5.dp,
+                                        color = if (isSelected) color else tokens.surfaceBorder
+                                    ),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clickable { broadcastTypeInput = typeKey }
+                                ) {
+                                    Box(
+                                        contentAlignment = Alignment.Center,
+                                        modifier = Modifier.padding(vertical = 8.dp)
+                                    ) {
+                                        Text(
+                                            text = label,
+                                            fontSize = 11.sp,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (isSelected) color else tokens.cellNeutralText
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        OutlinedTextField(
+                            value = broadcastAuthorInput,
+                            onValueChange = { broadcastAuthorInput = it },
+                            singleLine = true,
+                            label = { Text("Author Display") },
+                            placeholder = { Text("Admin / Bora") },
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // Transmit Button
+                        Button(
+                            onClick = {
+                                val title = broadcastTitleInput.trim()
+                                val msg = broadcastMessageInput.trim()
+                                if (title.isBlank() || msg.isBlank()) {
+                                    Toast.makeText(context, "Please enter both title and message", Toast.LENGTH_SHORT).show()
+                                    return@Button
+                                }
+                                isTransmittingBroadcast = true
+                                coroutineScope.launch {
+                                    val success = BroadcastMessageManager.publishBroadcast(
+                                        title = title,
+                                        message = msg,
+                                        type = broadcastTypeInput,
+                                        author = broadcastAuthorInput.trim().ifBlank { "Admin" }
+                                    )
+                                    isTransmittingBroadcast = false
+                                    if (success) {
+                                        currentLiveBroadcast = BroadcastMessageManager.fetchCurrentActiveBroadcast()
+                                        Toast.makeText(context, "Broadcast sent to all players! 🚀", Toast.LENGTH_LONG).show()
+                                        broadcastTitleInput = ""
+                                        broadcastMessageInput = ""
+                                    } else {
+                                        Toast.makeText(context, "Failed to transmit broadcast", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            },
+                            enabled = !isTransmittingBroadcast,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = tokens.accentBrand),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            if (isTransmittingBroadcast) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Transmitting...", color = Color.White, fontSize = 13.sp)
+                            } else {
+                                Icon(Icons.Default.Campaign, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color.White)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Transmit Broadcast to All Players 🚀", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Clear and Preview options
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        BroadcastMessageManager.clearBroadcast()
+                                        currentLiveBroadcast = null
+                                        Toast.makeText(context, "Active broadcast removed", Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text("Clear Active", color = Color(0xFFEF4444), fontSize = 11.sp)
+                            }
+
+                            OutlinedButton(
+                                onClick = {
+                                    val previewMsg = BroadcastMessage(
+                                        id = "preview",
+                                        title = broadcastTitleInput.ifBlank { "Sample Announcement" },
+                                        message = broadcastMessageInput.ifBlank { "This is a preview of how the broadcast message dialog will look on player devices." },
+                                        type = broadcastTypeInput,
+                                        author = broadcastAuthorInput.ifBlank { "Admin" },
+                                        timestamp = System.currentTimeMillis(),
+                                        active = true
+                                    )
+                                    BroadcastMessageManager.previewLocally(previewMsg)
+                                    showAdminConsoleDialog = false
+                                },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text("Preview Dialog", color = tokens.accentBrand, fontSize = 11.sp)
+                            }
+                        }
+                    }
+                },
+                confirmButton = {},
+                dismissButton = {
+                    TextButton(onClick = { showAdminConsoleDialog = false }) {
+                        Text("Close", color = tokens.cellNeutralText)
+                    }
+                }
+            )
         }
 
         val profileToDisplay = selectedProfilePlayer

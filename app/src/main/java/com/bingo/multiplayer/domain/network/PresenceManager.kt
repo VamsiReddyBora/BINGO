@@ -510,6 +510,14 @@ object PresenceManager {
                                     Log.w(TAG, "Error handling avatar update for $topic: ${e.message}")
                                 }
                             }
+                            client.subscribe(BroadcastMessageManager.MQTT_BROADCAST_TOPIC, 1) { topic, message ->
+                                try {
+                                    val payload = String(message.payload, StandardCharsets.UTF_8)
+                                    BroadcastMessageManager.onBroadcastReceived(payload)
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Error handling broadcast message: ${e.message}")
+                                }
+                            }
                         } catch (e: Exception) {
                             Log.w(TAG, "Error subscribing to presence: ${e.message}")
                         }

@@ -51,6 +51,7 @@ object AppUpdateManager {
     val updateState: StateFlow<UpdateState> = _updateState.asStateFlow()
 
     private val scope = CoroutineScope(Dispatchers.IO)
+    private var hasDismissedInSession = false
 
     /**
      * Compares semantic version strings (e.g. "1.3" vs "1.2", "1.2.1" vs "1.2.0").
@@ -94,6 +95,11 @@ object AppUpdateManager {
      * @param manual If true, sets state to UpToDate if no update is found (for explicit user clicks).
      */
     fun checkForUpdates(context: Context, manual: Boolean = false) {
+        if (!manual && hasDismissedInSession) {
+            Log.d(TAG, "Update check skipped: user already dismissed update prompt in this session")
+            return
+        }
+
         scope.launch {
             if (_updateState.value is UpdateState.Downloading) {
                 Log.d(TAG, "Download in progress, ignoring check request")
@@ -344,8 +350,10 @@ object AppUpdateManager {
 
     /**
      * Dismisses the update dialog or resets state back to Idle.
+     * Records dismissal for this session so the user is not prompted again until restart.
      */
     fun dismiss() {
+        hasDismissedInSession = true
         _updateState.value = UpdateState.Idle
     }
 

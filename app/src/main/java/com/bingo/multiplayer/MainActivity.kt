@@ -16,6 +16,8 @@ import com.bingo.multiplayer.domain.network.PresenceManager
 import com.bingo.multiplayer.domain.repository.AuthRepository
 import com.bingo.multiplayer.domain.repository.FriendsRepository
 import com.bingo.multiplayer.presentation.components.AppUpdateDialog
+import com.bingo.multiplayer.presentation.components.BroadcastMessageDialog
+import com.bingo.multiplayer.domain.network.BroadcastMessageManager
 import com.bingo.multiplayer.presentation.navigation.RootNavGraph
 
 import androidx.lifecycle.lifecycleScope
@@ -54,10 +56,12 @@ class MainActivity : ComponentActivity() {
         authRepository = AuthRepository(applicationContext)
         friendsRepository = FriendsRepository(applicationContext)
 
-        // Asynchronously check for app updates silently after launch splash animation completes
+        // Asynchronously check for app updates and active broadcast silently after launch splash animation completes
         lifecycleScope.launch {
             delay(3500)
             AppUpdateManager.checkForUpdates(applicationContext, manual = false)
+            delay(500)
+            BroadcastMessageManager.checkForBroadcast()
         }
 
         setContent {
@@ -101,6 +105,7 @@ class MainActivity : ComponentActivity() {
                     friendsRepository = friendsRepository
                 )
                 AppUpdateDialog()
+                BroadcastMessageDialog()
             }
         }
     }
