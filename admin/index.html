@@ -2419,6 +2419,7 @@
             }
 
             // Step B: Fetch ground-truth profile from ExtendsClass bin
+            let binLastSeen = 0;
             if (binId) {
               try {
                 const controller = new AbortController();
@@ -2430,6 +2431,7 @@
                   if (data) {
                     binProfile = data.profile || null;
                     matchHistory = Array.isArray(data.matchHistory) ? data.matchHistory : null;
+                    binLastSeen = data.lastBackupTimestamp || data.profile?.lastSeenTimestamp || (matchHistory && matchHistory[0]?.timestamp) || 0;
                   }
                 }
               } catch (e) {
@@ -2437,8 +2439,8 @@
               }
             }
 
-            // Step C: Fallback to reg_{uname} from KeyValue if binProfile is missing
-            if (!binProfile) {
+            // Step C: Fallback to reg_{uname} from KeyValue if binProfile is missing or binLastSeen is 0
+            if (!binProfile || !binLastSeen) {
               try {
                 const rawReg = await getKeyValueDirect(`reg_${uname}`, 2);
                 if (rawReg) {
@@ -2446,6 +2448,18 @@
                   if (decoded.startsWith('{')) {
                     regData = JSON.parse(decoded);
                   }
+                }
+              } catch {}
+            }
+
+            // Step D: Fallback to pres_{uname} from KeyValue if lastSeen is still not found
+            if (!binLastSeen && !regData?.lastSeenTimestamp) {
+              try {
+                const rawPres = await getKeyValueDirect(`pres_${uname}`, 2);
+                if (rawPres && rawPres.includes(':')) {
+                  const pParts = rawPres.split(':');
+                  const pTs = parseInt(pParts[1]);
+                  if (pTs > 0) binLastSeen = pTs;
                 }
               } catch {}
             }
@@ -2459,6 +2473,7 @@
             const level = Math.max(existing.level || 1, binProfile?.level || 1, regData?.level || 1);
             const bestStreak = Math.max(existing.bestStreak || 0, binProfile?.bestStreak || 0, regData?.bestStreak || 0);
             const currentStreak = binProfile?.currentStreak !== undefined ? binProfile.currentStreak : (regData?.currentStreak !== undefined ? regData.currentStreak : (existing.currentStreak || 0));
+            const lastSeen = Math.max(existing.lastSeenTimestamp || 0, binLastSeen || 0, regData?.lastSeenTimestamp || 0);
 
             const playerObj = {
               username: uname,
@@ -2471,7 +2486,7 @@
               bestStreak: bestStreak,
               avatarUrl: binProfile?.avatarUrl || regData?.avatarUrl || existing.avatarUrl || null,
               avatarBase64: binProfile?.avatarBase64 || existing.avatarBase64 || null,
-              lastSeenTimestamp: regData?.lastSeenTimestamp || existing.lastSeenTimestamp || Date.now(),
+              lastSeenTimestamp: lastSeen,
               status: existing.status || 'OFFLINE',
               binId: binId,
               rawReg: regData || existing.rawReg || null
@@ -2497,7 +2512,7 @@
               currentStreak: 0,
               bestStreak: 0,
               avatarUrl: null,
-              lastSeenTimestamp: now,
+              lastSeenTimestamp: 0,
               status: 'OFFLINE',
               binId: null,
               rawReg: null
@@ -2744,7 +2759,16 @@
       let tableHtml = '';
       players.forEach(p => {
         const winRate = p.gamesPlayed > 0 ? Math.round((p.gamesWon / p.gamesPlayed) * 100) : 0;
-        const relativeTime = formatRelativeTime(p.lastSeenTimestamp);
+        let seenDisplay = '';
+        if (p.status === 'IN_LOBBY' || p.status === 'LOBBY') {
+          seenDisplay = '<span class="text-amber-500 font-semibold flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse inline-block"></span>In Lobby</span>';
+        } else if (p.status === 'PLAYING' || p.status === 'IN_GAME') {
+          seenDisplay = '<span class="text-purple-500 font-semibold flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-purple-500 animate-ping inline-block"></span>Playing now</span>';
+        } else if (p.status === 'ONLINE') {
+          seenDisplay = '<span class="text-emerald-500 font-semibold flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse inline-block"></span>Active now</span>';
+        } else {
+          seenDisplay = formatRelativeTime(p.lastSeenTimestamp);
+        }
         const statusBadge = getStatusBadgeHtml(p.status);
         const avatarHtml = getAvatarHtml(p, 'w-10 h-10 text-sm');
 
@@ -2789,7 +2813,7 @@
               ` : '<span class="theme-dimtext text-xs">-</span>'}
             </td>
             <td class="py-3.5 px-4 text-xs theme-dimtext whitespace-nowrap">
-              ${relativeTime}
+              ${seenDisplay}
             </td>
             <td class="py-3.5 px-4 text-right whitespace-nowrap">
               <div class="flex items-center justify-end gap-1.5">
@@ -2825,7 +2849,16 @@
       let gridHtml = '';
       players.forEach(p => {
         const winRate = p.gamesPlayed > 0 ? Math.round((p.gamesWon / p.gamesPlayed) * 100) : 0;
-        const relativeTime = formatRelativeTime(p.lastSeenTimestamp);
+        let seenCardText = '';
+        if (p.status === 'IN_LOBBY' || p.status === 'LOBBY') {
+          seenCardText = 'In Lobby';
+        } else if (p.status === 'PLAYING' || p.status === 'IN_GAME') {
+          seenCardText = 'Playing now';
+        } else if (p.status === 'ONLINE') {
+          seenCardText = 'Active now';
+        } else {
+          seenCardText = formatRelativeTime(p.lastSeenTimestamp);
+        }
         const statusBadge = getStatusBadgeHtml(p.status);
         const avatarHtml = getAvatarHtml(p, 'w-12 h-12 text-base');
 
@@ -2858,7 +2891,7 @@
             </div>
 
             <div class="flex items-center justify-between text-xs theme-dimtext pt-1">
-              <span>Seen: ${relativeTime}</span>
+              <span>Seen: ${seenCardText}</span>
               <div class="flex items-center gap-1.5">
                 <button 
                   onclick="quickMessagePlayer('${p.username}')" 
@@ -2936,9 +2969,10 @@
     }
 
     function formatRelativeTime(ts) {
-      if (!ts) return 'Never';
+      if (!ts || ts <= 0) return 'Never';
       const now = Date.now();
       const diffSec = Math.floor((now - ts) / 1000);
+      if (diffSec < 0) return 'Just now';
       if (diffSec < 60) return 'Just now';
       if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
       if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
@@ -3028,7 +3062,7 @@
 
       document.getElementById('inspUid').innerText = p.uid;
       document.getElementById('inspBinId').innerText = p.binId || 'None assigned';
-      document.getElementById('inspLastSeen').innerText = p.lastSeenTimestamp ? new Date(p.lastSeenTimestamp).toLocaleString() : 'Unknown';
+      document.getElementById('inspLastSeen').innerText = p.lastSeenTimestamp ? `${new Date(p.lastSeenTimestamp).toLocaleString()} (${formatRelativeTime(p.lastSeenTimestamp)})` : 'Never';
     }
 
     async function loadPlayerDeepData(username) {
@@ -3067,6 +3101,10 @@
             if (data) {
               matchHistory = Array.isArray(data.matchHistory) ? data.matchHistory : [];
               profileData = data.profile || null;
+              const binLastSeen = data.lastBackupTimestamp || profileData?.lastSeenTimestamp || (matchHistory && matchHistory[0]?.timestamp) || 0;
+              if (binLastSeen > 0) {
+                p.lastSeenTimestamp = Math.max(p.lastSeenTimestamp || 0, binLastSeen);
+              }
               if (profileData) {
                 p.level = Math.max(p.level || 1, profileData.level || 1);
                 p.gamesPlayed = Math.max(p.gamesPlayed || 0, profileData.gamesPlayed || 0, matchHistory.length);
@@ -3987,22 +4025,24 @@
       }
 
       let status = 'OFFLINE';
-      let ts = Date.now();
+      let ts = 0;
 
       try {
         if (payload && payload.startsWith('{')) {
           const pObj = JSON.parse(payload);
           status = (pObj.status || 'OFFLINE').trim().toUpperCase();
-          ts = pObj.timestamp || Date.now();
+          ts = (typeof pObj.timestamp === 'number') ? pObj.timestamp : (parseInt(pObj.timestamp) || 0);
         } else if (payload && payload.includes(':')) {
           const parts = payload.split(':');
           status = (parts[0] || 'OFFLINE').trim().toUpperCase();
-          ts = parseInt(parts[1]) || Date.now();
+          ts = parseInt(parts[1]) || 0;
         } else if (payload) {
           status = payload.trim().toUpperCase();
+          ts = 0;
         }
       } catch {
         status = 'OFFLINE';
+        ts = 0;
       }
 
       // Status normalization
@@ -4019,7 +4059,7 @@
       if (ts === 0) status = 'OFFLINE';
 
       // Check freshness: if older than 35s and not OFFLINE, consider OFFLINE
-      if (status !== 'OFFLINE' && (Date.now() - ts > 35000)) {
+      if (status !== 'OFFLINE' && ts > 0 && (Date.now() - ts > 35000)) {
         status = 'OFFLINE';
       }
 
@@ -4068,7 +4108,7 @@
           currentStreak: entry.currentStreak || 0,
           bestStreak: entry.bestStreak || 0,
           avatarUrl: entry.avatarUrl || null,
-          lastSeenTimestamp: entry.lastSeenTimestamp || Date.now(),
+          lastSeenTimestamp: entry.lastSeenTimestamp || 0,
           status: initialStatus,
           binId: knownBin,
           rawReg: entry
@@ -4109,7 +4149,7 @@
       }
     }
 
-    async function fetchSinglePlayerImmediate(username, status = 'ONLINE', ts = Date.now()) {
+    async function fetchSinglePlayerImmediate(username, status = 'ONLINE', ts = 0) {
       if (!username || globalState.fetchingPlayers.has(username)) return;
       if (globalState.validUsernamesSet && globalState.validUsernamesSet.size > 0 && !globalState.validUsernamesSet.has(username)) {
         return; // Refuse to fetch deleted / unregistered accounts
@@ -4121,6 +4161,7 @@
         let binProfile = null;
         let matchHistory = null;
         let regData = null;
+        let binLastSeen = 0;
 
         if (!binId) {
           const rawBin = await getKeyValueDirect(`user_${username}`, 2);
@@ -4137,12 +4178,13 @@
               if (data) {
                 binProfile = data.profile || null;
                 matchHistory = Array.isArray(data.matchHistory) ? data.matchHistory : null;
+                binLastSeen = data.lastBackupTimestamp || data.profile?.lastSeenTimestamp || (matchHistory && matchHistory[0]?.timestamp) || 0;
               }
             }
           } catch {}
         }
 
-        if (!binProfile) {
+        if (!binProfile || !binLastSeen) {
           const rawReg = await getKeyValueDirect(`reg_${username}`, 2);
           if (rawReg) {
             const decoded = safeB64Decode(rawReg);
@@ -4152,6 +4194,17 @@
           }
         }
 
+        if (!binLastSeen && !regData?.lastSeenTimestamp) {
+          try {
+            const rawPres = await getKeyValueDirect(`pres_${username}`, 2);
+            if (rawPres && rawPres.includes(':')) {
+              const pParts = rawPres.split(':');
+              const pTs = parseInt(pParts[1]);
+              if (pTs > 0) binLastSeen = pTs;
+            }
+          } catch {}
+        }
+
         const existing = globalState.playerCache[username] || {};
         const matchHistoryLen = Array.isArray(matchHistory) ? matchHistory.length : 0;
         const gamesPlayed = Math.max(existing.gamesPlayed || 0, binProfile?.gamesPlayed || 0, matchHistoryLen, regData?.gamesPlayed || 0);
@@ -4159,6 +4212,7 @@
         const level = Math.max(existing.level || 1, binProfile?.level || 1, regData?.level || 1);
         const bestStreak = Math.max(existing.bestStreak || 0, binProfile?.bestStreak || 0, regData?.bestStreak || 0);
         const currentStreak = binProfile?.currentStreak !== undefined ? binProfile.currentStreak : (regData?.currentStreak !== undefined ? regData.currentStreak : (existing.currentStreak || 0));
+        const lastSeen = Math.max(existing.lastSeenTimestamp || 0, binLastSeen || 0, regData?.lastSeenTimestamp || 0, ts || 0);
 
         let player = globalState.players.find(p => p.username === username);
         if (!player) {
@@ -4173,7 +4227,7 @@
             bestStreak: bestStreak,
             avatarUrl: binProfile?.avatarUrl || regData?.avatarUrl || existing.avatarUrl || null,
             avatarBase64: binProfile?.avatarBase64 || existing.avatarBase64 || null,
-            lastSeenTimestamp: regData?.lastSeenTimestamp || existing.lastSeenTimestamp || ts,
+            lastSeenTimestamp: lastSeen,
             status: status,
             binId: binId,
             rawReg: regData || existing.rawReg || null
@@ -4190,6 +4244,7 @@
           if (binProfile?.avatarBase64) player.avatarBase64 = binProfile.avatarBase64;
           if (binProfile?.avatarUrl || regData?.avatarUrl) player.avatarUrl = binProfile?.avatarUrl || regData?.avatarUrl;
           if (binId) player.binId = binId;
+          if (lastSeen > 0) player.lastSeenTimestamp = Math.max(player.lastSeenTimestamp || 0, lastSeen);
         }
 
         if (!globalState.playerCache) globalState.playerCache = {};
@@ -4953,7 +5008,7 @@
           bestStreak: Math.max(p.bestStreak || 0, newStreak),
           gamesPlayed: newPlayed,
           gamesWon: newWon,
-          lastSeenTimestamp: p.lastSeenTimestamp || Date.now()
+          lastSeenTimestamp: p.lastSeenTimestamp || 0
         };
 
         // 1. Update KeyValue reg_{username}
