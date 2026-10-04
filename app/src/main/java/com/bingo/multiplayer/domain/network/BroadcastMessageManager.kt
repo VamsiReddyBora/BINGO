@@ -30,9 +30,13 @@ data class BroadcastMessage(
     val message: String = "",
     val type: String = "INFO", // "INFO", "ALERT", "MAINTENANCE"
     val author: String = "Admin",
+    val targetUsername: String = "", // "" or "ALL" for everyone, or specific username like "@john"
     val timestamp: Long = 0L,
     val active: Boolean = true
 ) {
+    val isDirectMessage: Boolean
+        get() = targetUsername.isNotBlank() && !targetUsername.equals("ALL", ignoreCase = true)
+
     fun toJsonString(): String {
         val json = JSONObject()
         json.put("id", id)
@@ -40,6 +44,7 @@ data class BroadcastMessage(
         json.put("message", message)
         json.put("type", type)
         json.put("author", author)
+        json.put("targetUsername", targetUsername)
         json.put("timestamp", timestamp)
         json.put("active", active)
         return json.toString()
@@ -61,6 +66,7 @@ data class BroadcastMessage(
                     message = json.optString("message", ""),
                     type = json.optString("type", "INFO"),
                     author = json.optString("author", "Admin"),
+                    targetUsername = json.optString("targetUsername", ""),
                     timestamp = json.optLong("timestamp", 0L),
                     active = json.optBoolean("active", true)
                 )
@@ -84,10 +90,34 @@ object BroadcastMessageManager {
     private val scope = CoroutineScope(Dispatchers.IO)
 
     /**
+     * Retrieves current logged in username from SharedPreferences.
+     */
+    fun getLocalUsername(context: Context?): String {
+        if (context == null) return ""
+        return try {
+            val prefs = context.getSharedPreferences("bingo_auth_prefs", Context.MODE_PRIVATE)
+            val uname = prefs.getString("username", null)?.trim()
+            if (!uname.isNullOrBlank()) uname else (prefs.getString("display_name", "")?.trim() ?: "")
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
+    /**
+     * Checks if this message is intended for the local user.
+     */
+    fun isTargetMatch(msg: BroadcastMessage, context: Context?): Boolean {
+        val target = msg.targetUsername.trim().removePrefix("@").lowercase()
+        if (target.isBlank() || target == "all") return true
+        val localUser = getLocalUsername(context).trim().removePrefix("@").lowercase()
+        return target.equals(localUser, ignoreCase = true)
+    }
+
+    /**
      * Checks for any active broadcast message on app startup.
      * Silent and strictly respects the per-session dismissal rule.
      */
-    fun checkForBroadcast() {
+    fun checkForBroadcast(context: Context? = null) {
         if (hasDismissedInSession) {
             Log.d(TAG, "Broadcast already dismissed in this session, skipping check")
             return
@@ -95,12 +125,27 @@ object BroadcastMessageManager {
 
         scope.launch {
             try {
-                val msg = fetchCurrentActiveBroadcast()
-                if (msg != null && msg.active && msg.message.isNotBlank()) {
-                    if (!hasDismissedInSession) {
-                        _activeBroadcast.value = msg
-                        Log.i(TAG, "Active broadcast received on startup: ${msg.title}")
-                    }
+                val localUser = getLocalUsername(context).trim().removePrefix("@").lowercase()
+                
+                // 1. Check for personal direct message targeting this specific player
+                var targetMsg: BroadcastMessage? = null
+                if (localUser.isNotBlank()) {
+                    targetMsg = fetchDirectMessageFromCloud(localUser)
+                }
+
+                // 2. If no direct personal message, check for global broadcast
+                val activeMsg = if (targetMsg != null && targetMsg.active && targetMsg.message.isNotBlank()) {
+                    targetMsg
+                } else {
+                    val globalMsg = fetchCurrentActiveBroadcast()
+                    if (globalMsg != null && globalMsg.active && globalMsg.message.isNotBlank() && isTargetMatch(globalMsg, context)) {
+                        globalMsg
+                    } else null
+                }
+
+                if (activeMsg != null && !hasDismissedInSession) {
+                    _activeBroadcast.value = activeMsg
+                    Log.i(TAG, "Active broadcast received on startup: ${activeMsg.title} (target=${activeMsg.targetUsername})")
                 } else {
                     _activeBroadcast.value = null
                 }
@@ -113,20 +158,18 @@ object BroadcastMessageManager {
     /**
      * Called when a live MQTT broadcast arrives in real-time.
      */
-    fun onBroadcastReceived(jsonPayload: String) {
+    fun onBroadcastReceived(jsonPayload: String, context: Context? = null) {
         if (hasDismissedInSession) {
             Log.d(TAG, "Broadcast already dismissed in this session, ignoring live update")
             return
         }
         try {
             val msg = BroadcastMessage.fromJsonString(jsonPayload)
-            if (msg != null && msg.active && msg.message.isNotBlank()) {
+            if (msg != null && msg.active && msg.message.isNotBlank() && isTargetMatch(msg, context)) {
                 if (!hasDismissedInSession) {
                     _activeBroadcast.value = msg
-                    Log.i(TAG, "Live broadcast received: ${msg.title}")
+                    Log.i(TAG, "Live broadcast received: ${msg.title} (target=${msg.targetUsername})")
                 }
-            } else {
-                _activeBroadcast.value = null
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to parse live broadcast: ${e.message}")
@@ -143,7 +186,7 @@ object BroadcastMessageManager {
     }
 
     /**
-     * Fetches the current broadcast message from the cloud KeyValue store.
+     * Fetches the current global broadcast message from the cloud KeyValue store.
      */
     suspend fun fetchCurrentActiveBroadcast(): BroadcastMessage? = withContext(Dispatchers.IO) {
         try {
@@ -162,29 +205,56 @@ object BroadcastMessageManager {
     }
 
     /**
+     * Fetches a direct message targeting a specific user.
+     */
+    suspend fun fetchDirectMessageFromCloud(username: String): BroadcastMessage? = withContext(Dispatchers.IO) {
+        try {
+            val clean = username.trim().removePrefix("@").lowercase()
+            val encKey = URLEncoder.encode("user_msg_$clean", "UTF-8")
+            val url = "${NetworkConfig.KEYVALUE_API_URL}/GetValue/${NetworkConfig.KEYVALUE_APP_KEY}/$encKey"
+            val request = Request.Builder().url(url).get().build()
+            NetworkConfig.httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext null
+                val raw = response.body?.string()?.trim().orEmpty()
+                if (raw.isBlank() || raw == "\"\"" || raw == "null") return@withContext null
+                BroadcastMessage.fromJsonString(raw)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "fetchDirectMessageFromCloud error: ${e.message}")
+            null
+        }
+    }
+
+    /**
      * Transmits a new broadcast message from the admin page.
-     * Persists to KeyValue cloud store and publishes to all connected players via MQTT.
+     * Supports broadcasting to ALL players, or targeting a specific player (@username).
      */
     suspend fun publishBroadcast(
         title: String,
         message: String,
         type: String = "INFO",
-        author: String = "Admin"
+        author: String = "Admin",
+        targetUsername: String = ""
     ): Boolean = withContext(Dispatchers.IO) {
         try {
+            val cleanTarget = targetUsername.trim().removePrefix("@")
+            val isSpecificUser = cleanTarget.isNotBlank() && !cleanTarget.equals("ALL", ignoreCase = true)
+
             val broadcast = BroadcastMessage(
                 id = UUID.randomUUID().toString().take(8),
                 title = title.trim(),
                 message = message.trim(),
                 type = type,
                 author = author.trim().ifBlank { "Admin" },
+                targetUsername = if (isSpecificUser) "@$cleanTarget" else "ALL",
                 timestamp = System.currentTimeMillis(),
                 active = true
             )
             val jsonStr = broadcast.toJsonString()
 
-            // 1. Persist to KeyValue store for users opening the app later
-            val encKey = URLEncoder.encode(KEYVALUE_BROADCAST_KEY, "UTF-8")
+            // 1. Determine KeyValue storage key
+            val storageKey = if (isSpecificUser) "user_msg_${cleanTarget.lowercase()}" else KEYVALUE_BROADCAST_KEY
+            val encKey = URLEncoder.encode(storageKey, "UTF-8")
             val encVal = URLEncoder.encode(jsonStr, "UTF-8")
             val url = "${NetworkConfig.KEYVALUE_API_URL}/UpdateValue/${NetworkConfig.KEYVALUE_APP_KEY}/$encKey?value=$encVal"
             val emptyBody = "".toRequestBody(null)
@@ -203,7 +273,7 @@ object BroadcastMessageManager {
             hasDismissedInSession = false
             _activeBroadcast.value = broadcast
 
-            Log.i(TAG, "Broadcast published successfully: ${broadcast.title}")
+            Log.i(TAG, "Broadcast published: ${broadcast.title} (target=${broadcast.targetUsername})")
             success
         } catch (e: Exception) {
             Log.e(TAG, "Failed to publish broadcast: ${e.message}", e)
@@ -214,20 +284,25 @@ object BroadcastMessageManager {
     /**
      * Clears or deactivates any existing broadcast from the cloud.
      */
-    suspend fun clearBroadcast(): Boolean = withContext(Dispatchers.IO) {
+    suspend fun clearBroadcast(targetUsername: String = ""): Boolean = withContext(Dispatchers.IO) {
         try {
+            val cleanTarget = targetUsername.trim().removePrefix("@")
+            val isSpecificUser = cleanTarget.isNotBlank() && !cleanTarget.equals("ALL", ignoreCase = true)
+
             val emptyMsg = BroadcastMessage(
                 id = "",
                 title = "",
                 message = "",
                 type = "INFO",
                 author = "Admin",
+                targetUsername = if (isSpecificUser) "@$cleanTarget" else "ALL",
                 timestamp = System.currentTimeMillis(),
                 active = false
             )
             val jsonStr = emptyMsg.toJsonString()
 
-            val encKey = URLEncoder.encode(KEYVALUE_BROADCAST_KEY, "UTF-8")
+            val storageKey = if (isSpecificUser) "user_msg_${cleanTarget.lowercase()}" else KEYVALUE_BROADCAST_KEY
+            val encKey = URLEncoder.encode(storageKey, "UTF-8")
             val encVal = URLEncoder.encode(jsonStr, "UTF-8")
             val url = "${NetworkConfig.KEYVALUE_API_URL}/UpdateValue/${NetworkConfig.KEYVALUE_APP_KEY}/$encKey?value=$encVal"
             val emptyBody = "".toRequestBody(null)
@@ -241,7 +316,7 @@ object BroadcastMessageManager {
 
             publishMqttBroadcast(jsonStr)
             _activeBroadcast.value = null
-            Log.i(TAG, "Broadcast cleared successfully")
+            Log.i(TAG, "Broadcast cleared successfully (target=$storageKey)")
             success
         } catch (e: Exception) {
             Log.e(TAG, "Failed to clear broadcast: ${e.message}", e)

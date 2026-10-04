@@ -196,6 +196,7 @@ fun SettingsScreen(
     var broadcastMessageInput by remember { mutableStateOf("") }
     var broadcastTypeInput by remember { mutableStateOf("INFO") }
     var broadcastAuthorInput by remember(user.displayName) { mutableStateOf(if (user.username.isNotBlank()) user.username else "Admin") }
+    var broadcastTargetInput by remember { mutableStateOf("") }
     var isTransmittingBroadcast by remember { mutableStateOf(false) }
     var currentLiveBroadcast by remember { mutableStateOf<BroadcastMessage?>(null) }
 
@@ -2513,6 +2514,18 @@ fun SettingsScreen(
                             modifier = Modifier.fillMaxWidth()
                         )
 
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        OutlinedTextField(
+                            value = broadcastTargetInput,
+                            onValueChange = { broadcastTargetInput = it },
+                            singleLine = true,
+                            label = { Text("Target Player (Optional)") },
+                            placeholder = { Text("All Players (leave empty) or enter @username") },
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
                         Spacer(modifier = Modifier.height(16.dp))
 
                         // Transmit Button
@@ -2524,20 +2537,28 @@ fun SettingsScreen(
                                     Toast.makeText(context, "Please enter both title and message", Toast.LENGTH_SHORT).show()
                                     return@Button
                                 }
+                                val target = broadcastTargetInput.trim()
                                 isTransmittingBroadcast = true
                                 coroutineScope.launch {
                                     val success = BroadcastMessageManager.publishBroadcast(
                                         title = title,
                                         message = msg,
                                         type = broadcastTypeInput,
-                                        author = broadcastAuthorInput.trim().ifBlank { "Admin" }
+                                        author = broadcastAuthorInput.trim().ifBlank { "Admin" },
+                                        targetUsername = target
                                     )
                                     isTransmittingBroadcast = false
                                     if (success) {
                                         currentLiveBroadcast = BroadcastMessageManager.fetchCurrentActiveBroadcast()
-                                        Toast.makeText(context, "Broadcast sent to all players! 🚀", Toast.LENGTH_LONG).show()
+                                        val toastMsg = if (target.isNotBlank() && !target.equals("ALL", ignoreCase = true)) {
+                                            "Message transmitted to $target! 🚀"
+                                        } else {
+                                            "Broadcast transmitted to all players! 🚀"
+                                        }
+                                        Toast.makeText(context, toastMsg, Toast.LENGTH_LONG).show()
                                         broadcastTitleInput = ""
                                         broadcastMessageInput = ""
+                                        broadcastTargetInput = ""
                                     } else {
                                         Toast.makeText(context, "Failed to transmit broadcast", Toast.LENGTH_SHORT).show()
                                     }
@@ -2555,7 +2576,12 @@ fun SettingsScreen(
                             } else {
                                 Icon(Icons.Default.Campaign, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color.White)
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("Transmit Broadcast to All Players 🚀", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                val buttonLabel = if (broadcastTargetInput.trim().isNotBlank() && !broadcastTargetInput.trim().equals("ALL", ignoreCase = true)) {
+                                    "Transmit to ${broadcastTargetInput.trim()} 🚀"
+                                } else {
+                                    "Transmit Broadcast to All Players 🚀"
+                                }
+                                Text(buttonLabel, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                             }
                         }
 
@@ -2568,10 +2594,16 @@ fun SettingsScreen(
                         ) {
                             OutlinedButton(
                                 onClick = {
+                                    val target = broadcastTargetInput.trim()
                                     coroutineScope.launch {
-                                        BroadcastMessageManager.clearBroadcast()
+                                        BroadcastMessageManager.clearBroadcast(target)
                                         currentLiveBroadcast = null
-                                        Toast.makeText(context, "Active broadcast removed", Toast.LENGTH_SHORT).show()
+                                        val clearToast = if (target.isNotBlank() && !target.equals("ALL", ignoreCase = true)) {
+                                            "Message cleared for $target"
+                                        } else {
+                                            "Active broadcast removed from cloud"
+                                        }
+                                        Toast.makeText(context, clearToast, Toast.LENGTH_SHORT).show()
                                     }
                                 },
                                 modifier = Modifier.weight(1f),

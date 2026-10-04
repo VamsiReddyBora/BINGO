@@ -63,9 +63,11 @@ fun BroadcastMessageDialog() {
 
     val broadcast = activeBroadcast ?: return
 
-    val (badgeText, badgeColor, iconVector) = when (broadcast.type.uppercase(Locale.US)) {
-        "MAINTENANCE" -> Triple("MAINTENANCE", Color(0xFFF59E0B), Icons.Default.Build)
-        "ALERT" -> Triple("IMPORTANT NOTICE", Color(0xFFEF4444), Icons.Default.Warning)
+    val isDirect = broadcast.isDirectMessage
+    val (badgeText, badgeColor, iconVector) = when {
+        isDirect -> Triple("PERSONAL MESSAGE", Color(0xFF8B5CF6), Icons.Default.Campaign)
+        broadcast.type.uppercase(Locale.US) == "MAINTENANCE" -> Triple("MAINTENANCE", Color(0xFFF59E0B), Icons.Default.Build)
+        broadcast.type.uppercase(Locale.US) == "ALERT" -> Triple("IMPORTANT NOTICE", Color(0xFFEF4444), Icons.Default.Warning)
         else -> Triple("ANNOUNCEMENT", tokens.accentBrand, Icons.Default.Campaign)
     }
 
@@ -125,7 +127,7 @@ fun BroadcastMessageDialog() {
 
                 // Broadcast Title
                 Text(
-                    text = broadcast.title.ifBlank { "Announcement" },
+                    text = broadcast.title.ifBlank { if (isDirect) "Personal Message" else "Announcement" },
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
                     color = tokens.cellNeutralText
@@ -140,7 +142,7 @@ fun BroadcastMessageDialog() {
                     Icon(
                         imageVector = Icons.Default.Verified,
                         contentDescription = null,
-                        tint = tokens.accentBrand,
+                        tint = badgeColor,
                         modifier = Modifier.size(13.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
@@ -149,7 +151,9 @@ fun BroadcastMessageDialog() {
                             SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date(broadcast.timestamp))
                         } catch (_: Exception) { "" }
                     } else ""
-                    val authorText = if (dateFormatted.isNotBlank()) {
+                    val authorText = if (isDirect) {
+                        if (dateFormatted.isNotBlank()) "Direct Message from ${broadcast.author} • $dateFormatted" else "Direct Message from ${broadcast.author}"
+                    } else if (dateFormatted.isNotBlank()) {
                         "Official • ${broadcast.author} • $dateFormatted"
                     } else {
                         "Official • ${broadcast.author}"

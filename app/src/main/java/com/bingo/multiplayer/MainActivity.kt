@@ -61,7 +61,7 @@ class MainActivity : ComponentActivity() {
             delay(3500)
             AppUpdateManager.checkForUpdates(applicationContext, manual = false)
             delay(500)
-            BroadcastMessageManager.checkForBroadcast()
+            BroadcastMessageManager.checkForBroadcast(applicationContext)
         }
 
         setContent {
