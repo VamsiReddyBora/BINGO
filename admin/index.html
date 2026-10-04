@@ -434,6 +434,16 @@
         </button>
 
         <button 
+          onclick="switchTab('ota')" 
+          id="tabBtn-ota" 
+          class="nav-tab px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all whitespace-nowrap theme-dimtext hover:text-brand-500 flex-shrink-0"
+        >
+          <i class="fa-solid fa-cloud-arrow-down"></i>
+          <span>App Updates & OTA</span>
+          <span id="navOtaBadge" class="ml-1 px-1.5 py-0.2 rounded-full theme-subtle text-[10px] font-mono">v1.3</span>
+        </button>
+
+        <button 
           onclick="switchTab('settings')" 
           id="tabBtn-settings" 
           class="nav-tab px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all whitespace-nowrap theme-dimtext hover:text-brand-500 flex-shrink-0"
@@ -567,10 +577,20 @@
               <!-- Register Player Tool -->
               <button 
                 onclick="openAddPlayerModal()" 
-                class="px-3 py-2 rounded-xl bg-brand-600/15 hover:bg-brand-600/25 text-brand-600 dark:text-brand-300 border border-brand-500/40 text-xs font-bold flex items-center gap-1.5 active:scale-95 transition-all"
+                class="px-3 py-2 rounded-xl bg-brand-600/15 hover:bg-brand-600/25 text-brand-600 dark:text-brand-300 border border-brand-500/40 text-xs font-bold flex items-center gap-1.5 active:scale-95 transition-all cursor-pointer"
               >
                 <i class="fa-solid fa-user-plus"></i>
                 <span>Add Player</span>
+              </button>
+
+              <!-- Export CSV Tool -->
+              <button 
+                onclick="exportFilteredPlayersCsv()" 
+                class="px-3 py-2 rounded-xl theme-subtle theme-title text-xs font-bold flex items-center gap-1.5 hover:border-emerald-500 border border-inherit active:scale-95 transition-all cursor-pointer"
+                title="Export filtered players to CSV"
+              >
+                <i class="fa-solid fa-file-csv text-emerald-500"></i>
+                <span class="hidden sm:inline">Export CSV</span>
               </button>
             </div>
           </div>
@@ -707,6 +727,51 @@
 
           <!-- Broadcast Form Inputs -->
           <div class="space-y-3 pt-1">
+            <!-- Quick Preset Templates Bar -->
+            <div class="space-y-1.5 pb-1">
+              <span class="text-[11px] font-semibold theme-dimtext flex items-center gap-1.5">
+                <i class="fa-solid fa-wand-magic-sparkles text-amber-500"></i>
+                <span>Quick Message Presets (Click to autofill):</span>
+              </span>
+              <div class="flex items-center gap-1.5 flex-wrap">
+                <button 
+                  type="button" 
+                  onclick="applyBroadcastTemplate('maintenance')" 
+                  class="px-2.5 py-1 rounded-lg theme-subtle text-amber-400 hover:border-amber-500 border border-transparent text-[11px] font-medium flex items-center gap-1 transition-all cursor-pointer"
+                >
+                  <i class="fa-solid fa-screwdriver-wrench text-[10px]"></i> Server Maintenance
+                </button>
+                <button 
+                  type="button" 
+                  onclick="applyBroadcastTemplate('event_xp')" 
+                  class="px-2.5 py-1 rounded-lg theme-subtle text-indigo-400 hover:border-indigo-500 border border-transparent text-[11px] font-medium flex items-center gap-1 transition-all cursor-pointer"
+                >
+                  <i class="fa-solid fa-star text-[10px]"></i> Double XP Weekend
+                </button>
+                <button 
+                  type="button" 
+                  onclick="applyBroadcastTemplate('app_update')" 
+                  class="px-2.5 py-1 rounded-lg theme-subtle text-emerald-400 hover:border-emerald-500 border border-transparent text-[11px] font-medium flex items-center gap-1 transition-all cursor-pointer"
+                >
+                  <i class="fa-solid fa-rocket text-[10px]"></i> New App Update
+                </button>
+                <button 
+                  type="button" 
+                  onclick="applyBroadcastTemplate('warning')" 
+                  class="px-2.5 py-1 rounded-lg theme-subtle text-rose-400 hover:border-rose-500 border border-transparent text-[11px] font-medium flex items-center gap-1 transition-all cursor-pointer"
+                >
+                  <i class="fa-solid fa-shield-halved text-[10px]"></i> Fair Play Warning
+                </button>
+                <button 
+                  type="button" 
+                  onclick="applyBroadcastTemplate('welcome')" 
+                  class="px-2.5 py-1 rounded-lg theme-subtle text-cyan-400 hover:border-cyan-500 border border-transparent text-[11px] font-medium flex items-center gap-1 transition-all cursor-pointer"
+                >
+                  <i class="fa-solid fa-hand-wave text-[10px]"></i> Welcome Notice
+                </button>
+              </div>
+            </div>
+
             <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <label class="block text-[11px] font-semibold theme-title mb-1">Announcement Title</label>
@@ -820,6 +885,26 @@
           </div>
         </div>
 
+        <!-- Recent Sent Broadcasts History Log -->
+        <div class="theme-card rounded-2xl p-5 space-y-3">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <i class="fa-solid fa-clock-rotate-left text-amber-500"></i>
+              <h3 class="text-sm font-bold theme-title">Recent Sent Broadcasts History</h3>
+            </div>
+            <button 
+              type="button" 
+              onclick="clearBroadcastHistory()" 
+              class="text-[11px] theme-dimtext hover:text-rose-500 transition-colors cursor-pointer"
+            >
+              Clear Log
+            </button>
+          </div>
+          <div id="broadcastHistoryContainer" class="space-y-2 max-h-64 overflow-y-auto pr-1">
+            <div class="text-xs theme-dimtext italic text-center py-4">No broadcasts saved in local history yet.</div>
+          </div>
+        </div>
+
         <!-- Real-time MQTT Packet Stream Console -->
         <div class="theme-card rounded-2xl overflow-hidden">
           <div class="p-4 theme-subtle border-b border-inherit flex items-center justify-between gap-2">
@@ -839,7 +924,261 @@
 
 
       <!-- ==================================================== -->
-      <!-- TAB 4: SETTINGS & DATABASE TOOLS                     -->
+      <!-- TAB 4: APP UPDATES & OTA RELEASE HUB                -->
+      <!-- ==================================================== -->
+      <section id="tabView-ota" class="hidden space-y-5">
+        <!-- OTA Header / Overview -->
+        <div class="theme-card rounded-2xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-brand-600 to-indigo-600 flex items-center justify-center text-white text-lg flex-shrink-0 shadow-lg shadow-brand-600/20">
+              <i class="fa-solid fa-cloud-arrow-down"></i>
+            </div>
+            <div>
+              <h2 class="text-lg font-bold theme-title flex items-center gap-2">
+                <span>App Updates & OTA Engine</span>
+                <span id="otaHeaderBadge" class="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">ONLINE</span>
+              </h2>
+              <p class="text-xs theme-dimtext mt-0.5">Manage live mobile releases, test OTA update popups, and sync with KeyValue cloud store & Fastly CDN.</p>
+            </div>
+          </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <button 
+              onclick="fetchCurrentOtaReleaseStatus()" 
+              class="px-3.5 py-2 rounded-xl theme-subtle theme-title text-xs font-semibold flex items-center gap-1.5 hover:border-brand-500 transition-all cursor-pointer"
+            >
+              <i id="otaRefreshIcon" class="fa-solid fa-arrows-rotate text-[11px]"></i>
+              <span>Refresh Status</span>
+            </button>
+            <button 
+              onclick="testOtaEndpointsLatency()" 
+              class="px-3.5 py-2 rounded-xl theme-subtle theme-title text-xs font-semibold flex items-center gap-1.5 hover:border-brand-500 transition-all cursor-pointer"
+            >
+              <i class="fa-solid fa-gauge-high text-[11px] text-amber-500"></i>
+              <span>Ping CDNs</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Live Release Status Card -->
+        <div class="theme-card rounded-2xl p-5 space-y-4">
+          <div class="flex items-center justify-between flex-wrap gap-2">
+            <h3 class="text-sm font-bold theme-title flex items-center gap-2">
+              <i class="fa-solid fa-circle-check text-emerald-500"></i>
+              <span>Current Live Release in Cloud (KeyValue & CDN)</span>
+            </h3>
+            <div class="flex items-center gap-1.5">
+              <span id="otaLiveVersionBadge" class="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-brand-500/20 text-brand-400 border border-brand-500/30">v1.3</span>
+              <span id="otaLiveBuildBadge" class="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-neutral-800 text-neutral-300">Build 36</span>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div class="theme-subtle p-3.5 rounded-xl space-y-1">
+              <span class="text-[11px] theme-dimtext uppercase font-semibold">Version Name & Tag</span>
+              <p id="otaLiveTagName" class="text-sm font-mono font-bold theme-title truncate">v1.3</p>
+            </div>
+            <div class="theme-subtle p-3.5 rounded-xl space-y-1">
+              <span class="text-[11px] theme-dimtext uppercase font-semibold">APK Package Size</span>
+              <p id="otaLiveApkSize" class="text-sm font-mono font-bold theme-title">5.24 MB (5,497,848 bytes)</p>
+            </div>
+            <div class="theme-subtle p-3.5 rounded-xl space-y-1">
+              <span class="text-[11px] theme-dimtext uppercase font-semibold">Direct Download Link</span>
+              <p class="text-xs truncate">
+                <a id="otaLiveDownloadLink" href="https://github.com/VamsiReddyBora/BINGO/releases/download/v1.3/Bingo.apk" target="_blank" class="text-brand-500 hover:underline font-mono">
+                  Bingo.apk (GitHub Release)
+                </a>
+              </p>
+            </div>
+          </div>
+
+          <div class="space-y-1.5">
+            <span class="text-[11px] theme-dimtext uppercase font-semibold">Live Release Notes</span>
+            <div id="otaLiveReleaseNotes" class="p-3 rounded-xl theme-subtle font-mono text-xs theme-title whitespace-pre-wrap leading-relaxed border border-inherit">
+              Loading notes...
+            </div>
+          </div>
+        </div>
+
+        <!-- Multi-Tier OTA Distribution CDN Health Check -->
+        <div class="theme-card rounded-2xl p-5 space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-bold theme-title flex items-center gap-2">
+              <i class="fa-solid fa-network-wired text-cyan-500"></i>
+              <span>Multi-Tier CDN Distribution Health</span>
+            </h3>
+            <span class="text-[11px] theme-dimtext font-mono">4-Tier Resilient Failover</span>
+          </div>
+          <p class="text-xs theme-dimtext">The Android app checks these endpoints in order. All must serve the same payload.</p>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-1">
+            <!-- Tier 1: Fastly GitHub Pages -->
+            <div class="p-3 rounded-xl border border-inherit theme-subtle space-y-2">
+              <div class="flex items-center justify-between">
+                <span class="text-[11px] font-bold theme-title">Tier 1: Fastly Pages</span>
+                <span id="cdnStatus-tier1" class="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-neutral-800 text-neutral-400">WAITING</span>
+              </div>
+              <p class="text-[10px] theme-dimtext truncate font-mono">vamsireddybora.github.io/BINGO/version.json</p>
+              <div class="text-[11px] font-mono theme-title" id="cdnLatency-tier1">-- ms</div>
+            </div>
+
+            <!-- Tier 2: KeyValue Store -->
+            <div class="p-3 rounded-xl border border-inherit theme-subtle space-y-2">
+              <div class="flex items-center justify-between">
+                <span class="text-[11px] font-bold theme-title">Tier 2: KeyValue Cloud</span>
+                <span id="cdnStatus-tier2" class="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-neutral-800 text-neutral-400">WAITING</span>
+              </div>
+              <p class="text-[10px] theme-dimtext truncate font-mono">keyvalue.immanuel.co (latest_app_version)</p>
+              <div class="text-[11px] font-mono theme-title" id="cdnLatency-tier2">-- ms</div>
+            </div>
+
+            <!-- Tier 3: Raw GitHub -->
+            <div class="p-3 rounded-xl border border-inherit theme-subtle space-y-2">
+              <div class="flex items-center justify-between">
+                <span class="text-[11px] font-bold theme-title">Tier 3: Raw Git</span>
+                <span id="cdnStatus-tier3" class="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-neutral-800 text-neutral-400">WAITING</span>
+              </div>
+              <p class="text-[10px] theme-dimtext truncate font-mono">raw.githubusercontent.com/.../version.json</p>
+              <div class="text-[11px] font-mono theme-title" id="cdnLatency-tier3">-- ms</div>
+            </div>
+
+            <!-- Tier 4: jsDelivr -->
+            <div class="p-3 rounded-xl border border-inherit theme-subtle space-y-2">
+              <div class="flex items-center justify-between">
+                <span class="text-[11px] font-bold theme-title">Tier 4: jsDelivr CDN</span>
+                <span id="cdnStatus-tier4" class="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-neutral-800 text-neutral-400">WAITING</span>
+              </div>
+              <p class="text-[10px] theme-dimtext truncate font-mono">cdn.jsdelivr.net/.../version.json</p>
+              <div class="text-[11px] font-mono theme-title" id="cdnLatency-tier4">-- ms</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Deploy / Update OTA Release Form -->
+        <div class="theme-card rounded-2xl p-5 space-y-4">
+          <div class="flex items-center justify-between flex-wrap gap-2">
+            <h3 class="text-sm font-bold theme-title flex items-center gap-2">
+              <i class="fa-solid fa-upload text-brand-500"></i>
+              <span>Deploy New OTA Update to Cloud</span>
+            </h3>
+            <div class="flex items-center gap-2">
+              <!-- Quick Simulation Actions -->
+              <button 
+                type="button" 
+                onclick="simulateTestRelease('1.3.1')" 
+                class="px-2.5 py-1 rounded-lg theme-subtle text-amber-400 hover:border-amber-500 border border-transparent text-[11px] font-medium transition-all cursor-pointer"
+                title="Fill form with test version 1.3.1"
+              >
+                <i class="fa-solid fa-flask-vial text-[10px]"></i> Quick Test 1.3.1
+              </button>
+              <button 
+                type="button" 
+                onclick="restoreOfficialRelease()" 
+                class="px-2.5 py-1 rounded-lg theme-subtle text-emerald-400 hover:border-emerald-500 border border-transparent text-[11px] font-medium transition-all cursor-pointer"
+                title="Reset to official 1.3"
+              >
+                <i class="fa-solid fa-shield-halved text-[10px]"></i> Reset to v1.3
+              </button>
+            </div>
+          </div>
+
+          <div class="space-y-3 pt-1">
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label class="block text-[11px] font-semibold theme-title mb-1">Version Name</label>
+                <input 
+                  type="text" 
+                  id="otaInputVersionName" 
+                  placeholder="e.g. 1.3.1 or 1.4" 
+                  oninput="onOtaVersionNameInputChanged()" 
+                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs font-mono focus:outline-none focus:border-brand-500"
+                >
+              </div>
+              <div>
+                <label class="block text-[11px] font-semibold theme-title mb-1">Version Code (Integer Build)</label>
+                <input 
+                  type="number" 
+                  id="otaInputVersionCode" 
+                  placeholder="e.g. 37" 
+                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs font-mono focus:outline-none focus:border-brand-500"
+                >
+              </div>
+              <div>
+                <label class="block text-[11px] font-semibold theme-title mb-1">Git Tag Name</label>
+                <input 
+                  type="text" 
+                  id="otaInputTagName" 
+                  placeholder="e.g. v1.3.1" 
+                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs font-mono focus:outline-none focus:border-brand-500"
+                >
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div class="sm:col-span-2">
+                <label class="block text-[11px] font-semibold theme-title mb-1">Download APK URL</label>
+                <input 
+                  type="text" 
+                  id="otaInputDownloadUrl" 
+                  placeholder="https://github.com/VamsiReddyBora/BINGO/releases/download/v1.3/Bingo.apk" 
+                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs font-mono focus:outline-none focus:border-brand-500"
+                >
+              </div>
+              <div>
+                <label class="block text-[11px] font-semibold theme-title mb-1">APK Size (Bytes)</label>
+                <input 
+                  type="number" 
+                  id="otaInputApkSize" 
+                  placeholder="5497848" 
+                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs font-mono focus:outline-none focus:border-brand-500"
+                >
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-[11px] font-semibold theme-title mb-1">Release Notes (Displayed to players in update dialog)</label>
+              <textarea 
+                id="otaInputReleaseNotes" 
+                rows="4" 
+                placeholder="• Feature 1\n• Feature 2\n• Bug fixes" 
+                class="w-full px-3.5 py-2 rounded-xl theme-input text-xs font-mono focus:outline-none focus:border-brand-500"
+              ></textarea>
+            </div>
+
+            <!-- Action buttons -->
+            <div class="flex items-center gap-2 pt-2 flex-wrap">
+              <button 
+                onclick="publishOtaReleaseToCloud()" 
+                id="btnPublishOta" 
+                class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 text-white font-semibold text-xs shadow-lg shadow-brand-600/20 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <i class="fa-solid fa-cloud-arrow-up"></i>
+                <span>Publish Update to Cloud KeyValue 🚀</span>
+              </button>
+
+              <button 
+                onclick="downloadVersionJsonFile()" 
+                class="px-4 py-2.5 rounded-xl border border-emerald-500/40 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 font-semibold text-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                title="Download version.json for GitHub Pages"
+              >
+                <i class="fa-solid fa-file-arrow-down text-[11px]"></i>
+                <span>Download version.json</span>
+              </button>
+
+              <button 
+                onclick="copyOtaJsonPayload()" 
+                class="px-4 py-2.5 rounded-xl border border-neutral-700 theme-title hover:border-brand-500/50 font-semibold text-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <i class="fa-regular fa-copy text-[11px]"></i>
+                <span>Copy JSON</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+
+      <!-- ==================================================== -->
+      <!-- TAB 5: SETTINGS & DATABASE TOOLS                     -->
       <!-- ==================================================== -->
       <section id="tabView-settings" class="hidden space-y-5">
         
@@ -1034,6 +1373,24 @@
               <span class="text-[11px] theme-dimtext uppercase font-semibold">Best Streak</span>
               <p id="inspBestStreak" class="text-xl font-bold font-mono text-amber-500 mt-1">0</p>
             </div>
+          <!-- Player Actions Toolbar -->
+          <div class="flex items-center gap-2 flex-wrap">
+            <button 
+              type="button"
+              onclick="openEditPlayerModalForCurrent()" 
+              class="px-3.5 py-2 rounded-xl bg-brand-600/15 hover:bg-brand-600/25 text-brand-600 dark:text-brand-300 border border-brand-500/40 text-xs font-bold flex items-center gap-1.5 active:scale-95 transition-all cursor-pointer"
+            >
+              <i class="fa-solid fa-user-pen"></i>
+              <span>Edit Profile & Level</span>
+            </button>
+            <button 
+              type="button"
+              onclick="quickMessagePlayer(globalState.selectedPlayer ? globalState.selectedPlayer.username : '')" 
+              class="px-3.5 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-500 border border-amber-500/40 text-xs font-bold flex items-center gap-1.5 active:scale-95 transition-all cursor-pointer"
+            >
+              <i class="fa-solid fa-paper-plane"></i>
+              <span>Send Direct In-Game Message</span>
+            </button>
           </div>
 
           <!-- Technical & Account Metadata -->
@@ -1323,6 +1680,121 @@
 
 
   <!-- ======================================================== -->
+  <!-- 5C. EDIT PLAYER PROFILE & STATS MODAL                    -->
+  <!-- ======================================================== -->
+  <div id="editPlayerModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+    <div class="w-full max-w-md theme-modal rounded-3xl p-6 shadow-2xl border border-inherit space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 class="text-base font-bold theme-title flex items-center gap-2">
+          <i class="fa-solid fa-user-pen text-brand-500"></i>
+          <span>Edit Player Profile & Stats</span>
+        </h3>
+        <button onclick="closeEditPlayerModal()" class="theme-dimtext hover:theme-title cursor-pointer p-1">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <div class="space-y-3 text-xs">
+        <div>
+          <label class="font-semibold theme-dimtext block mb-1">Username (Read-only)</label>
+          <input type="text" id="editPlayerUsername" readonly class="w-full px-3 py-2 rounded-xl theme-input opacity-70 font-mono">
+        </div>
+        <div>
+          <label class="font-semibold theme-dimtext block mb-1">Display Name</label>
+          <input type="text" id="editPlayerDisplayName" class="w-full px-3 py-2 rounded-xl theme-input focus:outline-none focus:border-brand-500">
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="font-semibold theme-dimtext block mb-1">Player Level (1 - 100)</label>
+            <input type="number" id="editPlayerLevel" min="1" max="100" class="w-full px-3 py-2 rounded-xl theme-input focus:outline-none focus:border-brand-500 font-mono">
+          </div>
+          <div>
+            <label class="font-semibold theme-dimtext block mb-1">Current Streak</label>
+            <input type="number" id="editPlayerStreak" min="0" class="w-full px-3 py-2 rounded-xl theme-input focus:outline-none focus:border-brand-500 font-mono">
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="font-semibold theme-dimtext block mb-1">Games Played</label>
+            <input type="number" id="editPlayerGamesPlayed" min="0" class="w-full px-3 py-2 rounded-xl theme-input focus:outline-none focus:border-brand-500 font-mono">
+          </div>
+          <div>
+            <label class="font-semibold theme-dimtext block mb-1">Games Won</label>
+            <input type="number" id="editPlayerGamesWon" min="0" class="w-full px-3 py-2 rounded-xl theme-input focus:outline-none focus:border-brand-500 font-mono">
+          </div>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-end gap-2 pt-2">
+        <button onclick="closeEditPlayerModal()" class="px-4 py-2 rounded-xl theme-subtle theme-title text-xs font-semibold cursor-pointer">Cancel</button>
+        <button onclick="submitPlayerProfileEdits()" id="btnSavePlayerEdit" class="px-5 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white text-xs font-bold shadow-md shadow-brand-600/30 active:scale-95 transition-all cursor-pointer">
+          Save Changes
+        </button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ======================================================== -->
+  <!-- 5D. ROOM DETAILS & MODERATION MODAL                      -->
+  <!-- ======================================================== -->
+  <div id="roomDetailsModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+    <div class="w-full max-w-md theme-modal rounded-3xl p-6 shadow-2xl border border-inherit space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 class="text-base font-bold theme-title flex items-center gap-2">
+          <i class="fa-solid fa-gamepad text-brand-500"></i>
+          <span>Room Moderation: <span id="roomModalCode" class="font-mono text-brand-500">#000000</span></span>
+        </h3>
+        <button onclick="closeRoomDetailsModal()" class="theme-dimtext hover:theme-title cursor-pointer p-1">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <div class="space-y-3 text-xs">
+        <div class="grid grid-cols-2 gap-2 theme-subtle p-3 rounded-xl">
+          <div>
+            <span class="theme-dimtext uppercase text-[10px] block">Host Player</span>
+            <span id="roomModalHost" class="font-bold theme-title">@Host</span>
+          </div>
+          <div>
+            <span class="theme-dimtext uppercase text-[10px] block">Game Status</span>
+            <span id="roomModalStatus" class="font-bold text-emerald-500">WAITING</span>
+          </div>
+          <div class="mt-1">
+            <span class="theme-dimtext uppercase text-[10px] block">Capacity</span>
+            <span id="roomModalPlayers" class="font-mono theme-title">1 / 2</span>
+          </div>
+          <div class="mt-1">
+            <span class="theme-dimtext uppercase text-[10px] block">Board Size</span>
+            <span id="roomModalBoardSize" class="font-mono theme-title">5 x 5</span>
+          </div>
+        </div>
+
+        <div>
+          <label class="font-semibold theme-dimtext block mb-1">Broadcast Notice to This Room's Chat</label>
+          <div class="flex gap-2">
+            <input type="text" id="roomModalNoticeInput" placeholder="e.g. Wrap up match soon!" class="flex-1 px-3 py-2 rounded-xl theme-input focus:outline-none focus:border-amber-500 text-xs">
+            <button onclick="sendNoticeToRoomFromModal()" class="px-3 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs cursor-pointer">
+              Send
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between gap-2 pt-2 border-t border-inherit">
+        <button onclick="forceCloseRoomFromModal()" class="px-3.5 py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/30 text-xs font-bold flex items-center gap-1.5 cursor-pointer">
+          <i class="fa-solid fa-ban"></i>
+          <span>Force Close Room</span>
+        </button>
+        <button onclick="closeRoomDetailsModal()" class="px-4 py-2 rounded-xl theme-subtle theme-title text-xs font-semibold cursor-pointer">
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ======================================================== -->
   <!-- 6. FLOATING TOAST NOTIFICATION CONTAINER                 -->
   <!-- ======================================================== -->
   <div id="toastContainer" class="fixed bottom-4 right-4 z-50 space-y-2 pointer-events-none"></div>
@@ -1364,7 +1836,9 @@
       autoRefreshTimer: null,
       autoRefreshIntervalSecs: 15,
       packetLogsCount: 0,
-      currentTheme: 'dark'
+      currentTheme: 'dark',
+      otaReleaseData: null,
+      currentInspectedRoomCode: null
     };
 
     // Pending dangerous action to execute after password confirmation
@@ -1525,6 +1999,8 @@
 
       initMqtt();
       fetchGlobalData(true);
+      fetchCurrentOtaReleaseStatus();
+      renderBroadcastHistory();
       startAutoRefresh();
     }
 
@@ -1584,6 +2060,22 @@
           return;
         }
 
+        // 2C. Edit Player Modal
+        const editModal = document.getElementById('editPlayerModal');
+        if (editModal && !editModal.classList.contains('hidden')) {
+          closeEditPlayerModal(false);
+          window.history.pushState({ screen: 'app', tab: globalState.activeTab || 'players' }, '');
+          return;
+        }
+
+        // 2D. Room Details Modal
+        const roomModal = document.getElementById('roomDetailsModal');
+        if (roomModal && !roomModal.classList.contains('hidden')) {
+          closeRoomDetailsModal(false);
+          window.history.pushState({ screen: 'app', tab: globalState.activeTab || 'rooms' }, '');
+          return;
+        }
+
         // 3. Player Inspector Drawer
         const drawer = document.getElementById('playerInspectorDrawer');
         if (drawer && !drawer.classList.contains('hidden')) {
@@ -1620,9 +2112,10 @@
       if (pushHistory && !isHandlingPopState && tabId !== 'players') {
         window.history.pushState({ screen: 'tab', tab: tabId }, '');
       }
-      ['players', 'rooms', 'mqtt', 'settings'].forEach(t => {
+      ['players', 'rooms', 'mqtt', 'ota', 'settings'].forEach(t => {
         const view = document.getElementById(`tabView-${t}`);
         const btn = document.getElementById(`tabBtn-${t}`);
+        if (!view || !btn) return;
         if (t === tabId) {
           view.classList.remove('hidden');
           btn.className = "nav-tab active-tab px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all whitespace-nowrap bg-brand-600 text-white shadow-md shadow-brand-600/30 flex-shrink-0";
@@ -1633,6 +2126,9 @@
       });
       if (tabId === 'mqtt') {
         fetchCurrentCloudBroadcast();
+        renderBroadcastHistory();
+      } else if (tabId === 'ota') {
+        fetchCurrentOtaReleaseStatus();
       }
     }
 
@@ -2161,6 +2657,13 @@
             <td class="py-3.5 px-4 text-right whitespace-nowrap">
               <div class="flex items-center justify-end gap-1.5">
                 <button 
+                  onclick="quickMessagePlayer('${p.username}')" 
+                  class="p-2 rounded-lg bg-amber-500/10 hover:bg-amber-500/25 text-amber-500 transition-all text-xs" 
+                  title="Send Direct In-Game Message"
+                >
+                  <i class="fa-solid fa-paper-plane"></i>
+                </button>
+                <button 
                   onclick="openPlayerInspector('${p.username}')" 
                   class="p-2 rounded-lg theme-subtle theme-title hover:bg-brand-600 hover:text-white transition-all text-xs" 
                   title="Inspect Full Details"
@@ -2219,7 +2722,14 @@
 
             <div class="flex items-center justify-between text-xs theme-dimtext pt-1">
               <span>Seen: ${relativeTime}</span>
-              <div class="flex items-center gap-2">
+              <div class="flex items-center gap-1.5">
+                <button 
+                  onclick="quickMessagePlayer('${p.username}')" 
+                  class="p-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-500 text-xs" 
+                  title="Send Direct In-Game Message"
+                >
+                  <i class="fa-solid fa-paper-plane"></i>
+                </button>
                 <button 
                   onclick="openPlayerInspector('${p.username}')" 
                   class="px-2.5 py-1 rounded-lg bg-brand-600 hover:bg-brand-500 text-white font-medium text-xs flex items-center gap-1.5"
@@ -3197,13 +3707,22 @@
               <div>Size: <span class="theme-dimtext">${r.boardSize || 5}x${r.boardSize || 5}</span></div>
             </div>
 
-            <button 
-              onclick="forceCloseRoom('${r.code}')" 
-              class="w-full py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 text-xs font-bold border border-rose-500/30 transition-all flex items-center justify-center gap-1.5"
-            >
-              <i class="fa-solid fa-ban"></i>
-              <span>Force Close Room</span>
-            </button>
+            <div class="grid grid-cols-2 gap-2 pt-1">
+              <button 
+                onclick="inspectRoomDetails('${r.code}')" 
+                class="py-2 rounded-xl theme-subtle hover:border-brand-500 theme-title text-xs font-semibold border border-inherit transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <i class="fa-solid fa-circle-info text-brand-500"></i>
+                <span>Details</span>
+              </button>
+              <button 
+                onclick="forceCloseRoom('${r.code}')" 
+                class="py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 text-xs font-bold border border-rose-500/30 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <i class="fa-solid fa-ban"></i>
+                <span>Close</span>
+              </button>
+            </div>
           </div>
         `;
       });
@@ -3428,9 +3947,11 @@
         if (kvSuccess) {
           showToast(`Broadcast dispatched ${isDirect ? 'to @' + cleanTarget : 'globally to ALL players'}! 🚀`, 'success');
           updateLiveBroadcastCardUI(payloadObj, targetUsername);
+          saveBroadcastToHistory(payloadObj);
         } else {
           showToast('Dispatched via MQTT! Cloud persistence had a delay.', 'info');
           updateLiveBroadcastCardUI(payloadObj, targetUsername);
+          saveBroadcastToHistory(payloadObj);
         }
       } catch (err) {
         showToast('Error sending broadcast: ' + err.message, 'error');
@@ -3582,6 +4103,699 @@
       if (shouldPopHistory && !isHandlingPopState && window.history.state && window.history.state.screen === 'broadcastPreviewModal') {
         window.history.back();
       }
+    }
+
+    // --- QUICK BROADCAST PRESET TEMPLATES ---
+    function applyBroadcastTemplate(key) {
+      const templates = {
+        maintenance: {
+          title: 'Server Maintenance Notice',
+          type: 'MAINTENANCE',
+          deliveryMode: 'STARTUP',
+          size: 'STANDARD',
+          msg: 'We are performing scheduled server maintenance and network optimization. Online multiplayer rooms will temporarily restart. Thank you for your patience!'
+        },
+        event_xp: {
+          title: 'Double XP Weekend is LIVE!',
+          type: 'INFO',
+          deliveryMode: 'STARTUP',
+          size: 'EXPANDED',
+          msg: 'Enjoy 2x XP and win bonuses for all online multiplayer matches this weekend! Gather your friends, play together, and climb the global leaderboards!'
+        },
+        app_update: {
+          title: 'New Version Update Available',
+          type: 'INFO',
+          deliveryMode: 'ONCE',
+          size: 'STANDARD',
+          msg: 'A new update for Bingo Multiplayer is available with performance improvements, enhanced multiplayer sync, and bug fixes. Head over to in-game settings to download!'
+        },
+        warning: {
+          title: 'Community Guidelines & Fair Play',
+          type: 'ALERT',
+          deliveryMode: 'ONCE',
+          size: 'STANDARD',
+          msg: 'Friendly reminder to keep all in-game chat and room interactions respectful. Unsportsmanlike conduct or inappropriate usernames may lead to account restrictions.'
+        },
+        welcome: {
+          title: 'Welcome to Bingo Multiplayer!',
+          type: 'INFO',
+          deliveryMode: 'ONCE',
+          size: 'COMPACT',
+          msg: 'Welcome to Bingo Multiplayer! Join online lobbies or invite friends with room codes to compete. Enjoy the game!'
+        }
+      };
+
+      const t = templates[key];
+      if (!t) return;
+
+      const titleInput = document.getElementById('broadcastTitleInput');
+      const typeSelect = document.getElementById('broadcastTypeSelect');
+      const modeSelect = document.getElementById('broadcastModeSelect');
+      const sizeSelect = document.getElementById('broadcastSizeSelect');
+      const msgInput = document.getElementById('broadcastMsgInput');
+
+      if (titleInput) titleInput.value = t.title;
+      if (typeSelect) typeSelect.value = t.type;
+      if (modeSelect) modeSelect.value = t.deliveryMode;
+      if (sizeSelect) sizeSelect.value = t.size;
+      if (msgInput) msgInput.value = t.msg;
+
+      showToast(`Applied preset: ${t.title}`, 'info');
+    }
+
+    // --- BROADCAST SENT HISTORY LOG ---
+    function saveBroadcastToHistory(payload) {
+      try {
+        let history = JSON.parse(localStorage.getItem('bingo_admin_broadcast_history') || '[]');
+        if (!Array.isArray(history)) history = [];
+        history.unshift({
+          ...payload,
+          savedAt: Date.now()
+        });
+        if (history.length > 20) history = history.slice(0, 20);
+        localStorage.setItem('bingo_admin_broadcast_history', JSON.stringify(history));
+        renderBroadcastHistory();
+      } catch (e) {
+        console.warn('saveBroadcastToHistory error:', e);
+      }
+    }
+
+    function renderBroadcastHistory() {
+      const container = document.getElementById('broadcastHistoryContainer');
+      if (!container) return;
+
+      try {
+        const history = JSON.parse(localStorage.getItem('bingo_admin_broadcast_history') || '[]');
+        if (!Array.isArray(history) || history.length === 0) {
+          container.innerHTML = '<div class="text-xs theme-dimtext italic text-center py-4">No broadcasts saved in local history yet.</div>';
+          return;
+        }
+
+        let html = '';
+        history.forEach((item, idx) => {
+          const dateStr = item.timestamp ? new Date(item.timestamp).toLocaleString() : 'Recent';
+          const targetStr = (item.targetUsername && item.targetUsername !== 'ALL') ? item.targetUsername : 'ALL PLAYERS';
+          const modeBadge = item.deliveryMode === 'ONCE' ? '🎯 ONCE' : '🔄 STARTUP';
+          const sizeBadge = item.size || 'STANDARD';
+
+          html += `
+            <div class="p-3 rounded-xl border border-inherit theme-subtle space-y-2">
+              <div class="flex items-center justify-between flex-wrap gap-1">
+                <span class="font-bold text-xs theme-title">${escapeHtml(item.title || 'Untitled')}</span>
+                <div class="flex items-center gap-1.5 flex-wrap">
+                  <span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-neutral-800 text-neutral-300">${modeBadge}</span>
+                  <span class="px-1.5 py-0.5 rounded text-[10px] font-mono text-neutral-400 bg-neutral-900 border border-neutral-800">${sizeBadge}</span>
+                  <span class="text-[10px] theme-dimtext">${dateStr}</span>
+                </div>
+              </div>
+              <p class="text-xs theme-dimtext line-clamp-2">${escapeHtml(item.message || '')}</p>
+              <div class="flex items-center justify-between pt-1 text-[11px]">
+                <span class="font-mono text-brand-400 font-semibold">${escapeHtml(targetStr)}</span>
+                <div class="flex items-center gap-1.5">
+                  <button 
+                    type="button" 
+                    onclick="loadBroadcastFromHistory(${idx})" 
+                    class="px-2 py-0.5 rounded theme-card theme-title hover:text-brand-500 text-[10px] font-semibold border border-inherit transition-all cursor-pointer"
+                  >
+                    Load
+                  </button>
+                  <button 
+                    type="button" 
+                    onclick="deleteBroadcastFromHistory(${idx})" 
+                    class="px-2 py-0.5 rounded text-rose-400 hover:bg-rose-500/10 text-[10px] font-semibold transition-all cursor-pointer"
+                  >
+                    <i class="fa-solid fa-trash-can"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+          `;
+        });
+        container.innerHTML = html;
+      } catch (e) {
+        container.innerHTML = '<div class="text-xs text-rose-500 py-2">Error loading broadcast history</div>';
+      }
+    }
+
+    function loadBroadcastFromHistory(index) {
+      try {
+        const history = JSON.parse(localStorage.getItem('bingo_admin_broadcast_history') || '[]');
+        const item = history[index];
+        if (!item) return;
+
+        const titleInput = document.getElementById('broadcastTitleInput');
+        const msgInput = document.getElementById('broadcastMsgInput');
+        const typeSelect = document.getElementById('broadcastTypeSelect');
+        const modeSelect = document.getElementById('broadcastModeSelect');
+        const sizeSelect = document.getElementById('broadcastSizeSelect');
+        const targetInput = document.getElementById('broadcastTargetInput');
+        const authorInput = document.getElementById('broadcastAuthorInput');
+
+        if (titleInput) titleInput.value = item.title || '';
+        if (msgInput) msgInput.value = item.message || '';
+        if (typeSelect) typeSelect.value = item.type || 'INFO';
+        if (modeSelect) modeSelect.value = item.deliveryMode || 'STARTUP';
+        if (sizeSelect) sizeSelect.value = item.size || 'STANDARD';
+        if (targetInput) {
+          const target = item.targetUsername || 'ALL';
+          targetInput.value = target === 'ALL' ? '' : target;
+        }
+        if (authorInput) authorInput.value = item.author || 'Admin / Bora';
+
+        onBroadcastTargetChanged();
+        showToast('Loaded broadcast into composer', 'info');
+      } catch (e) {
+        showToast('Failed to load item', 'error');
+      }
+    }
+
+    function deleteBroadcastFromHistory(index) {
+      try {
+        let history = JSON.parse(localStorage.getItem('bingo_admin_broadcast_history') || '[]');
+        history.splice(index, 1);
+        localStorage.setItem('bingo_admin_broadcast_history', JSON.stringify(history));
+        renderBroadcastHistory();
+        showToast('Removed from history', 'info');
+      } catch {}
+    }
+
+    function clearBroadcastHistory() {
+      localStorage.removeItem('bingo_admin_broadcast_history');
+      renderBroadcastHistory();
+      showToast('Cleared broadcast history', 'info');
+    }
+
+    // --- QUICK DIRECT MESSAGE SHORTCUT ---
+    function quickMessagePlayer(username) {
+      if (!username) return;
+      const clean = username.replace(/^@/, '').trim();
+      closePlayerInspector(false);
+      switchTab('mqtt');
+      const targetInput = document.getElementById('broadcastTargetInput');
+      if (targetInput) targetInput.value = `@${clean}`;
+      const typeSelect = document.getElementById('broadcastTypeSelect');
+      if (typeSelect) typeSelect.value = 'DIRECT';
+      const modeSelect = document.getElementById('broadcastModeSelect');
+      if (modeSelect) modeSelect.value = 'ONCE';
+
+      onBroadcastTargetChanged();
+      fetchCurrentCloudBroadcast();
+
+      const msgInput = document.getElementById('broadcastMsgInput');
+      if (msgInput) {
+        msgInput.focus();
+        if (!msgInput.value.trim()) {
+          msgInput.placeholder = `Type direct message for @${clean}...`;
+        }
+      }
+      showToast(`Composer set to direct message @${clean}`, 'info');
+    }
+
+    // --- EDIT PLAYER PROFILE & LEVEL ADJUSTMENT ---
+    function openEditPlayerModal(username) {
+      const clean = (username || '').replace(/^@/, '').toLowerCase().trim();
+      const p = globalState.players.find(u => u.username === clean);
+      if (!p) {
+        showToast('Player not found in database', 'error');
+        return;
+      }
+
+      document.getElementById('editPlayerUsername').value = `@${p.username}`;
+      document.getElementById('editPlayerDisplayName').value = p.displayName || p.username;
+      document.getElementById('editPlayerLevel').value = p.level || 1;
+      document.getElementById('editPlayerStreak').value = p.currentStreak || 0;
+      document.getElementById('editPlayerGamesPlayed').value = p.gamesPlayed || 0;
+      document.getElementById('editPlayerGamesWon').value = p.gamesWon || 0;
+
+      if (!isHandlingPopState) {
+        window.history.pushState({ screen: 'editPlayerModal' }, '');
+      }
+      document.getElementById('editPlayerModal').classList.remove('hidden');
+    }
+
+    function openEditPlayerModalForCurrent() {
+      if (globalState.selectedPlayer) {
+        openEditPlayerModal(globalState.selectedPlayer.username);
+      }
+    }
+
+    function closeEditPlayerModal(shouldPopHistory = true) {
+      const modal = document.getElementById('editPlayerModal');
+      if (modal) modal.classList.add('hidden');
+      if (shouldPopHistory && !isHandlingPopState && window.history.state && window.history.state.screen === 'editPlayerModal') {
+        window.history.back();
+      }
+    }
+
+    async function submitPlayerProfileEdits() {
+      const rawUser = document.getElementById('editPlayerUsername').value.trim();
+      const cleanUser = rawUser.replace(/^@/, '').toLowerCase();
+      const p = globalState.players.find(u => u.username === cleanUser);
+      if (!p) return;
+
+      const newDisplayName = document.getElementById('editPlayerDisplayName').value.trim() || cleanUser;
+      const newLevel = Math.max(1, Math.min(100, parseInt(document.getElementById('editPlayerLevel').value) || 1));
+      const newStreak = Math.max(0, parseInt(document.getElementById('editPlayerStreak').value) || 0);
+      const newPlayed = Math.max(0, parseInt(document.getElementById('editPlayerGamesPlayed').value) || 0);
+      const newWon = Math.max(0, parseInt(document.getElementById('editPlayerGamesWon').value) || 0);
+
+      const btn = document.getElementById('btnSavePlayerEdit');
+      if (btn) {
+        btn.disabled = true;
+        btn.classList.add('opacity-60');
+      }
+
+      showToast(`Saving updates for @${cleanUser}...`, 'info');
+
+      try {
+        const updatedReg = {
+          ...(p.rawReg || {}),
+          username: cleanUser,
+          displayName: newDisplayName,
+          level: newLevel,
+          currentStreak: newStreak,
+          bestStreak: Math.max(p.bestStreak || 0, newStreak),
+          gamesPlayed: newPlayed,
+          gamesWon: newWon,
+          lastSeenTimestamp: p.lastSeenTimestamp || Date.now()
+        };
+
+        // 1. Update KeyValue reg_{username}
+        const b64 = safeB64Encode(JSON.stringify(updatedReg));
+        await setKeyValueDirect(`reg_${cleanUser}`, b64);
+
+        // 2. If ExtendsClass bin exists, update profile there too
+        if (p.binId) {
+          try {
+            const res = await fetch(`https://extendsclass.com/api/json-storage/bin/${p.binId}`);
+            if (res.ok) {
+              const binJson = await res.json();
+              if (binJson) {
+                binJson.profile = {
+                  ...(binJson.profile || {}),
+                  displayName: newDisplayName,
+                  level: newLevel,
+                  gamesPlayed: newPlayed,
+                  gamesWon: newWon,
+                  currentStreak: newStreak,
+                  bestStreak: Math.max(p.bestStreak || 0, newStreak)
+                };
+                await saveExtendsClassData(cleanUser, p.binId, binJson);
+              }
+            }
+          } catch (binErr) {
+            console.warn('ExtendsClass bin update warning:', binErr);
+          }
+        }
+
+        // 3. Update local state
+        p.displayName = newDisplayName;
+        p.level = newLevel;
+        p.currentStreak = newStreak;
+        p.bestStreak = Math.max(p.bestStreak || 0, newStreak);
+        p.gamesPlayed = newPlayed;
+        p.gamesWon = newWon;
+        p.rawReg = updatedReg;
+
+        if (globalState.selectedPlayer && globalState.selectedPlayer.username === cleanUser) {
+          globalState.selectedPlayer = p;
+          renderInspectorHeader();
+        }
+
+        applyPlayerFilters();
+        closeEditPlayerModal();
+        showToast(`Profile & stats updated for @${cleanUser}!`, 'success');
+      } catch (err) {
+        showToast('Failed to save profile edits: ' + err.message, 'error');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.classList.remove('opacity-60');
+        }
+      }
+    }
+
+    // --- EXPORT FILTERED PLAYERS CSV ---
+    function exportFilteredPlayersCsv() {
+      if (!globalState.players || globalState.players.length === 0) {
+        showToast('No player records to export', 'error');
+        return;
+      }
+
+      const rows = [
+        ['Username', 'Display Name', 'Level', 'Status', 'Matches Played', 'Wins', 'Losses', 'Win Rate %', 'Current Streak', 'Best Streak', 'Last Seen', 'UID', 'Cloud Bin ID']
+      ];
+
+      globalState.players.forEach(p => {
+        const winRate = p.gamesPlayed > 0 ? Math.round((p.gamesWon / p.gamesPlayed) * 100) : 0;
+        const lastSeen = p.lastSeenTimestamp ? new Date(p.lastSeenTimestamp).toISOString() : 'Unknown';
+        rows.push([
+          p.username,
+          `"${(p.displayName || p.username).replace(/"/g, '""')}"`,
+          p.level,
+          p.status,
+          p.gamesPlayed,
+          p.gamesWon,
+          Math.max(0, p.gamesPlayed - p.gamesWon),
+          winRate,
+          p.currentStreak,
+          p.bestStreak,
+          lastSeen,
+          p.uid,
+          p.binId || 'None'
+        ]);
+      });
+
+      const csvContent = rows.map(r => r.join(',')).join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `bingo_players_database_${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+
+      showToast(`Exported ${globalState.players.length} players to CSV!`, 'success');
+    }
+
+    // --- ROOM INSPECTION & MODERATION ---
+    function inspectRoomDetails(roomCode) {
+      const r = globalState.activeRooms[roomCode];
+      if (!r) {
+        showToast('Room information unavailable or expired', 'error');
+        return;
+      }
+
+      globalState.currentInspectedRoomCode = roomCode;
+      document.getElementById('roomModalCode').innerText = `#${roomCode}`;
+      document.getElementById('roomModalHost').innerText = `@${r.hostUsername || r.hostName || 'Host'}`;
+      document.getElementById('roomModalStatus').innerText = r.status || 'WAITING';
+      document.getElementById('roomModalPlayers').innerText = `${r.playerCount || 1} / ${r.maxPlayers || 2}`;
+      document.getElementById('roomModalBoardSize').innerText = `${r.boardSize || 5} x ${r.boardSize || 5}`;
+      const noticeInput = document.getElementById('roomModalNoticeInput');
+      if (noticeInput) noticeInput.value = '';
+
+      if (!isHandlingPopState) {
+        window.history.pushState({ screen: 'roomDetailsModal' }, '');
+      }
+      document.getElementById('roomDetailsModal').classList.remove('hidden');
+    }
+
+    function closeRoomDetailsModal(shouldPopHistory = true) {
+      const modal = document.getElementById('roomDetailsModal');
+      if (modal) modal.classList.add('hidden');
+      if (shouldPopHistory && !isHandlingPopState && window.history.state && window.history.state.screen === 'roomDetailsModal') {
+        window.history.back();
+      }
+    }
+
+    function sendNoticeToRoomFromModal() {
+      const code = globalState.currentInspectedRoomCode;
+      const input = document.getElementById('roomModalNoticeInput');
+      const text = input ? input.value.trim() : '';
+
+      if (!code || !text) {
+        showToast('Please enter a message to send', 'error');
+        return;
+      }
+
+      if (globalState.mqttClient && globalState.mqttClient.isConnected()) {
+        const msg = new Paho.MQTT.Message(JSON.stringify({
+          type: 'ROOM_SYSTEM_MSG',
+          sender: 'Admin / Moderator',
+          message: text,
+          timestamp: Date.now()
+        }));
+        msg.destinationName = `bingo/v3/room/${code}`;
+        globalState.mqttClient.send(msg);
+        showToast(`Dispatched alert to Room #${code}`, 'success');
+        input.value = '';
+      } else {
+        showToast('MQTT not connected', 'error');
+      }
+    }
+
+    function forceCloseRoomFromModal() {
+      const code = globalState.currentInspectedRoomCode;
+      if (code) {
+        forceCloseRoom(code);
+        closeRoomDetailsModal();
+      }
+    }
+
+    // --- APP UPDATES & OTA RELEASE SERVICES ---
+    async function fetchCurrentOtaReleaseStatus() {
+      const icon = document.getElementById('otaRefreshIcon');
+      if (icon) icon.classList.add('fa-spin');
+
+      try {
+        // 1. Fetch live latest_app_version from KeyValue cloud store
+        const raw = await getKeyValueDirect('latest_app_version');
+        let data = null;
+
+        if (raw && raw !== '""' && raw !== 'null') {
+          let cleanStr = raw.trim();
+          if (cleanStr.startsWith('"') && cleanStr.endsWith('"') && cleanStr.length >= 2) {
+            cleanStr = cleanStr.substring(1, cleanStr.length - 1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+          }
+          try {
+            data = JSON.parse(cleanStr);
+          } catch {}
+        }
+
+        // Fallback to official v1.3 default if KeyValue empty
+        if (!data) {
+          data = {
+            versionCode: 36,
+            versionName: "1.3",
+            tag_name: "v1.3",
+            downloadUrl: "https://github.com/VamsiReddyBora/BINGO/releases/download/v1.3/Bingo.apk",
+            releaseNotes: "• In-App OTA Update Engine\n• Resilient Anycast DNS\n• Multiplayer stability enhancements",
+            apkSize: 5497848
+          };
+        }
+
+        globalState.otaReleaseData = data;
+
+        // Update UI
+        const badge = document.getElementById('otaLiveVersionBadge');
+        const buildBadge = document.getElementById('otaLiveBuildBadge');
+        const tagNameEl = document.getElementById('otaLiveTagName');
+        const apkSizeEl = document.getElementById('otaLiveApkSize');
+        const linkEl = document.getElementById('otaLiveDownloadLink');
+        const notesEl = document.getElementById('otaLiveReleaseNotes');
+        const navBadge = document.getElementById('navOtaBadge');
+
+        if (badge) badge.innerText = `v${data.versionName}`;
+        if (buildBadge) buildBadge.innerText = `Build ${data.versionCode}`;
+        if (tagNameEl) tagNameEl.innerText = data.tag_name || `v${data.versionName}`;
+        if (apkSizeEl) {
+          const mb = (data.apkSize / (1024 * 1024)).toFixed(2);
+          apkSizeEl.innerText = `${mb} MB (${(data.apkSize || 0).toLocaleString()} bytes)`;
+        }
+        if (linkEl) {
+          linkEl.href = data.downloadUrl;
+          linkEl.innerText = data.downloadUrl;
+        }
+        if (notesEl) notesEl.innerText = data.releaseNotes || 'No release notes specified.';
+        if (navBadge) navBadge.innerText = `v${data.versionName}`;
+
+        // Populate Deploy Form inputs with current release values if empty
+        const inName = document.getElementById('otaInputVersionName');
+        const inCode = document.getElementById('otaInputVersionCode');
+        const inTag = document.getElementById('otaInputTagName');
+        const inUrl = document.getElementById('otaInputDownloadUrl');
+        const inSize = document.getElementById('otaInputApkSize');
+        const inNotes = document.getElementById('otaInputReleaseNotes');
+
+        if (inName && !inName.value) inName.value = data.versionName || '';
+        if (inCode && !inCode.value) inCode.value = data.versionCode || '';
+        if (inTag && !inTag.value) inTag.value = data.tag_name || '';
+        if (inUrl && !inUrl.value) inUrl.value = data.downloadUrl || '';
+        if (inSize && !inSize.value) inSize.value = data.apkSize || '';
+        if (inNotes && !inNotes.value) inNotes.value = data.releaseNotes || '';
+
+      } catch (err) {
+        console.error('fetchCurrentOtaReleaseStatus error:', err);
+      } finally {
+        if (icon) setTimeout(() => icon.classList.remove('fa-spin'), 300);
+      }
+    }
+
+    async function testOtaEndpointsLatency() {
+      showToast('Pinging all 4 OTA update CDN distribution endpoints...', 'info');
+
+      const endpoints = [
+        { id: 'tier1', url: `https://vamsireddybora.github.io/BINGO/version.json?_t=${Date.now()}` },
+        { id: 'tier2', url: `${KEYVALUE_API_URL}/GetValue/${KEYVALUE_APP_KEY}/latest_app_version?_t=${Date.now()}` },
+        { id: 'tier3', url: `https://raw.githubusercontent.com/VamsiReddyBora/BINGO/gh-pages/version.json?_t=${Date.now()}` },
+        { id: 'tier4', url: `https://cdn.jsdelivr.net/gh/VamsiReddyBora/BINGO@gh-pages/version.json?_t=${Date.now()}` }
+      ];
+
+      endpoints.forEach(async (ep) => {
+        const badge = document.getElementById(`cdnStatus-${ep.id}`);
+        const lat = document.getElementById(`cdnLatency-${ep.id}`);
+        if (badge) {
+          badge.className = "px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/20 text-amber-400";
+          badge.innerText = "PINGING...";
+        }
+
+        const t0 = performance.now();
+        try {
+          const res = await fetch(ep.url);
+          const elapsed = Math.round(performance.now() - t0);
+          if (res.ok) {
+            if (badge) {
+              badge.className = "px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-400";
+              badge.innerText = "ONLINE 200";
+            }
+            if (lat) lat.innerText = `${elapsed} ms`;
+          } else {
+            if (badge) {
+              badge.className = "px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-rose-500/20 text-rose-400";
+              badge.innerText = `ERR ${res.status}`;
+            }
+            if (lat) lat.innerText = `${elapsed} ms`;
+          }
+        } catch (e) {
+          if (badge) {
+            badge.className = "px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-rose-500/20 text-rose-400";
+            badge.innerText = "FAIL";
+          }
+          if (lat) lat.innerText = "-- ms";
+        }
+      });
+    }
+
+    function onOtaVersionNameInputChanged() {
+      const name = document.getElementById('otaInputVersionName').value.trim();
+      const tagInput = document.getElementById('otaInputTagName');
+      if (name && tagInput) {
+        tagInput.value = name.startsWith('v') ? name : `v${name}`;
+      }
+    }
+
+    async function publishOtaReleaseToCloud() {
+      const name = document.getElementById('otaInputVersionName').value.trim();
+      const code = parseInt(document.getElementById('otaInputVersionCode').value);
+      const tag = document.getElementById('otaInputTagName').value.trim() || `v${name}`;
+      const url = document.getElementById('otaInputDownloadUrl').value.trim();
+      const size = parseInt(document.getElementById('otaInputApkSize').value) || 0;
+      const notes = document.getElementById('otaInputReleaseNotes').value.trim();
+      const btn = document.getElementById('btnPublishOta');
+
+      if (!name || isNaN(code) || !url) {
+        showToast('Please provide Version Name, Version Code (integer), and Download URL', 'error');
+        return;
+      }
+
+      const payload = {
+        versionCode: code,
+        versionName: name,
+        tag_name: tag,
+        downloadUrl: url,
+        releaseNotes: notes,
+        apkSize: size
+      };
+
+      if (btn) {
+        btn.disabled = true;
+        btn.classList.add('opacity-60');
+      }
+      showToast(`Publishing release v${name} (build ${code}) to KeyValue...`, 'info');
+
+      try {
+        const jsonStr = JSON.stringify(payload);
+        const ok = await setKeyValueDirect('latest_app_version', jsonStr);
+
+        if (ok) {
+          showToast(`OTA Release v${name} published to Cloud! Mobile apps will detect this build.`, 'success');
+          await fetchCurrentOtaReleaseStatus();
+        } else {
+          showToast('Failed to write release payload to KeyValue. Please retry.', 'error');
+        }
+      } catch (e) {
+        showToast('Error publishing release: ' + e.message, 'error');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.classList.remove('opacity-60');
+        }
+      }
+    }
+
+    function downloadVersionJsonFile() {
+      const name = document.getElementById('otaInputVersionName').value.trim() || '1.3';
+      const code = parseInt(document.getElementById('otaInputVersionCode').value) || 36;
+      const tag = document.getElementById('otaInputTagName').value.trim() || `v${name}`;
+      const url = document.getElementById('otaInputDownloadUrl').value.trim() || `https://github.com/VamsiReddyBora/BINGO/releases/download/${tag}/Bingo.apk`;
+      const size = parseInt(document.getElementById('otaInputApkSize').value) || 5497848;
+      const notes = document.getElementById('otaInputReleaseNotes').value.trim() || '• In-App OTA Update Engine\n• Resilient Anycast DNS\n• Multiplayer stability enhancements';
+
+      const payload = {
+        versionCode: code,
+        versionName: name,
+        tag_name: tag,
+        downloadUrl: url,
+        releaseNotes: notes,
+        apkSize: size
+      };
+
+      const jsonStr = JSON.stringify(payload, null, 2);
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'version.json';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+
+      showToast('Downloaded version.json file ready for git commit!', 'success');
+    }
+
+    function copyOtaJsonPayload() {
+      const name = document.getElementById('otaInputVersionName').value.trim() || '1.3';
+      const code = parseInt(document.getElementById('otaInputVersionCode').value) || 36;
+      const tag = document.getElementById('otaInputTagName').value.trim() || `v${name}`;
+      const url = document.getElementById('otaInputDownloadUrl').value.trim() || '';
+      const size = parseInt(document.getElementById('otaInputApkSize').value) || 0;
+      const notes = document.getElementById('otaInputReleaseNotes').value.trim() || '';
+
+      const payload = {
+        versionCode: code,
+        versionName: name,
+        tag_name: tag,
+        downloadUrl: url,
+        releaseNotes: notes,
+        apkSize: size
+      };
+
+      copyToClipboard(JSON.stringify(payload, null, 2));
+    }
+
+    function simulateTestRelease(verStr) {
+      document.getElementById('otaInputVersionName').value = verStr || '1.3.1';
+      document.getElementById('otaInputVersionCode').value = '37';
+      document.getElementById('otaInputTagName').value = `v${verStr || '1.3.1'}`;
+      document.getElementById('otaInputDownloadUrl').value = 'https://github.com/VamsiReddyBora/BINGO/releases/download/v1.3/Bingo.apk';
+      document.getElementById('otaInputApkSize').value = '5497848';
+      document.getElementById('otaInputReleaseNotes').value = '• OTA In-App Update Simulation Test\n• Verified download and auto-installer flow\n• Fast rollback available from Admin Portal';
+
+      showToast(`Form filled with test version ${verStr || '1.3.1'}! Click Publish to test.`, 'info');
+    }
+
+    function restoreOfficialRelease() {
+      document.getElementById('otaInputVersionName').value = '1.3';
+      document.getElementById('otaInputVersionCode').value = '36';
+      document.getElementById('otaInputTagName').value = 'v1.3';
+      document.getElementById('otaInputDownloadUrl').value = 'https://github.com/VamsiReddyBora/BINGO/releases/download/v1.3/Bingo.apk';
+      document.getElementById('otaInputApkSize').value = '5497848';
+      document.getElementById('otaInputReleaseNotes').value = '• In-App OTA Update Engine\n• Resilient Anycast DNS\n• Multiplayer stability enhancements';
+
+      showToast('Reset form to official v1.3 release values.', 'info');
     }
 
     function logMqttEvent(topic, payload) {
