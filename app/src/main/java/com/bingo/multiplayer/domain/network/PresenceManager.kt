@@ -193,6 +193,25 @@ object PresenceManager {
         }
     }
 
+    private fun ensureInCloudDirectory(clean: String) {
+        try {
+            val encKey = URLEncoder.encode("user_directory", "UTF-8")
+            val url = "${NetworkConfig.KEYVALUE_API_URL}/GetValue/$appKey/$encKey"
+            val request = Request.Builder().url(url).get().build()
+            val current = httpClient.newCall(request).execute().use { resp ->
+                if (resp.isSuccessful) resp.body?.string()?.trim()?.removeSurrounding("\"") else null
+            } ?: ""
+            val users = current.split(",").map { it.trim().lowercase() }.filter { it.isNotBlank() }.toMutableSet()
+            if (users.add(clean)) {
+                val newDir = users.sorted().joinToString(",")
+                val encVal = URLEncoder.encode(newDir, "UTF-8")
+                val updateUrl = "${NetworkConfig.KEYVALUE_API_URL}/UpdateValue/$appKey/$encKey?value=$encVal"
+                val updateReq = Request.Builder().url(updateUrl).post("".toRequestBody(null)).header("Content-Length", "0").build()
+                httpClient.newCall(updateReq).execute().close()
+            }
+        } catch (_: Exception) {}
+    }
+
     /**
      * Reads presence directly from Cloud Key-Value store.
      */
@@ -257,6 +276,7 @@ object PresenceManager {
         // Write initial status to cloud immediately
         scope.launch {
             setCloudPresence(clean, currentStatus, now)
+            ensureInCloudDirectory(clean)
         }
 
         scope.launch {

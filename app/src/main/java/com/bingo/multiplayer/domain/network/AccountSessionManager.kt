@@ -676,6 +676,15 @@ class AccountSessionManager(
                 val b64 = Base64.encodeToString(jsonStr.toByteArray(StandardCharsets.UTF_8), Base64.URL_SAFE or Base64.NO_WRAP).trim()
                 setKeyValue("reg_$clean", b64)
 
+                // 1b. Maintain cloud user directory index
+                try {
+                    val currentDir = getKeyValue("user_directory") ?: ""
+                    val users = currentDir.split(",").map { it.trim().lowercase() }.filter { it.isNotBlank() }.toMutableSet()
+                    if (users.add(clean)) {
+                        setKeyValue("user_directory", users.sorted().joinToString(","))
+                    }
+                } catch (_: Exception) {}
+
                 // 2. Save avatar JSON bin if avatar is a Base64 string
                 if (!entry.avatarUrl.isNullOrBlank() && !isLocalFilePath(entry.avatarUrl)) {
                     saveUserAvatar(clean, entry.avatarUrl)
