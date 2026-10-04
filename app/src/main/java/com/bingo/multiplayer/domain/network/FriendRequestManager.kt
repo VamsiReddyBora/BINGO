@@ -287,7 +287,7 @@ object FriendRequestManager {
                 val options = MqttConnectOptions().apply {
                     isCleanSession = true
                     connectionTimeout = 5
-                    socketFactory = LowLatencySocketFactory()
+                    NetworkConfig.applyMqttOptions(this)
                 }
                 mqttClient.connect(options).waitForCompletion(4000L)
                 val topic = "bingo/v3/friend_requests/$targetUsername"
@@ -324,7 +324,7 @@ object FriendRequestManager {
                 isCleanSession = true
                 connectionTimeout = 5
                 isAutomaticReconnect = true
-                socketFactory = LowLatencySocketFactory()
+                NetworkConfig.applyMqttOptions(this)
             }
             val topic = "bingo/v3/friend_requests/$clean"
             client.setCallback(object : org.eclipse.paho.client.mqttv3.MqttCallbackExtended {

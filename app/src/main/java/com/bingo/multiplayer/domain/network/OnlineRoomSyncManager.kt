@@ -247,7 +247,7 @@ class OnlineRoomSyncManager(
                     isCleanSession = true
                     connectionTimeout = 10
                     keepAliveInterval = 30
-                    socketFactory = LowLatencySocketFactory()
+                    NetworkConfig.applyMqttOptions(this)
                     try {
                         val willPacket = RoomMessagePacket(
                             type = "LEAVE",

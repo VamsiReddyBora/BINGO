@@ -209,7 +209,7 @@ object GameInviteManager {
                 val options = MqttConnectOptions().apply {
                     isCleanSession = true
                     connectionTimeout = 3
-                    socketFactory = LowLatencySocketFactory()
+                    NetworkConfig.applyMqttOptions(this)
                 }
                 mqttClient.connect(options).waitForCompletion(2000L)
                 val emptyMsg = MqttMessage(ByteArray(0)).apply {
@@ -234,7 +234,7 @@ object GameInviteManager {
                 val options = MqttConnectOptions().apply {
                     isCleanSession = true
                     connectionTimeout = 3
-                    socketFactory = LowLatencySocketFactory()
+                    NetworkConfig.applyMqttOptions(this)
                 }
                 mqttClient.connect(options).waitForCompletion(2500L)
                 val topic = "bingo/v3/invites/$targetUsername"
@@ -268,7 +268,7 @@ object GameInviteManager {
                 isCleanSession = true
                 connectionTimeout = 5
                 isAutomaticReconnect = true
-                socketFactory = LowLatencySocketFactory()
+                NetworkConfig.applyMqttOptions(this)
             }
             val topic = "bingo/v3/invites/$clean"
             client.setCallback(object : org.eclipse.paho.client.mqttv3.MqttCallbackExtended {

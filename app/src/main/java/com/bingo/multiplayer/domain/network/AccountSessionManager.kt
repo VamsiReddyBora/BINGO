@@ -762,7 +762,7 @@ class AccountSessionManager(
                 val options = MqttConnectOptions().apply {
                     isCleanSession = true
                     connectionTimeout = 3
-                    socketFactory = LowLatencySocketFactory()
+                    NetworkConfig.applyMqttOptions(this)
                 }
                 client.connect(options).waitForCompletion(2000L)
                 val payloadObj = org.json.JSONObject()
@@ -830,7 +830,7 @@ class AccountSessionManager(
                 isCleanSession = true
                 connectionTimeout = 2
                 keepAliveInterval = 10
-                socketFactory = LowLatencySocketFactory()
+                NetworkConfig.applyMqttOptions(this)
             }
 
             tempClient.setCallback(object : MqttCallbackExtended {
@@ -911,6 +911,7 @@ class AccountSessionManager(
                 val options = MqttConnectOptions().apply {
                     isCleanSession = true
                     connectionTimeout = 3
+                    NetworkConfig.applyMqttOptions(this)
                 }
                 kickerClient.connect(options).waitForCompletion(2000)
 
@@ -959,7 +960,7 @@ class AccountSessionManager(
                     isCleanSession = true
                     connectionTimeout = 5
                     keepAliveInterval = 15
-                    socketFactory = LowLatencySocketFactory()
+                    NetworkConfig.applyMqttOptions(this)
                 }
 
                 client.setCallback(object : MqttCallbackExtended {
@@ -1043,7 +1044,7 @@ class AccountSessionManager(
             val options = MqttConnectOptions().apply {
                 isCleanSession = true
                 connectionTimeout = 3
-                socketFactory = LowLatencySocketFactory()
+                NetworkConfig.applyMqttOptions(this)
             }
             client.connect(options).waitForCompletion(2000L)
             val payload = json.encodeToString(entry.copy(username = clean))
@@ -1081,7 +1082,7 @@ class AccountSessionManager(
             val connectOptions = MqttConnectOptions().apply {
                 isCleanSession = true
                 connectionTimeout = 2
-                socketFactory = LowLatencySocketFactory()
+                NetworkConfig.applyMqttOptions(this)
             }
 
             tempClient.setCallback(object : MqttCallbackExtended {
@@ -1142,7 +1143,7 @@ class AccountSessionManager(
             val connectOptions = MqttConnectOptions().apply {
                 isCleanSession = true
                 connectionTimeout = 2
-                socketFactory = LowLatencySocketFactory()
+                NetworkConfig.applyMqttOptions(this)
             }
 
             tempClient.setCallback(object : MqttCallbackExtended {
@@ -1206,7 +1207,7 @@ class AccountSessionManager(
             val connectOptions = MqttConnectOptions().apply {
                 isCleanSession = true
                 connectionTimeout = 2
-                socketFactory = LowLatencySocketFactory()
+                NetworkConfig.applyMqttOptions(this)
             }
 
             tempClient.setCallback(object : MqttCallbackExtended {

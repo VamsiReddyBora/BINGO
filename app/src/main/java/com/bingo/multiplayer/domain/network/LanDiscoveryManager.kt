@@ -385,7 +385,7 @@ class LanDiscoveryManager(
                 val options = MqttConnectOptions().apply {
                     isCleanSession = true
                     connectionTimeout = 3
-                    socketFactory = LowLatencySocketFactory()
+                    NetworkConfig.applyMqttOptions(this)
                 }
                 client.connect(options).waitForCompletion(2000L)
                 Log.d("LanDiscovery", "MQTT publisher connected for room ${game.roomCode}")
@@ -414,7 +414,7 @@ class LanDiscoveryManager(
                 val options = MqttConnectOptions().apply {
                     isCleanSession = true
                     connectionTimeout = 3
-                    socketFactory = LowLatencySocketFactory()
+                    NetworkConfig.applyMqttOptions(this)
                 }
                 client.connect(options).waitForCompletion(2000L)
                 Log.d("LanDiscovery", "MQTT subscriber connected")

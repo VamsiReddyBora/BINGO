@@ -299,7 +299,7 @@ object PresenceManager {
                     isCleanSession = true
                     connectionTimeout = 10
                     keepAliveInterval = 60
-                    socketFactory = LowLatencySocketFactory()
+                    NetworkConfig.applyMqttOptions(this)
                     setWill(
                         presenceTopic,
                         lwtPayload.toByteArray(StandardCharsets.UTF_8),
@@ -483,7 +483,7 @@ object PresenceManager {
                     isCleanSession = true
                     connectionTimeout = 10
                     keepAliveInterval = 60
-                    socketFactory = LowLatencySocketFactory()
+                    NetworkConfig.applyMqttOptions(this)
                 }
 
                 client.setCallback(object : MqttCallbackExtended {

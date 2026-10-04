@@ -136,7 +136,7 @@ object OnlineRoomRegistry {
             val options = MqttConnectOptions().apply {
                 isCleanSession = true
                 connectionTimeout = 3
-                socketFactory = LowLatencySocketFactory()
+                NetworkConfig.applyMqttOptions(this)
             }
             client.connect(options).waitForCompletion(2000L)
             val jsonStr = json.encodeToString(session)
@@ -161,7 +161,7 @@ object OnlineRoomRegistry {
             val options = MqttConnectOptions().apply {
                 isCleanSession = true
                 connectionTimeout = 3
-                socketFactory = LowLatencySocketFactory()
+                NetworkConfig.applyMqttOptions(this)
             }
             client.connect(options).waitForCompletion(2000L)
             val message = MqttMessage(ByteArray(0)).apply {
@@ -185,7 +185,7 @@ object OnlineRoomRegistry {
             val options = MqttConnectOptions().apply {
                 isCleanSession = true
                 connectionTimeout = 3
-                socketFactory = LowLatencySocketFactory()
+                NetworkConfig.applyMqttOptions(this)
             }
             var result: OnlineRoomSession? = null
             val latch = CountDownLatch(1)
