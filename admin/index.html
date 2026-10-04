@@ -346,9 +346,9 @@
             title="Cloud Database Ping & Latency (Tap to re-test)"
           >
             <span class="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span class="text-[10px] sm:text-[11px] hidden md:inline font-semibold">Ping:</span>
+            <span class="text-[10px] sm:text-[11px] font-semibold text-emerald-400">Ping:</span>
             <span class="text-[10px] sm:text-[11px] font-mono font-bold flex items-center gap-0.5">
-              <i class="fa-solid fa-bolt text-[9px] text-emerald-400 hidden sm:inline"></i>
+              <i class="fa-solid fa-bolt text-[9px] text-emerald-400"></i>
               <span id="keyValLatency">--ms</span>
             </span>
           </div>
@@ -2161,7 +2161,8 @@
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
           const encKey = encodeURIComponent(key.trim());
-          const encVal = encodeURIComponent(value.trim());
+          const safeVal = (value === null || value === undefined || String(value).trim() === '') ? '""' : String(value).trim();
+          const encVal = encodeURIComponent(safeVal);
           const url = `${KEYVALUE_API_URL}/UpdateValue/${KEYVALUE_APP_KEY}/${encKey}?value=${encVal}`;
           const res = await fetch(url, {
             method: 'POST',
@@ -2289,6 +2290,7 @@
       // 2. If new bin was created, update KeyValue pointers (user_{username} & gid_{googleId})
       if (newBinId) {
         const clean = username.trim().toLowerCase().replace(/^@/, '');
+        KNOWN_USER_BINS[clean] = newBinId;
         await setKeyValueDirect(`user_${clean}`, newBinId);
         
         const p = globalState.players.find(u => u.username === clean);
@@ -2298,6 +2300,9 @@
             const gid = p.uid.replace('google_', '');
             await setKeyValueDirect(`gid_${gid}`, newBinId);
           }
+        }
+        if (globalState.playerCache && globalState.playerCache[clean]) {
+          globalState.playerCache[clean].binId = newBinId;
         }
         return true;
       }
@@ -2319,13 +2324,32 @@
       throw new Error('Could not persist updated record to cloud storage');
     }
 
+    // Authoritative ExtendsClass Bin mappings (fast, 100% accurate, no rate-limiting)
+    const KNOWN_USER_BINS = {
+      'ammu': 'bbdfeaa',
+      'bob': 'bfbafff',
+      'bora': 'dbadeef',
+      'charan': 'bdddadf',
+      'hari': 'cddcadf',
+      'hjskakj': 'ddbeded',
+      'navii': 'ddbeded',
+      'player4': 'feaccfc',
+      'realme': 'abbaabe',
+      'shivuu': 'cefdade',
+      'vampire': 'ddfdbbe',
+      'vamsi': 'defffae',
+      'vani': 'fdedeba'
+    };
+
     // Concurrency guard to prevent overlapping polls
     let isFetchingGlobal = false;
+    let globalFetchTick = 0;
 
     // Master Global Fetch: Lightning-fast (<100ms), cached, authoritative & ghost-free
     async function fetchGlobalData(showSpinner = false) {
       if (isFetchingGlobal) return;
       isFetchingGlobal = true;
+      globalFetchTick++;
 
       const refreshIcon = document.getElementById('refreshIcon');
       if (showSpinner && refreshIcon) refreshIcon.classList.add('fa-spin');
@@ -2369,22 +2393,52 @@
           }
         }
 
-        // 2. Determine which players need their profile/reg fetched from KeyValue
-        // If showSpinner is true (manual refresh or initial load), refresh all profiles.
+        // 2. Determine which players need their profile fetched
+        // If showSpinner is true (manual refresh or initial load) OR every 10 ticks (30s), refresh profiles.
         // If 3s auto-refreshing, ONLY fetch players that are NOT yet in playerCache!
-        const toFetch = showSpinner 
+        const shouldRefreshProfiles = showSpinner || (globalFetchTick % 10 === 0);
+        const toFetch = shouldRefreshProfiles 
           ? usernames 
           : usernames.filter(u => !globalState.playerCache[u]);
 
         if (toFetch.length > 0) {
-          const CHUNK_SIZE = 5;
-          for (let i = 0; i < toFetch.length; i += CHUNK_SIZE) {
-            const chunk = toFetch.slice(i, i + CHUNK_SIZE);
-            await Promise.all(chunk.map(async (uname) => {
-              let regData = null;
-              let binId = globalState.playerCache[uname]?.binId || null;
+          await Promise.all(toFetch.map(async (uname) => {
+            let binId = KNOWN_USER_BINS[uname] || globalState.playerCache[uname]?.binId || null;
+            let binProfile = null;
+            let matchHistory = null;
+            let regData = null;
 
-              // Fetch reg_{uname}
+            // Step A: If binId is not yet known, query KeyValue
+            if (!binId) {
+              try {
+                const rawBin = await getKeyValueDirect(`user_${uname}`, 2);
+                if (rawBin && !rawBin.startsWith('{') && rawBin.length < 50 && rawBin !== 'null' && rawBin !== '""') {
+                  binId = rawBin;
+                }
+              } catch {}
+            }
+
+            // Step B: Fetch ground-truth profile from ExtendsClass bin
+            if (binId) {
+              try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 2500);
+                const res = await fetch(`https://extendsclass.com/api/json-storage/bin/${binId}`, { signal: controller.signal });
+                clearTimeout(timeoutId);
+                if (res.ok) {
+                  const data = await res.json();
+                  if (data) {
+                    binProfile = data.profile || null;
+                    matchHistory = Array.isArray(data.matchHistory) ? data.matchHistory : null;
+                  }
+                }
+              } catch (e) {
+                console.warn('ExtendsClass fetch failed for ' + uname, e);
+              }
+            }
+
+            // Step C: Fallback to reg_{uname} from KeyValue if binProfile is missing
+            if (!binProfile) {
               try {
                 const rawReg = await getKeyValueDirect(`reg_${uname}`, 2);
                 if (rawReg) {
@@ -2394,48 +2448,37 @@
                   }
                 }
               } catch {}
+            }
 
-              // Fetch user_{uname} (ExtendsClass bin pointer) if not yet resolved
-              if (!binId) {
-                try {
-                  const rawBin = await getKeyValueDirect(`user_${uname}`, 2);
-                  if (rawBin && !rawBin.startsWith('{') && rawBin.length < 50 && rawBin !== 'null') {
-                    binId = rawBin;
-                  }
-                } catch {}
-              }
+            const existing = globalState.playerCache[uname] || {};
+            const matchHistoryLen = Array.isArray(matchHistory) ? matchHistory.length : 0;
 
-              // Multi-source fallback: check gid_{googleId}
-              if (!binId && regData && regData.uid && regData.uid.startsWith('google_')) {
-                try {
-                  const gid = regData.uid.replace('google_', '');
-                  const rawGidBin = await getKeyValueDirect(`gid_${gid}`, 2);
-                  if (rawGidBin && !rawGidBin.startsWith('{') && rawGidBin.length < 50 && rawGidBin !== 'null') {
-                    binId = rawGidBin;
-                  }
-                } catch {}
-              }
+            // Monotonic stats: Never overwrite valid stats with 0!
+            const gamesPlayed = Math.max(existing.gamesPlayed || 0, binProfile?.gamesPlayed || 0, matchHistoryLen, regData?.gamesPlayed || 0);
+            const gamesWon = Math.max(existing.gamesWon || 0, binProfile?.gamesWon || 0, regData?.gamesWon || 0);
+            const level = Math.max(existing.level || 1, binProfile?.level || 1, regData?.level || 1);
+            const bestStreak = Math.max(existing.bestStreak || 0, binProfile?.bestStreak || 0, regData?.bestStreak || 0);
+            const currentStreak = binProfile?.currentStreak !== undefined ? binProfile.currentStreak : (regData?.currentStreak !== undefined ? regData.currentStreak : (existing.currentStreak || 0));
 
-              const existing = globalState.playerCache[uname] || {};
-              const playerObj = {
-                username: uname,
-                displayName: (regData && regData.displayName) ? regData.displayName : (existing.displayName || uname),
-                uid: (regData && regData.uid) ? regData.uid : (existing.uid || `user_${uname}`),
-                level: (regData && regData.level !== undefined) ? regData.level : (existing.level || 1),
-                gamesPlayed: (regData && regData.gamesPlayed !== undefined) ? regData.gamesPlayed : (existing.gamesPlayed || 0),
-                gamesWon: (regData && regData.gamesWon !== undefined) ? regData.gamesWon : (existing.gamesWon || 0),
-                currentStreak: (regData && regData.currentStreak !== undefined) ? regData.currentStreak : (existing.currentStreak || 0),
-                bestStreak: (regData && regData.bestStreak !== undefined) ? regData.bestStreak : (existing.bestStreak || 0),
-                avatarUrl: (regData && regData.avatarUrl) ? regData.avatarUrl : (existing.avatarUrl || null),
-                lastSeenTimestamp: (regData && regData.lastSeenTimestamp) ? regData.lastSeenTimestamp : (existing.lastSeenTimestamp || Date.now()),
-                status: existing.status || 'OFFLINE',
-                binId: binId,
-                rawReg: regData || existing.rawReg || null
-              };
+            const playerObj = {
+              username: uname,
+              displayName: binProfile?.displayName || regData?.displayName || existing.displayName || uname,
+              uid: binProfile?.uid || regData?.uid || existing.uid || `user_${uname}`,
+              level: level,
+              gamesPlayed: gamesPlayed,
+              gamesWon: gamesWon,
+              currentStreak: currentStreak,
+              bestStreak: bestStreak,
+              avatarUrl: binProfile?.avatarUrl || regData?.avatarUrl || existing.avatarUrl || null,
+              avatarBase64: binProfile?.avatarBase64 || existing.avatarBase64 || null,
+              lastSeenTimestamp: regData?.lastSeenTimestamp || existing.lastSeenTimestamp || Date.now(),
+              status: existing.status || 'OFFLINE',
+              binId: binId,
+              rawReg: regData || existing.rawReg || null
+            };
 
-              globalState.playerCache[uname] = playerObj;
-            }));
-          }
+            globalState.playerCache[uname] = playerObj;
+          }));
         }
 
         // 3. Assemble globalState.players strictly for valid users in user_directory
@@ -3000,15 +3043,18 @@
 
       // 1. Resolve Bin ID if null
       if (!p.binId) {
+        p.binId = KNOWN_USER_BINS[username] || null;
+      }
+      if (!p.binId) {
         let foundBin = await getKeyValueDirect(`user_${username}`);
         if (!foundBin && p.uid && p.uid.startsWith('google_')) {
           foundBin = await getKeyValueDirect(`gid_${p.uid.replace('google_', '')}`);
         }
         if (foundBin && !foundBin.startsWith('{') && foundBin.length < 50 && foundBin !== 'null') {
           p.binId = foundBin;
-          document.getElementById('inspBinId').innerText = foundBin;
         }
       }
+      document.getElementById('inspBinId').innerText = p.binId || 'None assigned';
 
       // 2. Fetch ExtendsClass Match History & Profile Data
       let matchHistory = [];
@@ -3022,9 +3068,20 @@
               matchHistory = Array.isArray(data.matchHistory) ? data.matchHistory : [];
               profileData = data.profile || null;
               if (profileData) {
+                p.level = Math.max(p.level || 1, profileData.level || 1);
+                p.gamesPlayed = Math.max(p.gamesPlayed || 0, profileData.gamesPlayed || 0, matchHistory.length);
+                p.gamesWon = Math.max(p.gamesWon || 0, profileData.gamesWon || 0);
+                p.bestStreak = Math.max(p.bestStreak || 0, profileData.bestStreak || 0);
+                if (profileData.currentStreak !== undefined) p.currentStreak = profileData.currentStreak;
+                if (profileData.displayName) p.displayName = profileData.displayName;
                 if (profileData.avatarBase64) p.avatarBase64 = profileData.avatarBase64;
                 if (profileData.avatarUrl) p.avatarUrl = profileData.avatarUrl;
+                if (globalState.playerCache && globalState.playerCache[username]) {
+                  Object.assign(globalState.playerCache[username], p);
+                }
                 renderInspectorHeader();
+                updateDashboardStatistics();
+                applyPlayerFilters();
               }
             }
           }
@@ -3565,10 +3622,11 @@
       }
 
       // 3. Clear cloud records in KeyValue
-      await setKeyValueDirect(`reg_${clean}`, '');
-      await setKeyValueDirect(`user_${clean}`, '');
+      await setKeyValueDirect(`reg_${clean}`, '""');
+      await setKeyValueDirect(`user_${clean}`, '""');
       await setKeyValueDirect(`pres_${clean}`, 'OFFLINE:0');
-      await setKeyValueDirect(`friends_${clean}`, '');
+      await setKeyValueDirect(`friends_${clean}`, '[]');
+      delete KNOWN_USER_BINS[clean];
 
       // 4. Purge retained MQTT messages from EMQX broker permanently
       if (globalState.mqttClient && globalState.mqttClient.isConnected()) {
@@ -3896,11 +3954,13 @@
         }
         try {
           const roomObj = JSON.parse(payload);
-          if (!roomObj || roomObj.status === 'CLOSED' || roomObj.status === 'CANCELLED' || roomObj.status === 'FINISHED') {
+          const rTime = roomObj.lastHeartbeat || roomObj.timestamp || roomObj.createdAt || 0;
+          const now = Date.now();
+          if (!roomObj || roomObj.status === 'CLOSED' || roomObj.status === 'CANCELLED' || roomObj.status === 'FINISHED' || (rTime > 0 && (now - rTime > 30000))) {
             delete globalState.activeRooms[roomCode];
           } else {
             roomObj.code = roomCode;
-            roomObj.timestamp = roomObj.lastHeartbeat || Date.now();
+            roomObj.timestamp = rTime > 0 ? rTime : now;
             globalState.activeRooms[roomCode] = roomObj;
           }
           renderActiveRooms();
@@ -3995,13 +4055,14 @@
       let player = globalState.players.find(p => p.username === clean);
       const liveStatus = globalState.onlineStatuses[clean];
       const initialStatus = (liveStatus && (Date.now() - liveStatus.timestamp < 35000)) ? liveStatus.status : 'OFFLINE';
+      const knownBin = KNOWN_USER_BINS[clean] || null;
 
       if (!player) {
         player = {
           username: clean,
           displayName: entry.displayName || clean,
           uid: entry.uid || `user_${clean}`,
-          level: entry.level || 1,
+          level: Math.max(1, entry.level || 1),
           gamesPlayed: entry.gamesPlayed || 0,
           gamesWon: entry.gamesWon || 0,
           currentStreak: entry.currentStreak || 0,
@@ -4009,29 +4070,31 @@
           avatarUrl: entry.avatarUrl || null,
           lastSeenTimestamp: entry.lastSeenTimestamp || Date.now(),
           status: initialStatus,
-          binId: null,
+          binId: knownBin,
           rawReg: entry
         };
         globalState.players.push(player);
         if (!globalState.playerCache) globalState.playerCache = {};
         globalState.playerCache[clean] = player;
-        // Asynchronously fetch ExtendsClass bin pointer for statistics
-        getKeyValueDirect(`user_${clean}`, 2).then(bin => {
-          if (bin && !bin.startsWith('{') && bin.length < 50 && bin !== 'null') {
-            player.binId = bin;
-            if (globalState.playerCache[clean]) globalState.playerCache[clean].binId = bin;
-          }
-        });
+        if (!player.binId) {
+          getKeyValueDirect(`user_${clean}`, 2).then(bin => {
+            if (bin && !bin.startsWith('{') && bin.length < 50 && bin !== 'null' && bin !== '""') {
+              player.binId = bin;
+              if (globalState.playerCache[clean]) globalState.playerCache[clean].binId = bin;
+            }
+          });
+        }
       } else {
-        // Update fields if provided
+        // Monotonic stat updates: Never overwrite valid stats with 0!
         if (entry.displayName) player.displayName = entry.displayName;
-        if (entry.level !== undefined) player.level = entry.level;
-        if (entry.gamesPlayed !== undefined) player.gamesPlayed = entry.gamesPlayed;
-        if (entry.gamesWon !== undefined) player.gamesWon = entry.gamesWon;
-        if (entry.currentStreak !== undefined) player.currentStreak = entry.currentStreak;
-        if (entry.bestStreak !== undefined) player.bestStreak = entry.bestStreak;
+        if (entry.level !== undefined) player.level = Math.max(player.level || 1, entry.level || 1);
+        if (entry.gamesPlayed !== undefined) player.gamesPlayed = Math.max(player.gamesPlayed || 0, entry.gamesPlayed || 0);
+        if (entry.gamesWon !== undefined) player.gamesWon = Math.max(player.gamesWon || 0, entry.gamesWon || 0);
+        if (entry.currentStreak !== undefined && entry.currentStreak > 0) player.currentStreak = entry.currentStreak;
+        if (entry.bestStreak !== undefined) player.bestStreak = Math.max(player.bestStreak || 0, entry.bestStreak || 0);
         if (entry.avatarUrl) player.avatarUrl = entry.avatarUrl;
         if (entry.lastSeenTimestamp) player.lastSeenTimestamp = Math.max(player.lastSeenTimestamp || 0, entry.lastSeenTimestamp);
+        if (!player.binId && knownBin) player.binId = knownBin;
         player.rawReg = { ...(player.rawReg || {}), ...entry };
         if (!globalState.playerCache) globalState.playerCache = {};
         globalState.playerCache[clean] = player;
@@ -4054,53 +4117,83 @@
       globalState.fetchingPlayers.add(username);
 
       try {
+        let binId = KNOWN_USER_BINS[username] || null;
+        let binProfile = null;
+        let matchHistory = null;
         let regData = null;
-        let binId = null;
 
-        const rawReg = await getKeyValueDirect(`reg_${username}`, 2);
-        if (rawReg) {
-          const decoded = safeB64Decode(rawReg);
-          if (decoded.startsWith('{')) {
-            regData = JSON.parse(decoded);
+        if (!binId) {
+          const rawBin = await getKeyValueDirect(`user_${username}`, 2);
+          if (rawBin && !rawBin.startsWith('{') && rawBin.length < 50 && rawBin !== 'null' && rawBin !== '""') {
+            binId = rawBin;
           }
         }
 
-        const rawBin = await getKeyValueDirect(`user_${username}`, 2);
-        if (rawBin && !rawBin.startsWith('{') && rawBin.length < 50 && rawBin !== 'null') {
-          binId = rawBin;
+        if (binId) {
+          try {
+            const res = await fetch(`https://extendsclass.com/api/json-storage/bin/${binId}`);
+            if (res.ok) {
+              const data = await res.json();
+              if (data) {
+                binProfile = data.profile || null;
+                matchHistory = Array.isArray(data.matchHistory) ? data.matchHistory : null;
+              }
+            }
+          } catch {}
         }
+
+        if (!binProfile) {
+          const rawReg = await getKeyValueDirect(`reg_${username}`, 2);
+          if (rawReg) {
+            const decoded = safeB64Decode(rawReg);
+            if (decoded.startsWith('{')) {
+              regData = JSON.parse(decoded);
+            }
+          }
+        }
+
+        const existing = globalState.playerCache[username] || {};
+        const matchHistoryLen = Array.isArray(matchHistory) ? matchHistory.length : 0;
+        const gamesPlayed = Math.max(existing.gamesPlayed || 0, binProfile?.gamesPlayed || 0, matchHistoryLen, regData?.gamesPlayed || 0);
+        const gamesWon = Math.max(existing.gamesWon || 0, binProfile?.gamesWon || 0, regData?.gamesWon || 0);
+        const level = Math.max(existing.level || 1, binProfile?.level || 1, regData?.level || 1);
+        const bestStreak = Math.max(existing.bestStreak || 0, binProfile?.bestStreak || 0, regData?.bestStreak || 0);
+        const currentStreak = binProfile?.currentStreak !== undefined ? binProfile.currentStreak : (regData?.currentStreak !== undefined ? regData.currentStreak : (existing.currentStreak || 0));
 
         let player = globalState.players.find(p => p.username === username);
         if (!player) {
           player = {
             username: username,
-            displayName: (regData && regData.displayName) ? regData.displayName : username,
-            uid: (regData && regData.uid) ? regData.uid : `user_${username}`,
-            level: (regData && regData.level) ? regData.level : 1,
-            gamesPlayed: (regData && regData.gamesPlayed !== undefined) ? regData.gamesPlayed : 0,
-            gamesWon: (regData && regData.gamesWon !== undefined) ? regData.gamesWon : 0,
-            currentStreak: (regData && regData.currentStreak !== undefined) ? regData.currentStreak : 0,
-            bestStreak: (regData && regData.bestStreak !== undefined) ? regData.bestStreak : 0,
-            avatarUrl: (regData && regData.avatarUrl) ? regData.avatarUrl : null,
-            lastSeenTimestamp: (regData && regData.lastSeenTimestamp) ? regData.lastSeenTimestamp : ts,
+            displayName: binProfile?.displayName || regData?.displayName || existing.displayName || username,
+            uid: binProfile?.uid || regData?.uid || existing.uid || `user_${username}`,
+            level: level,
+            gamesPlayed: gamesPlayed,
+            gamesWon: gamesWon,
+            currentStreak: currentStreak,
+            bestStreak: bestStreak,
+            avatarUrl: binProfile?.avatarUrl || regData?.avatarUrl || existing.avatarUrl || null,
+            avatarBase64: binProfile?.avatarBase64 || existing.avatarBase64 || null,
+            lastSeenTimestamp: regData?.lastSeenTimestamp || existing.lastSeenTimestamp || ts,
             status: status,
             binId: binId,
-            rawReg: regData
+            rawReg: regData || existing.rawReg || null
           };
           globalState.players.push(player);
-          if (!globalState.playerCache) globalState.playerCache = {};
-          globalState.playerCache[username] = player;
         } else {
           player.status = status;
-          if (regData) {
-            if (regData.displayName) player.displayName = regData.displayName;
-            if (regData.level) player.level = regData.level;
-            if (regData.gamesPlayed !== undefined) player.gamesPlayed = regData.gamesPlayed;
-            if (regData.gamesWon !== undefined) player.gamesWon = regData.gamesWon;
-          }
-          if (!globalState.playerCache) globalState.playerCache = {};
-          globalState.playerCache[username] = player;
+          player.displayName = binProfile?.displayName || regData?.displayName || player.displayName;
+          player.level = level;
+          player.gamesPlayed = gamesPlayed;
+          player.gamesWon = gamesWon;
+          player.bestStreak = bestStreak;
+          if (currentStreak > 0) player.currentStreak = currentStreak;
+          if (binProfile?.avatarBase64) player.avatarBase64 = binProfile.avatarBase64;
+          if (binProfile?.avatarUrl || regData?.avatarUrl) player.avatarUrl = binProfile?.avatarUrl || regData?.avatarUrl;
+          if (binId) player.binId = binId;
         }
+
+        if (!globalState.playerCache) globalState.playerCache = {};
+        globalState.playerCache[username] = player;
 
         updateDashboardStatistics();
         applyPlayerFilters();
@@ -4121,10 +4214,11 @@
       const badge = document.getElementById('navRoomsBadge');
       const now = Date.now();
 
-      // Clean up stale or closed rooms: max 90 seconds without heartbeat
+      // Clean up stale or closed rooms: max 30 seconds without heartbeat
       Object.keys(globalState.activeRooms).forEach(code => {
         const r = globalState.activeRooms[code];
-        if (!r || r.status === 'CLOSED' || r.status === 'CANCELLED' || (now - (r.lastHeartbeat || r.timestamp || 0)) >= 90000) {
+        const rTime = r.lastHeartbeat || r.timestamp || r.createdAt || 0;
+        if (!r || r.status === 'CLOSED' || r.status === 'CANCELLED' || r.status === 'FINISHED' || (now - rTime >= 30000)) {
           delete globalState.activeRooms[code];
         }
       });
@@ -4212,6 +4306,17 @@
     }
 
     function purgeExpiredRooms() {
+      if (globalState.mqttClient && globalState.mqttClient.isConnected()) {
+        Object.keys(globalState.activeRooms).forEach(code => {
+          try {
+            const clearMsg = new Paho.MQTT.Message("");
+            clearMsg.destinationName = `bingo/v3/room_meta/${code}`;
+            clearMsg.retained = true;
+            clearMsg.qos = 1;
+            globalState.mqttClient.send(clearMsg);
+          } catch {}
+        });
+      }
       globalState.activeRooms = {};
       renderActiveRooms();
       showToast('Purged stale room references', 'info');
