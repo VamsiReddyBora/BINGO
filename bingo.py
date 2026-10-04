@@ -145,6 +145,97 @@ def fetch_keyval_friends(username):
         pass
     return []
 
+def fetch_player_cloud_backup(username):
+    clean = username.strip().lower().lstrip("@")
+    bin_id = None
+    try:
+        url = f"{KEYVALUE_API_URL}/GetValue/{KEYVALUE_APP_KEY}/user_{clean}"
+        req = urllib.request.Request(url, headers={'User-Agent': 'BingoAdminCLI/2.0'})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            if resp.status == 200:
+                raw = resp.read().decode('utf-8').strip().strip('"')
+                if raw and raw != "null":
+                    bin_id = raw
+    except Exception:
+        pass
+
+    if not bin_id:
+        p_data = fetch_keyval_user(clean)
+        uid = p_data.get("uid") if isinstance(p_data, dict) else None
+        if uid:
+            clean_uid = uid.replace("google_", "")
+            try:
+                url = f"{KEYVALUE_API_URL}/GetValue/{KEYVALUE_APP_KEY}/gid_{clean_uid}"
+                req = urllib.request.Request(url, headers={'User-Agent': 'BingoAdminCLI/2.0'})
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    if resp.status == 200:
+                        raw = resp.read().decode('utf-8').strip().strip('"')
+                        if raw and raw != "null":
+                            bin_id = raw
+            except Exception:
+                pass
+
+    if not bin_id:
+        return None, None
+
+    try:
+        bin_url = f"https://extendsclass.com/api/json-storage/bin/{bin_id}"
+        req = urllib.request.Request(bin_url, headers={'User-Agent': 'BingoAdminCLI/2.0'})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            if resp.status == 200:
+                data = json.loads(resp.read().decode('utf-8'))
+                return bin_id, data
+    except Exception:
+        pass
+
+    return bin_id, None
+
+def save_player_cloud_backup(bin_id, data):
+    try:
+        bin_url = f"https://extendsclass.com/api/json-storage/bin/{bin_id}"
+        payload = json.dumps(data).encode('utf-8')
+        req = urllib.request.Request(bin_url, data=payload, method='PUT', headers={
+            'Content-Type': 'application/json',
+            'User-Agent': 'BingoAdminCLI/2.0'
+        })
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+def fetch_player_friends_details(username):
+    clean = username.strip().lower().lstrip("@")
+    try:
+        url = f"{KEYVALUE_API_URL}/GetValue/{KEYVALUE_APP_KEY}/friends_{clean}"
+        req = urllib.request.Request(url, headers={'User-Agent': 'BingoAdminCLI/2.0'})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            if resp.status == 200:
+                raw = resp.read().decode('utf-8').strip().strip('"')
+                if raw and raw != "null":
+                    decoded = base64.b64decode(raw).decode('utf-8')
+                    return json.loads(decoded)
+    except Exception:
+        pass
+    return []
+
+def save_player_friends_details(username, friends_list):
+    clean = username.strip().lower().lstrip("@")
+    try:
+        if not friends_list:
+            return clear_keyval_key(f"friends_{clean}")
+        json_str = json.dumps(friends_list)
+        b64 = base64.b64encode(json_str.encode('utf-8')).decode('utf-8')
+        enc_val = urllib.parse.quote(b64)
+        url = f"{KEYVALUE_API_URL}/UpdateValue/{KEYVALUE_APP_KEY}/friends_{clean}?value={enc_val}"
+        req = urllib.request.Request(url, data=b'', method='POST', headers={
+            'Content-Length': '0',
+            'User-Agent': 'BingoAdminCLI/2.0'
+        })
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
 
 def fetch_live_data(timeout=2.5):
     """
@@ -571,9 +662,158 @@ def inspect_player(target_username=None, from_menu=False):
     print("  " + "─" * 45)
 
     if from_menu and sys.stdin.isatty():
-        sub_action = input(f"{C_YELLOW}Options: [K] Kick/Remove this player | [Enter] Back to Menu: {C_RESET}").strip().lower()
-        if sub_action == "k":
+        sub_action = input(f"{C_YELLOW}Options: [M] Match History | [F] Friends List | [K] Kick Player | [Enter] Back: {C_RESET}").strip().lower()
+        if sub_action == "m":
+            show_and_manage_matches(clean)
+        elif sub_action == "f":
+            show_and_manage_friends(clean)
+        elif sub_action == "k":
             remove_player(clean)
+
+def show_and_manage_matches(target_username=None):
+    if not target_username:
+        raw_user = input(f"\n{C_BOLD}Enter username to view match history (e.g. @vanabha): {C_RESET}").strip()
+        target_username = raw_user.lstrip("@").lower()
+
+    clean = target_username.strip().lower().lstrip("@")
+    if not clean:
+        return
+
+    print(f"\n{C_CYAN}Loading match records from cloud storage for @{clean}...{C_RESET}")
+    bin_id, backup = fetch_player_cloud_backup(clean)
+
+    if not backup or "matchHistory" not in backup:
+        print(f"{C_YELLOW}[!] No cloud match records found for @{clean}.{C_RESET}\n")
+        return
+
+    history = backup.get("matchHistory", [])
+    if not history:
+        print(f"{C_YELLOW}[!] Player @{clean} currently has 0 recorded matches in history.{C_RESET}\n")
+        return
+
+    print(f"\n{C_BOLD}{C_CYAN}╔══════════════════════════════════════════════════════════════════════════════════════╗{C_RESET}")
+    print(f"{C_BOLD}{C_CYAN}║                    MATCH HISTORY FOR @{clean.upper():<14} ({len(history)} matches)                     ║{C_RESET}")
+    print(f"{C_BOLD}{C_CYAN}╚══════════════════════════════════════════════════════════════════════════════════════╝{C_RESET}")
+
+    header = f"{'#':<4} {'Date & Time':<17} {'Mode':<18} {'Opponent':<18} {'Result':<10} {'Grid':<6} {'Match ID':<10}"
+    print(f"{C_BOLD}{header}{C_RESET}")
+    print("─" * 86)
+
+    for idx, m in enumerate(history, 1):
+        ts = m.get("timestamp", 0)
+        dt_str = format_timestamp(ts)
+        mode = m.get("mode", "Online Match")[:17]
+        opp = m.get("opponentName", "Opponent")[:17]
+        is_draw = m.get("isDraw", False)
+        did_win = m.get("didWin", False)
+        if is_draw:
+            res_str = f"{C_YELLOW}DRAW 🤝{C_RESET}"
+        elif did_win:
+            res_str = f"{C_GREEN}WIN 👑{C_RESET}"
+        else:
+            res_str = f"{C_RED}LOSS ❌{C_RESET}"
+        grid = f"{m.get('boardSize', 5)}x{m.get('boardSize', 5)}"
+        mid = m.get("id", "N/A")[:10]
+        print(f"{idx:<4} {dt_str:<17} {mode:<18} {opp:<18} {res_str:<19} {grid:<6} {mid:<10}")
+
+    print("─" * 86)
+
+    if sys.stdin.isatty():
+        sub = input(f"\n{C_YELLOW}Options: [D] Delete a specific match | [C] Clear ALL match history | [Enter] Back: {C_RESET}").strip().lower()
+        if sub == "d":
+            target = input("Enter Match # (1, 2, ...) or Match ID to delete: ").strip()
+            if not target:
+                return
+            del_idx = None
+            if target.isdigit():
+                num = int(target)
+                if 1 <= num <= len(history):
+                    del_idx = num - 1
+            if del_idx is None:
+                for i, m in enumerate(history):
+                    if m.get("id") == target:
+                        del_idx = i
+                        break
+
+            if del_idx is None:
+                print(f"{C_RED}[!] Match '{target}' not found.{C_RESET}\n")
+                return
+
+            removed = history.pop(del_idx)
+            backup["matchHistory"] = history
+            if save_player_cloud_backup(bin_id, backup):
+                print(f"{C_GREEN}✓ Successfully deleted match {removed.get('id', '')} (vs {removed.get('opponentName', '')})!{C_RESET}\n")
+            else:
+                print(f"{C_RED}[!] Failed to update cloud storage.{C_RESET}\n")
+
+        elif sub == "c":
+            confirm = input(f"{C_RED}Are you SURE you want to clear ALL {len(history)} match records for @{clean}? (yes/no): {C_RESET}").strip().lower()
+            if confirm == "yes":
+                backup["matchHistory"] = []
+                if save_player_cloud_backup(bin_id, backup):
+                    print(f"{C_GREEN}✓ All match history for @{clean} cleared successfully!{C_RESET}\n")
+                else:
+                    print(f"{C_RED}[!] Failed to update cloud storage.{C_RESET}\n")
+
+def show_and_manage_friends(target_username=None):
+    if not target_username:
+        raw_user = input(f"\n{C_BOLD}Enter username to view friends list (e.g. @vanabha): {C_RESET}").strip()
+        target_username = raw_user.lstrip("@").lower()
+
+    clean = target_username.strip().lower().lstrip("@")
+    if not clean:
+        return
+
+    print(f"\n{C_CYAN}Loading friends list from cloud storage for @{clean}...{C_RESET}")
+    friends = fetch_player_friends_details(clean)
+
+    if not friends:
+        print(f"{C_YELLOW}[!] Player @{clean} currently has 0 friends in their list.{C_RESET}\n")
+        return
+
+    print(f"\n{C_BOLD}{C_CYAN}╔══════════════════════════════════════════════════════════════════════════╗{C_RESET}")
+    print(f"{C_BOLD}{C_CYAN}║                    FRIENDS LIST FOR @{clean.upper():<14} ({len(friends)} friends)                  ║{C_RESET}")
+    print(f"{C_BOLD}{C_CYAN}╚══════════════════════════════════════════════════════════════════════════╝{C_RESET}")
+
+    header = f"{'#':<4} {'Username':<16} {'Display Name':<18} {'Live Status':<15} {'Last Seen':<17}"
+    print(f"{C_BOLD}{header}{C_RESET}")
+    print("─" * 74)
+
+    for idx, f in enumerate(friends, 1):
+        fu = f.get("username", "unknown")
+        fdn = f.get("displayName", fu)[:17]
+        st, ts, diff = get_user_status(fu)
+        is_live = st in ("ONLINE", "IN_LOBBY", "PLAYING")
+        badge = get_status_badge(st, is_live=is_live, ts=ts)
+        last_seen = format_timestamp(ts or f.get("lastSeenTimestamp", 0))
+        print(f"{idx:<4} @{fu:<15} {fdn:<18} {badge:<24} {last_seen:<17}")
+
+    print("─" * 74)
+
+    if sys.stdin.isatty():
+        sub = input(f"\n{C_YELLOW}Options: [R] Remove a friend | [C] Clear ALL friends | [Enter] Back: {C_RESET}").strip().lower()
+        if sub == "r":
+            target = input("Enter friend username to remove (e.g. @player): ").strip().lstrip("@").lower()
+            if not target:
+                return
+            new_list = [f for f in friends if f.get("username", "").strip().lower() != target]
+            if len(new_list) == len(friends):
+                print(f"{C_RED}[!] Friend '@{target}' not found in @{clean}'s friends list.{C_RESET}\n")
+                return
+
+            if save_player_friends_details(clean, new_list):
+                print(f"{C_GREEN}✓ Successfully removed @{target} from @{clean}'s friends list!{C_RESET}\n")
+            else:
+                print(f"{C_RED}[!] Failed to update cloud database.{C_RESET}\n")
+
+        elif sub == "c":
+            confirm = input(f"{C_RED}Are you SURE you want to clear ALL friends for @{clean}? (yes/no): {C_RESET}").strip().lower()
+            if confirm == "yes":
+                if save_player_friends_details(clean, []):
+                    print(f"{C_GREEN}✓ All friends for @{clean} have been cleared!{C_RESET}\n")
+                else:
+                    print(f"{C_RED}[!] Failed to update cloud database.{C_RESET}\n")
+
 
 def remove_player(target_username=None):
     if not target_username:
@@ -694,13 +934,15 @@ def main():
         arg = sys.argv[1].lower()
         if arg in ("-h", "--help"):
             print(f"\n{C_BOLD}Usage: bingo [options]{C_RESET}")
-            print("  bingo                      Launch interactive admin menu")
-            print("  bingo -u, --users          Show all players directory")
-            print("  bingo -o, --online         Show online players")
-            print("  bingo -r, --rooms          Show active game rooms")
-            print("  bingo -i, --inspect <user> Inspect a specific player")
-            print("  bingo -k, --kick <user>    Kick & delete a player")
-            print("  bingo -p, --purge          Purge expired ghost rooms\n")
+            print("  bingo                       Launch interactive admin menu")
+            print("  bingo -u, --users           Show all players directory")
+            print("  bingo -o, --online          Show online players")
+            print("  bingo -r, --rooms           Show active game rooms")
+            print("  bingo -i, --inspect <user>  Inspect a specific player")
+            print("  bingo -m, --matches <user>  View & manage player match history")
+            print("  bingo -f, --friends <user>  View & manage player friends list")
+            print("  bingo -k, --kick <user>     Kick & delete a player")
+            print("  bingo -p, --purge           Purge expired ghost rooms\n")
             return
 
         print_banner()
@@ -715,6 +957,12 @@ def main():
         elif arg in ("-i", "--inspect"):
             target = sys.argv[2] if len(sys.argv) > 2 else ""
             inspect_player(target)
+        elif arg in ("-m", "--matches"):
+            target = sys.argv[2] if len(sys.argv) > 2 else ""
+            show_and_manage_matches(target)
+        elif arg in ("-f", "--friends"):
+            target = sys.argv[2] if len(sys.argv) > 2 else ""
+            show_and_manage_friends(target)
         elif arg in ("-k", "--kick"):
             target = sys.argv[2] if len(sys.argv) > 2 else ""
             remove_player(target)
@@ -735,13 +983,15 @@ def main():
         print(f"  {C_BOLD}[2]{C_RESET} 🟢 Online Players Only")
         print(f"  {C_BOLD}[3]{C_RESET} 🎮 Active Game Matches / Rooms")
         print(f"  {C_BOLD}[4]{C_RESET} 🔍 Inspect Player Details & Stats")
-        print(f"  {C_BOLD}[5]{C_RESET} 🚫 Kick & Delete Player from Database")
-        print(f"  {C_BOLD}[6]{C_RESET} 🧹 Purge Expired Ghost Rooms")
-        print(f"  {C_BOLD}[7]{C_RESET} 🔄 Refresh Server Data")
+        print(f"  {C_BOLD}[5]{C_RESET} 📜 View & Manage Match History")
+        print(f"  {C_BOLD}[6]{C_RESET} 👥 View & Manage Friends List")
+        print(f"  {C_BOLD}[7]{C_RESET} 🚫 Kick & Delete Player from Database")
+        print(f"  {C_BOLD}[8]{C_RESET} 🧹 Purge Expired Ghost Rooms")
+        print(f"  {C_BOLD}[9]{C_RESET} 🔄 Refresh Server Data")
         print(f"  {C_BOLD}[0]{C_RESET} 🚪 Exit")
         print("───────────────────────────────────────")
 
-        choice = input(f"{C_BOLD}Select an option (0-7): {C_RESET}").strip()
+        choice = input(f"{C_BOLD}Select an option (0-9): {C_RESET}").strip()
 
         if choice == "1":
             show_all_users()
@@ -752,10 +1002,14 @@ def main():
         elif choice == "4":
             inspect_player(from_menu=True)
         elif choice == "5":
-            remove_player()
+            show_and_manage_matches()
         elif choice == "6":
-            purge_expired_rooms()
+            show_and_manage_friends()
         elif choice == "7":
+            remove_player()
+        elif choice == "8":
+            purge_expired_rooms()
+        elif choice == "9":
             print(f"\n{C_CYAN}Refreshing live data from servers...{C_RESET}")
             fetch_live_data(timeout=2.5)
             print(f"{C_GREEN}Refreshed! ({len(players)} players, {len(rooms)} rooms){C_RESET}")
@@ -763,7 +1017,7 @@ def main():
             print(f"\n{C_CYAN}Goodbye! 👋{C_RESET}\n")
             break
         else:
-            print(f"{C_RED}[!] Invalid choice. Please choose 0 to 7.{C_RESET}")
+            print(f"{C_RED}[!] Invalid choice. Please choose 0 to 9.{C_RESET}")
 
 if __name__ == "__main__":
     try:
