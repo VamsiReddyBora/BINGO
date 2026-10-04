@@ -44,8 +44,22 @@ sealed class UpdateState {
 
 object AppUpdateManager {
     private const val TAG = "AppUpdateManager"
-    private const val GITHUB_LATEST_RELEASE_API =
+
+    /**
+     * Resilient multi-tier update endpoints checked in sequence:
+     * 1. Primary: Fastly CDN edge on GitHub Pages (vamsireddybora.github.io) - zero rate limit, instant.
+     * 2. Secondary: Raw GitHub blob endpoint.
+     * 3. Tertiary: KeyValue cloud store (keyvalue.immanuel.co) - already verified connected for game accounts.
+     * 4. Quaternary: jsDelivr multi-CDN network.
+     * 5. Quinary: Official GitHub Releases API.
+     */
+    val UPDATE_ENDPOINTS = listOf(
+        "https://vamsireddybora.github.io/BINGO/version.json",
+        "https://raw.githubusercontent.com/VamsiReddyBora/BINGO/gh-pages/version.json",
+        "https://keyvalue.immanuel.co/api/KeyVal/GetValue/2464j24f/latest_app_version",
+        "https://cdn.jsdelivr.net/gh/VamsiReddyBora/BINGO@gh-pages/version.json",
         "https://api.github.com/repos/VamsiReddyBora/BINGO/releases/latest"
+    )
 
     private val _updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
     val updateState: StateFlow<UpdateState> = _updateState.asStateFlow()
@@ -91,8 +105,62 @@ object AppUpdateManager {
     }
 
     /**
-     * Checks GitHub releases for a newer version in the background.
-     * @param manual If true, sets state to UpToDate if no update is found (for explicit user clicks).
+     * Parses version information from either simplified version.json format or full GitHub release JSON.
+     */
+    fun parseUpdatePayload(bodyStr: String, currentVersion: String): AppUpdateInfo? {
+        try {
+            val json = JSONObject(bodyStr)
+            val tagName = json.optString("tag_name", json.optString("tagName", ""))
+            val rawVersion = json.optString("versionName", tagName.removePrefix("v")).trim()
+            val cleanTag = if (rawVersion.isNotBlank()) rawVersion else tagName.removePrefix("v").trim()
+            val releaseNotes = json.optString(
+                "releaseNotes",
+                json.optString("body", "Bug fixes and performance improvements.")
+            )
+
+            var apkDownloadUrl = json.optString("downloadUrl", json.optString("apk_url", ""))
+            var apkSize = json.optLong("apkSize", json.optLong("apk_size", 0L))
+
+            // Check if it's GitHub Release payload format (assets array)
+            if (apkDownloadUrl.isBlank()) {
+                val assets = json.optJSONArray("assets")
+                if (assets != null) {
+                    for (i in 0 until assets.length()) {
+                        val asset = assets.optJSONObject(i) ?: continue
+                        val name = asset.optString("name", "")
+                        if (name.endsWith(".apk", ignoreCase = true)) {
+                            apkDownloadUrl = asset.optString("browser_download_url", "")
+                            apkSize = asset.optLong("size", 0L)
+                            break
+                        }
+                    }
+                }
+            }
+
+            if (cleanTag.isBlank()) return null
+            if (apkDownloadUrl.isBlank()) {
+                // Default to GitHub Pages CDN APK
+                apkDownloadUrl = "https://vamsireddybora.github.io/BINGO/Bingo.apk"
+            }
+
+            val hasNewer = isNewerVersion(cleanTag, currentVersion)
+            return AppUpdateInfo(
+                hasUpdate = hasNewer,
+                latestVersionTag = if (tagName.startsWith("v")) tagName else "v$cleanTag",
+                latestVersionName = cleanTag,
+                downloadUrl = apkDownloadUrl,
+                releaseNotes = releaseNotes,
+                apkSize = apkSize
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to parse update payload: ${e.message}")
+            return null
+        }
+    }
+
+    /**
+     * Checks multiple redundant cloud sources for a newer version in the background.
+     * @param manual If true, sets state to UpToDate if no update is found (for explicit user clicks in Settings).
      */
     fun checkForUpdates(context: Context, manual: Boolean = false) {
         if (!manual && hasDismissedInSession) {
@@ -109,70 +177,51 @@ object AppUpdateManager {
             _updateState.value = UpdateState.Checking
             val currentVersion = getInstalledVersionName(context)
 
-            try {
-                val request = Request.Builder()
-                    .url(GITHUB_LATEST_RELEASE_API)
-                    .header("Accept", "application/vnd.github.v3+json")
-                    .header("User-Agent", "BingoMultiplayer-App")
-                    .get()
-                    .build()
+            var resolvedUpdateInfo: AppUpdateInfo? = null
+            var lastErrorMessage: String? = null
 
-                val response = NetworkConfig.httpClient.newCall(request).execute()
-                if (!response.isSuccessful) {
-                    val msg = "Server responded with HTTP ${response.code}"
-                    Log.w(TAG, "Check update failed: $msg")
-                    if (manual) {
-                        _updateState.value = UpdateState.Error(msg)
-                    } else {
-                        _updateState.value = UpdateState.Idle
-                    }
-                    response.close()
-                    return@launch
-                }
+            for (endpointUrl in UPDATE_ENDPOINTS) {
+                try {
+                    val request = Request.Builder()
+                        .url(endpointUrl)
+                        .header("Accept", "application/json, text/plain, */*")
+                        .header("User-Agent", "BingoMultiplayer-App/$currentVersion")
+                        .get()
+                        .build()
 
-                val bodyStr = response.body?.string().orEmpty()
-                response.close()
+                    val response = NetworkConfig.httpClient.newCall(request).execute()
+                    if (response.isSuccessful) {
+                        val body = response.body?.string().orEmpty().trim()
+                        response.close()
 
-                if (bodyStr.isBlank()) {
-                    if (manual) _updateState.value = UpdateState.Error("Empty release response")
-                    else _updateState.value = UpdateState.Idle
-                    return@launch
-                }
-
-                val releaseJson = JSONObject(bodyStr)
-                val tagName = releaseJson.optString("tag_name", "")
-                val cleanTag = tagName.removePrefix("v").trim()
-                val releaseNotes = releaseJson.optString("body", "Bug fixes and performance improvements.")
-
-                var apkDownloadUrl = ""
-                var apkSize = 0L
-
-                val assets = releaseJson.optJSONArray("assets")
-                if (assets != null) {
-                    for (i in 0 until assets.length()) {
-                        val asset = assets.optJSONObject(i) ?: continue
-                        val name = asset.optString("name", "")
-                        if (name.endsWith(".apk", ignoreCase = true)) {
-                            apkDownloadUrl = asset.optString("browser_download_url", "")
-                            apkSize = asset.optLong("size", 0L)
-                            break
+                        var cleanBody = body
+                        // If response is a quoted JSON string from KeyValue, unwrap it
+                        if (cleanBody.startsWith("\"") && cleanBody.endsWith("\"") && cleanBody.length >= 2) {
+                            cleanBody = cleanBody.substring(1, cleanBody.length - 1)
+                                .replace("\\\"", "\"")
+                                .replace("\\\\", "\\")
                         }
+
+                        if (cleanBody.isNotBlank() && cleanBody != "null" && cleanBody != "\"\"") {
+                            val info = parseUpdatePayload(cleanBody, currentVersion)
+                            if (info != null) {
+                                resolvedUpdateInfo = info
+                                Log.i(TAG, "Successfully resolved update info from $endpointUrl: $info")
+                                break
+                            }
+                        }
+                    } else {
+                        response.close()
                     }
+                } catch (e: Exception) {
+                    lastErrorMessage = e.message
+                    Log.w(TAG, "Failed to fetch update from $endpointUrl: ${e.message}")
                 }
+            }
 
-                val hasNewer = isNewerVersion(cleanTag, currentVersion)
-                Log.i(TAG, "Update check result: remote=$cleanTag, local=$currentVersion, hasUpdate=$hasNewer")
-
-                if (hasNewer && apkDownloadUrl.isNotBlank()) {
-                    val info = AppUpdateInfo(
-                        hasUpdate = true,
-                        latestVersionTag = tagName,
-                        latestVersionName = cleanTag,
-                        downloadUrl = apkDownloadUrl,
-                        releaseNotes = releaseNotes,
-                        apkSize = apkSize
-                    )
-                    _updateState.value = UpdateState.UpdateAvailable(info)
+            if (resolvedUpdateInfo != null) {
+                if (resolvedUpdateInfo.hasUpdate) {
+                    _updateState.value = UpdateState.UpdateAvailable(resolvedUpdateInfo)
                 } else {
                     if (manual) {
                         _updateState.value = UpdateState.UpToDate
@@ -180,10 +229,14 @@ object AppUpdateManager {
                         _updateState.value = UpdateState.Idle
                     }
                 }
-            } catch (e: Exception) {
-                Log.w(TAG, "Error checking for updates: ${e.message}", e)
+            } else {
                 if (manual) {
-                    _updateState.value = UpdateState.Error(e.message ?: "Failed to check updates")
+                    val friendlyMsg = if (lastErrorMessage?.contains("resolve host", ignoreCase = true) == true) {
+                        "No internet connection. Please check your network and try again."
+                    } else {
+                        "Unable to check for updates. Please check your connection and try again."
+                    }
+                    _updateState.value = UpdateState.Error(friendlyMsg)
                 } else {
                     _updateState.value = UpdateState.Idle
                 }
@@ -200,7 +253,7 @@ object AppUpdateManager {
     }
 
     /**
-     * Downloads APK from the given URL and tracks progress.
+     * Downloads APK from the given URL and tracks progress with automatic CDN fallback.
      */
     fun startDownload(context: Context, downloadUrl: String, onComplete: ((File) -> Unit)? = null) {
         scope.launch {
@@ -213,7 +266,6 @@ object AppUpdateManager {
 
                 if (downloadUrl == "test://self_install") {
                     // Test Simulation: safely test the OTA installer pipeline using this build's APK (matching versionCode 34 and signature)
-                    // Avoids Android's INSTALL_FAILED_VERSION_DOWNGRADE error while verifying download UI, FileProvider, and PackageInstaller
                     val sourceApk = File(context.applicationInfo.sourceDir)
                     val totalBytes = if (sourceApk.exists()) sourceApk.length() else 1L
                     var totalCopied = 0L
@@ -239,54 +291,80 @@ object AppUpdateManager {
                     return@launch
                 }
 
-                val request = Request.Builder()
-                    .url(downloadUrl)
-                    .header("User-Agent", "BingoMultiplayer-App")
-                    .get()
-                    .build()
-
-                val response = NetworkConfig.httpClient.newCall(request).execute()
-                if (!response.isSuccessful) {
-                    _updateState.value = UpdateState.Error("Download failed with code ${response.code}")
-                    response.close()
-                    return@launch
+                // Prepare redundant download candidate URLs in case one CDN node is blocked
+                val downloadCandidates = mutableListOf(downloadUrl)
+                if (!downloadUrl.contains("vamsireddybora.github.io")) {
+                    downloadCandidates.add("https://vamsireddybora.github.io/BINGO/Bingo.apk")
+                }
+                if (!downloadUrl.contains("raw.githubusercontent.com")) {
+                    downloadCandidates.add("https://raw.githubusercontent.com/VamsiReddyBora/BINGO/gh-pages/Bingo.apk")
                 }
 
-                val responseBody = response.body
-                if (responseBody == null) {
-                    _updateState.value = UpdateState.Error("Empty response body from download")
-                    response.close()
-                    return@launch
-                }
+                var downloadSuccess = false
+                var lastDownloadError: String? = null
 
-                val totalBytes = responseBody.contentLength()
+                for (url in downloadCandidates) {
+                    try {
+                        val request = Request.Builder()
+                            .url(url)
+                            .header("User-Agent", "BingoMultiplayer-App")
+                            .get()
+                            .build()
 
-                responseBody.byteStream().use { input ->
-                    FileOutputStream(targetFile).use { output ->
-                        val buffer = ByteArray(16384)
-                        var bytesRead: Int
-                        var totalDownloaded = 0L
-                        var lastProgressReport = 0L
+                        val response = NetworkConfig.httpClient.newCall(request).execute()
+                        if (!response.isSuccessful) {
+                            response.close()
+                            continue
+                        }
 
-                        while (input.read(buffer).also { bytesRead = it } != -1) {
-                            output.write(buffer, 0, bytesRead)
-                            totalDownloaded += bytesRead
+                        val responseBody = response.body
+                        if (responseBody == null) {
+                            response.close()
+                            continue
+                        }
 
-                            val now = System.currentTimeMillis()
-                            if (now - lastProgressReport > 100 || totalDownloaded == totalBytes) {
-                                lastProgressReport = now
-                                val progress = if (totalBytes > 0) totalDownloaded.toFloat() / totalBytes else 0f
-                                _updateState.value = UpdateState.Downloading(progress, totalDownloaded, totalBytes)
+                        val totalBytes = responseBody.contentLength()
+
+                        responseBody.byteStream().use { input ->
+                            FileOutputStream(targetFile).use { output ->
+                                val buffer = ByteArray(16384)
+                                var bytesRead: Int
+                                var totalDownloaded = 0L
+                                var lastProgressReport = 0L
+
+                                while (input.read(buffer).also { bytesRead = it } != -1) {
+                                    output.write(buffer, 0, bytesRead)
+                                    totalDownloaded += bytesRead
+
+                                    val now = System.currentTimeMillis()
+                                    if (now - lastProgressReport > 100 || totalDownloaded == totalBytes) {
+                                        lastProgressReport = now
+                                        val progress = if (totalBytes > 0) totalDownloaded.toFloat() / totalBytes else 0f
+                                        _updateState.value = UpdateState.Downloading(progress, totalDownloaded, totalBytes)
+                                    }
+                                }
+                                output.flush()
                             }
                         }
-                        output.flush()
+                        response.close()
+
+                        if (targetFile.exists() && targetFile.length() > 0) {
+                            downloadSuccess = true
+                            Log.i(TAG, "APK download completed from $url: ${targetFile.absolutePath} (${targetFile.length()} bytes)")
+                            break
+                        }
+                    } catch (e: Exception) {
+                        lastDownloadError = e.message
+                        Log.w(TAG, "Failed downloading from $url: ${e.message}")
                     }
                 }
-                response.close()
 
-                Log.i(TAG, "APK download completed: ${targetFile.absolutePath} (${targetFile.length()} bytes)")
-                _updateState.value = UpdateState.ReadyToInstall(targetFile)
-                onComplete?.invoke(targetFile)
+                if (downloadSuccess) {
+                    _updateState.value = UpdateState.ReadyToInstall(targetFile)
+                    onComplete?.invoke(targetFile)
+                } else {
+                    _updateState.value = UpdateState.Error(lastDownloadError ?: "Download failed. Please check internet connection.")
+                }
             } catch (e: Exception) {
                 Log.w(TAG, "APK download failed: ${e.message}", e)
                 _updateState.value = UpdateState.Error(e.message ?: "Download failed")
