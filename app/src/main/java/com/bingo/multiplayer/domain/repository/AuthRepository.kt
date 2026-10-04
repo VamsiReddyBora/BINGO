@@ -375,6 +375,7 @@ class AuthRepository(
                 gamesPlayed = profile.gamesPlayed,
                 gamesWon = profile.gamesWon,
                 currentStreak = profile.currentStreak,
+                bestStreak = profile.bestStreak,
                 level = profile.level
             ),
             googleId = googleId
@@ -418,6 +419,7 @@ class AuthRepository(
                 gamesPlayed = profile.gamesPlayed,
                 gamesWon = profile.gamesWon,
                 currentStreak = profile.currentStreak,
+                bestStreak = profile.bestStreak,
                 level = profile.level
             )
         )
@@ -445,6 +447,7 @@ class AuthRepository(
                 gamesPlayed = updated.gamesPlayed,
                 gamesWon = updated.gamesWon,
                 currentStreak = updated.currentStreak,
+                bestStreak = updated.bestStreak,
                 level = updated.level
             ),
             googleId = googleId
@@ -548,6 +551,7 @@ class AuthRepository(
                     gamesPlayed = updated.gamesPlayed,
                     gamesWon = updated.gamesWon,
                     currentStreak = updated.currentStreak,
+                    bestStreak = updated.bestStreak,
                     level = updated.level
                 ),
                 googleId = googleId
@@ -617,6 +621,7 @@ class AuthRepository(
                 gamesPlayed = updated.gamesPlayed,
                 gamesWon = updated.gamesWon,
                 currentStreak = updated.currentStreak,
+                bestStreak = updated.bestStreak,
                 level = updated.level
             ),
             googleId = googleId

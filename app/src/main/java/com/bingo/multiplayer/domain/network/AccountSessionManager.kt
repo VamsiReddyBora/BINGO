@@ -303,6 +303,11 @@ class AccountSessionManager(
                         uid = backup.profile.uid,
                         displayName = backup.profile.displayName,
                         avatarUrl = backup.profile.avatarUrl,
+                        gamesPlayed = backup.profile.gamesPlayed,
+                        gamesWon = backup.profile.gamesWon,
+                        currentStreak = backup.profile.currentStreak,
+                        bestStreak = backup.profile.bestStreak,
+                        level = backup.profile.level,
                         lastSeenTimestamp = backup.lastBackupTimestamp
                     )
                     claimUsernameMqtt(entry, gid)
@@ -399,6 +404,11 @@ class AccountSessionManager(
                 uid = p.uid,
                 displayName = p.displayName,
                 avatarUrl = p.avatarUrl,
+                gamesPlayed = p.gamesPlayed,
+                gamesWon = p.gamesWon,
+                currentStreak = p.currentStreak,
+                bestStreak = p.bestStreak,
+                level = p.level,
                 lastSeenTimestamp = backup.lastBackupTimestamp
             )
         }
