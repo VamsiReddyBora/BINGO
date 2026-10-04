@@ -18,6 +18,10 @@ import com.bingo.multiplayer.domain.repository.FriendsRepository
 import com.bingo.multiplayer.presentation.components.AppUpdateDialog
 import com.bingo.multiplayer.presentation.navigation.RootNavGraph
 
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+
 class MainActivity : ComponentActivity() {
 
     private lateinit var authRepository: AuthRepository
@@ -50,8 +54,11 @@ class MainActivity : ComponentActivity() {
         authRepository = AuthRepository(applicationContext)
         friendsRepository = FriendsRepository(applicationContext)
 
-        // Asynchronously check for app updates in the background
-        AppUpdateManager.checkForUpdates(applicationContext, manual = false)
+        // Asynchronously check for app updates silently after launch splash animation completes
+        lifecycleScope.launch {
+            delay(3500)
+            AppUpdateManager.checkForUpdates(applicationContext, manual = false)
+        }
 
         setContent {
             val isDark = ThemePreferences.isDarkTheme.value

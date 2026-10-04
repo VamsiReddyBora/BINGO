@@ -5,11 +5,13 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.provider.Settings
 import android.util.Log
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -18,6 +20,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.Request
 import org.json.JSONObject
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 
 data class AppUpdateInfo(
@@ -182,6 +185,14 @@ object AppUpdateManager {
         }
     }
 
+    private fun getUpdateDir(context: Context): File {
+        val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.cacheDir, "updates")
+        if (!dir.exists()) {
+            dir.mkdirs()
+        }
+        return dir
+    }
+
     /**
      * Downloads APK from the given URL and tracks progress.
      */
@@ -189,6 +200,38 @@ object AppUpdateManager {
         scope.launch {
             try {
                 _updateState.value = UpdateState.Downloading(0f, 0L, 0L)
+                val targetFile = File(getUpdateDir(context), "Bingo_Update.apk")
+                if (targetFile.exists()) {
+                    targetFile.delete()
+                }
+
+                if (downloadUrl == "test://self_install") {
+                    // Test Simulation: safely test the OTA installer pipeline using this build's APK (matching versionCode 34 and signature)
+                    // Avoids Android's INSTALL_FAILED_VERSION_DOWNGRADE error while verifying download UI, FileProvider, and PackageInstaller
+                    val sourceApk = File(context.applicationInfo.sourceDir)
+                    val totalBytes = if (sourceApk.exists()) sourceApk.length() else 1L
+                    var totalCopied = 0L
+
+                    FileInputStream(sourceApk).use { input ->
+                        FileOutputStream(targetFile).use { output ->
+                            val buffer = ByteArray(65536)
+                            var read: Int
+                            while (input.read(buffer).also { read = it } != -1) {
+                                output.write(buffer, 0, read)
+                                totalCopied += read
+                                val progress = (totalCopied.toFloat() / totalBytes).coerceIn(0f, 1f)
+                                _updateState.value = UpdateState.Downloading(progress, totalCopied, totalBytes)
+                                delay(25) // Smooth UI progress animation simulation
+                            }
+                            output.flush()
+                        }
+                    }
+
+                    Log.i(TAG, "Test simulation prepared APK: ${targetFile.absolutePath} (${targetFile.length()} bytes)")
+                    _updateState.value = UpdateState.ReadyToInstall(targetFile)
+                    onComplete?.invoke(targetFile)
+                    return@launch
+                }
 
                 val request = Request.Builder()
                     .url(downloadUrl)
@@ -211,10 +254,6 @@ object AppUpdateManager {
                 }
 
                 val totalBytes = responseBody.contentLength()
-                val targetFile = File(context.cacheDir, "Bingo_Update.apk")
-                if (targetFile.exists()) {
-                    targetFile.delete()
-                }
 
                 responseBody.byteStream().use { input ->
                     FileOutputStream(targetFile).use { output ->
@@ -288,7 +327,14 @@ object AppUpdateManager {
                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
             }
 
-            Log.i(TAG, "Launching Android PackageInstaller with URI: $apkUri")
+            // Explicitly grant URI read permission to all matching package installer handlers
+            val resolvedActivities = context.packageManager.queryIntentActivities(installIntent, 0)
+            for (resolveInfo in resolvedActivities) {
+                val pkgName = resolveInfo.activityInfo.packageName
+                context.grantUriPermission(pkgName, apkUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+
+            Log.i(TAG, "Launching Android PackageInstaller with URI: $apkUri (${apkFile.length()} bytes)")
             context.startActivity(installIntent)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to launch package installer: ${e.message}", e)
@@ -304,19 +350,21 @@ object AppUpdateManager {
     }
 
     /**
-     * Test verification trigger: Simulates an update flow by downloading
-     * the latest published release and triggering the installer.
+     * Test verification trigger: Simulates an update flow by testing
+     * the download UI and native package installer without triggering a downgrade rejection.
      */
     fun triggerVerificationTest(context: Context) {
         scope.launch {
             _updateState.value = UpdateState.Checking
+            val appFile = File(context.applicationInfo.sourceDir)
+            val size = if (appFile.exists()) appFile.length() else 5500000L
             val testInfo = AppUpdateInfo(
                 hasUpdate = true,
-                latestVersionTag = "v1.2",
-                latestVersionName = "1.2 (Test Simulation)",
-                downloadUrl = "https://github.com/VamsiReddyBora/BINGO/releases/download/v1.2/Bingo.apk",
-                releaseNotes = "• Test verification of In-App OTA Update Engine\n• Download stream verified\n• FileProvider intent verified",
-                apkSize = 5472432L
+                latestVersionTag = "v1.3",
+                latestVersionName = "1.3 (Test Simulation)",
+                downloadUrl = "test://self_install",
+                releaseNotes = "• Test verification of In-App OTA Update Engine\n• Verifies Android PackageInstaller & FileProvider on this device\n• Re-installs/updates current build preserving all settings",
+                apkSize = size
             )
             _updateState.value = UpdateState.UpdateAvailable(testInfo)
         }

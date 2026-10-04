@@ -55,7 +55,8 @@ fun AppUpdateDialog() {
     val context = LocalContext.current
     val tokens = BingoTheme.colors
 
-    if (updateState is UpdateState.Idle || updateState is UpdateState.UpToDate) {
+    // Only display dialog for actionable states: update available, downloading, ready to install, or manual error
+    if (updateState is UpdateState.Idle || updateState is UpdateState.UpToDate || updateState is UpdateState.Checking) {
         return
     }
 
@@ -86,34 +87,6 @@ fun AppUpdateDialog() {
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 when (val state = updateState) {
-                    is UpdateState.Checking -> {
-                        Box(
-                            modifier = Modifier
-                                .size(56.dp)
-                                .clip(CircleShape)
-                                .background(tokens.accentBrand.copy(alpha = 0.12f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(28.dp),
-                                color = tokens.accentBrand,
-                                strokeWidth = 3.dp
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = "Checking for Updates...",
-                            fontSize = 17.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = tokens.cellNeutralText
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "Checking latest version on GitHub Releases",
-                            fontSize = 13.sp,
-                            color = tokens.textMuted
-                        )
-                    }
 
                     is UpdateState.UpdateAvailable -> {
                         Box(
