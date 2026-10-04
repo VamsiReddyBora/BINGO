@@ -2140,16 +2140,6 @@ fun SettingsScreen(
 
                 Spacer(modifier = Modifier.height(6.dp))
 
-                // Verification trigger for testing the download & installer prompt
-                TextButton(
-                    onClick = { AppUpdateManager.triggerVerificationTest(context) }
-                ) {
-                    Text(
-                        text = "Test Update Installer",
-                        fontSize = 11.sp,
-                        color = tokens.accentBrand.copy(alpha = 0.75f)
-                    )
-                }
 
 
             }

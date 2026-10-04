@@ -32,10 +32,15 @@ data class BroadcastMessage(
     val author: String = "Admin",
     val targetUsername: String = "", // "" or "ALL" for everyone, or specific username like "@john"
     val timestamp: Long = 0L,
-    val active: Boolean = true
+    val active: Boolean = true,
+    val deliveryMode: String = "STARTUP", // "ONCE" or "STARTUP"
+    val size: String = "STANDARD" // "COMPACT", "STANDARD", "EXPANDED"
 ) {
     val isDirectMessage: Boolean
         get() = targetUsername.isNotBlank() && !targetUsername.equals("ALL", ignoreCase = true)
+
+    val isOnlyOnce: Boolean
+        get() = deliveryMode.equals("ONCE", ignoreCase = true)
 
     fun toJsonString(): String {
         val json = JSONObject()
@@ -47,6 +52,8 @@ data class BroadcastMessage(
         json.put("targetUsername", targetUsername)
         json.put("timestamp", timestamp)
         json.put("active", active)
+        json.put("deliveryMode", deliveryMode)
+        json.put("size", size)
         return json.toString()
     }
 
@@ -68,7 +75,9 @@ data class BroadcastMessage(
                     author = json.optString("author", "Admin"),
                     targetUsername = json.optString("targetUsername", ""),
                     timestamp = json.optLong("timestamp", 0L),
-                    active = json.optBoolean("active", true)
+                    active = json.optBoolean("active", true),
+                    deliveryMode = json.optString("deliveryMode", "STARTUP"),
+                    size = json.optString("size", "STANDARD")
                 )
             } catch (e: Exception) {
                 null
@@ -87,15 +96,44 @@ object BroadcastMessageManager {
 
     // Session-based dismissal flag: Once dismissed, no popups appear until app restart
     private var hasDismissedInSession = false
+    private var lastApplicationContext: Context? = null
     private val scope = CoroutineScope(Dispatchers.IO)
+
+    /**
+     * Checks if this message has already been viewed and dismissed in ONCE mode.
+     */
+    fun hasMessageBeenSeen(context: Context?, msgId: String): Boolean {
+        val ctx = context ?: lastApplicationContext ?: return false
+        if (msgId.isBlank()) return false
+        return try {
+            val prefs = ctx.getSharedPreferences("bingo_bcast_seen", Context.MODE_PRIVATE)
+            val set = prefs.getStringSet("seen_ids", emptySet()) ?: emptySet()
+            set.contains(msgId)
+        } catch (_: Exception) { false }
+    }
+
+    /**
+     * Records that a message has been seen and dismissed by the local user.
+     */
+    fun markMessageAsSeen(context: Context?, msgId: String) {
+        val ctx = context ?: lastApplicationContext ?: return
+        if (msgId.isBlank()) return
+        try {
+            val prefs = ctx.getSharedPreferences("bingo_bcast_seen", Context.MODE_PRIVATE)
+            val set = prefs.getStringSet("seen_ids", emptySet())?.toMutableSet() ?: mutableSetOf()
+            set.add(msgId)
+            prefs.edit().putStringSet("seen_ids", set).apply()
+        } catch (_: Exception) {}
+    }
 
     /**
      * Retrieves current logged in username from SharedPreferences.
      */
     fun getLocalUsername(context: Context?): String {
-        if (context == null) return ""
+        val ctx = context ?: lastApplicationContext
+        if (ctx == null) return ""
         return try {
-            val prefs = context.getSharedPreferences("bingo_auth_prefs", Context.MODE_PRIVATE)
+            val prefs = ctx.getSharedPreferences("bingo_auth_prefs", Context.MODE_PRIVATE)
             val uname = prefs.getString("username", null)?.trim()
             if (!uname.isNullOrBlank()) uname else (prefs.getString("display_name", "")?.trim() ?: "")
         } catch (_: Exception) {
@@ -118,6 +156,9 @@ object BroadcastMessageManager {
      * Silent and strictly respects the per-session dismissal rule.
      */
     fun checkForBroadcast(context: Context? = null) {
+        if (context != null) {
+            lastApplicationContext = context.applicationContext
+        }
         if (hasDismissedInSession) {
             Log.d(TAG, "Broadcast already dismissed in this session, skipping check")
             return
@@ -144,8 +185,13 @@ object BroadcastMessageManager {
                 }
 
                 if (activeMsg != null && !hasDismissedInSession) {
+                    if (activeMsg.isOnlyOnce && hasMessageBeenSeen(context, activeMsg.id)) {
+                        Log.d(TAG, "Message ${activeMsg.id} was already seen in ONCE mode, suppressing startup popup")
+                        _activeBroadcast.value = null
+                        return@launch
+                    }
                     _activeBroadcast.value = activeMsg
-                    Log.i(TAG, "Active broadcast received on startup: ${activeMsg.title} (target=${activeMsg.targetUsername})")
+                    Log.i(TAG, "Active broadcast received on startup: ${activeMsg.title} (target=${activeMsg.targetUsername}, mode=${activeMsg.deliveryMode})")
                 } else {
                     _activeBroadcast.value = null
                 }
@@ -159,6 +205,9 @@ object BroadcastMessageManager {
      * Called when a live MQTT broadcast arrives in real-time.
      */
     fun onBroadcastReceived(jsonPayload: String, context: Context? = null) {
+        if (context != null) {
+            lastApplicationContext = context.applicationContext
+        }
         if (hasDismissedInSession) {
             Log.d(TAG, "Broadcast already dismissed in this session, ignoring live update")
             return
@@ -166,9 +215,13 @@ object BroadcastMessageManager {
         try {
             val msg = BroadcastMessage.fromJsonString(jsonPayload)
             if (msg != null && msg.active && msg.message.isNotBlank() && isTargetMatch(msg, context)) {
+                if (msg.isOnlyOnce && hasMessageBeenSeen(context, msg.id)) {
+                    Log.d(TAG, "Live message ${msg.id} was already seen in ONCE mode, ignoring")
+                    return
+                }
                 if (!hasDismissedInSession) {
                     _activeBroadcast.value = msg
-                    Log.i(TAG, "Live broadcast received: ${msg.title} (target=${msg.targetUsername})")
+                    Log.i(TAG, "Live broadcast received: ${msg.title} (target=${msg.targetUsername}, mode=${msg.deliveryMode})")
                 }
             }
         } catch (e: Exception) {
@@ -178,10 +231,25 @@ object BroadcastMessageManager {
 
     /**
      * Dismisses the broadcast dialog for the current app session.
-     * Will NOT pop up again until the app is restarted fresh.
+     * In ONCE mode, marks the message seen locally and automatically clears
+     * targeted cloud mailboxes so it goes inactive in the admin console.
      */
-    fun dismiss() {
+    fun dismiss(context: Context? = null) {
         hasDismissedInSession = true
+        val current = _activeBroadcast.value
+        if (current != null) {
+            val ctx = context ?: lastApplicationContext
+            if (current.isOnlyOnce) {
+                markMessageAsSeen(ctx, current.id)
+                // If this was a direct targeted message, automatically deactivate it in the cloud!
+                if (current.isDirectMessage) {
+                    scope.launch {
+                        clearBroadcast(current.targetUsername)
+                        Log.i(TAG, "Direct message ${current.id} for ${current.targetUsername} acknowledged & deactivated in cloud")
+                    }
+                }
+            }
+        }
         _activeBroadcast.value = null
     }
 

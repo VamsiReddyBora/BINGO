@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -71,6 +73,59 @@ fun BroadcastMessageDialog() {
         else -> Triple("ANNOUNCEMENT", tokens.accentBrand, Icons.Default.Campaign)
     }
 
+    // 3 Distinct popup sizes
+    val dialogSize = broadcast.size.uppercase(Locale.US)
+    val cardMaxWidth = when (dialogSize) {
+        "COMPACT" -> 295.dp
+        "EXPANDED" -> 380.dp
+        else -> 340.dp
+    }
+    val cardPadding = when (dialogSize) {
+        "COMPACT" -> 16.dp
+        "EXPANDED" -> 26.dp
+        else -> 22.dp
+    }
+    val iconBoxSize = when (dialogSize) {
+        "COMPACT" -> 44.dp
+        "EXPANDED" -> 62.dp
+        else -> 54.dp
+    }
+    val iconSize = when (dialogSize) {
+        "COMPACT" -> 22.dp
+        "EXPANDED" -> 30.dp
+        else -> 26.dp
+    }
+    val titleSize = when (dialogSize) {
+        "COMPACT" -> 16.sp
+        "EXPANDED" -> 20.sp
+        else -> 18.sp
+    }
+    val bodyMinHeight = when (dialogSize) {
+        "COMPACT" -> 65.dp
+        "EXPANDED" -> 150.dp
+        else -> 100.dp
+    }
+    val bodyMaxHeight = when (dialogSize) {
+        "COMPACT" -> 110.dp
+        "EXPANDED" -> 280.dp
+        else -> 160.dp
+    }
+    val bodyFontSize = when (dialogSize) {
+        "COMPACT" -> 12.sp
+        "EXPANDED" -> 14.sp
+        else -> 13.sp
+    }
+    val bodyLineHeight = when (dialogSize) {
+        "COMPACT" -> 17.sp
+        "EXPANDED" -> 21.sp
+        else -> 19.sp
+    }
+    val buttonHeight = when (dialogSize) {
+        "COMPACT" -> 38.dp
+        "EXPANDED" -> 48.dp
+        else -> 44.dp
+    }
+
     Dialog(
         onDismissRequest = { BroadcastMessageManager.dismiss() },
         properties = DialogProperties(dismissOnBackPress = true, dismissOnClickOutside = true)
@@ -80,20 +135,21 @@ fun BroadcastMessageDialog() {
             color = tokens.surface,
             tonalElevation = 8.dp,
             modifier = Modifier
+                .widthIn(max = cardMaxWidth)
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp)
+                .padding(horizontal = 6.dp)
                 .border(1.dp, tokens.cellNeutralBorder.copy(alpha = 0.3f), RoundedCornerShape(24.dp))
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(24.dp),
+                    .padding(cardPadding),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 // Header Icon
                 Box(
                     modifier = Modifier
-                        .size(56.dp)
+                        .size(iconBoxSize)
                         .clip(CircleShape)
                         .background(badgeColor.copy(alpha = 0.15f)),
                     contentAlignment = Alignment.Center
@@ -102,11 +158,11 @@ fun BroadcastMessageDialog() {
                         imageVector = iconVector,
                         contentDescription = null,
                         tint = badgeColor,
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier.size(iconSize)
                     )
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(if (dialogSize == "COMPACT") 10.dp else 14.dp))
 
                 // Badge
                 Surface(
@@ -115,26 +171,26 @@ fun BroadcastMessageDialog() {
                 ) {
                     Text(
                         text = badgeText,
-                        fontSize = 11.sp,
+                        fontSize = if (dialogSize == "COMPACT") 10.sp else 11.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 0.6.sp,
                         color = badgeColor,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp)
                     )
                 }
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(if (dialogSize == "COMPACT") 8.dp else 10.dp))
 
                 // Broadcast Title
                 Text(
                     text = broadcast.title.ifBlank { if (isDirect) "Personal Message" else "Announcement" },
-                    fontSize = 18.sp,
+                    fontSize = titleSize,
                     fontWeight = FontWeight.Bold,
                     color = tokens.cellNeutralText
                 )
 
                 // Subtitle / Author Info
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(3.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center
@@ -143,7 +199,7 @@ fun BroadcastMessageDialog() {
                         imageVector = Icons.Default.Verified,
                         contentDescription = null,
                         tint = badgeColor,
-                        modifier = Modifier.size(13.dp)
+                        modifier = Modifier.size(12.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     val dateFormatted = if (broadcast.timestamp > 0L) {
@@ -160,48 +216,50 @@ fun BroadcastMessageDialog() {
                     }
                     Text(
                         text = authorText,
-                        fontSize = 11.sp,
+                        fontSize = 10.5.sp,
                         color = tokens.textMuted
                     )
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(if (dialogSize == "COMPACT") 12.dp else 16.dp))
 
-                // Message Body
+                // Message Body Container
                 Surface(
                     shape = RoundedCornerShape(14.dp),
                     color = tokens.badgeSurface,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(150.dp)
+                        .heightIn(min = bodyMinHeight, max = bodyMaxHeight)
                 ) {
                     Column(
                         modifier = Modifier
-                            .padding(14.dp)
+                            .padding(if (dialogSize == "COMPACT") 10.dp else 14.dp)
                             .verticalScroll(rememberScrollState())
                     ) {
                         Text(
                             text = broadcast.message,
-                            fontSize = 13.sp,
-                            lineHeight = 19.sp,
+                            fontSize = bodyFontSize,
+                            lineHeight = bodyLineHeight,
                             color = tokens.cellNeutralText
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(if (dialogSize == "COMPACT") 14.dp else 18.dp))
 
                 // Action Button (Got it / Dismiss)
                 Button(
                     onClick = { BroadcastMessageManager.dismiss() },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(buttonHeight),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = badgeColor)
                 ) {
                     Text(
                         text = "Got it",
                         color = Color.White,
-                        fontSize = 14.sp,
+                        fontSize = if (dialogSize == "COMPACT") 13.sp else 14.sp,
                         fontWeight = FontWeight.Bold
                     )
                 }
