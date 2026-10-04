@@ -22,14 +22,17 @@
               hover: '#161616',
             },
             brand: {
-              50: '#eef2ff',
-              100: '#e0e7ff',
-              400: '#818cf8',
-              500: '#6366f1',
-              600: '#4f46e5',
-              700: '#4338ca',
-              900: '#312e81',
-              950: '#1e1b4b',
+              50: '#fafafa',
+              100: '#f5f5f5',
+              200: '#e5e5e5',
+              300: '#d4d4d4',
+              400: '#a3a3a3',
+              500: '#737373',
+              600: '#525252',
+              700: '#404040',
+              800: '#262626',
+              900: '#171717',
+              950: '#0a0a0a',
             }
           },
           fontFamily: {
@@ -54,54 +57,54 @@
 
   <style>
     /* ======================================================== */
-    /* THEME VARIABLES: PURE AMOLED BLACK VS CRISP LIGHT        */
+    /* THEME VARIABLES: PURE WHITE, BLACK & GREYSCALE MONOCHROME*/
     /* ======================================================== */
     :root {
-      /* Default Light Theme */
-      --page-bg: #f8fafc;
-      --card-bg: rgba(255, 255, 255, 0.95);
-      --card-hover-bg: #f1f5f9;
-      --header-bg: rgba(255, 255, 255, 0.92);
-      --modal-bg: rgba(255, 255, 255, 0.98);
+      /* Default Light Theme - PURE WHITE & GREYSCALE */
+      --page-bg: #ffffff;
+      --card-bg: #ffffff;
+      --card-hover-bg: #f9f9f9;
+      --header-bg: #ffffff;
+      --modal-bg: #ffffff;
       --drawer-bg: #ffffff;
       --input-bg: #ffffff;
-      --subtle-box: #f1f5f9;
-      --terminal-bg: #0f172a;
-      --border-color: #e2e8f0;
-      --border-strong: #cbd5e1;
-      --text-title: #0f172a;
-      --text-sub: #334155;
-      --text-dim: #64748b;
-      --keypad-bg: #f1f5f9;
-      --keypad-hover: #e2e8f0;
-      --keypad-text: #0f172a;
+      --subtle-box: #f5f5f5;
+      --terminal-bg: #0a0a0a;
+      --border-color: #e5e5e5;
+      --border-strong: #d4d4d4;
+      --text-title: #000000;
+      --text-sub: #404040;
+      --text-dim: #737373;
+      --keypad-bg: #f5f5f5;
+      --keypad-hover: #e5e5e5;
+      --keypad-text: #000000;
     }
 
     html.dark {
-      /* PURE AMOLED BLACK Dark Theme */
+      /* PURE AMOLED BLACK Dark Theme - PURE BLACK & GREYSCALE */
       --page-bg: #000000;
-      --card-bg: rgba(10, 10, 10, 0.92);
-      --card-hover-bg: #151515;
-      --header-bg: rgba(0, 0, 0, 0.94);
-      --modal-bg: rgba(6, 6, 6, 0.98);
+      --card-bg: #0a0a0a;
+      --card-hover-bg: #141414;
+      --header-bg: #000000;
+      --modal-bg: #0a0a0a;
       --drawer-bg: #000000;
-      --input-bg: #070707;
-      --subtle-box: #0f0f0f;
-      --terminal-bg: #040404;
+      --input-bg: #000000;
+      --subtle-box: #121212;
+      --terminal-bg: #000000;
       --border-color: #222222;
       --border-strong: #333333;
       --text-title: #ffffff;
-      --text-sub: #cbd5e1;
-      --text-dim: #94a3b8;
-      --keypad-bg: #121212;
-      --keypad-hover: #1e1e1e;
+      --text-sub: #a3a3a3;
+      --text-dim: #737373;
+      --keypad-bg: #111111;
+      --keypad-hover: #1c1c1c;
       --keypad-text: #ffffff;
     }
 
     body {
       background-color: var(--page-bg) !important;
       color: var(--text-sub);
-      transition: background-color 0.25s ease, color 0.25s ease;
+      transition: background-color 0.2s ease, color 0.2s ease;
       touch-action: pan-y;
     }
 
@@ -112,44 +115,30 @@
     /* Custom scrollbars */
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     html.dark ::-webkit-scrollbar-track { background: #000000; }
-    html.light ::-webkit-scrollbar-track { background: #f1f5f9; }
+    html.light ::-webkit-scrollbar-track { background: #f5f5f5; }
     html.dark ::-webkit-scrollbar-thumb { background: #262626; border-radius: 9999px; }
-    html.light ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 9999px; }
+    html.light ::-webkit-scrollbar-thumb { background: #d4d4d4; border-radius: 9999px; }
 
-    /* Keyframe animations */
-    @keyframes pulse-subtle {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50% { opacity: 0.85; transform: scale(0.98); }
-    }
-    .animate-pulse-subtle { animation: pulse-subtle 3s infinite ease-in-out; }
-
-    @keyframes shake {
-      0%, 100% { transform: translateX(0); }
-      20%, 60% { transform: translateX(-8px); }
-      40%, 80% { transform: translateX(8px); }
-    }
-    .shake-anim { animation: shake 0.4s ease-in-out; }
-
-    /* Themed container styles */
+    /* Themed container styles - Minimal borders, no neon shadows */
     .theme-card {
       background: var(--card-bg);
       border: 1px solid var(--border-color);
-      transition: background-color 0.25s ease, border-color 0.25s ease;
+      transition: background-color 0.2s ease, border-color 0.2s ease;
     }
     .theme-header {
       background: var(--header-bg);
       border-bottom: 1px solid var(--border-color);
-      transition: background-color 0.25s ease, border-color 0.25s ease;
+      transition: background-color 0.2s ease, border-color 0.2s ease;
     }
     .theme-modal {
       background: var(--modal-bg);
       border: 1px solid var(--border-strong);
-      transition: background-color 0.25s ease, border-color 0.25s ease;
+      transition: background-color 0.2s ease, border-color 0.2s ease;
     }
     .theme-drawer {
       background: var(--drawer-bg);
       border-left: 1px solid var(--border-color);
-      transition: background-color 0.25s ease, border-color 0.25s ease;
+      transition: background-color 0.2s ease, border-color 0.2s ease;
     }
     .theme-input {
       background: var(--input-bg);
@@ -178,26 +167,46 @@
       color: var(--text-dim);
     }
 
-    /* Status badge styles */
+    /* Status badge styles - Pure Minimal Monochrome (No neon) */
     .badge-online {
-      background: rgba(16, 185, 129, 0.12);
-      color: #10b981;
-      border: 1px solid rgba(16, 185, 129, 0.35);
+      background: #f5f5f5;
+      color: #000000;
+      border: 1px solid #d4d4d4;
+    }
+    html.dark .badge-online {
+      background: #141414;
+      color: #ffffff;
+      border: 1px solid #333333;
     }
     .badge-lobby {
-      background: rgba(245, 158, 11, 0.12);
-      color: #f59e0b;
-      border: 1px solid rgba(245, 158, 11, 0.35);
+      background: #f5f5f5;
+      color: #525252;
+      border: 1px solid #e5e5e5;
+    }
+    html.dark .badge-lobby {
+      background: #141414;
+      color: #a3a3a3;
+      border: 1px solid #262626;
     }
     .badge-playing {
-      background: rgba(168, 85, 247, 0.12);
-      color: #a855f7;
-      border: 1px solid rgba(168, 85, 247, 0.35);
+      background: #000000;
+      color: #ffffff;
+      border: 1px solid #000000;
+    }
+    html.dark .badge-playing {
+      background: #ffffff;
+      color: #000000;
+      border: 1px solid #ffffff;
     }
     .badge-offline {
-      background: var(--subtle-box);
-      color: var(--text-dim);
-      border: 1px solid var(--border-color);
+      background: transparent;
+      color: #737373;
+      border: 1px solid #e5e5e5;
+    }
+    html.dark .badge-offline {
+      background: transparent;
+      color: #737373;
+      border: 1px solid #222222;
     }
 
     /* Slide animation */
@@ -224,23 +233,19 @@
         class="px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl flex items-center gap-2 text-xs font-bold shadow-lg transition-all active:scale-95 border theme-subtle hover:scale-105"
         title="Toggle Theme (AMOLED Black / Light)"
       >
-        <i id="authThemeIcon" class="fa-solid fa-moon text-brand-400"></i>
+        <i id="authThemeIcon" class="fa-solid fa-moon text-neutral-400"></i>
         <span id="authThemeLabel" class="font-mono text-xs theme-title">AMOLED</span>
       </button>
     </div>
 
     <!-- Auth Modal Container -->
     <div class="w-full max-w-md theme-modal rounded-3xl p-6 sm:p-8 shadow-2xl relative overflow-hidden backdrop-blur-2xl max-h-[92vh] overflow-y-auto">
-      <div class="absolute -top-24 -left-24 w-48 h-48 bg-brand-500/20 rounded-full blur-3xl pointer-events-none"></div>
-      <div class="absolute -bottom-24 -right-24 w-48 h-48 bg-purple-500/20 rounded-full blur-3xl pointer-events-none"></div>
+      
       
       <div class="text-center relative z-10">
         <!-- Logo Badge -->
-        <div class="inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-gradient-to-tr from-brand-600 via-indigo-500 to-purple-600 p-1 shadow-lg shadow-brand-600/30 mb-4 sm:mb-5">
-          <div class="w-full h-full theme-card rounded-[14px] flex items-center justify-center">
-            <span class="text-2xl sm:text-3xl font-black bg-gradient-to-r from-brand-400 via-purple-300 to-emerald-400 bg-clip-text text-transparent">B</span>
-            <i class="fa-solid fa-shield-halved text-brand-400 text-xl sm:text-2xl ml-1"></i>
-          </div>
+        <div class="inline-flex items-center justify-center w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-neutral-900 text-white dark:bg-white dark:text-black mb-4 sm:mb-5">
+          <span class="text-2xl sm:text-3xl font-black">B</span>
         </div>
 
         <h1 class="text-xl sm:text-2xl font-black tracking-tight theme-title mb-1">BINGO SERVER ADMIN</h1>
@@ -255,12 +260,12 @@
               maxlength="32" 
               placeholder="Enter Admin Password" 
               autocomplete="current-password"
-              class="w-full py-3 sm:py-3.5 px-4 theme-input text-center text-base sm:text-lg font-mono tracking-widest rounded-xl focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/30 transition-all placeholder:text-slate-400 placeholder:text-sm placeholder:tracking-normal"
+              class="w-full py-3 sm:py-3.5 px-4 theme-input text-center text-base sm:text-lg font-mono tracking-widest rounded-xl focus:outline-none focus:border-neutral-900 dark:focus:border-white transition-all placeholder:text-neutral-400 placeholder:text-sm placeholder:tracking-normal"
             >
             <button 
               type="button" 
               onclick="togglePinVisibility()" 
-              class="absolute right-3.5 top-1/2 -translate-y-1/2 theme-dimtext hover:text-brand-400 transition-colors"
+              class="absolute right-3.5 top-1/2 -translate-y-1/2 theme-dimtext hover:theme-title transition-colors"
               title="Show/Hide Password"
             >
               <i id="pinEyeIcon" class="fa-solid fa-eye-slash text-sm"></i>
@@ -268,7 +273,7 @@
           </div>
 
           <!-- Error Message Banner -->
-          <div id="authErrorMsg" class="hidden text-xs text-rose-500 bg-rose-500/10 border border-rose-500/30 rounded-lg py-2 px-3 text-center font-medium">
+          <div id="authErrorMsg" class="hidden text-xs theme-title bg-neutral-100 dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 rounded-lg py-2 px-3 text-center font-medium">
             <i class="fa-solid fa-circle-exclamation mr-1"></i> Incorrect Admin Password. Try again.
           </div>
 
@@ -283,14 +288,14 @@
             <button onclick="appendPin('7')" class="py-2 sm:py-2.5 rounded-xl theme-keypad-btn font-mono text-base font-bold active:scale-95 transition-all">7</button>
             <button onclick="appendPin('8')" class="py-2 sm:py-2.5 rounded-xl theme-keypad-btn font-mono text-base font-bold active:scale-95 transition-all">8</button>
             <button onclick="appendPin('9')" class="py-2 sm:py-2.5 rounded-xl theme-keypad-btn font-mono text-base font-bold active:scale-95 transition-all">9</button>
-            <button onclick="clearPin()" class="py-2 sm:py-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-500 font-mono text-xs font-bold active:scale-95 transition-all border border-rose-500/20">CLR</button>
+            <button onclick="clearPin()" class="py-2 sm:py-2.5 rounded-xl theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title font-mono text-xs font-bold active:scale-95 transition-all border border-inherit">CLR</button>
             <button onclick="appendPin('0')" class="py-2 sm:py-2.5 rounded-xl theme-keypad-btn font-mono text-base font-bold active:scale-95 transition-all">0</button>
             <button onclick="backspacePin()" class="py-2 sm:py-2.5 rounded-xl theme-keypad-btn font-mono text-sm active:scale-95 transition-all"><i class="fa-solid fa-delete-left"></i></button>
           </div>
 
           <div class="flex items-center justify-between text-xs theme-dimtext pt-1 px-1">
             <label class="flex items-center cursor-pointer select-none">
-              <input type="checkbox" id="rememberSessionCheck" class="rounded border-slate-700 bg-transparent text-brand-600 focus:ring-brand-500 mr-2">
+              <input type="checkbox" id="rememberSessionCheck" class="rounded border-neutral-400 dark:border-neutral-700 bg-transparent text-neutral-900 dark:text-white focus:ring-0 mr-2">
               <span>Keep unlocked</span>
             </label>
             <span class="text-[11px] opacity-70"><i class="fa-solid fa-lock mr-1"></i>Protected Session</span>
@@ -300,7 +305,7 @@
           <button 
             type="button" 
             onclick="validateAndUnlock()" 
-            class="w-full mt-3 py-3 sm:py-3.5 px-4 rounded-xl bg-gradient-to-r from-brand-600 via-indigo-600 to-purple-600 hover:from-brand-500 hover:to-purple-500 text-white font-semibold text-sm shadow-lg shadow-brand-600/30 active:scale-[0.98] transition-all flex items-center justify-center gap-2"
+            class="w-full mt-3 py-3 sm:py-3.5 px-4 rounded-xl bg-neutral-900 text-white dark:bg-white dark:text-black hover:bg-neutral-800 dark:hover:bg-neutral-200 font-semibold text-sm active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer"
           >
             <i class="fa-solid fa-unlock-keyhole"></i>
             <span>Unlock Admin Console</span>
@@ -322,15 +327,13 @@
         
         <!-- Left: Logo & Branding -->
         <div class="flex items-center gap-2 sm:gap-3 min-w-0">
-          <div class="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-brand-600 to-purple-600 p-0.5 shadow-md shadow-brand-600/20 flex-shrink-0">
-            <div class="w-full h-full theme-card rounded-[10px] flex items-center justify-center">
-              <span class="text-base sm:text-lg font-black bg-gradient-to-r from-brand-400 to-purple-400 bg-clip-text text-transparent">B</span>
-            </div>
+          <div class="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-neutral-900 text-white dark:bg-white dark:text-black flex items-center justify-center font-black text-base sm:text-lg flex-shrink-0">
+            <span>B</span>
           </div>
           <div class="min-w-0">
             <div class="flex items-center gap-1.5 sm:gap-2">
               <h1 class="text-sm sm:text-lg font-black tracking-tight theme-title truncate">BINGO SERVER</h1>
-              <span class="text-[9px] sm:text-[10px] font-bold px-1.5 py-0.2 rounded bg-brand-500/15 text-brand-500 border border-brand-500/30 uppercase tracking-wide flex-shrink-0">Admin v2.0</span>
+              <span class="text-[9px] sm:text-[10px] font-bold px-1.5 py-0.5 rounded theme-subtle theme-title border theme-border uppercase tracking-wide flex-shrink-0">Admin v2.0</span>
             </div>
             <p class="text-[11px] theme-dimtext hidden md:block">Realtime Global Control & Player Management</p>
           </div>
@@ -342,20 +345,19 @@
           <div 
             id="statusKeyVal" 
             onclick="measureCloudPing(true)" 
-            class="flex items-center gap-1 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full badge-online cursor-pointer transition-all active:scale-95" 
+            class="flex items-center gap-1.5 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full badge-online cursor-pointer transition-all active:scale-95" 
             title="Cloud Database Ping & Latency (Tap to re-test)"
           >
-            <span class="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span class="text-[10px] sm:text-[11px] font-semibold text-emerald-400">Ping:</span>
+            <span class="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-neutral-900 dark:bg-white"></span>
+            <span class="text-[10px] sm:text-[11px] font-semibold">Ping:</span>
             <span class="text-[10px] sm:text-[11px] font-mono font-bold flex items-center gap-0.5">
-              <i class="fa-solid fa-bolt text-[9px] text-emerald-400"></i>
               <span id="keyValLatency">--ms</span>
             </span>
           </div>
 
           <!-- MQTT Broker Status -->
           <div id="statusMqtt" class="flex items-center gap-1 px-1.5 py-0.5 sm:px-2.5 sm:py-1 rounded-full theme-subtle transition-all" title="EMQX MQTT WebSocket Status">
-            <span id="mqttDot" class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+            <span id="mqttDot" class="w-1.5 h-1.5 rounded-full bg-neutral-500"></span>
             <span class="text-[10px] sm:text-[11px] hidden lg:inline font-semibold">MQTT:</span>
             <span class="text-[10px] sm:text-[11px] font-mono font-bold hidden sm:inline" id="mqttStatusText">Connecting...</span>
           </div>
@@ -372,13 +374,13 @@
             class="p-2 sm:px-3 sm:py-1.5 rounded-lg theme-subtle theme-title text-xs font-bold active:scale-95 transition-all flex items-center gap-1.5 hover:border-brand-500"
             title="Toggle Theme (AMOLED Black / Light)"
           >
-            <i id="adminThemeIcon" class="fa-solid fa-moon text-brand-400"></i>
+            <i id="adminThemeIcon" class="fa-solid fa-moon text-neutral-400"></i>
             <span id="adminThemeLabel" class="hidden sm:inline font-mono">AMOLED</span>
           </button>
 
           <!-- Auto-Refresh Toggle -->
           <div class="flex items-center gap-1 sm:gap-1.5 theme-subtle rounded-lg px-2 sm:px-2.5 py-1 sm:py-1.5 text-xs theme-dimtext">
-            <i class="fa-solid fa-clock-rotate-left text-[11px] text-brand-500"></i>
+            <i class="fa-solid fa-clock-rotate-left text-[11px] theme-dimtext"></i>
             <select id="autoRefreshInterval" onchange="updateAutoRefresh(this.value)" class="bg-transparent theme-title text-xs focus:outline-none cursor-pointer">
               <option value="0" class="theme-card theme-title">Auto: Off</option>
               <option value="3" selected class="theme-card theme-title">Auto: 3s</option>
@@ -402,7 +404,7 @@
           <!-- Lock Button -->
           <button 
             onclick="lockConsole()" 
-            class="p-2 sm:px-3 sm:py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 text-xs font-bold border border-rose-500/30 active:scale-95 transition-all flex items-center gap-1.5"
+            class="p-2 sm:px-3 sm:py-1.5 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title text-xs font-bold border theme-border active:scale-95 transition-all flex items-center gap-1.5"
             title="Lock Console"
           >
             <i class="fa-solid fa-lock"></i>
@@ -412,15 +414,15 @@
       </div>
 
       <!-- Navigation Tabs -->
-      <div class="max-w-7xl mx-auto mt-3 flex items-center gap-1 sm:gap-2 border-t border-slate-700/20 dark:border-neutral-800/80 pt-2.5 overflow-x-auto no-scrollbar">
+      <div class="max-w-7xl mx-auto mt-3 flex items-center gap-1 sm:gap-2 border-t border-neutral-200 dark:border-neutral-800 pt-2.5 overflow-x-auto no-scrollbar">
         <button 
           onclick="switchTab('players')" 
           id="tabBtn-players" 
-          class="nav-tab active-tab px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all whitespace-nowrap bg-brand-600 text-white shadow-md shadow-brand-600/30 flex-shrink-0"
+          class="nav-tab active-tab px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all whitespace-nowrap bg-neutral-900 text-white dark:bg-white dark:text-black flex-shrink-0"
         >
           <i class="fa-solid fa-users"></i>
           <span>Players Directory</span>
-          <span id="navPlayersBadge" class="ml-1 px-1.5 py-0.2 rounded-full bg-white/20 text-[10px] font-mono">0</span>
+          <span id="navPlayersBadge" class="ml-1 px-1.5 py-0.2 rounded-full bg-neutral-700 text-white dark:bg-neutral-200 dark:text-black text-[10px] font-mono">0</span>
         </button>
 
         <button 
@@ -475,8 +477,8 @@
         <!-- Summary Stat Cards -->
         <div class="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
           <!-- Total Players -->
-          <div class="theme-card rounded-2xl p-4 flex items-center gap-3.5">
-            <div class="w-12 h-12 rounded-xl bg-brand-500/15 border border-brand-500/25 flex items-center justify-center text-brand-500 text-xl flex-shrink-0">
+          <div class="theme-card rounded-xl p-4 flex items-center gap-3.5">
+            <div class="w-12 h-12 rounded-xl theme-subtle border theme-border flex items-center justify-center theme-title text-xl flex-shrink-0">
               <i class="fa-solid fa-users-viewfinder"></i>
             </div>
             <div>
@@ -486,22 +488,22 @@
           </div>
 
           <!-- Online Now -->
-          <div class="theme-card rounded-2xl p-4 flex items-center gap-3.5">
-            <div class="w-12 h-12 rounded-xl bg-emerald-500/15 border border-emerald-500/25 flex items-center justify-center text-emerald-500 text-xl flex-shrink-0">
+          <div class="theme-card rounded-xl p-4 flex items-center gap-3.5">
+            <div class="w-12 h-12 rounded-xl theme-subtle border theme-border flex items-center justify-center theme-title text-xl flex-shrink-0">
               <i class="fa-solid fa-signal"></i>
             </div>
             <div>
               <p class="text-[11px] font-semibold theme-dimtext uppercase tracking-wider">Online Now</p>
               <div class="flex items-center gap-2 mt-0.5">
-                <h3 id="statOnlinePlayers" class="text-xl sm:text-2xl font-black text-emerald-500 font-mono">0</h3>
-                <span class="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
+                <h3 id="statOnlinePlayers" class="text-xl sm:text-2xl font-black theme-title font-mono">0</h3>
+                <span class="w-2 h-2 rounded-full bg-neutral-900 dark:bg-white"></span>
               </div>
             </div>
           </div>
 
           <!-- Total Matches Tracked -->
-          <div class="theme-card rounded-2xl p-4 flex items-center gap-3.5">
-            <div class="w-12 h-12 rounded-xl bg-purple-500/15 border border-purple-500/25 flex items-center justify-center text-purple-500 text-xl flex-shrink-0">
+          <div class="theme-card rounded-xl p-4 flex items-center gap-3.5">
+            <div class="w-12 h-12 rounded-xl theme-subtle border theme-border flex items-center justify-center theme-title text-xl flex-shrink-0">
               <i class="fa-solid fa-trophy"></i>
             </div>
             <div>
@@ -511,13 +513,13 @@
           </div>
 
           <!-- Highest Level Player -->
-          <div class="theme-card rounded-2xl p-4 flex items-center gap-3.5">
-            <div class="w-12 h-12 rounded-xl bg-amber-500/15 border border-amber-500/25 flex items-center justify-center text-amber-500 text-xl flex-shrink-0">
+          <div class="theme-card rounded-xl p-4 flex items-center gap-3.5">
+            <div class="w-12 h-12 rounded-xl theme-subtle border theme-border flex items-center justify-center theme-title text-xl flex-shrink-0">
               <i class="fa-solid fa-crown"></i>
             </div>
             <div class="overflow-hidden">
               <p class="text-[11px] font-semibold theme-dimtext uppercase tracking-wider">Top Player</p>
-              <h3 id="statTopPlayer" class="text-sm sm:text-base font-bold text-amber-500 truncate mt-0.5">None</h3>
+              <h3 id="statTopPlayer" class="text-sm sm:text-base font-bold theme-title truncate mt-0.5">None</h3>
             </div>
           </div>
         </div>
@@ -568,7 +570,7 @@
                 <button 
                   onclick="setPlayerViewMode('table')" 
                   id="viewModeTableBtn" 
-                  class="px-2.5 py-1 rounded-lg text-white bg-brand-600 transition-all" 
+                  class="px-2.5 py-1 rounded-lg text-white dark:text-black bg-neutral-900 dark:bg-white transition-all" 
                   title="Table View"
                 >
                   <i class="fa-solid fa-table-list"></i>
@@ -576,7 +578,7 @@
                 <button 
                   onclick="setPlayerViewMode('grid')" 
                   id="viewModeGridBtn" 
-                  class="px-2.5 py-1 rounded-lg theme-dimtext hover:text-brand-500 transition-all" 
+                  class="px-2.5 py-1 rounded-lg theme-dimtext hover:theme-title transition-all" 
                   title="Cards Grid"
                 >
                   <i class="fa-solid fa-grip"></i>
@@ -586,7 +588,7 @@
               <!-- Register Player Tool -->
               <button 
                 onclick="openAddPlayerModal()" 
-                class="px-3 py-2 rounded-xl bg-brand-600/15 hover:bg-brand-600/25 text-brand-600 dark:text-brand-300 border border-brand-500/40 text-xs font-bold flex items-center gap-1.5 active:scale-95 transition-all cursor-pointer"
+                class="px-3 py-2 rounded-xl theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-900 dark:text-white border theme-border text-xs font-bold flex items-center gap-1.5 active:scale-95 transition-all cursor-pointer"
               >
                 <i class="fa-solid fa-user-plus"></i>
                 <span>Add Player</span>
@@ -595,10 +597,10 @@
               <!-- Export CSV Tool -->
               <button 
                 onclick="exportFilteredPlayersCsv()" 
-                class="px-3 py-2 rounded-xl theme-subtle theme-title text-xs font-bold flex items-center gap-1.5 hover:border-emerald-500 border border-inherit active:scale-95 transition-all cursor-pointer"
+                class="px-3 py-2 rounded-xl theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-900 dark:text-white text-xs font-bold flex items-center gap-1.5 border theme-border active:scale-95 transition-all cursor-pointer" 
                 title="Export filtered players to CSV"
               >
-                <i class="fa-solid fa-file-csv text-emerald-500"></i>
+                <i class="fa-solid fa-file-csv theme-title"></i>
                 <span class="hidden sm:inline">Export CSV</span>
               </button>
             </div>
@@ -607,11 +609,11 @@
           <!-- Status Filter Pills -->
           <div class="flex items-center gap-1.5 pt-1 overflow-x-auto no-scrollbar">
             <span class="text-xs theme-dimtext font-medium mr-1 hidden sm:inline">Status:</span>
-            <button onclick="setPlayerStatusFilter('ALL')" id="filterStatus-ALL" class="status-filter-pill px-3 py-1 rounded-lg text-xs font-semibold theme-subtle theme-title whitespace-nowrap">All (<span id="count-ALL">0</span>)</button>
-            <button onclick="setPlayerStatusFilter('ONLINE')" id="filterStatus-ONLINE" class="status-filter-pill px-3 py-1 rounded-lg text-xs font-semibold badge-online whitespace-nowrap">🟢 Online (<span id="count-ONLINE">0</span>)</button>
-            <button onclick="setPlayerStatusFilter('LOBBY')" id="filterStatus-LOBBY" class="status-filter-pill px-3 py-1 rounded-lg text-xs font-semibold badge-lobby whitespace-nowrap">🟡 In Lobby (<span id="count-LOBBY">0</span>)</button>
-            <button onclick="setPlayerStatusFilter('PLAYING')" id="filterStatus-PLAYING" class="status-filter-pill px-3 py-1 rounded-lg text-xs font-semibold badge-playing whitespace-nowrap">🟣 Playing (<span id="count-PLAYING">0</span>)</button>
-            <button onclick="setPlayerStatusFilter('OFFLINE')" id="filterStatus-OFFLINE" class="status-filter-pill px-3 py-1 rounded-lg text-xs font-semibold badge-offline whitespace-nowrap">⚪ Offline (<span id="count-OFFLINE">0</span>)</button>
+            <button onclick="setPlayerStatusFilter('ALL')" id="filterStatus-ALL" class="status-filter-pill px-3 py-1 rounded-lg text-xs font-semibold bg-neutral-900 text-white dark:bg-white dark:text-black whitespace-nowrap">All (<span id="count-ALL">0</span>)</button>
+            <button onclick="setPlayerStatusFilter('ONLINE')" id="filterStatus-ONLINE" class="status-filter-pill px-3 py-1 rounded-lg text-xs font-semibold theme-subtle theme-subtext border theme-border whitespace-nowrap">Online (<span id="count-ONLINE">0</span>)</button>
+            <button onclick="setPlayerStatusFilter('LOBBY')" id="filterStatus-LOBBY" class="status-filter-pill px-3 py-1 rounded-lg text-xs font-semibold theme-subtle theme-subtext border theme-border whitespace-nowrap">In Lobby (<span id="count-LOBBY">0</span>)</button>
+            <button onclick="setPlayerStatusFilter('PLAYING')" id="filterStatus-PLAYING" class="status-filter-pill px-3 py-1 rounded-lg text-xs font-semibold theme-subtle theme-subtext border theme-border whitespace-nowrap">Playing (<span id="count-PLAYING">0</span>)</button>
+            <button onclick="setPlayerStatusFilter('OFFLINE')" id="filterStatus-OFFLINE" class="status-filter-pill px-3 py-1 rounded-lg text-xs font-semibold theme-subtle theme-subtext border theme-border whitespace-nowrap">Offline (<span id="count-OFFLINE">0</span>)</button>
           </div>
         </div>
 
@@ -706,7 +708,7 @@
         <div class="theme-card rounded-2xl p-5 space-y-4">
           <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div class="flex items-center gap-2.5">
-              <div class="w-8 h-8 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-500 text-sm">
+              <div class="w-8 h-8 rounded-xl theme-subtle border theme-border flex items-center justify-center theme-title text-sm">
                 <i class="fa-solid fa-bullhorn"></i>
               </div>
               <div>
@@ -714,7 +716,7 @@
                 <p class="text-[11px] theme-dimtext">Transmit announcements to all mobile apps or send targeted notices to a specific player.</p>
               </div>
             </div>
-            <button onclick="fetchCurrentCloudBroadcast()" class="self-start sm:self-auto px-3 py-1.5 rounded-lg theme-subtle theme-title text-xs font-semibold flex items-center gap-1.5 hover:border-amber-500 transition-all cursor-pointer">
+            <button onclick="fetchCurrentCloudBroadcast()" class="self-start sm:self-auto px-3 py-1.5 rounded-lg theme-subtle theme-title text-xs font-semibold flex items-center gap-1.5 hover:border-neutral-400 dark:hover:border-neutral-600 transition-all cursor-pointer">
               <i class="fa-solid fa-arrows-rotate text-[10px]"></i>
               <span>Refresh Status</span>
             </button>
@@ -739,42 +741,42 @@
             <!-- Quick Preset Templates Bar -->
             <div class="space-y-1.5 pb-1">
               <span class="text-[11px] font-semibold theme-dimtext flex items-center gap-1.5">
-                <i class="fa-solid fa-wand-magic-sparkles text-amber-500"></i>
+                <i class="fa-solid fa-wand-magic-sparkles theme-title"></i>
                 <span>Quick Message Presets (Click to autofill):</span>
               </span>
               <div class="flex items-center gap-1.5 flex-wrap">
                 <button 
                   type="button" 
                   onclick="applyBroadcastTemplate('maintenance')" 
-                  class="px-2.5 py-1 rounded-lg theme-subtle text-amber-400 hover:border-amber-500 border border-transparent text-[11px] font-medium flex items-center gap-1 transition-all cursor-pointer"
+                  class="px-2.5 py-1 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-800 dark:text-neutral-200 border theme-border text-[11px] font-medium flex items-center gap-1 transition-all cursor-pointer"
                 >
                   <i class="fa-solid fa-screwdriver-wrench text-[10px]"></i> Server Maintenance
                 </button>
                 <button 
                   type="button" 
                   onclick="applyBroadcastTemplate('event_xp')" 
-                  class="px-2.5 py-1 rounded-lg theme-subtle text-indigo-400 hover:border-indigo-500 border border-transparent text-[11px] font-medium flex items-center gap-1 transition-all cursor-pointer"
+                  class="px-2.5 py-1 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-800 dark:text-neutral-200 border theme-border text-[11px] font-medium flex items-center gap-1 transition-all cursor-pointer"
                 >
                   <i class="fa-solid fa-star text-[10px]"></i> Double XP Weekend
                 </button>
                 <button 
                   type="button" 
                   onclick="applyBroadcastTemplate('app_update')" 
-                  class="px-2.5 py-1 rounded-lg theme-subtle text-emerald-400 hover:border-emerald-500 border border-transparent text-[11px] font-medium flex items-center gap-1 transition-all cursor-pointer"
+                  class="px-2.5 py-1 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-800 dark:text-neutral-200 border theme-border text-[11px] font-medium flex items-center gap-1 transition-all cursor-pointer"
                 >
                   <i class="fa-solid fa-rocket text-[10px]"></i> New App Update
                 </button>
                 <button 
                   type="button" 
                   onclick="applyBroadcastTemplate('warning')" 
-                  class="px-2.5 py-1 rounded-lg theme-subtle text-rose-400 hover:border-rose-500 border border-transparent text-[11px] font-medium flex items-center gap-1 transition-all cursor-pointer"
+                  class="px-2.5 py-1 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-800 dark:text-neutral-200 border theme-border text-[11px] font-medium flex items-center gap-1 transition-all cursor-pointer"
                 >
                   <i class="fa-solid fa-shield-halved text-[10px]"></i> Fair Play Warning
                 </button>
                 <button 
                   type="button" 
                   onclick="applyBroadcastTemplate('welcome')" 
-                  class="px-2.5 py-1 rounded-lg theme-subtle text-cyan-400 hover:border-cyan-500 border border-transparent text-[11px] font-medium flex items-center gap-1 transition-all cursor-pointer"
+                  class="px-2.5 py-1 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-800 dark:text-neutral-200 border theme-border text-[11px] font-medium flex items-center gap-1 transition-all cursor-pointer"
                 >
                   <i class="fa-solid fa-hand-wave text-[10px]"></i> Welcome Notice
                 </button>
@@ -788,14 +790,14 @@
                   type="text" 
                   id="broadcastTitleInput" 
                   placeholder="e.g. Server Maintenance Notice" 
-                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs placeholder:theme-dimtext focus:outline-none focus:border-amber-500"
+                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs placeholder:theme-dimtext focus:outline-none focus:border-neutral-900 dark:focus:border-white focus:ring-0"
                 >
               </div>
               <div>
                 <label class="block text-[11px] font-semibold theme-title mb-1">Message Type</label>
                 <select 
                   id="broadcastTypeSelect" 
-                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs focus:outline-none focus:border-amber-500 cursor-pointer"
+                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs focus:outline-none focus:border-neutral-900 dark:focus:border-white focus:ring-0 cursor-pointer"
                 >
                   <option value="INFO">📢 Info / Announcement</option>
                   <option value="ALERT">⚠️ Critical Alert / Warning</option>
@@ -809,7 +811,7 @@
                 </label>
                 <select 
                   id="broadcastModeSelect" 
-                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs focus:outline-none focus:border-amber-500 cursor-pointer"
+                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs focus:outline-none focus:border-neutral-900 dark:focus:border-white focus:ring-0 cursor-pointer"
                 >
                   <option value="ONCE">🎯 Only Once (Auto-Expires on Ack)</option>
                   <option value="STARTUP">🔄 Every Startup (Until Stopped)</option>
@@ -823,7 +825,7 @@
                 id="broadcastMsgInput" 
                 rows="3" 
                 placeholder="Type the message body to display on players' screens on app launch..." 
-                class="w-full px-3.5 py-2 rounded-xl theme-input text-xs placeholder:theme-dimtext focus:outline-none focus:border-amber-500"
+                class="w-full px-3.5 py-2 rounded-xl theme-input text-xs placeholder:theme-dimtext focus:outline-none focus:border-neutral-900 dark:focus:border-white focus:ring-0"
               ></textarea>
             </div>
 
@@ -837,14 +839,14 @@
                   id="broadcastTargetInput" 
                   oninput="onBroadcastTargetChanged()" 
                   placeholder="All Players (or type @username)" 
-                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs placeholder:theme-dimtext focus:outline-none focus:border-amber-500 font-mono"
+                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs placeholder:theme-dimtext focus:outline-none focus:border-neutral-900 dark:focus:border-white focus:ring-0 font-mono"
                 >
               </div>
               <div>
                 <label class="block text-[11px] font-semibold theme-title mb-1">Popup Dialog Size</label>
                 <select 
                   id="broadcastSizeSelect" 
-                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs focus:outline-none focus:border-amber-500 cursor-pointer"
+                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs focus:outline-none focus:border-neutral-900 dark:focus:border-white focus:ring-0 cursor-pointer"
                 >
                   <option value="STANDARD">◽ Standard (Medium - Default)</option>
                   <option value="COMPACT">▫️ Compact (Small)</option>
@@ -858,7 +860,7 @@
                   id="broadcastAuthorInput" 
                   value="Admin / Bora" 
                   placeholder="Admin / Bora" 
-                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs placeholder:theme-dimtext focus:outline-none focus:border-amber-500"
+                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs placeholder:theme-dimtext focus:outline-none focus:border-neutral-900 dark:focus:border-white focus:ring-0"
                 >
               </div>
             </div>
@@ -868,7 +870,7 @@
               <button 
                 onclick="dispatchEnhancedBroadcast()" 
                 id="btnDispatchBroadcast"
-                class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-semibold text-xs shadow-lg shadow-amber-600/20 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                class="px-5 py-2.5 rounded-xl bg-neutral-900 text-white dark:bg-white dark:text-black hover:bg-neutral-800 dark:hover:bg-neutral-200 font-semibold text-xs active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
               >
                 <i class="fa-solid fa-paper-plane"></i>
                 <span id="btnDispatchText">Transmit Broadcast 🚀</span>
@@ -877,7 +879,7 @@
               <button 
                 onclick="clearCloudBroadcast()" 
                 id="btnClearBroadcast"
-                class="px-4 py-2.5 rounded-xl border border-rose-500/40 text-rose-400 hover:bg-rose-500/10 font-semibold text-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                class="px-4 py-2.5 rounded-xl theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border font-semibold text-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <i class="fa-solid fa-trash-can text-[11px]"></i>
                 <span>Clear Active</span>
@@ -885,9 +887,9 @@
 
               <button 
                 onclick="previewBroadcastModal()" 
-                class="px-4 py-2.5 rounded-xl border border-neutral-700 theme-title hover:border-amber-500/50 font-semibold text-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                class="px-4 py-2.5 rounded-xl theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border font-semibold text-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
               >
-                <i class="fa-solid fa-eye text-[11px] text-amber-500"></i>
+                <i class="fa-solid fa-eye text-[11px]"></i>
                 <span>Preview Popup</span>
               </button>
             </div>
@@ -898,13 +900,13 @@
         <div class="theme-card rounded-2xl p-5 space-y-3">
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-2">
-              <i class="fa-solid fa-clock-rotate-left text-amber-500"></i>
+              <i class="fa-solid fa-clock-rotate-left theme-title"></i>
               <h3 class="text-sm font-bold theme-title">Recent Sent Broadcasts History</h3>
             </div>
             <button 
               type="button" 
               onclick="clearBroadcastHistory()" 
-              class="text-[11px] theme-dimtext hover:text-rose-500 transition-colors cursor-pointer"
+              class="text-[11px] theme-dimtext hover:theme-title transition-colors cursor-pointer"
             >
               Clear Log
             </button>
@@ -918,7 +920,7 @@
         <div class="theme-card rounded-2xl overflow-hidden">
           <div class="p-4 theme-subtle border-b border-inherit flex items-center justify-between gap-2">
             <div class="flex items-center gap-2">
-              <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span class="w-2.5 h-2.5 rounded-full bg-neutral-900 dark:bg-white"></span>
               <h3 class="text-xs font-mono font-bold theme-title">MQTT LIVE PACKET STREAM (<span id="packetCount">0</span>)</h3>
             </div>
             <div class="flex items-center gap-2">
@@ -939,13 +941,13 @@
         <!-- OTA Header / Overview -->
         <div class="theme-card rounded-2xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div class="flex items-center gap-3">
-            <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-brand-600 to-indigo-600 flex items-center justify-center text-white text-lg flex-shrink-0 shadow-lg shadow-brand-600/20">
+            <div class="w-10 h-10 rounded-xl bg-neutral-900 text-white dark:bg-white dark:text-black flex items-center justify-center text-lg flex-shrink-0">
               <i class="fa-solid fa-cloud-arrow-down"></i>
             </div>
             <div>
               <h2 class="text-lg font-bold theme-title flex items-center gap-2">
                 <span>App Updates & OTA Engine</span>
-                <span id="otaHeaderBadge" class="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">ONLINE</span>
+                <span id="otaHeaderBadge" class="px-2 py-0.5 rounded text-[10px] font-mono font-bold theme-subtle theme-title border theme-border">ONLINE</span>
               </h2>
               <p class="text-xs theme-dimtext mt-0.5">Manage live mobile releases, test OTA update popups, and sync with KeyValue cloud store & Fastly CDN.</p>
             </div>
@@ -962,7 +964,7 @@
               onclick="testOtaEndpointsLatency()" 
               class="px-3.5 py-2 rounded-xl theme-subtle theme-title text-xs font-semibold flex items-center gap-1.5 hover:border-brand-500 transition-all cursor-pointer"
             >
-              <i class="fa-solid fa-gauge-high text-[11px] text-amber-500"></i>
+              <i class="fa-solid fa-gauge-high text-[11px] theme-title"></i>
               <span>Ping CDNs</span>
             </button>
           </div>
@@ -972,11 +974,11 @@
         <div class="theme-card rounded-2xl p-5 space-y-4">
           <div class="flex items-center justify-between flex-wrap gap-2">
             <h3 class="text-sm font-bold theme-title flex items-center gap-2">
-              <i class="fa-solid fa-circle-check text-emerald-500"></i>
+              <i class="fa-solid fa-circle-check theme-title"></i>
               <span>Current Live Release in Cloud (KeyValue & CDN)</span>
             </h3>
             <div class="flex items-center gap-1.5">
-              <span id="otaLiveVersionBadge" class="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-brand-500/20 text-brand-400 border border-brand-500/30">v1.3</span>
+              <span id="otaLiveVersionBadge" class="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold theme-subtle theme-title border theme-border">v1.3</span>
               <span id="otaLiveBuildBadge" class="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-neutral-800 text-neutral-300">Build 36</span>
             </div>
           </div>
@@ -993,7 +995,7 @@
             <div class="theme-subtle p-3.5 rounded-xl space-y-1">
               <span class="text-[11px] theme-dimtext uppercase font-semibold">Direct Download Link</span>
               <p class="text-xs truncate">
-                <a id="otaLiveDownloadLink" href="https://github.com/VamsiReddyBora/BINGO/releases/download/v1.3/Bingo.apk" target="_blank" class="text-brand-500 hover:underline font-mono">
+                <a id="otaLiveDownloadLink" href="https://github.com/VamsiReddyBora/BINGO/releases/download/v1.3/Bingo.apk" target="_blank" class="theme-title hover:underline font-mono font-semibold">
                   Bingo.apk (GitHub Release)
                 </a>
               </p>
@@ -1012,7 +1014,7 @@
         <div class="theme-card rounded-2xl p-5 space-y-3">
           <div class="flex items-center justify-between">
             <h3 class="text-sm font-bold theme-title flex items-center gap-2">
-              <i class="fa-solid fa-network-wired text-cyan-500"></i>
+              <i class="fa-solid fa-network-wired theme-title"></i>
               <span>Multi-Tier CDN Distribution Health</span>
             </h3>
             <span class="text-[11px] theme-dimtext font-mono">4-Tier Resilient Failover</span>
@@ -1074,7 +1076,7 @@
               <button 
                 type="button" 
                 onclick="simulateTestRelease('1.3.1')" 
-                class="px-2.5 py-1 rounded-lg theme-subtle text-amber-400 hover:border-amber-500 border border-transparent text-[11px] font-medium transition-all cursor-pointer"
+                class="px-2.5 py-1 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border text-[11px] font-medium transition-all cursor-pointer"
                 title="Fill form with test version 1.3.1"
               >
                 <i class="fa-solid fa-flask-vial text-[10px]"></i> Quick Test 1.3.1
@@ -1082,7 +1084,7 @@
               <button 
                 type="button" 
                 onclick="restoreOfficialRelease()" 
-                class="px-2.5 py-1 rounded-lg theme-subtle text-emerald-400 hover:border-emerald-500 border border-transparent text-[11px] font-medium transition-all cursor-pointer"
+                class="px-2.5 py-1 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border text-[11px] font-medium transition-all cursor-pointer"
                 title="Reset to official 1.3"
               >
                 <i class="fa-solid fa-shield-halved text-[10px]"></i> Reset to v1.3
@@ -1158,7 +1160,7 @@
               <button 
                 onclick="publishOtaReleaseToCloud()" 
                 id="btnPublishOta" 
-                class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 text-white font-semibold text-xs shadow-lg shadow-brand-600/20 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                class="px-5 py-2.5 rounded-xl bg-neutral-900 text-white dark:bg-white dark:text-black hover:bg-neutral-800 dark:hover:bg-neutral-200 font-semibold text-xs active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
               >
                 <i class="fa-solid fa-cloud-arrow-up"></i>
                 <span>Publish Update to Cloud KeyValue 🚀</span>
@@ -1166,7 +1168,7 @@
 
               <button 
                 onclick="downloadVersionJsonFile()" 
-                class="px-4 py-2.5 rounded-xl border border-emerald-500/40 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 font-semibold text-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                class="px-4 py-2.5 rounded-xl theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border font-semibold text-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                 title="Download version.json for GitHub Pages"
               >
                 <i class="fa-solid fa-file-arrow-down text-[11px]"></i>
@@ -1175,7 +1177,7 @@
 
               <button 
                 onclick="copyOtaJsonPayload()" 
-                class="px-4 py-2.5 rounded-xl border border-neutral-700 theme-title hover:border-brand-500/50 font-semibold text-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                class="px-4 py-2.5 rounded-xl theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border font-semibold text-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <i class="fa-regular fa-copy text-[11px]"></i>
                 <span>Copy JSON</span>
@@ -1194,7 +1196,7 @@
         <!-- Admin Password Configuration -->
         <div class="theme-card rounded-2xl p-5 space-y-4">
           <h3 class="text-sm font-bold theme-title flex items-center gap-2">
-            <i class="fa-solid fa-key text-brand-500"></i>
+            <i class="fa-solid fa-key theme-title"></i>
             <span>Admin Master Password Security</span>
           </h3>
           <p class="text-xs theme-dimtext">Change the master password used to authorize access and perform player or match deletions.</p>
@@ -1239,14 +1241,14 @@
         <!-- Full Database Backup Export -->
         <div class="theme-card rounded-2xl p-5 space-y-3">
           <h3 class="text-sm font-bold theme-title flex items-center gap-2">
-            <i class="fa-solid fa-file-export text-emerald-500"></i>
+            <i class="fa-solid fa-file-export theme-title"></i>
             <span>Database Backup & Snapshot Export</span>
           </h3>
           <p class="text-xs theme-dimtext">Download a full JSON backup of all registered players, their cloud storage bins, match histories, and friends lists.</p>
           
           <button 
             onclick="exportFullDatabaseJson()" 
-            class="px-4 py-2.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-600 dark:text-emerald-400 border border-emerald-500/40 text-xs font-semibold flex items-center gap-2 active:scale-95 transition-all"
+            class="px-4 py-2.5 rounded-xl theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border text-xs font-semibold flex items-center gap-2 active:scale-95 transition-all cursor-pointer"
           >
             <i class="fa-solid fa-cloud-arrow-down"></i>
             <span>Download Complete Database JSON</span>
@@ -1256,17 +1258,17 @@
         <!-- Raw KeyValue Explorer -->
         <div class="theme-card rounded-2xl p-5 space-y-3">
           <h3 class="text-sm font-bold theme-title flex items-center gap-2">
-            <i class="fa-solid fa-database text-purple-500"></i>
+            <i class="fa-solid fa-database theme-title"></i>
             <span>Direct KeyValue Inspector</span>
           </h3>
-          <p class="text-xs theme-dimtext">Inspect or query any raw key stored under KeyValue App Key <code class="text-purple-500 font-mono">2464j24f</code>.</p>
+          <p class="text-xs theme-dimtext">Inspect or query any raw key stored under KeyValue App Key <code class="theme-title font-mono font-bold">2464j24f</code>.</p>
           
           <div class="flex gap-2 max-w-lg">
             <input 
               type="text" 
               id="rawKeyInput" 
               placeholder="e.g. user_directory or reg_vanabha" 
-              class="flex-1 px-3.5 py-2 rounded-xl theme-input text-xs focus:outline-none focus:border-purple-500"
+              class="flex-1 px-3.5 py-2 rounded-xl theme-input text-xs focus:outline-none focus:border-neutral-900 dark:focus:border-white"
             >
             <button 
               onclick="inspectRawKey()" 
@@ -1275,7 +1277,7 @@
               Fetch Key
             </button>
           </div>
-          <div id="rawKeyResultContainer" class="hidden mt-3 p-3 rounded-xl theme-subtle font-mono text-xs text-purple-400 max-h-48 overflow-y-auto break-all"></div>
+          <div id="rawKeyResultContainer" class="hidden mt-3 p-3 rounded-xl theme-subtle font-mono text-xs theme-title border theme-border max-h-48 overflow-y-auto break-all"></div>
         </div>
 
       </section>
@@ -1304,23 +1306,23 @@
           </button>
 
           <!-- Big Avatar -->
-          <div id="inspAvatarContainer" class="w-11 h-11 sm:w-14 sm:h-14 rounded-2xl bg-gradient-to-tr from-brand-600 to-purple-600 p-0.5 relative flex-shrink-0">
-            <div id="inspAvatarInner" class="w-full h-full rounded-[14px] theme-card overflow-hidden flex items-center justify-center text-xl sm:text-2xl font-bold theme-title">
+          <div id="inspAvatarContainer" class="w-11 h-11 sm:w-14 sm:h-14 rounded-2xl theme-subtle border theme-border relative flex-shrink-0">
+            <div id="inspAvatarInner" class="w-full h-full rounded-2xl theme-card overflow-hidden flex items-center justify-center text-xl sm:text-2xl font-bold font-mono theme-title">
               ?
             </div>
-            <span id="inspStatusDot" class="absolute -bottom-1 -right-1 w-3.5 h-3.5 sm:w-4 sm:h-4 rounded-full bg-emerald-500 border-2 border-inherit"></span>
+            <span id="inspStatusDot" class="absolute -bottom-1 -right-1 w-3.5 h-3.5 sm:w-4 sm:h-4 rounded-full bg-neutral-900 dark:bg-white border-2 border-inherit"></span>
           </div>
 
           <!-- Names & Status -->
           <div class="overflow-hidden min-w-0">
             <div class="flex items-center gap-1.5 sm:gap-2">
               <h2 id="inspDisplayName" class="text-base sm:text-lg font-black theme-title truncate">Player Name</h2>
-              <span id="inspLevelBadge" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-500 border border-amber-500/30 flex-shrink-0">Lvl 1</span>
+              <span id="inspLevelBadge" class="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold theme-subtle theme-title border theme-border flex-shrink-0">Lvl 1</span>
             </div>
             <div class="flex items-center gap-1.5 sm:gap-2 mt-0.5 text-xs theme-dimtext truncate">
-              <span id="inspUsername" class="font-mono text-brand-500 truncate">@username</span>
+              <span id="inspUsername" class="font-mono theme-title truncate">@username</span>
               <span>•</span>
-              <span id="inspStatusText" class="text-emerald-500 font-semibold flex-shrink-0">Online</span>
+              <span id="inspStatusText" class="theme-title font-semibold flex-shrink-0">Online</span>
             </div>
           </div>
         </div>
@@ -1337,7 +1339,7 @@
 
       <!-- Drawer Sub-Navigation Tabs -->
       <div class="flex items-center px-2 sm:px-4 theme-subtle border-b border-inherit gap-1 overflow-x-auto no-scrollbar flex-shrink-0">
-        <button onclick="switchInspTab('overview')" id="inspTabBtn-overview" class="insp-tab active px-3 sm:px-3.5 py-2.5 text-xs font-semibold theme-title border-b-2 border-brand-500 whitespace-nowrap flex-shrink-0">
+        <button onclick="switchInspTab('overview')" id="inspTabBtn-overview" class="insp-tab active px-3 sm:px-3.5 py-2.5 text-xs font-semibold theme-title border-b-2 border-neutral-900 dark:border-white whitespace-nowrap flex-shrink-0">
           <i class="fa-solid fa-chart-pie mr-1 sm:mr-1.5"></i> Overview & Stats
         </button>
         <button onclick="switchInspTab('matches')" id="inspTabBtn-matches" class="insp-tab px-3 sm:px-3.5 py-2.5 text-xs font-semibold theme-dimtext hover:theme-title border-b-2 border-transparent whitespace-nowrap flex-shrink-0">
@@ -1346,7 +1348,7 @@
         <button onclick="switchInspTab('friends')" id="inspTabBtn-friends" class="insp-tab px-3 sm:px-3.5 py-2.5 text-xs font-semibold theme-dimtext hover:theme-title border-b-2 border-transparent whitespace-nowrap flex-shrink-0">
           <i class="fa-solid fa-user-group mr-1 sm:mr-1.5"></i> Friends (<span id="inspFriendCount">0</span>)
         </button>
-        <button onclick="switchInspTab('danger')" id="inspTabBtn-danger" class="insp-tab px-3.5 py-2.5 text-xs font-semibold text-rose-500 hover:text-rose-400 border-b-2 border-transparent whitespace-nowrap flex-shrink-0">
+        <button onclick="switchInspTab('danger')" id="inspTabBtn-danger" class="insp-tab px-3.5 py-2.5 text-xs font-semibold theme-dimtext hover:theme-title border-b-2 border-transparent whitespace-nowrap flex-shrink-0">
           <i class="fa-solid fa-triangle-exclamation mr-1 sm:mr-1.5"></i> Danger
         </button>
       </div>
@@ -1364,7 +1366,7 @@
             </div>
             <div class="theme-subtle p-3 rounded-xl">
               <span class="text-[11px] theme-dimtext uppercase font-semibold">Wins</span>
-              <p id="inspGamesWon" class="text-xl font-bold font-mono text-emerald-500 mt-1">0</p>
+              <p id="inspGamesWon" class="text-xl font-bold font-mono theme-title mt-1">0</p>
             </div>
             <div class="theme-subtle p-3 rounded-xl">
               <span class="text-[11px] theme-dimtext uppercase font-semibold">Losses / Draws</span>
@@ -1376,11 +1378,11 @@
             </div>
             <div class="theme-subtle p-3 rounded-xl">
               <span class="text-[11px] theme-dimtext uppercase font-semibold">Current Streak</span>
-              <p id="inspCurrentStreak" class="text-xl font-bold font-mono text-amber-500 mt-1">0</p>
+              <p id="inspCurrentStreak" class="text-xl font-bold font-mono theme-title mt-1">0</p>
             </div>
             <div class="theme-subtle p-3 rounded-xl">
               <span class="text-[11px] theme-dimtext uppercase font-semibold">Best Streak</span>
-              <p id="inspBestStreak" class="text-xl font-bold font-mono text-amber-500 mt-1">0</p>
+              <p id="inspBestStreak" class="text-xl font-bold font-mono theme-title mt-1">0</p>
             </div>
           <!-- Player Actions Toolbar -->
           <div class="flex items-center gap-2 flex-wrap">
@@ -1395,7 +1397,7 @@
             <button 
               type="button"
               onclick="quickMessagePlayer(globalState.selectedPlayer ? globalState.selectedPlayer.username : '')" 
-              class="px-3.5 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-500 border border-amber-500/40 text-xs font-bold flex items-center gap-1.5 active:scale-95 transition-all cursor-pointer"
+              class="px-3.5 py-2 rounded-xl theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-900 dark:text-white border theme-border text-xs font-bold flex items-center gap-1.5 active:scale-95 transition-all cursor-pointer"
             >
               <i class="fa-solid fa-paper-plane"></i>
               <span>Send Direct In-Game Message</span>
@@ -1438,7 +1440,7 @@
             <button 
               onclick="promptClearAllMatches()" 
               id="clearAllMatchesBtn" 
-              class="px-3 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/30 text-xs font-bold flex items-center gap-1.5 transition-all"
+              class="px-3 py-1.5 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
             >
               <i class="fa-solid fa-trash-can"></i>
               <span>Clear All Matches</span>
@@ -1504,30 +1506,30 @@
         <!-- SUB-TAB 4: DANGER ZONE -->
         <div id="inspTabView-danger" class="hidden space-y-4">
           <!-- Reset Player Stats -->
-          <div class="p-4 rounded-xl border border-amber-500/40 bg-amber-500/10 space-y-2">
-            <h4 class="text-sm font-bold text-amber-500 flex items-center gap-2">
+          <div class="p-4 rounded-xl border theme-border theme-subtle space-y-2">
+            <h4 class="text-sm font-bold theme-title flex items-center gap-2">
               <i class="fa-solid fa-rotate-left"></i>
               <span>Reset Player Statistics</span>
             </h4>
             <p class="text-xs theme-dimtext">Zero out all games played, wins, streaks, and XP for this player without deleting their account or friends list.</p>
             <button 
               onclick="promptResetPlayerStats()" 
-              class="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold transition-all active:scale-95"
+              class="px-4 py-2 rounded-xl theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border text-xs font-bold transition-all active:scale-95 cursor-pointer"
             >
               Reset Player Stats
             </button>
           </div>
 
           <!-- Permanently Delete Player -->
-          <div class="p-4 rounded-xl border border-rose-500/40 bg-rose-500/10 space-y-2">
-            <h4 class="text-sm font-bold text-rose-500 flex items-center gap-2">
+          <div class="p-4 rounded-xl border theme-border theme-subtle space-y-2">
+            <h4 class="text-sm font-bold theme-title flex items-center gap-2">
               <i class="fa-solid fa-user-xmark"></i>
               <span>Delete Player Entirely</span>
             </h4>
             <p class="text-xs theme-dimtext">Permanently remove this player from the global directory, purge registration, wipe their cloud storage bin, and disconnect all friends.</p>
             <button 
               onclick="promptDeleteCurrentPlayer()" 
-              class="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition-all active:scale-95 flex items-center gap-2"
+              class="px-4 py-2 rounded-xl bg-neutral-900 text-white dark:bg-white dark:text-black hover:bg-neutral-800 dark:hover:bg-neutral-200 text-xs font-bold transition-all active:scale-95 flex items-center gap-2 cursor-pointer"
             >
               <i class="fa-solid fa-trash-can"></i>
               <span>Delete Player from Database</span>
@@ -1544,11 +1546,11 @@
   <!-- 4. SECURE PASSWORD CONFIRMATION MODAL                    -->
   <!-- ======================================================== -->
   <div id="confirmActionModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md">
-    <div id="confirmModalBox" class="w-full max-w-md theme-modal rounded-3xl p-6 sm:p-7 shadow-2xl border border-rose-500/40 space-y-5 relative overflow-hidden">
+    <div id="confirmModalBox" class="w-full max-w-md theme-modal rounded-3xl p-6 sm:p-7 shadow-2xl border theme-border space-y-5 relative overflow-hidden">
       
       <!-- Top Warning Badge -->
       <div class="flex items-center gap-3.5">
-        <div class="w-12 h-12 rounded-2xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-500 text-xl flex-shrink-0">
+        <div class="w-12 h-12 rounded-2xl theme-subtle border theme-border flex items-center justify-center theme-title text-xl flex-shrink-0">
           <i class="fa-solid fa-triangle-exclamation"></i>
         </div>
         <div>
@@ -1570,7 +1572,7 @@
             type="password" 
             id="confirmPasswordInput" 
             placeholder="Enter admin password" 
-            class="w-full py-2.5 px-3.5 rounded-xl theme-input text-sm focus:outline-none focus:border-rose-500 focus:ring-1 focus:ring-rose-500 transition-all"
+            class="w-full py-2.5 px-3.5 rounded-xl theme-input text-sm focus:outline-none focus:border-neutral-900 dark:focus:border-white transition-all"
           >
           <button 
             type="button" 
@@ -1580,7 +1582,7 @@
             <i id="confirmPassEyeIcon" class="fa-solid fa-eye-slash text-xs"></i>
           </button>
         </div>
-        <div id="confirmModalError" class="hidden text-xs text-rose-500 font-medium">
+        <div id="confirmModalError" class="hidden text-xs theme-title font-medium">
           <i class="fa-solid fa-circle-exclamation mr-1"></i> Incorrect Admin Password.
         </div>
       </div>
@@ -1596,7 +1598,7 @@
         <button 
           id="confirmExecuteBtn" 
           onclick="executeConfirmedAction()" 
-          class="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold flex items-center gap-2 shadow-lg shadow-rose-600/30 transition-all active:scale-95"
+          class="px-5 py-2.5 rounded-xl bg-neutral-900 text-white dark:bg-white dark:text-black hover:bg-neutral-800 dark:hover:bg-neutral-200 text-xs font-bold flex items-center gap-2 transition-all active:scale-95 cursor-pointer"
         >
           <i class="fa-solid fa-trash-can"></i>
           <span id="confirmBtnText">Confirm Delete</span>
@@ -1639,7 +1641,7 @@
 
       <div class="flex items-center justify-end gap-2 pt-2">
         <button onclick="closeAddPlayerModal()" class="px-4 py-2 rounded-xl theme-subtle theme-title text-xs font-semibold">Cancel</button>
-        <button onclick="submitNewPlayer()" class="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white text-xs font-semibold">Create Player</button>
+        <button onclick="submitNewPlayer()" class="px-4 py-2 rounded-xl bg-neutral-900 text-white dark:bg-white dark:text-black hover:bg-neutral-800 dark:hover:bg-neutral-200 text-xs font-semibold cursor-pointer">Create Player</button>
       </div>
     </div>
   </div>
@@ -1654,7 +1656,7 @@
           <span id="previewModalBadge" class="px-2.5 py-1 rounded-full text-[11px] font-bold font-mono tracking-wider bg-brand-500/20 text-brand-400 border border-brand-500/30">
             📢 ANNOUNCEMENT
           </span>
-          <span id="previewModalModeBadge" class="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">
+          <span id="previewModalModeBadge" class="px-2 py-0.5 rounded text-[10px] font-mono font-bold theme-subtle theme-title border theme-border">
             🎯 ONLY ONCE
           </span>
           <span id="previewModalSizeBadge" class="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-neutral-800 text-neutral-300">
@@ -1681,7 +1683,7 @@
       </div>
 
       <div class="pt-2">
-        <button onclick="closeBroadcastPreviewModal()" class="w-full py-2.5 rounded-xl bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 text-white font-bold text-xs shadow-lg active:scale-95 transition-all cursor-pointer">
+        <button onclick="closeBroadcastPreviewModal()" class="w-full py-2.5 rounded-xl bg-neutral-900 text-white dark:bg-white dark:text-black hover:bg-neutral-800 dark:hover:bg-neutral-200 font-bold text-xs active:scale-95 transition-all cursor-pointer">
           Acknowledge
         </button>
       </div>
@@ -1737,7 +1739,7 @@
 
       <div class="flex items-center justify-end gap-2 pt-2">
         <button onclick="closeEditPlayerModal()" class="px-4 py-2 rounded-xl theme-subtle theme-title text-xs font-semibold cursor-pointer">Cancel</button>
-        <button onclick="submitPlayerProfileEdits()" id="btnSavePlayerEdit" class="px-5 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white text-xs font-bold shadow-md shadow-brand-600/30 active:scale-95 transition-all cursor-pointer">
+        <button onclick="submitPlayerProfileEdits()" id="btnSavePlayerEdit" class="px-5 py-2 rounded-xl bg-neutral-900 text-white dark:bg-white dark:text-black hover:bg-neutral-800 dark:hover:bg-neutral-200 text-xs font-bold active:scale-95 transition-all cursor-pointer">
           Save Changes
         </button>
       </div>
@@ -1768,7 +1770,7 @@
           </div>
           <div>
             <span class="theme-dimtext uppercase text-[10px] block">Game Status</span>
-            <span id="roomModalStatus" class="font-bold text-emerald-500">WAITING</span>
+            <span id="roomModalStatus" class="font-bold theme-title">WAITING</span>
           </div>
           <div class="mt-1">
             <span class="theme-dimtext uppercase text-[10px] block">Capacity</span>
@@ -1783,8 +1785,8 @@
         <div>
           <label class="font-semibold theme-dimtext block mb-1">Broadcast Notice to This Room's Chat</label>
           <div class="flex gap-2">
-            <input type="text" id="roomModalNoticeInput" placeholder="e.g. Wrap up match soon!" class="flex-1 px-3 py-2 rounded-xl theme-input focus:outline-none focus:border-amber-500 text-xs">
-            <button onclick="sendNoticeToRoomFromModal()" class="px-3 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs cursor-pointer">
+            <input type="text" id="roomModalNoticeInput" placeholder="e.g. Wrap up match soon!" class="flex-1 px-3 py-2 rounded-xl theme-input focus:outline-none focus:border-neutral-900 dark:focus:border-white focus:ring-0 text-xs">
+            <button onclick="sendNoticeToRoomFromModal()" class="px-3 py-2 rounded-xl bg-neutral-900 text-white dark:bg-white dark:text-black hover:bg-neutral-800 dark:hover:bg-neutral-200 font-bold text-xs cursor-pointer">
               Send
             </button>
           </div>
@@ -1792,7 +1794,7 @@
       </div>
 
       <div class="flex items-center justify-between gap-2 pt-2 border-t border-inherit">
-        <button onclick="forceCloseRoomFromModal()" class="px-3.5 py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/30 text-xs font-bold flex items-center gap-1.5 cursor-pointer">
+        <button onclick="forceCloseRoomFromModal()" class="px-3.5 py-2 rounded-xl theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border text-xs font-bold flex items-center gap-1.5 cursor-pointer">
           <i class="fa-solid fa-ban"></i>
           <span>Force Close Room</span>
         </button>
@@ -1892,11 +1894,11 @@
         html.classList.remove('light');
         html.classList.add('dark');
         if (authIcon) {
-          authIcon.className = "fa-solid fa-moon text-brand-400";
+          authIcon.className = "fa-solid fa-moon text-neutral-400";
           authLabel.innerText = "AMOLED";
         }
         if (adminIcon) {
-          adminIcon.className = "fa-solid fa-moon text-brand-400";
+          adminIcon.className = "fa-solid fa-moon text-neutral-400";
           adminLabel.innerText = "AMOLED";
         }
         if (notify) showToast('Switched to Pure AMOLED Dark Theme', 'info');
@@ -1904,11 +1906,11 @@
         html.classList.remove('dark');
         html.classList.add('light');
         if (authIcon) {
-          authIcon.className = "fa-solid fa-sun text-amber-500";
+          authIcon.className = "fa-solid fa-sun text-neutral-600";
           authLabel.innerText = "Light";
         }
         if (adminIcon) {
-          adminIcon.className = "fa-solid fa-sun text-amber-500";
+          adminIcon.className = "fa-solid fa-sun text-neutral-600";
           adminLabel.innerText = "Light";
         }
         if (notify) showToast('Switched to Crisp Light Theme', 'info');
@@ -2142,10 +2144,10 @@
         if (!view || !btn) return;
         if (t === tabId) {
           view.classList.remove('hidden');
-          btn.className = "nav-tab active-tab px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all whitespace-nowrap bg-brand-600 text-white shadow-md shadow-brand-600/30 flex-shrink-0";
+          btn.className = "nav-tab active-tab px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all whitespace-nowrap bg-neutral-900 text-white dark:bg-white dark:text-black flex-shrink-0";
         } else {
           view.classList.add('hidden');
-          btn.className = "nav-tab px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all whitespace-nowrap theme-dimtext hover:text-brand-500 flex-shrink-0";
+          btn.className = "nav-tab px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all whitespace-nowrap theme-subtle theme-subtext hover:theme-title flex-shrink-0";
         }
       });
       if (tabId === 'mqtt') {
@@ -2722,13 +2724,13 @@
       if (!tableBtn || !gridBtn || !tableContainer || !gridContainer) return;
 
       if (mode === 'table') {
-        tableBtn.className = "px-2.5 py-1 rounded-lg text-white bg-brand-600 transition-all";
-        gridBtn.className = "px-2.5 py-1 rounded-lg theme-dimtext hover:text-brand-500 transition-all";
+        tableBtn.className = "px-2.5 py-1 rounded-lg text-white dark:text-black bg-neutral-900 dark:bg-white transition-all";
+        gridBtn.className = "px-2.5 py-1 rounded-lg theme-dimtext hover:theme-title transition-all";
         tableContainer.classList.remove('hidden');
         gridContainer.classList.add('hidden');
       } else {
-        tableBtn.className = "px-2.5 py-1 rounded-lg theme-dimtext hover:text-brand-500 transition-all";
-        gridBtn.className = "px-2.5 py-1 rounded-lg text-white bg-brand-600 transition-all";
+        tableBtn.className = "px-2.5 py-1 rounded-lg theme-dimtext hover:theme-title transition-all";
+        gridBtn.className = "px-2.5 py-1 rounded-lg text-white dark:text-black bg-neutral-900 dark:bg-white transition-all";
         tableContainer.classList.add('hidden');
         gridContainer.classList.remove('hidden');
       }
@@ -2761,11 +2763,11 @@
         const winRate = p.gamesPlayed > 0 ? Math.round((p.gamesWon / p.gamesPlayed) * 100) : 0;
         let seenDisplay = '';
         if (p.status === 'IN_LOBBY' || p.status === 'LOBBY') {
-          seenDisplay = '<span class="text-amber-500 font-semibold flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse inline-block"></span>In Lobby</span>';
+          seenDisplay = '<span class="theme-title font-semibold flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-neutral-500 inline-block"></span>In Lobby</span>';
         } else if (p.status === 'PLAYING' || p.status === 'IN_GAME') {
-          seenDisplay = '<span class="text-purple-500 font-semibold flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-purple-500 animate-ping inline-block"></span>Playing now</span>';
+          seenDisplay = '<span class="theme-title font-semibold flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-neutral-900 dark:bg-white inline-block"></span>Playing now</span>';
         } else if (p.status === 'ONLINE') {
-          seenDisplay = '<span class="text-emerald-500 font-semibold flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse inline-block"></span>Active now</span>';
+          seenDisplay = '<span class="theme-title font-semibold flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-neutral-900 dark:bg-white inline-block"></span>Active now</span>';
         } else {
           seenDisplay = formatRelativeTime(p.lastSeenTimestamp);
         }
@@ -2787,28 +2789,28 @@
               ${statusBadge}
             </td>
             <td class="py-3.5 px-3 text-center">
-              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-amber-500/15 text-amber-500 border border-amber-500/30">
-                <i class="fa-solid fa-star text-[10px] mr-1"></i> ${p.level}
+              <span class="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-mono font-bold theme-subtle theme-title border theme-border">
+                Lvl ${p.level}
               </span>
             </td>
             <td class="py-3.5 px-3 text-center font-mono font-medium theme-title">
               ${p.gamesPlayed}
             </td>
-            <td class="py-3.5 px-3 text-center font-mono font-bold text-emerald-500">
+            <td class="py-3.5 px-3 text-center font-mono font-bold theme-title">
               ${p.gamesWon}
             </td>
             <td class="py-3.5 px-3 text-center">
               <div class="flex flex-col items-center">
-                <span class="text-xs font-mono font-bold ${winRate >= 50 ? 'text-emerald-500' : 'theme-dimtext'}">${winRate}%</span>
-                <div class="w-12 h-1.5 theme-subtle rounded-full overflow-hidden mt-1">
-                  <div class="h-full bg-emerald-500 rounded-full" style="width: ${winRate}%"></div>
+                <span class="text-xs font-mono font-bold theme-title">${winRate}%</span>
+                <div class="w-12 h-1.5 theme-subtle rounded-full overflow-hidden mt-1 border theme-border">
+                  <div class="h-full bg-neutral-900 dark:bg-white rounded-full" style="width: ${winRate}%"></div>
                 </div>
               </div>
             </td>
             <td class="py-3.5 px-3 text-center">
               ${p.currentStreak > 0 ? `
-                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-orange-500/20 text-orange-500 border border-orange-500/30">
-                  <i class="fa-solid fa-fire mr-1 text-[10px]"></i> ${p.currentStreak}
+                <span class="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-mono font-bold theme-subtle theme-title border theme-border">
+                  ${p.currentStreak}
                 </span>
               ` : '<span class="theme-dimtext text-xs">-</span>'}
             </td>
@@ -2819,21 +2821,21 @@
               <div class="flex items-center justify-end gap-1.5">
                 <button 
                   onclick="quickMessagePlayer('${p.username}')" 
-                  class="p-2 rounded-lg bg-amber-500/10 hover:bg-amber-500/25 text-amber-500 transition-all text-xs" 
+                  class="p-2 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border transition-all text-xs cursor-pointer" 
                   title="Send Direct In-Game Message"
                 >
                   <i class="fa-solid fa-paper-plane"></i>
                 </button>
                 <button 
                   onclick="openPlayerInspector('${p.username}')" 
-                  class="p-2 rounded-lg theme-subtle theme-title hover:bg-brand-600 hover:text-white transition-all text-xs" 
+                  class="p-2 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border transition-all text-xs cursor-pointer" 
                   title="Inspect Full Details"
                 >
                   <i class="fa-solid fa-eye"></i>
                 </button>
                 <button 
                   onclick="promptDeletePlayer('${p.username}')" 
-                  class="p-2 rounded-lg bg-rose-500/10 hover:bg-rose-500/25 text-rose-500 transition-all text-xs" 
+                  class="p-2 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border transition-all text-xs cursor-pointer" 
                   title="Delete Player"
                 >
                   <i class="fa-solid fa-trash-can"></i>
@@ -2878,7 +2880,7 @@
             <div class="grid grid-cols-3 gap-2 theme-subtle p-2.5 rounded-xl text-center text-xs">
               <div>
                 <span class="text-[10px] theme-dimtext uppercase">Level</span>
-                <p class="font-bold text-amber-500 mt-0.5">${p.level}</p>
+                <p class="font-bold theme-title font-mono mt-0.5">${p.level}</p>
               </div>
               <div>
                 <span class="text-[10px] theme-dimtext uppercase">Games</span>
@@ -2886,7 +2888,7 @@
               </div>
               <div>
                 <span class="text-[10px] theme-dimtext uppercase">Win %</span>
-                <p class="font-bold ${winRate >= 50 ? 'text-emerald-500' : 'theme-title'} font-mono mt-0.5">${winRate}%</p>
+                <p class="font-bold theme-title font-mono mt-0.5">${winRate}%</p>
               </div>
             </div>
 
@@ -2895,20 +2897,20 @@
               <div class="flex items-center gap-1.5">
                 <button 
                   onclick="quickMessagePlayer('${p.username}')" 
-                  class="p-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-500 text-xs" 
+                  class="p-1.5 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border text-xs cursor-pointer" 
                   title="Send Direct In-Game Message"
                 >
                   <i class="fa-solid fa-paper-plane"></i>
                 </button>
                 <button 
                   onclick="openPlayerInspector('${p.username}')" 
-                  class="px-2.5 py-1 rounded-lg bg-brand-600 hover:bg-brand-500 text-white font-medium text-xs flex items-center gap-1.5"
+                  class="px-2.5 py-1 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border font-medium text-xs flex items-center gap-1.5 cursor-pointer"
                 >
                   <i class="fa-solid fa-eye text-[11px]"></i> Details
                 </button>
                 <button 
                   onclick="promptDeletePlayer('${p.username}')" 
-                  class="p-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-500 text-xs" 
+                  class="p-1.5 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border text-xs cursor-pointer" 
                   title="Delete Player"
                 >
                   <i class="fa-solid fa-trash-can"></i>
@@ -2927,30 +2929,17 @@
       const displayName = player.displayName || username || '?';
 
       if (player.avatarUrl && (player.avatarUrl.startsWith('http') || player.avatarUrl.startsWith('data:'))) {
-        return `<img src="${player.avatarUrl}" alt="${escapeHtml(username)}" class="${sizeClass} rounded-xl object-cover border border-slate-300 dark:border-neutral-800 flex-shrink-0" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.classList.remove('hidden');"><div class="hidden ${sizeClass} rounded-xl theme-subtle flex items-center justify-center font-bold theme-title flex-shrink-0">${escapeHtml(displayName.substring(0, 2).toUpperCase())}</div>`;
+        return `<img src="${player.avatarUrl}" alt="${escapeHtml(username)}" class="${sizeClass} rounded-xl object-cover border theme-border flex-shrink-0" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.classList.remove('hidden');"><div class="hidden ${sizeClass} rounded-xl theme-subtle border theme-border flex items-center justify-center font-bold theme-title flex-shrink-0 font-mono">${escapeHtml(displayName.substring(0, 2).toUpperCase())}</div>`;
       }
       if (player.avatarBase64) {
         const src = player.avatarBase64.startsWith('data:') ? player.avatarBase64 : `data:image/jpeg;base64,${player.avatarBase64}`;
-        return `<img src="${src}" alt="${escapeHtml(username)}" class="${sizeClass} rounded-xl object-cover border border-slate-300 dark:border-neutral-800 flex-shrink-0" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.classList.remove('hidden');"><div class="hidden ${sizeClass} rounded-xl theme-subtle flex items-center justify-center font-bold theme-title flex-shrink-0">${escapeHtml(displayName.substring(0, 2).toUpperCase())}</div>`;
+        return `<img src="${src}" alt="${escapeHtml(username)}" class="${sizeClass} rounded-xl object-cover border theme-border flex-shrink-0" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.classList.remove('hidden');"><div class="hidden ${sizeClass} rounded-xl theme-subtle border theme-border flex items-center justify-center font-bold theme-title flex-shrink-0 font-mono">${escapeHtml(displayName.substring(0, 2).toUpperCase())}</div>`;
       }
       const initials = displayName.substring(0, 2).toUpperCase();
-      const colorGradients = [
-        'from-indigo-600 to-purple-600',
-        'from-emerald-600 to-teal-600',
-        'from-rose-600 to-pink-600',
-        'from-amber-600 to-orange-600',
-        'from-sky-600 to-blue-600',
-        'from-violet-600 to-fuchsia-600'
-      ];
-      let hash = 0;
-      for (let i = 0; i < username.length; i++) hash = username.charCodeAt(i) + ((hash << 5) - hash);
-      const gradient = colorGradients[Math.abs(hash) % colorGradients.length];
 
       return `
-        <div class="${sizeClass} rounded-xl bg-gradient-to-tr ${gradient} p-0.5 flex-shrink-0">
-          <div class="w-full h-full rounded-[10px] theme-card flex items-center justify-center font-bold theme-title">
-            ${initials}
-          </div>
+        <div class="${sizeClass} rounded-xl theme-subtle border theme-border flex-shrink-0 flex items-center justify-center font-bold font-mono theme-title select-none">
+          <span>${initials}</span>
         </div>
       `;
     }
@@ -2958,13 +2947,13 @@
     function getStatusBadgeHtml(status) {
       const s = (status || '').toUpperCase();
       if (s === 'ONLINE') {
-        return `<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold badge-online"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> Online</span>`;
+        return `<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold badge-online"><span class="w-1.5 h-1.5 rounded-full bg-neutral-900 dark:bg-white"></span> Online</span>`;
       } else if (s === 'IN_LOBBY' || s === 'LOBBY') {
-        return `<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold badge-lobby"><span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span> In Lobby</span>`;
+        return `<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold badge-lobby"><span class="w-1.5 h-1.5 rounded-full bg-neutral-500"></span> In Lobby</span>`;
       } else if (s === 'PLAYING' || s === 'IN_GAME') {
-        return `<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold badge-playing"><span class="w-1.5 h-1.5 rounded-full bg-purple-500 animate-ping"></span> Playing</span>`;
+        return `<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold badge-playing"><span class="w-1.5 h-1.5 rounded-full bg-white dark:bg-black"></span> Playing</span>`;
       } else {
-        return `<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold badge-offline"><span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span> Offline</span>`;
+        return `<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold badge-offline"><span class="w-1.5 h-1.5 rounded-full bg-neutral-400"></span> Offline</span>`;
       }
     }
 
@@ -3030,13 +3019,13 @@
       
       if (s === 'ONLINE') {
         statusLabel = 'Online';
-        dotClass = "absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-emerald-500 border-2 border-inherit animate-pulse";
+        dotClass = "absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-neutral-900 dark:bg-white border-2 border-inherit";
       } else if (s === 'IN_LOBBY' || s === 'LOBBY') {
         statusLabel = 'In Lobby';
-        dotClass = "absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-amber-500 border-2 border-inherit";
+        dotClass = "absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-neutral-500 border-2 border-inherit";
       } else if (s === 'PLAYING' || s === 'IN_GAME') {
         statusLabel = 'Playing';
-        dotClass = "absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-purple-500 border-2 border-inherit animate-ping";
+        dotClass = "absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-neutral-900 dark:bg-white border-2 border-inherit";
       }
 
       document.getElementById('inspStatusText').innerText = statusLabel;
@@ -3319,14 +3308,14 @@
       visibleMatches.forEach((m, idx) => {
         const isWin = m.didWin;
         const isDraw = m.isDraw;
-        let badgeClass = 'bg-rose-500/10 text-rose-500 border-rose-500/30';
-        let badgeText = '❌ Lost';
+        let badgeClass = 'theme-subtle theme-dimtext border theme-border';
+        let badgeText = 'LOST';
         if (isWin) {
-          badgeClass = 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30';
-          badgeText = '🏆 Victory';
+          badgeClass = 'bg-neutral-900 text-white dark:bg-white dark:text-black border border-inherit';
+          badgeText = 'WON';
         } else if (isDraw) {
-          badgeClass = 'bg-amber-500/10 text-amber-500 border-amber-500/30';
-          badgeText = '🤝 Draw';
+          badgeClass = 'theme-subtle theme-title border theme-border';
+          badgeText = 'DRAW';
         }
 
         const matchTime = m.timestamp ? new Date(m.timestamp).toLocaleString() : 'Unknown date';
@@ -3351,7 +3340,7 @@
             </div>
             <button 
               onclick="promptDeleteSingleMatch('${p.username}', '${matchId}', '${escapeHtml(oppName)}')" 
-              class="p-2 rounded-lg bg-rose-500/10 hover:bg-rose-500/25 text-rose-500 text-xs transition-all flex-shrink-0 cursor-pointer"
+              class="p-2 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border text-xs transition-all flex-shrink-0 cursor-pointer"
               title="Delete this match record"
             >
               <i class="fa-solid fa-trash-can"></i>
@@ -3390,9 +3379,9 @@
         if (totalPages <= 7) {
           for (let pNum = 1; pNum <= totalPages; pNum++) {
             if (pNum === currentPage) {
-              btnsHtml += `<button class="w-7 h-7 rounded-lg bg-brand-600 text-white font-bold text-xs flex items-center justify-center">${pNum}</button>`;
+              btnsHtml += `<button class="w-7 h-7 rounded-lg bg-neutral-900 text-white dark:bg-white dark:text-black font-bold text-xs flex items-center justify-center">${pNum}</button>`;
             } else {
-              btnsHtml += `<button onclick="setMatchPage(${pNum})" class="w-7 h-7 rounded-lg theme-subtle hover:border-brand-500 theme-title font-semibold text-xs flex items-center justify-center transition-all cursor-pointer">${pNum}</button>`;
+              btnsHtml += `<button onclick="setMatchPage(${pNum})" class="w-7 h-7 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border font-semibold text-xs flex items-center justify-center transition-all cursor-pointer">${pNum}</button>`;
             }
           }
         } else {
@@ -3409,9 +3398,9 @@
             if (pItem === '...') {
               btnsHtml += `<span class="px-1 text-xs theme-dimtext">...</span>`;
             } else if (pItem === currentPage) {
-              btnsHtml += `<button class="w-7 h-7 rounded-lg bg-brand-600 text-white font-bold text-xs flex items-center justify-center">${pItem}</button>`;
+              btnsHtml += `<button class="w-7 h-7 rounded-lg bg-neutral-900 text-white dark:bg-white dark:text-black font-bold text-xs flex items-center justify-center">${pItem}</button>`;
             } else {
-              btnsHtml += `<button onclick="setMatchPage(${pItem})" class="w-7 h-7 rounded-lg theme-subtle hover:border-brand-500 theme-title font-semibold text-xs flex items-center justify-center transition-all cursor-pointer">${pItem}</button>`;
+              btnsHtml += `<button onclick="setMatchPage(${pItem})" class="w-7 h-7 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border font-semibold text-xs flex items-center justify-center transition-all cursor-pointer">${pItem}</button>`;
             }
           });
         }
@@ -3476,7 +3465,7 @@
             <div class="flex items-center gap-3 min-w-0">
               <div class="relative flex-shrink-0">
                 ${avatarHtml}
-                <span class="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'} border-2 border-inherit"></span>
+                <span class="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full ${isOnline ? 'bg-neutral-900 dark:bg-white' : 'bg-neutral-500'} border-2 border-inherit"></span>
               </div>
               <div class="min-w-0">
                 <div class="flex items-center gap-2">
@@ -3486,7 +3475,7 @@
                 <div class="text-[11px] font-mono theme-dimtext flex items-center gap-1.5 truncate mt-0.5">
                   <span class="truncate">@${escapeHtml(friendUser)}</span>
                   <span>•</span>
-                  <span class="${isOnline ? 'text-emerald-500 font-semibold' : 'theme-dimtext'} flex-shrink-0">${statusLabel}</span>
+                  <span class="${isOnline ? 'theme-title font-semibold' : 'theme-dimtext'} flex-shrink-0">${statusLabel}</span>
                 </div>
               </div>
             </div>
@@ -3500,7 +3489,7 @@
               </button>
               <button 
                 onclick="promptRemoveFriend('${username}', '${friendUser}')" 
-                class="px-2.5 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 text-xs font-semibold flex items-center gap-1 transition-all" 
+                class="px-2.5 py-1.5 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border text-xs font-semibold flex items-center gap-1 transition-all cursor-pointer" 
                 title="Remove Friend"
               >
                 <i class="fa-solid fa-user-minus"></i>
@@ -3623,7 +3612,7 @@
     function promptDeletePlayer(username) {
       openConfirmModal(
         'Delete Player Account',
-        `Are you sure you want to permanently delete player <strong class="text-rose-500 font-mono">@${username}</strong>? This will remove all their cloud data, registration, and directory listing.`,
+        `Are you sure you want to permanently delete player <strong class="theme-title font-mono">@${username}</strong>? This will remove all their cloud data, registration, and directory listing.`,
         'DELETE_PLAYER',
         { username }
       );
@@ -3734,7 +3723,7 @@
       const username = globalState.selectedPlayer.username;
       openConfirmModal(
         'Clear All Match History',
-        `Are you sure you want to erase ALL match records for <strong class="text-rose-500 font-mono">@${username}</strong>? This action cannot be reversed.`,
+        `Are you sure you want to erase ALL match records for <strong class="theme-title font-mono">@${username}</strong>? This action cannot be reversed.`,
         'CLEAR_MATCHES',
         { username }
       );
@@ -3809,7 +3798,7 @@
       const username = globalState.selectedPlayer.username;
       openConfirmModal(
         'Reset Player Statistics',
-        `Are you sure you want to reset games, wins, and streaks to ZERO for <strong class="text-amber-500 font-mono">@${username}</strong>?`,
+        `Are you sure you want to reset games, wins, and streaks to ZERO for <strong class="theme-title font-mono">@${username}</strong>?`,
         'RESET_STATS',
         { username }
       );
@@ -3922,7 +3911,7 @@
         globalState.mqttClient = client;
 
         client.onConnectionLost = (responseObject) => {
-          mqttDot.className = "w-2 h-2 rounded-full bg-rose-500";
+          mqttDot.className = "w-2 h-2 rounded-full bg-neutral-500";
           mqttStatusText.innerText = "Offline";
           logMqttEvent("CONNECTION", "MQTT Disconnected: " + responseObject.errorMessage);
           setTimeout(initMqtt, 5000);
@@ -3938,7 +3927,7 @@
           userName: MQTT_USERNAME,
           password: MQTT_PASSWORD,
           onSuccess: () => {
-            mqttDot.className = "w-2 h-2 rounded-full bg-emerald-500 animate-pulse";
+            mqttDot.className = "w-2 h-2 rounded-full bg-neutral-900 dark:bg-white";
             mqttStatusText.innerText = "Online";
             logMqttEvent("CONNECTION", `Connected to wss://${MQTT_BROKER_HOST}:${MQTT_BROKER_PORT}`);
             client.subscribe('bingo/v3/room_meta/#');
@@ -3949,7 +3938,7 @@
             logMqttEvent("SUBSCRIBE", "Subscribed to bingo topics (rooms, registry, presence, broadcast)");
           },
           onFailure: (err) => {
-            mqttDot.className = "w-2 h-2 rounded-full bg-rose-500";
+            mqttDot.className = "w-2 h-2 rounded-full bg-neutral-500";
             mqttStatusText.innerText = "Failed";
             logMqttEvent("ERROR", "MQTT Connection Failed: " + JSON.stringify(err));
           }
@@ -4300,7 +4289,7 @@
           <div class="theme-card rounded-2xl p-4 space-y-3">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-2">
-                <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping"></span>
+                <span class="w-2.5 h-2.5 rounded-full bg-neutral-900 dark:bg-white"></span>
                 <span class="font-mono font-bold theme-title text-base">#${r.code}</span>
               </div>
               <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-brand-500/20 text-brand-500 border border-brand-500/30">
@@ -4310,7 +4299,7 @@
 
             <div class="text-xs theme-subtext space-y-1">
               <div>Host: <span class="font-bold theme-title">@${escapeHtml(r.hostUsername || r.hostName || 'Host')}</span></div>
-              <div>Players: <span class="font-mono text-emerald-500 font-bold">${r.playerCount || (r.players ? r.players.length : 1)}/${r.maxPlayers || 2}</span></div>
+              <div>Players: <span class="font-mono theme-title font-bold">${r.playerCount || (r.players ? r.players.length : 1)}/${r.maxPlayers || 2}</span></div>
               <div>Size: <span class="theme-dimtext">${r.boardSize || 5}x${r.boardSize || 5}</span></div>
             </div>
 
@@ -4324,7 +4313,7 @@
               </button>
               <button 
                 onclick="forceCloseRoom('${r.code}')" 
-                class="py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 text-xs font-bold border border-rose-500/30 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                class="py-2 rounded-xl theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title text-xs font-bold border theme-border transition-all flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <i class="fa-solid fa-ban"></i>
                 <span>Close</span>
@@ -4436,25 +4425,25 @@
       if (!dot || !badge || !content) return;
 
       if (bcast && bcast.active && bcast.message && bcast.message.trim().length > 0) {
-        dot.className = "w-2 h-2 rounded-full bg-emerald-500 animate-pulse";
+        dot.className = "w-2 h-2 rounded-full bg-neutral-900 dark:bg-white";
         
         let typeBadge = "📢 INFO";
-        let typeClass = "bg-brand-500/20 text-brand-400 border border-brand-500/30";
+        let typeClass = "theme-subtle theme-title border theme-border";
         if (bcast.type === 'ALERT') {
           typeBadge = "⚠️ ALERT";
-          typeClass = "bg-rose-500/20 text-rose-400 border border-rose-500/30";
+          typeClass = "theme-subtle theme-title border theme-border";
         } else if (bcast.type === 'MAINTENANCE') {
           typeBadge = "🛠️ MAINTENANCE";
-          typeClass = "bg-amber-500/20 text-amber-400 border border-amber-500/30";
+          typeClass = "theme-subtle theme-title border theme-border";
         } else if (bcast.type === 'DIRECT' || (bcast.targetUsername && bcast.targetUsername !== 'ALL')) {
-          typeBadge = "💜 DIRECT";
-          typeClass = "bg-purple-500/20 text-purple-400 border border-purple-500/30";
+          typeBadge = "DIRECT";
+          typeClass = "theme-subtle theme-title border theme-border";
         }
 
         const deliveryMode = bcast.deliveryMode || 'STARTUP';
         const modeBadge = deliveryMode === 'ONCE' 
-          ? '<span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">🎯 ONLY ONCE</span>'
-          : '<span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-blue-500/20 text-blue-400 border border-blue-500/30">🔄 STARTUP</span>';
+          ? '<span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold theme-subtle theme-title border theme-border">🎯 ONLY ONCE</span>'
+          : '<span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold theme-subtle theme-title border theme-border">🔄 STARTUP</span>';
 
         const sizeMode = bcast.size || 'STANDARD';
         const sizeBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-neutral-800 text-neutral-300 border border-neutral-700/50">${sizeMode === 'COMPACT' ? '▫️ COMPACT' : (sizeMode === 'EXPANDED' ? '◻️ EXPANDED' : '◽ STANDARD')}</span>`;
@@ -4488,7 +4477,7 @@
 
         content.className = "text-xs theme-dimtext space-y-1.5";
         content.innerHTML = `
-          <div class="flex items-center gap-1.5 text-amber-400/90 font-medium">
+          <div class="flex items-center gap-1.5 theme-title font-medium">
             <i class="fa-solid fa-circle-check"></i>
             <span>Message Delivered & Acknowledged (Auto-Expired)</span>
           </div>
@@ -4688,27 +4677,23 @@
       }
 
       if (badgeEl) {
+        badgeEl.className = "px-2.5 py-1 rounded-full text-[11px] font-bold font-mono tracking-wider theme-subtle theme-title border theme-border";
         if (isDirect) {
-          badgeEl.className = "px-2.5 py-1 rounded-full text-[11px] font-bold font-mono tracking-wider bg-purple-500/20 text-purple-400 border border-purple-500/30";
-          badgeEl.innerText = "💜 DIRECT MESSAGE";
+          badgeEl.innerText = "DIRECT MESSAGE";
         } else if (type === 'ALERT') {
-          badgeEl.className = "px-2.5 py-1 rounded-full text-[11px] font-bold font-mono tracking-wider bg-rose-500/20 text-rose-400 border border-rose-500/30";
           badgeEl.innerText = "⚠️ IMPORTANT NOTICE";
         } else if (type === 'MAINTENANCE') {
-          badgeEl.className = "px-2.5 py-1 rounded-full text-[11px] font-bold font-mono tracking-wider bg-amber-500/20 text-amber-400 border border-amber-500/30";
           badgeEl.innerText = "🛠️ MAINTENANCE";
         } else {
-          badgeEl.className = "px-2.5 py-1 rounded-full text-[11px] font-bold font-mono tracking-wider bg-brand-500/20 text-brand-400 border border-brand-500/30";
           badgeEl.innerText = "📢 ANNOUNCEMENT";
         }
       }
 
       if (modeBadgeEl) {
+        modeBadgeEl.className = "px-2 py-0.5 rounded text-[10px] font-mono font-bold theme-subtle theme-title border theme-border";
         if (mode === 'ONCE') {
-          modeBadgeEl.className = "px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30";
           modeBadgeEl.innerText = "🎯 ONLY ONCE";
         } else {
-          modeBadgeEl.className = "px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-blue-500/20 text-blue-400 border border-blue-500/30";
           modeBadgeEl.innerText = "🔄 STARTUP";
         }
       }
@@ -4853,7 +4838,7 @@
                   <button 
                     type="button" 
                     onclick="deleteBroadcastFromHistory(${idx})" 
-                    class="px-2 py-0.5 rounded text-rose-400 hover:bg-rose-500/10 text-[10px] font-semibold transition-all cursor-pointer"
+                    class="px-2 py-0.5 rounded theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title text-[10px] font-semibold transition-all cursor-pointer"
                   >
                     <i class="fa-solid fa-trash-can"></i>
                   </button>
@@ -4864,7 +4849,7 @@
         });
         container.innerHTML = html;
       } catch (e) {
-        container.innerHTML = '<div class="text-xs text-rose-500 py-2">Error loading broadcast history</div>';
+        container.innerHTML = '<div class="text-xs theme-title py-2">Error loading broadcast history</div>';
       }
     }
 
@@ -5269,7 +5254,7 @@
         const badge = document.getElementById(`cdnStatus-${ep.id}`);
         const lat = document.getElementById(`cdnLatency-${ep.id}`);
         if (badge) {
-          badge.className = "px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/20 text-amber-400";
+          badge.className = "px-1.5 py-0.5 rounded text-[10px] font-mono font-bold theme-subtle theme-dimtext border theme-border";
           badge.innerText = "PINGING...";
         }
 
@@ -5279,20 +5264,20 @@
           const elapsed = Math.round(performance.now() - t0);
           if (res.ok) {
             if (badge) {
-              badge.className = "px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-400";
+              badge.className = "px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-neutral-900 text-white dark:bg-white dark:text-black border border-inherit";
               badge.innerText = "ONLINE 200";
             }
             if (lat) lat.innerText = `${elapsed} ms`;
           } else {
             if (badge) {
-              badge.className = "px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-rose-500/20 text-rose-400";
+              badge.className = "px-1.5 py-0.5 rounded text-[10px] font-mono font-bold theme-subtle theme-title border theme-border";
               badge.innerText = `ERR ${res.status}`;
             }
             if (lat) lat.innerText = `${elapsed} ms`;
           }
         } catch (e) {
           if (badge) {
-            badge.className = "px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-rose-500/20 text-rose-400";
+            badge.className = "px-1.5 py-0.5 rounded text-[10px] font-mono font-bold theme-subtle theme-title border theme-border";
             badge.innerText = "FAIL";
           }
           if (lat) lat.innerText = "-- ms";
@@ -5601,14 +5586,12 @@
       const container = document.getElementById('toastContainer');
       const toast = document.createElement('div');
       
-      let borderClass = 'border-slate-300 dark:border-neutral-800 theme-card theme-title';
-      let icon = 'fa-circle-info text-brand-500';
+      let borderClass = 'theme-card border theme-border text-neutral-900 dark:text-white';
+      let icon = 'fa-circle-info theme-title';
       if (type === 'success') {
-        borderClass = 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500';
-        icon = 'fa-circle-check text-emerald-500';
+        icon = 'fa-circle-check theme-title';
       } else if (type === 'error') {
-        borderClass = 'border-rose-500/30 bg-rose-500/10 text-rose-500';
-        icon = 'fa-circle-exclamation text-rose-500';
+        icon = 'fa-circle-exclamation theme-title';
       }
 
       toast.className = `p-3.5 rounded-xl border shadow-xl flex items-center gap-2.5 text-xs font-bold backdrop-blur-md pointer-events-auto transition-all transform duration-300 translate-y-2 opacity-0 ${borderClass}`;
