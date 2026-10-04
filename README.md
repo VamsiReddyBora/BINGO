@@ -2,13 +2,13 @@
 
 > Fast, aesthetic, real-time multiplayer Bingo with friends — online or offline over Wi-Fi / Hotspot!
 
-[![Download APK](https://img.shields.io/badge/Download-Android%20APK-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/VamsiReddyBora/BINGO/releases/download/v1.1/Bingo.apk)
-[![Release](https://img.shields.io/badge/Release-v1.1-FF4081?style=for-the-badge&logo=github&logoColor=white)](https://github.com/VamsiReddyBora/BINGO/releases/tag/v1.1)
-[![Platform](https://img.shields.io/badge/Platform-Android%207.0%2B-blue?style=for-the-badge&logo=android&logoColor=white)](https://github.com/VamsiReddyBora/BINGO/releases/tag/v1.1)
+[![Download APK](https://img.shields.io/badge/Download-Android%20APK-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/VamsiReddyBora/BINGO/releases/download/v1.2/Bingo.apk)
+[![Release](https://img.shields.io/badge/Release-v1.2-FF4081?style=for-the-badge&logo=github&logoColor=white)](https://github.com/VamsiReddyBora/BINGO/releases/tag/v1.2)
+[![Platform](https://img.shields.io/badge/Platform-Android%207.0%2B-blue?style=for-the-badge&logo=android&logoColor=white)](https://github.com/VamsiReddyBora/BINGO/releases/tag/v1.2)
 
 ---
 
-### 📥 [Download Native Android APK (Bingo.apk)](https://github.com/VamsiReddyBora/BINGO/releases/download/v1.1/Bingo.apk)
+### 📥 [Download Native Android APK (Bingo.apk)](https://github.com/VamsiReddyBora/BINGO/releases/download/v1.2/Bingo.apk)
 
 ---
 
