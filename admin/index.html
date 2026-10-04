@@ -336,20 +336,28 @@
           </div>
         </div>
 
-        <!-- Middle: Connectivity Status Indicators (Desktop / Tablet) -->
-        <div class="hidden sm:flex items-center gap-2 md:gap-4 text-xs font-medium">
-          <!-- KeyVal API Status -->
-          <div id="statusKeyVal" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full badge-online" title="KeyValue Cloud Database Status">
-            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span class="text-[11px] hidden md:inline font-semibold">KeyVal:</span>
-            <span class="text-[11px] font-mono font-bold" id="keyValLatency">Online</span>
+        <!-- Middle: Connectivity Status Indicators (Visible on Desktop & Mobile) -->
+        <div class="flex items-center gap-1.5 sm:gap-2 md:gap-4 text-xs font-medium">
+          <!-- KeyVal API / Latency Ping Status (Mobile & Desktop) -->
+          <div 
+            id="statusKeyVal" 
+            onclick="measureCloudPing(true)" 
+            class="flex items-center gap-1 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full badge-online cursor-pointer transition-all active:scale-95" 
+            title="Cloud Database Ping & Latency (Tap to re-test)"
+          >
+            <span class="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span class="text-[10px] sm:text-[11px] hidden md:inline font-semibold">Ping:</span>
+            <span class="text-[10px] sm:text-[11px] font-mono font-bold flex items-center gap-0.5">
+              <i class="fa-solid fa-bolt text-[9px] text-emerald-400 hidden sm:inline"></i>
+              <span id="keyValLatency">--ms</span>
+            </span>
           </div>
 
           <!-- MQTT Broker Status -->
-          <div id="statusMqtt" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full theme-subtle" title="EMQX MQTT WebSocket Status">
-            <span id="mqttDot" class="w-2 h-2 rounded-full bg-amber-400"></span>
-            <span class="text-[11px] hidden md:inline font-semibold">MQTT:</span>
-            <span class="text-[11px] font-mono font-bold" id="mqttStatusText">Connecting...</span>
+          <div id="statusMqtt" class="flex items-center gap-1 px-1.5 py-0.5 sm:px-2.5 sm:py-1 rounded-full theme-subtle transition-all" title="EMQX MQTT WebSocket Status">
+            <span id="mqttDot" class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+            <span class="text-[10px] sm:text-[11px] hidden lg:inline font-semibold">MQTT:</span>
+            <span class="text-[10px] sm:text-[11px] font-mono font-bold hidden sm:inline" id="mqttStatusText">Connecting...</span>
           </div>
         </div>
 
@@ -601,7 +609,7 @@
             <button onclick="setPlayerStatusFilter('ALL')" id="filterStatus-ALL" class="status-filter-pill px-3 py-1 rounded-lg text-xs font-semibold theme-subtle theme-title whitespace-nowrap">All (<span id="count-ALL">0</span>)</button>
             <button onclick="setPlayerStatusFilter('ONLINE')" id="filterStatus-ONLINE" class="status-filter-pill px-3 py-1 rounded-lg text-xs font-semibold badge-online whitespace-nowrap">🟢 Online (<span id="count-ONLINE">0</span>)</button>
             <button onclick="setPlayerStatusFilter('LOBBY')" id="filterStatus-LOBBY" class="status-filter-pill px-3 py-1 rounded-lg text-xs font-semibold badge-lobby whitespace-nowrap">🟡 In Lobby (<span id="count-LOBBY">0</span>)</button>
-            <button onclick="setPlayerStatusFilter('PLAYING')" id="filterStatus-PLAYING" class="status-filter-pill px-3 py-1 rounded-lg text-xs font-semibold badge-playing whitespace-nowrap">🟣 In Game (<span id="count-PLAYING">0</span>)</button>
+            <button onclick="setPlayerStatusFilter('PLAYING')" id="filterStatus-PLAYING" class="status-filter-pill px-3 py-1 rounded-lg text-xs font-semibold badge-playing whitespace-nowrap">🟣 Playing (<span id="count-PLAYING">0</span>)</button>
             <button onclick="setPlayerStatusFilter('OFFLINE')" id="filterStatus-OFFLINE" class="status-filter-pill px-3 py-1 rounded-lg text-xs font-semibold badge-offline whitespace-nowrap">⚪ Offline (<span id="count-OFFLINE">0</span>)</button>
           </div>
         </div>
@@ -1462,23 +1470,24 @@
           <!-- Matches Container -->
           <div id="inspMatchesList" class="space-y-2.5"></div>
 
-          <!-- Pagination / Load More for 500+ records -->
-          <div id="matchPaginationContainer" class="hidden pt-2 text-center space-y-2">
-            <button 
-              onclick="loadMoreMatches()" 
-              id="loadMoreMatchesBtn" 
-              class="w-full py-2.5 rounded-xl theme-subtle theme-title text-xs font-bold hover:border-brand-500 transition-all flex items-center justify-center gap-2"
-            >
-              <i class="fa-solid fa-angles-down"></i>
-              <span id="loadMoreText">Load Next 50 Matches</span>
-            </button>
-            <button 
-              onclick="showAllMatches()" 
-              id="showAllMatchesBtn" 
-              class="text-[11px] theme-dimtext hover:text-brand-500 underline"
-            >
-              Show All Matches At Once
-            </button>
+          <!-- Pagination Bar (20 Matches Per Page by default, with page navigation) -->
+          <div id="matchPaginationContainer" class="hidden pt-3 border-t border-slate-700/20 dark:border-neutral-800/80 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+            <div class="flex items-center gap-2">
+              <span class="theme-dimtext font-medium" id="matchPageInfo">Showing 1-20 of 0</span>
+              <div class="flex items-center gap-1 theme-subtle rounded-lg px-2 py-1">
+                <span class="text-[11px] theme-dimtext">Per page:</span>
+                <select id="matchPageSizeSelect" onchange="changeMatchPageSize(this.value)" class="bg-transparent theme-title text-[11px] font-bold focus:outline-none cursor-pointer">
+                  <option value="20" selected class="theme-card">20</option>
+                  <option value="50" class="theme-card">50</option>
+                  <option value="100" class="theme-card">100</option>
+                  <option value="999999" class="theme-card">All</option>
+                </select>
+              </div>
+            </div>
+            
+            <div class="flex items-center gap-1" id="matchPaginationButtons">
+              <!-- Dynamically populated page buttons -->
+            </div>
           </div>
         </div>
 
@@ -1831,10 +1840,14 @@
       currentMatchList: [],     // matches for currently inspected player
       matchOutcomeFilter: 'ALL',
       matchSearchQuery: '',
-      matchDisplayLimit: 50,    // progressive chunking for 500+ records
+      matchCurrentPage: 1,      // active page for match pagination
+      matchPageSize: 20,        // default 20 matches per page
+      matchDisplayLimit: 20,    // backwards compat
       mqttClient: null,
       autoRefreshTimer: null,
       autoRefreshIntervalSecs: 15,
+      cloudPingTimer: null,     // periodic cloud ping monitor
+      fetchingPlayers: new Set(), // deduplicate concurrent single-player fetches
       packetLogsCount: 0,
       currentTheme: 'dark',
       otaReleaseData: null,
@@ -2008,6 +2021,14 @@
       sessionStorage.removeItem('bingo_admin_auth');
       localStorage.removeItem('bingo_admin_auth');
       globalState.authenticated = false;
+      if (globalState.autoRefreshTimer) {
+        clearInterval(globalState.autoRefreshTimer);
+        globalState.autoRefreshTimer = null;
+      }
+      if (globalState.cloudPingTimer) {
+        clearInterval(globalState.cloudPingTimer);
+        globalState.cloudPingTimer = null;
+      }
       document.getElementById('adminApp').classList.add('hidden');
       document.getElementById('authGate').classList.remove('hidden');
       document.getElementById('adminPinInput').value = '';
@@ -2156,8 +2177,8 @@
       for (let attempt = 0; attempt < retries; attempt++) {
         try {
           const encKey = encodeURIComponent(key.trim());
-          const url = `${KEYVALUE_API_URL}/GetValue/${KEYVALUE_APP_KEY}/${encKey}`;
-          const res = await fetch(url);
+          const url = `${KEYVALUE_API_URL}/GetValue/${KEYVALUE_APP_KEY}/${encKey}?_t=${Date.now()}`;
+          const res = await fetch(url, { cache: 'no-store' });
           if (res.ok) {
             const text = await res.text();
             return text.replace(/^"|"$/g, '').trim();
@@ -2167,6 +2188,36 @@
         }
       }
       return null;
+    }
+
+    // Live Cloud Database Ping & Latency Monitor (Visible on Mobile & Desktop)
+    async function measureCloudPing(manual = false) {
+      const latencyEl = document.getElementById('keyValLatency');
+      if (!latencyEl) return;
+      const t0 = performance.now();
+      try {
+        const res = await fetch(`${KEYVALUE_API_URL}/GetValue/${KEYVALUE_APP_KEY}/user_directory?_t=${Date.now()}`, {
+          method: 'GET',
+          cache: 'no-store'
+        });
+        if (res.ok) {
+          const ms = Math.round(performance.now() - t0);
+          latencyEl.innerText = `${ms}ms`;
+          const statusBox = document.getElementById('statusKeyVal');
+          if (statusBox) {
+            if (ms < 350) {
+              statusBox.className = "flex items-center gap-1 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full badge-online cursor-pointer transition-all active:scale-95";
+            } else if (ms < 850) {
+              statusBox.className = "flex items-center gap-1 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full badge-lobby cursor-pointer transition-all active:scale-95";
+            } else {
+              statusBox.className = "flex items-center gap-1 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full badge-playing cursor-pointer transition-all active:scale-95";
+            }
+          }
+          if (manual) showToast(`Live cloud ping: ${ms}ms`, 'info');
+        }
+      } catch (err) {
+        if (manual) showToast('Cloud database ping failed', 'error');
+      }
     }
 
     // Universal URL-safe and standard Base64 decoder with self-healing truncated JSON support
@@ -2293,6 +2344,14 @@
           });
         }
 
+        // Include any players already discovered via live MQTT
+        Object.keys(globalState.onlineStatuses).forEach(u => {
+          if (!usernames.includes(u)) usernames.push(u);
+        });
+        globalState.players.forEach(p => {
+          if (!usernames.includes(p.username)) usernames.push(p.username);
+        });
+
         usernames = Array.from(new Set(usernames));
 
         // 2. Fetch all players in staggered chunks to prevent KeyValue API rate-limiting
@@ -2323,9 +2382,13 @@
               const rawPres = await getKeyValueDirect(`pres_${uname}`);
               if (rawPres) {
                 const parts = rawPres.split(':');
-                const status = parts[0] || 'OFFLINE';
+                const rawStatus = (parts[0] || 'OFFLINE').trim().toUpperCase();
                 const ts = parseInt(parts[1]) || 0;
-                presData = { status, timestamp: ts };
+                let normalized = 'OFFLINE';
+                if (rawStatus === 'IN_LOBBY' || rawStatus === 'LOBBY') normalized = 'IN_LOBBY';
+                else if (rawStatus === 'PLAYING' || rawStatus === 'IN_GAME') normalized = 'PLAYING';
+                else if (rawStatus === 'ONLINE') normalized = 'ONLINE';
+                presData = { status: normalized, timestamp: ts };
               }
             } catch {}
 
@@ -2367,9 +2430,25 @@
 
             let computedStatus = 'OFFLINE';
             const now = Date.now();
-            if (presData && (now - presData.timestamp < 75000)) {
+            if (presData && presData.status !== 'OFFLINE' && (now - presData.timestamp < 35000)) {
               computedStatus = presData.status;
             }
+
+            // Real-time MQTT presence override if active
+            if (globalState.onlineStatuses[uname]) {
+              const livePres = globalState.onlineStatuses[uname];
+              if (livePres.status === 'OFFLINE') {
+                computedStatus = 'OFFLINE';
+              } else if (now - livePres.timestamp < 35000) {
+                computedStatus = livePres.status;
+              }
+            }
+
+            const effectiveLastSeen = Math.max(
+              (regData && regData.lastSeenTimestamp) ? regData.lastSeenTimestamp : 0,
+              presData ? presData.timestamp : 0,
+              (globalState.onlineStatuses[uname] && globalState.onlineStatuses[uname].timestamp) ? globalState.onlineStatuses[uname].timestamp : 0
+            );
 
             return {
               username: uname,
@@ -2381,7 +2460,7 @@
               currentStreak: (regData && regData.currentStreak !== undefined) ? regData.currentStreak : 0,
               bestStreak: (regData && regData.bestStreak !== undefined) ? regData.bestStreak : 0,
               avatarUrl: (regData && regData.avatarUrl) ? regData.avatarUrl : null,
-              lastSeenTimestamp: (regData && regData.lastSeenTimestamp) ? regData.lastSeenTimestamp : (presData ? presData.timestamp : 0),
+              lastSeenTimestamp: effectiveLastSeen || Date.now(),
               status: computedStatus,
               binId: binId,
               rawReg: regData
@@ -2502,8 +2581,8 @@
 
       document.getElementById('count-ALL').innerText = total;
       document.getElementById('count-ONLINE').innerText = players.filter(p => p.status === 'ONLINE').length;
-      document.getElementById('count-LOBBY').innerText = players.filter(p => p.status === 'LOBBY').length;
-      document.getElementById('count-PLAYING').innerText = players.filter(p => p.status === 'PLAYING').length;
+      document.getElementById('count-LOBBY').innerText = players.filter(p => p.status === 'IN_LOBBY' || p.status === 'LOBBY').length;
+      document.getElementById('count-PLAYING').innerText = players.filter(p => p.status === 'PLAYING' || p.status === 'IN_GAME').length;
       document.getElementById('count-OFFLINE').innerText = players.filter(p => p.status === 'OFFLINE').length;
     }
 
@@ -2528,7 +2607,12 @@
       globalState.sortBy = sort;
 
       let list = globalState.players.filter(p => {
-        if (status !== 'ALL' && p.status !== status) return false;
+        if (status !== 'ALL') {
+          if ((status === 'LOBBY' || status === 'IN_LOBBY') && !(p.status === 'IN_LOBBY' || p.status === 'LOBBY')) return false;
+          else if ((status === 'PLAYING' || status === 'IN_GAME') && !(p.status === 'PLAYING' || p.status === 'IN_GAME')) return false;
+          else if (status === 'ONLINE' && p.status !== 'ONLINE') return false;
+          else if (status === 'OFFLINE' && p.status !== 'OFFLINE') return false;
+        }
         if (search) {
           const matchUser = p.username.toLowerCase().includes(search);
           const matchDisplay = (p.displayName || '').toLowerCase().includes(search);
@@ -2786,16 +2870,15 @@
     }
 
     function getStatusBadgeHtml(status) {
-      switch (status) {
-        case 'ONLINE':
-          return `<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold badge-online"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> Online</span>`;
-        case 'LOBBY':
-          return `<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold badge-lobby"><span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span> In Lobby</span>`;
-        case 'PLAYING':
-          return `<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold badge-playing"><span class="w-1.5 h-1.5 rounded-full bg-purple-500 animate-ping"></span> In Game</span>`;
-        case 'OFFLINE':
-        default:
-          return `<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold badge-offline"><span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span> Offline</span>`;
+      const s = (status || '').toUpperCase();
+      if (s === 'ONLINE') {
+        return `<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold badge-online"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> Online</span>`;
+      } else if (s === 'IN_LOBBY' || s === 'LOBBY') {
+        return `<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold badge-lobby"><span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span> In Lobby</span>`;
+      } else if (s === 'PLAYING' || s === 'IN_GAME') {
+        return `<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold badge-playing"><span class="w-1.5 h-1.5 rounded-full bg-purple-500 animate-ping"></span> Playing</span>`;
+      } else {
+        return `<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold badge-offline"><span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span> Offline</span>`;
       }
     }
 
@@ -2826,9 +2909,14 @@
       const player = globalState.players.find(p => p.username === username);
       if (!player) return;
       globalState.selectedPlayer = player;
-      globalState.matchDisplayLimit = 50;
+      globalState.matchCurrentPage = 1;
+      globalState.matchPageSize = 20;
       globalState.matchOutcomeFilter = 'ALL';
       globalState.matchSearchQuery = '';
+      const searchInput = document.getElementById('matchSearchInput');
+      if (searchInput) searchInput.value = '';
+      const pageSizeSelect = document.getElementById('matchPageSizeSelect');
+      if (pageSizeSelect) pageSizeSelect.value = '20';
 
       if (!isHandlingPopState) {
         window.history.pushState({ screen: 'inspector', username }, '');
@@ -2848,13 +2936,24 @@
       document.getElementById('inspDisplayName').innerText = p.displayName || p.username;
       document.getElementById('inspUsername').innerText = `@${p.username}`;
       document.getElementById('inspLevelBadge').innerText = `Lvl ${p.level}`;
-      document.getElementById('inspStatusText').innerText = p.status;
       
-      const statusDot = document.getElementById('inspStatusDot');
-      if (p.status === 'ONLINE') statusDot.className = "absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-emerald-500 border-2 border-inherit animate-pulse";
-      else if (p.status === 'LOBBY') statusDot.className = "absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-amber-500 border-2 border-inherit";
-      else if (p.status === 'PLAYING') statusDot.className = "absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-purple-500 border-2 border-inherit";
-      else statusDot.className = "absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-slate-400 border-2 border-inherit";
+      const s = (p.status || '').toUpperCase();
+      let statusLabel = 'Offline';
+      let dotClass = "absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-slate-400 border-2 border-inherit";
+      
+      if (s === 'ONLINE') {
+        statusLabel = 'Online';
+        dotClass = "absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-emerald-500 border-2 border-inherit animate-pulse";
+      } else if (s === 'IN_LOBBY' || s === 'LOBBY') {
+        statusLabel = 'In Lobby';
+        dotClass = "absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-amber-500 border-2 border-inherit";
+      } else if (s === 'PLAYING' || s === 'IN_GAME') {
+        statusLabel = 'Playing';
+        dotClass = "absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-purple-500 border-2 border-inherit animate-ping";
+      }
+
+      document.getElementById('inspStatusText').innerText = statusLabel;
+      document.getElementById('inspStatusDot').className = dotClass;
 
       const avatarInner = document.getElementById('inspAvatarInner');
       if (p.avatarUrl && (p.avatarUrl.startsWith('http') || p.avatarUrl.startsWith('data:'))) {
@@ -2993,9 +3092,10 @@
       }
     }
 
-    // --- MATCH HISTORY SEARCH, FILTER & CHUNKING (SUPPORTS 500+ RECORDS) ---
+    // --- MATCH HISTORY SEARCH, FILTER & 20-PER-PAGE PAGINATION ---
     function setMatchOutcomeFilter(filter) {
       globalState.matchOutcomeFilter = filter;
+      globalState.matchCurrentPage = 1;
       document.querySelectorAll('.match-pill').forEach(btn => {
         if (btn.id === `matchFilter-${filter}`) {
           btn.className = "match-pill px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-brand-600 text-white";
@@ -3003,6 +3103,28 @@
           btn.className = "match-pill px-2.5 py-1 rounded-lg text-[11px] font-semibold theme-subtle theme-title";
         }
       });
+      filterAndRenderMatches();
+    }
+
+    function changeMatchPageSize(size) {
+      globalState.matchPageSize = parseInt(size) || 20;
+      globalState.matchCurrentPage = 1;
+      filterAndRenderMatches();
+    }
+
+    function setMatchPage(page) {
+      globalState.matchCurrentPage = page;
+      filterAndRenderMatches();
+      const container = document.getElementById('inspMatchesList');
+      if (container) container.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function showAllMatches() {
+      changeMatchPageSize(999999);
+    }
+
+    function loadMoreMatches() {
+      globalState.matchPageSize = (globalState.matchPageSize || 20) + 20;
       filterAndRenderMatches();
     }
 
@@ -3075,9 +3197,18 @@
         return;
       }
 
-      // Progressive chunking
-      const limit = globalState.matchDisplayLimit;
-      const visibleMatches = filtered.slice(0, limit);
+      // 20-Matches-Per-Page Pagination logic
+      const totalCount = filtered.length;
+      const pageSize = globalState.matchPageSize || 20;
+      const totalPages = Math.ceil(totalCount / pageSize) || 1;
+
+      if (globalState.matchCurrentPage > totalPages) globalState.matchCurrentPage = totalPages;
+      if (globalState.matchCurrentPage < 1) globalState.matchCurrentPage = 1;
+      const currentPage = globalState.matchCurrentPage;
+
+      const startIdx = (currentPage - 1) * pageSize;
+      const endIdx = Math.min(startIdx + pageSize, totalCount);
+      const visibleMatches = filtered.slice(startIdx, endIdx);
 
       let matchesHtml = '';
       visibleMatches.forEach((m, idx) => {
@@ -3095,27 +3226,27 @@
 
         const matchTime = m.timestamp ? new Date(m.timestamp).toLocaleString() : 'Unknown date';
         const oppName = m.opponentName || 'Online Opponent';
-        const matchId = m.id || `m_${idx}`;
+        const matchId = m.id || `m_${startIdx + idx}`;
 
         matchesHtml += `
           <div class="theme-subtle rounded-xl p-3.5 flex items-center justify-between gap-3 hover:border-brand-500 transition-colors">
-            <div class="flex items-center gap-3">
-              <div class="w-9 h-9 rounded-lg theme-card flex items-center justify-center theme-dimtext text-sm">
+            <div class="flex items-center gap-3 min-w-0">
+              <div class="w-9 h-9 rounded-lg theme-card flex items-center justify-center theme-dimtext text-sm flex-shrink-0">
                 <i class="fa-solid fa-gamepad"></i>
               </div>
-              <div>
+              <div class="min-w-0">
                 <div class="flex items-center gap-2">
-                  <span class="font-bold theme-title text-xs">${escapeHtml(oppName)}</span>
-                  <span class="px-2 py-0.5 rounded text-[10px] font-bold border ${badgeClass}">${badgeText}</span>
+                  <span class="font-bold theme-title text-xs truncate">${escapeHtml(oppName)}</span>
+                  <span class="px-2 py-0.5 rounded text-[10px] font-bold border ${badgeClass} flex-shrink-0">${badgeText}</span>
                 </div>
-                <div class="text-[11px] theme-dimtext mt-0.5">
+                <div class="text-[11px] theme-dimtext mt-0.5 truncate">
                   <span>${matchTime}</span> • <span class="font-mono opacity-70">ID: ${matchId}</span>
                 </div>
               </div>
             </div>
             <button 
               onclick="promptDeleteSingleMatch('${p.username}', '${matchId}', '${escapeHtml(oppName)}')" 
-              class="p-2 rounded-lg bg-rose-500/10 hover:bg-rose-500/25 text-rose-500 text-xs transition-all"
+              class="p-2 rounded-lg bg-rose-500/10 hover:bg-rose-500/25 text-rose-500 text-xs transition-all flex-shrink-0 cursor-pointer"
               title="Delete this match record"
             >
               <i class="fa-solid fa-trash-can"></i>
@@ -3126,24 +3257,75 @@
 
       matchesList.innerHTML = matchesHtml;
 
-      // Handle pagination buttons
-      if (filtered.length > limit) {
+      // Render Pagination Bar
+      if (totalCount > 0) {
         paginationContainer.classList.remove('hidden');
-        const remaining = filtered.length - limit;
-        document.getElementById('loadMoreText').innerText = `Load Next 50 Matches (${remaining} more)`;
+        document.getElementById('matchPageInfo').innerText = `Showing ${startIdx + 1}-${endIdx} of ${totalCount}`;
+
+        const selectEl = document.getElementById('matchPageSizeSelect');
+        if (selectEl && String(selectEl.value) !== String(pageSize)) {
+          selectEl.value = String(pageSize);
+        }
+
+        const btnContainer = document.getElementById('matchPaginationButtons');
+        let btnsHtml = '';
+
+        // Previous Page Button
+        btnsHtml += `
+          <button 
+            onclick="setMatchPage(${currentPage - 1})" 
+            ${currentPage === 1 ? 'disabled class="px-2.5 py-1 rounded-lg theme-subtle opacity-40 cursor-not-allowed text-xs font-semibold"' : 'class="px-2.5 py-1 rounded-lg theme-subtle hover:border-brand-500 theme-title text-xs font-semibold transition-all cursor-pointer"'} 
+            title="Previous Page"
+          >
+            <i class="fa-solid fa-chevron-left text-[10px]"></i>
+          </button>
+        `;
+
+        // Numbered Pages
+        if (totalPages <= 7) {
+          for (let pNum = 1; pNum <= totalPages; pNum++) {
+            if (pNum === currentPage) {
+              btnsHtml += `<button class="w-7 h-7 rounded-lg bg-brand-600 text-white font-bold text-xs flex items-center justify-center">${pNum}</button>`;
+            } else {
+              btnsHtml += `<button onclick="setMatchPage(${pNum})" class="w-7 h-7 rounded-lg theme-subtle hover:border-brand-500 theme-title font-semibold text-xs flex items-center justify-center transition-all cursor-pointer">${pNum}</button>`;
+            }
+          }
+        } else {
+          let pages = [];
+          if (currentPage <= 4) {
+            pages = [1, 2, 3, 4, 5, '...', totalPages];
+          } else if (currentPage >= totalPages - 3) {
+            pages = [1, '...', totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
+          } else {
+            pages = [1, '...', currentPage - 1, currentPage, currentPage + 1, '...', totalPages];
+          }
+
+          pages.forEach(pItem => {
+            if (pItem === '...') {
+              btnsHtml += `<span class="px-1 text-xs theme-dimtext">...</span>`;
+            } else if (pItem === currentPage) {
+              btnsHtml += `<button class="w-7 h-7 rounded-lg bg-brand-600 text-white font-bold text-xs flex items-center justify-center">${pItem}</button>`;
+            } else {
+              btnsHtml += `<button onclick="setMatchPage(${pItem})" class="w-7 h-7 rounded-lg theme-subtle hover:border-brand-500 theme-title font-semibold text-xs flex items-center justify-center transition-all cursor-pointer">${pItem}</button>`;
+            }
+          });
+        }
+
+        // Next Page Button
+        btnsHtml += `
+          <button 
+            onclick="setMatchPage(${currentPage + 1})" 
+            ${currentPage === totalPages ? 'disabled class="px-2.5 py-1 rounded-lg theme-subtle opacity-40 cursor-not-allowed text-xs font-semibold"' : 'class="px-2.5 py-1 rounded-lg theme-subtle hover:border-brand-500 theme-title text-xs font-semibold transition-all cursor-pointer"'} 
+            title="Next Page"
+          >
+            <i class="fa-solid fa-chevron-right text-[10px]"></i>
+          </button>
+        `;
+
+        btnContainer.innerHTML = btnsHtml;
       } else {
         paginationContainer.classList.add('hidden');
       }
-    }
-
-    function loadMoreMatches() {
-      globalState.matchDisplayLimit += 50;
-      filterAndRenderMatches();
-    }
-
-    function showAllMatches() {
-      globalState.matchDisplayLimit = 999999;
-      filterAndRenderMatches();
     }
 
     // --- RENDER RESOLVED MUTUAL FRIENDS ---
@@ -3620,10 +3802,11 @@
             mqttStatusText.innerText = "Online";
             logMqttEvent("CONNECTION", `Connected to wss://${MQTT_BROKER_HOST}:${MQTT_BROKER_PORT}`);
             client.subscribe('bingo/v3/room_meta/#');
+            client.subscribe('bingo/v3/registry/#');
             client.subscribe('bingo/v3/presence/#');
             client.subscribe('bingo/v3/system/notice');
             client.subscribe('bingo/global/broadcast');
-            logMqttEvent("SUBSCRIBE", "Subscribed to bingo topics including bingo/global/broadcast");
+            logMqttEvent("SUBSCRIBE", "Subscribed to bingo topics (rooms, registry, presence, broadcast)");
           },
           onFailure: (err) => {
             mqttDot.className = "w-2 h-2 rounded-full bg-rose-500";
@@ -3646,32 +3829,236 @@
         } catch {}
       }
 
-      if (topic.startsWith('bingo/v3/room_meta/')) {
-        const roomCode = topic.replace('bingo/v3/room_meta/', '');
-        try {
-          const roomObj = JSON.parse(payload);
-          roomObj.code = roomCode;
-          roomObj.timestamp = Date.now();
-          globalState.activeRooms[roomCode] = roomObj;
-          renderActiveRooms();
-        } catch {}
+      // 1. Instant Player Registration Stream
+      if (topic.startsWith('bingo/v3/registry/')) {
+        const clean = topic.replace('bingo/v3/registry/', '').trim().toLowerCase().replace(/^@/, '');
+        if (clean && payload) {
+          try {
+            const entry = JSON.parse(payload);
+            upsertPlayerFromRegistry(clean, entry);
+          } catch (e) {
+            console.warn('Error parsing registry packet for ' + clean, e);
+          }
+        }
       }
 
-      if (topic.startsWith('bingo/v3/presence/')) {
-        const uname = topic.replace('bingo/v3/presence/', '');
-        const player = globalState.players.find(p => p.username === uname);
-        if (player) {
-          player.status = 'ONLINE';
-          player.lastSeenTimestamp = Date.now();
-          applyPlayerFilters();
+      // 2. Real-Time Room Metadata (Instant Removal on Close/Purge)
+      if (topic.startsWith('bingo/v3/room_meta/')) {
+        const roomCode = topic.replace('bingo/v3/room_meta/', '').trim();
+        if (!payload || payload.trim() === '' || payload === '{}' || payload === '""') {
+          delete globalState.activeRooms[roomCode];
+          renderActiveRooms();
+          return;
         }
+        try {
+          const roomObj = JSON.parse(payload);
+          if (!roomObj || roomObj.status === 'CLOSED' || roomObj.status === 'CANCELLED' || roomObj.status === 'FINISHED') {
+            delete globalState.activeRooms[roomCode];
+          } else {
+            roomObj.code = roomCode;
+            roomObj.timestamp = roomObj.lastHeartbeat || Date.now();
+            globalState.activeRooms[roomCode] = roomObj;
+          }
+          renderActiveRooms();
+        } catch {
+          delete globalState.activeRooms[roomCode];
+          renderActiveRooms();
+        }
+      }
+
+      // 3. Instant Real-Time Player Presence Stream
+      if (topic.startsWith('bingo/v3/presence/')) {
+        const uname = topic.replace('bingo/v3/presence/', '').trim().toLowerCase().replace(/^@/, '');
+        if (uname) {
+          handleIncomingPresence(uname, payload);
+        }
+      }
+    }
+
+    function handleIncomingPresence(uname, payload) {
+      let status = 'OFFLINE';
+      let ts = Date.now();
+
+      try {
+        if (payload && payload.startsWith('{')) {
+          const pObj = JSON.parse(payload);
+          status = (pObj.status || 'OFFLINE').trim().toUpperCase();
+          ts = pObj.timestamp || Date.now();
+        } else if (payload && payload.includes(':')) {
+          const parts = payload.split(':');
+          status = (parts[0] || 'OFFLINE').trim().toUpperCase();
+          ts = parseInt(parts[1]) || Date.now();
+        } else if (payload) {
+          status = payload.trim().toUpperCase();
+        }
+      } catch {
+        status = 'OFFLINE';
+      }
+
+      // Status normalization
+      if (status === 'IN_LOBBY' || status === 'LOBBY') {
+        status = 'IN_LOBBY';
+      } else if (status === 'PLAYING' || status === 'IN_GAME') {
+        status = 'PLAYING';
+      } else if (status === 'ONLINE') {
+        status = 'ONLINE';
+      } else {
+        status = 'OFFLINE';
+      }
+
+      if (ts === 0) status = 'OFFLINE';
+
+      // Check freshness: if older than 30s and not OFFLINE, consider OFFLINE
+      if (status !== 'OFFLINE' && (Date.now() - ts > 30000)) {
+        status = 'OFFLINE';
+      }
+
+      globalState.onlineStatuses[uname] = { status, timestamp: ts };
+
+      let player = globalState.players.find(p => p.username === uname);
+      if (player) {
+        player.status = status;
+        if (ts > 0) player.lastSeenTimestamp = Math.max(player.lastSeenTimestamp || 0, ts);
+        updateDashboardStatistics();
+        applyPlayerFilters();
+        if (globalState.selectedPlayer && globalState.selectedPlayer.username === uname) {
+          globalState.selectedPlayer.status = status;
+          renderInspectorHeader();
+        }
+      } else {
+        // Discovered a new registered player via live presence! Fetch them immediately!
+        fetchSinglePlayerImmediate(uname, status, ts);
+      }
+    }
+
+    function upsertPlayerFromRegistry(clean, entry) {
+      if (!clean || !entry) return;
+      let player = globalState.players.find(p => p.username === clean);
+      const liveStatus = globalState.onlineStatuses[clean];
+      const initialStatus = (liveStatus && (Date.now() - liveStatus.timestamp < 30000)) ? liveStatus.status : 'OFFLINE';
+
+      if (!player) {
+        player = {
+          username: clean,
+          displayName: entry.displayName || clean,
+          uid: entry.uid || `user_${clean}`,
+          level: entry.level || 1,
+          gamesPlayed: entry.gamesPlayed || 0,
+          gamesWon: entry.gamesWon || 0,
+          currentStreak: entry.currentStreak || 0,
+          bestStreak: entry.bestStreak || 0,
+          avatarUrl: entry.avatarUrl || null,
+          lastSeenTimestamp: entry.lastSeenTimestamp || Date.now(),
+          status: initialStatus,
+          binId: null,
+          rawReg: entry
+        };
+        globalState.players.push(player);
+        // Asynchronously fetch ExtendsClass bin pointer for statistics
+        getKeyValueDirect(`user_${clean}`, 2).then(bin => {
+          if (bin && !bin.startsWith('{') && bin.length < 50 && bin !== 'null') {
+            player.binId = bin;
+          }
+        });
+      } else {
+        // Update fields if provided
+        if (entry.displayName) player.displayName = entry.displayName;
+        if (entry.level) player.level = entry.level;
+        if (entry.gamesPlayed !== undefined) player.gamesPlayed = entry.gamesPlayed;
+        if (entry.gamesWon !== undefined) player.gamesWon = entry.gamesWon;
+        if (entry.currentStreak !== undefined) player.currentStreak = entry.currentStreak;
+        if (entry.bestStreak !== undefined) player.bestStreak = entry.bestStreak;
+        if (entry.avatarUrl) player.avatarUrl = entry.avatarUrl;
+        if (entry.lastSeenTimestamp) player.lastSeenTimestamp = Math.max(player.lastSeenTimestamp || 0, entry.lastSeenTimestamp);
+        player.rawReg = { ...(player.rawReg || {}), ...entry };
+      }
+
+      updateDashboardStatistics();
+      applyPlayerFilters();
+
+      if (globalState.selectedPlayer && globalState.selectedPlayer.username === clean) {
+        globalState.selectedPlayer = player;
+        renderInspectorHeader();
+      }
+    }
+
+    async function fetchSinglePlayerImmediate(username, status = 'ONLINE', ts = Date.now()) {
+      if (!username || globalState.fetchingPlayers.has(username)) return;
+      globalState.fetchingPlayers.add(username);
+
+      try {
+        let regData = null;
+        let binId = null;
+
+        const rawReg = await getKeyValueDirect(`reg_${username}`, 2);
+        if (rawReg) {
+          const decoded = safeB64Decode(rawReg);
+          if (decoded.startsWith('{')) {
+            regData = JSON.parse(decoded);
+          }
+        }
+
+        const rawBin = await getKeyValueDirect(`user_${username}`, 2);
+        if (rawBin && !rawBin.startsWith('{') && rawBin.length < 50 && rawBin !== 'null') {
+          binId = rawBin;
+        }
+
+        let player = globalState.players.find(p => p.username === username);
+        if (!player) {
+          player = {
+            username: username,
+            displayName: (regData && regData.displayName) ? regData.displayName : username,
+            uid: (regData && regData.uid) ? regData.uid : `user_${username}`,
+            level: (regData && regData.level) ? regData.level : 1,
+            gamesPlayed: (regData && regData.gamesPlayed !== undefined) ? regData.gamesPlayed : 0,
+            gamesWon: (regData && regData.gamesWon !== undefined) ? regData.gamesWon : 0,
+            currentStreak: (regData && regData.currentStreak !== undefined) ? regData.currentStreak : 0,
+            bestStreak: (regData && regData.bestStreak !== undefined) ? regData.bestStreak : 0,
+            avatarUrl: (regData && regData.avatarUrl) ? regData.avatarUrl : null,
+            lastSeenTimestamp: (regData && regData.lastSeenTimestamp) ? regData.lastSeenTimestamp : ts,
+            status: status,
+            binId: binId,
+            rawReg: regData
+          };
+          globalState.players.push(player);
+        } else {
+          player.status = status;
+          if (regData) {
+            if (regData.displayName) player.displayName = regData.displayName;
+            if (regData.level) player.level = regData.level;
+            if (regData.gamesPlayed !== undefined) player.gamesPlayed = regData.gamesPlayed;
+            if (regData.gamesWon !== undefined) player.gamesWon = regData.gamesWon;
+          }
+        }
+
+        updateDashboardStatistics();
+        applyPlayerFilters();
+
+        if (globalState.selectedPlayer && globalState.selectedPlayer.username === username) {
+          globalState.selectedPlayer = player;
+          renderInspectorHeader();
+        }
+      } catch (e) {
+        console.warn('fetchSinglePlayerImmediate error for ' + username, e);
+      } finally {
+        globalState.fetchingPlayers.delete(username);
       }
     }
 
     function renderActiveRooms() {
       const roomsGrid = document.getElementById('roomsGridContainer');
       const badge = document.getElementById('navRoomsBadge');
-      const rooms = Object.values(globalState.activeRooms).filter(r => Date.now() - r.timestamp < 300000);
+      const now = Date.now();
+
+      // Clean up stale or closed rooms: max 90 seconds without heartbeat
+      Object.keys(globalState.activeRooms).forEach(code => {
+        const r = globalState.activeRooms[code];
+        if (!r || r.status === 'CLOSED' || r.status === 'CANCELLED' || (now - (r.lastHeartbeat || r.timestamp || 0)) >= 90000) {
+          delete globalState.activeRooms[code];
+        }
+      });
+
+      const rooms = Object.values(globalState.activeRooms);
       badge.innerText = rooms.length;
 
       if (rooms.length === 0) {
@@ -3703,7 +4090,7 @@
 
             <div class="text-xs theme-subtext space-y-1">
               <div>Host: <span class="font-bold theme-title">@${escapeHtml(r.hostUsername || r.hostName || 'Host')}</span></div>
-              <div>Players: <span class="font-mono text-emerald-500 font-bold">${r.playerCount || 1}/${r.maxPlayers || 2}</span></div>
+              <div>Players: <span class="font-mono text-emerald-500 font-bold">${r.playerCount || (r.players ? r.players.length : 1)}/${r.maxPlayers || 2}</span></div>
               <div>Size: <span class="theme-dimtext">${r.boardSize || 5}x${r.boardSize || 5}</span></div>
             </div>
 
@@ -3731,12 +4118,25 @@
 
     function forceCloseRoom(roomCode) {
       if (globalState.mqttClient && globalState.mqttClient.isConnected()) {
+        // 1. Notify any room subscribers
         const msg = new Paho.MQTT.Message(JSON.stringify({ type: 'ROOM_CANCEL', reason: 'ADMIN_CLOSED' }));
         msg.destinationName = `bingo/v3/room/${roomCode}`;
         globalState.mqttClient.send(msg);
+
+        // 2. Clear retained metadata from EMQX broker (empty payload with retained=true)
+        const clearMsg = new Paho.MQTT.Message("");
+        clearMsg.destinationName = `bingo/v3/room_meta/${roomCode}`;
+        clearMsg.retained = true;
+        clearMsg.qos = 1;
+        globalState.mqttClient.send(clearMsg);
+
         delete globalState.activeRooms[roomCode];
         renderActiveRooms();
-        showToast(`Room #${roomCode} close signal dispatched`, 'info');
+        showToast(`Room #${roomCode} closed and purged from broker`, 'info');
+      } else {
+        delete globalState.activeRooms[roomCode];
+        renderActiveRooms();
+        showToast(`Room #${roomCode} removed locally`, 'info');
       }
     }
 
@@ -4929,6 +5329,11 @@
         clearInterval(globalState.autoRefreshTimer);
         globalState.autoRefreshTimer = null;
       }
+      if (globalState.cloudPingTimer) {
+        clearInterval(globalState.cloudPingTimer);
+        globalState.cloudPingTimer = null;
+      }
+
       if (globalState.autoRefreshIntervalSecs > 0) {
         globalState.autoRefreshTimer = setInterval(() => {
           if (globalState.authenticated) {
@@ -4936,6 +5341,13 @@
           }
         }, globalState.autoRefreshIntervalSecs * 1000);
       }
+
+      // Background latency ping heartbeat every 10 seconds (keeps ping fresh on mobile & desktop)
+      globalState.cloudPingTimer = setInterval(() => {
+        if (globalState.authenticated) {
+          measureCloudPing(false);
+        }
+      }, 10000);
     }
 
     function copyToClipboard(text) {
