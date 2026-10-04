@@ -2212,7 +2212,13 @@ fun RootNavGraph(
                 .background(BingoTheme.colors.background)
         ) {
         // 1. Splash / Auth Gate
-        composable(Screen.AuthGate.route) {
+        composable(
+            route = Screen.AuthGate.route,
+            exitTransition = {
+                androidx.compose.animation.fadeOut(animationSpec = androidx.compose.animation.core.tween(350)) +
+                androidx.compose.animation.scaleOut(targetScale = 1.25f, animationSpec = androidx.compose.animation.core.tween(350, easing = androidx.compose.animation.core.FastOutSlowInEasing))
+            }
+        ) {
             AuthGateScreen(
                 authRepository = authRepository,
                 onNavigateToLogin = {
@@ -2241,7 +2247,13 @@ fun RootNavGraph(
         }
 
         // 3. Main Container Screen (3 tabs: Home, Dashboard, Settings with swipe & floating pill)
-        composable(Screen.MainMenu.route) {
+        composable(
+            route = Screen.MainMenu.route,
+            enterTransition = {
+                androidx.compose.animation.fadeIn(animationSpec = androidx.compose.animation.core.tween(350)) +
+                androidx.compose.animation.scaleIn(initialScale = 0.94f, animationSpec = androidx.compose.animation.core.tween(350, easing = androidx.compose.animation.core.FastOutSlowInEasing))
+            }
+        ) {
             com.bingo.multiplayer.presentation.menu.MainContainerScreen(
                 authRepository = authRepository,
                 friendsRepository = friendsRepository,

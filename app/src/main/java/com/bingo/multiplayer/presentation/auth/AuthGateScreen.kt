@@ -44,15 +44,16 @@ fun AuthGateScreen(
     val tokens = BingoTheme.colors
     val context = LocalContext.current
 
-    val iconScale = remember { Animatable(0.72f) }
+    val iconScale = remember { Animatable(0.58f) }
     val iconAlpha = remember { Animatable(0f) }
 
     LaunchedEffect(Unit) {
-        // 1. Smooth opening scale and alpha reveal animation (~700ms)
+        // 1. Smooth opening zoom-in and alpha reveal animation (~650ms)
+        val zoomInSpec = androidx.compose.animation.core.CubicBezierEasing(0.16f, 1f, 0.3f, 1f)
         launch {
             iconScale.animateTo(
                 targetValue = 1.0f,
-                animationSpec = tween(durationMillis = 700, easing = FastOutSlowInEasing)
+                animationSpec = tween(durationMillis = 650, easing = zoomInSpec)
             )
         }
         launch {
@@ -75,8 +76,8 @@ fun AuthGateScreen(
             } catch (_: Exception) {}
         }
 
-        // 3. Keep big launch icon visible on app opening (~1s)
-        delay(1050L)
+        // 3. Keep launch icon visible during opening (~900ms)
+        delay(950L)
         refreshJob.join()
 
         // 4. Ensure auth state is resolved
@@ -87,6 +88,18 @@ fun AuthGateScreen(
             currentAuth = authRepository.authState.value
             waitIterations++
         }
+
+        // 5. Smooth cinematic zoom-in transition on app opening exit
+        launch {
+            iconScale.animateTo(
+                targetValue = 1.35f,
+                animationSpec = tween(durationMillis = 380, easing = FastOutSlowInEasing)
+            )
+        }
+        iconAlpha.animateTo(
+            targetValue = 0f,
+            animationSpec = tween(durationMillis = 350, easing = LinearEasing)
+        )
 
         withContext(Dispatchers.Main) {
             when (currentAuth) {
@@ -107,7 +120,7 @@ fun AuthGateScreen(
             painter = painterResource(id = R.drawable.ic_bingo_logo),
             contentDescription = "Bingo Logo",
             modifier = Modifier
-                .size(220.dp)
+                .size(280.dp)
                 .scale(iconScale.value)
                 .alpha(iconAlpha.value)
         )
