@@ -2,19 +2,20 @@
 
 > Fast, aesthetic, real-time multiplayer Bingo with friends — online or offline over Wi-Fi / Hotspot!
 
-[![Download APK](https://img.shields.io/badge/Download-Android%20APK-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/VamsiReddyBora/BINGO/releases/download/v1.2/Bingo.apk)
-[![Release](https://img.shields.io/badge/Release-v1.2-FF4081?style=for-the-badge&logo=github&logoColor=white)](https://github.com/VamsiReddyBora/BINGO/releases/tag/v1.2)
-[![Platform](https://img.shields.io/badge/Platform-Android%207.0%2B-blue?style=for-the-badge&logo=android&logoColor=white)](https://github.com/VamsiReddyBora/BINGO/releases/tag/v1.2)
+[![Download APK](https://img.shields.io/badge/Download-Android%20APK-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/VamsiReddyBora/BINGO/releases/download/v1.3/Bingo.apk)
+[![Release](https://img.shields.io/badge/Release-v1.3-FF4081?style=for-the-badge&logo=github&logoColor=white)](https://github.com/VamsiReddyBora/BINGO/releases/tag/v1.3)
+[![Platform](https://img.shields.io/badge/Platform-Android%207.0%2B-blue?style=for-the-badge&logo=android&logoColor=white)](https://github.com/VamsiReddyBora/BINGO/releases/tag/v1.3)
 
 ---
 
-### 📥 [Download Native Android APK (Bingo.apk)](https://github.com/VamsiReddyBora/BINGO/releases/download/v1.2/Bingo.apk)
+### 📥 [Download Native Android APK (Bingo.apk)](https://github.com/VamsiReddyBora/BINGO/releases/download/v1.3/Bingo.apk)
 
 ---
 
 ## ⚡ Highlights
 
 * 🌐 **Online & Offline Multiplayer**: Play with 2 to 8 players via 6-digit room codes or offline local Wi-Fi / Hotspot.
+* 🔄 **In-App Over-The-Air (OTA) Updates**: Seamless auto-update detection and 1-tap installation directly inside the app.
 * 🖤 **AMOLED Dark & Clean Light Themes**: Pure 100% black OLED theme with customizable board cell colors.
 * 📐 **Custom & Auto Boards**: Play classic auto boards or design your own layout from 5×5 up to 8×8 grids.
 * 👥 **Social & Friends**: Add friends, see live online/in-lobby status, and invite with 1 tap.
