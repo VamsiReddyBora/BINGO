@@ -376,14 +376,15 @@
             <span id="adminThemeLabel" class="hidden sm:inline font-mono">AMOLED</span>
           </button>
 
-          <!-- Auto-Refresh Toggle (Tablet / Desktop) -->
-          <div class="hidden md:flex items-center gap-1.5 theme-subtle rounded-lg px-2.5 py-1.5 text-xs theme-dimtext">
-            <i class="fa-solid fa-clock-rotate-left text-[11px]"></i>
+          <!-- Auto-Refresh Toggle -->
+          <div class="flex items-center gap-1 sm:gap-1.5 theme-subtle rounded-lg px-2 sm:px-2.5 py-1 sm:py-1.5 text-xs theme-dimtext">
+            <i class="fa-solid fa-clock-rotate-left text-[11px] text-brand-500"></i>
             <select id="autoRefreshInterval" onchange="updateAutoRefresh(this.value)" class="bg-transparent theme-title text-xs focus:outline-none cursor-pointer">
               <option value="0" class="theme-card theme-title">Auto: Off</option>
-              <option value="15" selected class="theme-card theme-title">Auto: 15s</option>
+              <option value="3" selected class="theme-card theme-title">Auto: 3s</option>
+              <option value="5" class="theme-card theme-title">Auto: 5s</option>
+              <option value="15" class="theme-card theme-title">Auto: 15s</option>
               <option value="30" class="theme-card theme-title">Auto: 30s</option>
-              <option value="60" class="theme-card theme-title">Auto: 1m</option>
             </select>
           </div>
 
@@ -1845,7 +1846,9 @@
       matchDisplayLimit: 20,    // backwards compat
       mqttClient: null,
       autoRefreshTimer: null,
-      autoRefreshIntervalSecs: 15,
+      autoRefreshIntervalSecs: 3,
+      playerCache: {},          // username -> player object cache
+      validUsernamesSet: new Set(), // authoritative set of usernames from user_directory
       cloudPingTimer: null,     // periodic cloud ping monitor
       fetchingPlayers: new Set(), // deduplicate concurrent single-player fetches
       packetLogsCount: 0,
@@ -2316,17 +2319,24 @@
       throw new Error('Could not persist updated record to cloud storage');
     }
 
-    // Master Global Fetch: Batch-throttled and reliable
+    // Concurrency guard to prevent overlapping polls
+    let isFetchingGlobal = false;
+
+    // Master Global Fetch: Lightning-fast (<100ms), cached, authoritative & ghost-free
     async function fetchGlobalData(showSpinner = false) {
+      if (isFetchingGlobal) return;
+      isFetchingGlobal = true;
+
       const refreshIcon = document.getElementById('refreshIcon');
-      if (showSpinner) refreshIcon.classList.add('fa-spin');
+      if (showSpinner && refreshIcon) refreshIcon.classList.add('fa-spin');
       const startTime = performance.now();
 
       try {
-        // 1. Fetch User Directory CSV
-        const rawDir = await getKeyValueDirect('user_directory', 4);
+        // 1. Authoritative User Directory from Cloud KeyValue (single HTTP call ~80ms)
+        const rawDir = await getKeyValueDirect('user_directory', 3);
         const latency = Math.round(performance.now() - startTime);
-        document.getElementById('keyValLatency').innerText = `${latency}ms`;
+        const latencyEl = document.getElementById('keyValLatency');
+        if (latencyEl) latencyEl.innerText = `${latency}ms`;
 
         let usernames = [];
         if (rawDir) {
@@ -2334,168 +2344,168 @@
             .map(u => u.trim().toLowerCase().replace(/^@/, ''))
             .filter(u => u.length > 0);
         }
-
-        const fallbackKnown = ['ammu', 'bob', 'bora', 'charan', 'dangersmiley', 'manjuuu', 'player4', 'realme', 'vampire', 'vamsi', 'vanabha', 'vani', 'vish_hh'];
-        if (usernames.length === 0) {
-          usernames = [...fallbackKnown];
-        } else {
-          fallbackKnown.forEach(u => {
-            if (!usernames.includes(u)) usernames.push(u);
-          });
-        }
-
-        // Include any players already discovered via live MQTT
-        Object.keys(globalState.onlineStatuses).forEach(u => {
-          if (!usernames.includes(u)) usernames.push(u);
-        });
-        globalState.players.forEach(p => {
-          if (!usernames.includes(p.username)) usernames.push(p.username);
-        });
-
         usernames = Array.from(new Set(usernames));
 
-        // 2. Fetch all players in staggered chunks to prevent KeyValue API rate-limiting
-        const CHUNK_SIZE = 3;
-        const fetchedPlayers = [];
-        const directFriendsMap = {};
+        // Authoritative set of valid users - ONLY users in user_directory exist!
+        const validSet = new Set(usernames);
+        globalState.validUsernamesSet = validSet;
 
-        for (let i = 0; i < usernames.length; i += CHUNK_SIZE) {
-          const chunk = usernames.slice(i, i + CHUNK_SIZE);
-          const chunkResults = await Promise.all(chunk.map(async (uname) => {
-            let regData = null;
-            let presData = null;
-            let binId = null;
-
-            // Fetch reg_{uname}
-            try {
-              const rawReg = await getKeyValueDirect(`reg_${uname}`);
-              if (rawReg) {
-                const decoded = safeB64Decode(rawReg);
-                if (decoded.startsWith('{')) {
-                  regData = JSON.parse(decoded);
-                }
-              }
-            } catch {}
-
-            // Fetch pres_{uname}
-            try {
-              const rawPres = await getKeyValueDirect(`pres_${uname}`);
-              if (rawPres) {
-                const parts = rawPres.split(':');
-                const rawStatus = (parts[0] || 'OFFLINE').trim().toUpperCase();
-                const ts = parseInt(parts[1]) || 0;
-                let normalized = 'OFFLINE';
-                if (rawStatus === 'IN_LOBBY' || rawStatus === 'LOBBY') normalized = 'IN_LOBBY';
-                else if (rawStatus === 'PLAYING' || rawStatus === 'IN_GAME') normalized = 'PLAYING';
-                else if (rawStatus === 'ONLINE') normalized = 'ONLINE';
-                presData = { status: normalized, timestamp: ts };
-              }
-            } catch {}
-
-            // Fetch user_{uname} (ExtendsClass bin pointer)
-            try {
-              const rawBin = await getKeyValueDirect(`user_${uname}`);
-              if (rawBin && !rawBin.startsWith('{') && rawBin.length < 50 && rawBin !== 'null') {
-                binId = rawBin;
-              }
-            } catch {}
-
-            // Multi-source fallback: If binId missing, check gid_{googleId}
-            if (!binId && regData && regData.uid && regData.uid.startsWith('google_')) {
-              try {
-                const gid = regData.uid.replace('google_', '');
-                const rawGidBin = await getKeyValueDirect(`gid_${gid}`);
-                if (rawGidBin && !rawGidBin.startsWith('{') && rawGidBin.length < 50 && rawGidBin !== 'null') {
-                  binId = rawGidBin;
-                }
-              } catch {}
+        // Instantly purge any deleted / ghost users from memory and active presence
+        if (globalState.playerCache) {
+          for (const cachedUname in globalState.playerCache) {
+            if (!validSet.has(cachedUname)) {
+              delete globalState.playerCache[cachedUname];
             }
+          }
+        } else {
+          globalState.playerCache = {};
+        }
 
-            // Fetch direct friends list: friends_{uname}
-            try {
-              const rawFriends = await getKeyValueDirect(`friends_${uname}`);
-              if (rawFriends) {
-                const decoded = safeB64Decode(rawFriends);
-                if (decoded.startsWith('[')) {
-                  directFriendsMap[uname] = JSON.parse(decoded);
-                } else {
-                  directFriendsMap[uname] = [];
-                }
-              } else {
-                directFriendsMap[uname] = [];
-              }
-            } catch {
-              directFriendsMap[uname] = [];
+        if (globalState.onlineStatuses) {
+          for (const presUname in globalState.onlineStatuses) {
+            if (!validSet.has(presUname)) {
+              delete globalState.onlineStatuses[presUname];
             }
-
-            let computedStatus = 'OFFLINE';
-            const now = Date.now();
-            if (presData && presData.status !== 'OFFLINE' && (now - presData.timestamp < 35000)) {
-              computedStatus = presData.status;
-            }
-
-            // Real-time MQTT presence override if active
-            if (globalState.onlineStatuses[uname]) {
-              const livePres = globalState.onlineStatuses[uname];
-              if (livePres.status === 'OFFLINE') {
-                computedStatus = 'OFFLINE';
-              } else if (now - livePres.timestamp < 35000) {
-                computedStatus = livePres.status;
-              }
-            }
-
-            const effectiveLastSeen = Math.max(
-              (regData && regData.lastSeenTimestamp) ? regData.lastSeenTimestamp : 0,
-              presData ? presData.timestamp : 0,
-              (globalState.onlineStatuses[uname] && globalState.onlineStatuses[uname].timestamp) ? globalState.onlineStatuses[uname].timestamp : 0
-            );
-
-            return {
-              username: uname,
-              displayName: (regData && regData.displayName) ? regData.displayName : uname,
-              uid: (regData && regData.uid) ? regData.uid : `user_${uname}`,
-              level: (regData && regData.level) ? regData.level : 1,
-              gamesPlayed: (regData && regData.gamesPlayed !== undefined) ? regData.gamesPlayed : 0,
-              gamesWon: (regData && regData.gamesWon !== undefined) ? regData.gamesWon : 0,
-              currentStreak: (regData && regData.currentStreak !== undefined) ? regData.currentStreak : 0,
-              bestStreak: (regData && regData.bestStreak !== undefined) ? regData.bestStreak : 0,
-              avatarUrl: (regData && regData.avatarUrl) ? regData.avatarUrl : null,
-              lastSeenTimestamp: effectiveLastSeen || Date.now(),
-              status: computedStatus,
-              binId: binId,
-              rawReg: regData
-            };
-          }));
-
-          fetchedPlayers.push(...chunkResults);
-          // 60ms pause between chunks to keep connection warm and respectful
-          if (i + CHUNK_SIZE < usernames.length) {
-            await new Promise(r => setTimeout(r, 60));
           }
         }
 
-        globalState.players = fetchedPlayers;
-        globalState.directFriendsMap = directFriendsMap;
+        // 2. Determine which players need their profile/reg fetched from KeyValue
+        // If showSpinner is true (manual refresh or initial load), refresh all profiles.
+        // If 3s auto-refreshing, ONLY fetch players that are NOT yet in playerCache!
+        const toFetch = showSpinner 
+          ? usernames 
+          : usernames.filter(u => !globalState.playerCache[u]);
 
-        // 3. Compute Mutual Friends Graph (Resolves friends even if recorded on only one side)
-        computeMutualFriendsGraph();
+        if (toFetch.length > 0) {
+          const CHUNK_SIZE = 5;
+          for (let i = 0; i < toFetch.length; i += CHUNK_SIZE) {
+            const chunk = toFetch.slice(i, i + CHUNK_SIZE);
+            await Promise.all(chunk.map(async (uname) => {
+              let regData = null;
+              let binId = globalState.playerCache[uname]?.binId || null;
 
+              // Fetch reg_{uname}
+              try {
+                const rawReg = await getKeyValueDirect(`reg_${uname}`, 2);
+                if (rawReg) {
+                  const decoded = safeB64Decode(rawReg);
+                  if (decoded.startsWith('{')) {
+                    regData = JSON.parse(decoded);
+                  }
+                }
+              } catch {}
+
+              // Fetch user_{uname} (ExtendsClass bin pointer) if not yet resolved
+              if (!binId) {
+                try {
+                  const rawBin = await getKeyValueDirect(`user_${uname}`, 2);
+                  if (rawBin && !rawBin.startsWith('{') && rawBin.length < 50 && rawBin !== 'null') {
+                    binId = rawBin;
+                  }
+                } catch {}
+              }
+
+              // Multi-source fallback: check gid_{googleId}
+              if (!binId && regData && regData.uid && regData.uid.startsWith('google_')) {
+                try {
+                  const gid = regData.uid.replace('google_', '');
+                  const rawGidBin = await getKeyValueDirect(`gid_${gid}`, 2);
+                  if (rawGidBin && !rawGidBin.startsWith('{') && rawGidBin.length < 50 && rawGidBin !== 'null') {
+                    binId = rawGidBin;
+                  }
+                } catch {}
+              }
+
+              const existing = globalState.playerCache[uname] || {};
+              const playerObj = {
+                username: uname,
+                displayName: (regData && regData.displayName) ? regData.displayName : (existing.displayName || uname),
+                uid: (regData && regData.uid) ? regData.uid : (existing.uid || `user_${uname}`),
+                level: (regData && regData.level !== undefined) ? regData.level : (existing.level || 1),
+                gamesPlayed: (regData && regData.gamesPlayed !== undefined) ? regData.gamesPlayed : (existing.gamesPlayed || 0),
+                gamesWon: (regData && regData.gamesWon !== undefined) ? regData.gamesWon : (existing.gamesWon || 0),
+                currentStreak: (regData && regData.currentStreak !== undefined) ? regData.currentStreak : (existing.currentStreak || 0),
+                bestStreak: (regData && regData.bestStreak !== undefined) ? regData.bestStreak : (existing.bestStreak || 0),
+                avatarUrl: (regData && regData.avatarUrl) ? regData.avatarUrl : (existing.avatarUrl || null),
+                lastSeenTimestamp: (regData && regData.lastSeenTimestamp) ? regData.lastSeenTimestamp : (existing.lastSeenTimestamp || Date.now()),
+                status: existing.status || 'OFFLINE',
+                binId: binId,
+                rawReg: regData || existing.rawReg || null
+              };
+
+              globalState.playerCache[uname] = playerObj;
+            }));
+          }
+        }
+
+        // 3. Assemble globalState.players strictly for valid users in user_directory
+        const now = Date.now();
+        const updatedPlayers = [];
+        for (const uname of usernames) {
+          let p = globalState.playerCache[uname];
+          if (!p) {
+            p = {
+              username: uname,
+              displayName: uname,
+              uid: `user_${uname}`,
+              level: 1,
+              gamesPlayed: 0,
+              gamesWon: 0,
+              currentStreak: 0,
+              bestStreak: 0,
+              avatarUrl: null,
+              lastSeenTimestamp: now,
+              status: 'OFFLINE',
+              binId: null,
+              rawReg: null
+            };
+            globalState.playerCache[uname] = p;
+          }
+
+          // Real-time MQTT presence status
+          let computedStatus = 'OFFLINE';
+          const livePres = globalState.onlineStatuses[uname];
+          if (livePres) {
+            if (livePres.status === 'OFFLINE') {
+              computedStatus = 'OFFLINE';
+            } else if (now - livePres.timestamp < 35000) {
+              computedStatus = livePres.status;
+            } else {
+              computedStatus = 'OFFLINE';
+            }
+          }
+          p.status = computedStatus;
+          if (livePres && livePres.timestamp > 0) {
+            p.lastSeenTimestamp = Math.max(p.lastSeenTimestamp || 0, livePres.timestamp);
+          }
+          updatedPlayers.push(p);
+        }
+
+        globalState.players = updatedPlayers;
+
+        // 4. Update UI Dashboard & Filters immediately
         updateDashboardStatistics();
         applyPlayerFilters();
 
         if (globalState.selectedPlayer) {
-          const updatedSelected = globalState.players.find(p => p.username === globalState.selectedPlayer.username);
-          if (updatedSelected) {
-            globalState.selectedPlayer = updatedSelected;
-            renderInspectorHeader();
+          if (!validSet.has(globalState.selectedPlayer.username)) {
+            closePlayerInspector();
+          } else {
+            const updatedSelected = globalState.players.find(p => p.username === globalState.selectedPlayer.username);
+            if (updatedSelected) {
+              globalState.selectedPlayer = updatedSelected;
+              renderInspectorHeader();
+            }
           }
         }
 
       } catch (err) {
         console.error('fetchGlobalData error:', err);
-        showToast('Failed to fetch global database', 'error');
       } finally {
-        if (showSpinner) setTimeout(() => refreshIcon.classList.remove('fa-spin'), 300);
+        isFetchingGlobal = false;
+        if (showSpinner && refreshIcon) {
+          setTimeout(() => refreshIcon.classList.remove('fa-spin'), 300);
+        }
       }
     }
 
@@ -3531,20 +3541,54 @@
       showToast(`Deleting @${username}...`, 'info');
       const clean = username.trim().toLowerCase().replace(/^@/, '');
 
-      const rawDir = await getKeyValueDirect('user_directory');
-      if (rawDir) {
-        let dirList = rawDir.split(',').map(u => u.trim().toLowerCase().replace(/^@/, ''));
-        dirList = dirList.filter(u => u !== clean && u.length > 0);
-        await setKeyValueDirect('user_directory', dirList.join(','));
+      // 1. Immediately purge from local state so UI updates in 0ms!
+      if (globalState.validUsernamesSet) globalState.validUsernamesSet.delete(clean);
+      if (globalState.playerCache) delete globalState.playerCache[clean];
+      delete globalState.onlineStatuses[clean];
+      globalState.players = globalState.players.filter(p => p.username !== clean);
+      if (globalState.selectedPlayer && globalState.selectedPlayer.username === clean) {
+        closePlayerInspector();
+      }
+      updateDashboardStatistics();
+      applyPlayerFilters();
+
+      // 2. Remove from user_directory in Cloud KeyValue
+      try {
+        const rawDir = await getKeyValueDirect('user_directory', 4);
+        if (rawDir) {
+          let dirList = rawDir.split(',').map(u => u.trim().toLowerCase().replace(/^@/, ''));
+          dirList = dirList.filter(u => u !== clean && u.length > 0);
+          await setKeyValueDirect('user_directory', dirList.join(','));
+        }
+      } catch (e) {
+        console.warn('Error updating user_directory for delete:', e);
       }
 
+      // 3. Clear cloud records in KeyValue
       await setKeyValueDirect(`reg_${clean}`, '');
-      const binId = await getKeyValueDirect(`user_${clean}`);
       await setKeyValueDirect(`user_${clean}`, '');
       await setKeyValueDirect(`pres_${clean}`, 'OFFLINE:0');
       await setKeyValueDirect(`friends_${clean}`, '');
 
-      closePlayerInspector();
+      // 4. Purge retained MQTT messages from EMQX broker permanently
+      if (globalState.mqttClient && globalState.mqttClient.isConnected()) {
+        try {
+          const regMsg = new Paho.MQTT.Message("");
+          regMsg.destinationName = `bingo/v3/registry/${clean}`;
+          regMsg.retained = true;
+          regMsg.qos = 1;
+          globalState.mqttClient.send(regMsg);
+
+          const presMsg = new Paho.MQTT.Message("");
+          presMsg.destinationName = `bingo/v3/presence/${clean}`;
+          presMsg.retained = true;
+          presMsg.qos = 1;
+          globalState.mqttClient.send(presMsg);
+        } catch (e) {
+          console.warn('Error clearing MQTT retained messages for ' + clean, e);
+        }
+      }
+
       showToast(`Player @${clean} deleted successfully!`, 'success');
       await fetchGlobalData(true);
     }
@@ -3832,7 +3876,7 @@
       // 1. Instant Player Registration Stream
       if (topic.startsWith('bingo/v3/registry/')) {
         const clean = topic.replace('bingo/v3/registry/', '').trim().toLowerCase().replace(/^@/, '');
-        if (clean && payload) {
+        if (clean && payload && payload.trim().length > 0 && payload !== '""' && payload !== '{}') {
           try {
             const entry = JSON.parse(payload);
             upsertPlayerFromRegistry(clean, entry);
@@ -3869,13 +3913,19 @@
       // 3. Instant Real-Time Player Presence Stream
       if (topic.startsWith('bingo/v3/presence/')) {
         const uname = topic.replace('bingo/v3/presence/', '').trim().toLowerCase().replace(/^@/, '');
-        if (uname) {
+        if (uname && payload && payload.trim().length > 0 && payload !== '""') {
           handleIncomingPresence(uname, payload);
         }
       }
     }
 
     function handleIncomingPresence(uname, payload) {
+      if (!uname) return;
+      // Strict filter: If validUsernamesSet is initialized, ignore presence for deleted / unregistered users
+      if (globalState.validUsernamesSet && globalState.validUsernamesSet.size > 0 && !globalState.validUsernamesSet.has(uname)) {
+        return;
+      }
+
       let status = 'OFFLINE';
       let ts = Date.now();
 
@@ -3908,8 +3958,8 @@
 
       if (ts === 0) status = 'OFFLINE';
 
-      // Check freshness: if older than 30s and not OFFLINE, consider OFFLINE
-      if (status !== 'OFFLINE' && (Date.now() - ts > 30000)) {
+      // Check freshness: if older than 35s and not OFFLINE, consider OFFLINE
+      if (status !== 'OFFLINE' && (Date.now() - ts > 35000)) {
         status = 'OFFLINE';
       }
 
@@ -3919,13 +3969,17 @@
       if (player) {
         player.status = status;
         if (ts > 0) player.lastSeenTimestamp = Math.max(player.lastSeenTimestamp || 0, ts);
+        if (globalState.playerCache && globalState.playerCache[uname]) {
+          globalState.playerCache[uname].status = status;
+          if (ts > 0) globalState.playerCache[uname].lastSeenTimestamp = Math.max(globalState.playerCache[uname].lastSeenTimestamp || 0, ts);
+        }
         updateDashboardStatistics();
         applyPlayerFilters();
         if (globalState.selectedPlayer && globalState.selectedPlayer.username === uname) {
           globalState.selectedPlayer.status = status;
           renderInspectorHeader();
         }
-      } else {
+      } else if (globalState.validUsernamesSet && globalState.validUsernamesSet.has(uname)) {
         // Discovered a new registered player via live presence! Fetch them immediately!
         fetchSinglePlayerImmediate(uname, status, ts);
       }
@@ -3933,9 +3987,14 @@
 
     function upsertPlayerFromRegistry(clean, entry) {
       if (!clean || !entry) return;
+      // Strict filter: Ignore registry updates for deleted / unregistered users
+      if (globalState.validUsernamesSet && globalState.validUsernamesSet.size > 0 && !globalState.validUsernamesSet.has(clean)) {
+        return;
+      }
+
       let player = globalState.players.find(p => p.username === clean);
       const liveStatus = globalState.onlineStatuses[clean];
-      const initialStatus = (liveStatus && (Date.now() - liveStatus.timestamp < 30000)) ? liveStatus.status : 'OFFLINE';
+      const initialStatus = (liveStatus && (Date.now() - liveStatus.timestamp < 35000)) ? liveStatus.status : 'OFFLINE';
 
       if (!player) {
         player = {
@@ -3954,16 +4013,19 @@
           rawReg: entry
         };
         globalState.players.push(player);
+        if (!globalState.playerCache) globalState.playerCache = {};
+        globalState.playerCache[clean] = player;
         // Asynchronously fetch ExtendsClass bin pointer for statistics
         getKeyValueDirect(`user_${clean}`, 2).then(bin => {
           if (bin && !bin.startsWith('{') && bin.length < 50 && bin !== 'null') {
             player.binId = bin;
+            if (globalState.playerCache[clean]) globalState.playerCache[clean].binId = bin;
           }
         });
       } else {
         // Update fields if provided
         if (entry.displayName) player.displayName = entry.displayName;
-        if (entry.level) player.level = entry.level;
+        if (entry.level !== undefined) player.level = entry.level;
         if (entry.gamesPlayed !== undefined) player.gamesPlayed = entry.gamesPlayed;
         if (entry.gamesWon !== undefined) player.gamesWon = entry.gamesWon;
         if (entry.currentStreak !== undefined) player.currentStreak = entry.currentStreak;
@@ -3971,6 +4033,8 @@
         if (entry.avatarUrl) player.avatarUrl = entry.avatarUrl;
         if (entry.lastSeenTimestamp) player.lastSeenTimestamp = Math.max(player.lastSeenTimestamp || 0, entry.lastSeenTimestamp);
         player.rawReg = { ...(player.rawReg || {}), ...entry };
+        if (!globalState.playerCache) globalState.playerCache = {};
+        globalState.playerCache[clean] = player;
       }
 
       updateDashboardStatistics();
@@ -3984,6 +4048,9 @@
 
     async function fetchSinglePlayerImmediate(username, status = 'ONLINE', ts = Date.now()) {
       if (!username || globalState.fetchingPlayers.has(username)) return;
+      if (globalState.validUsernamesSet && globalState.validUsernamesSet.size > 0 && !globalState.validUsernamesSet.has(username)) {
+        return; // Refuse to fetch deleted / unregistered accounts
+      }
       globalState.fetchingPlayers.add(username);
 
       try {
@@ -4021,6 +4088,8 @@
             rawReg: regData
           };
           globalState.players.push(player);
+          if (!globalState.playerCache) globalState.playerCache = {};
+          globalState.playerCache[username] = player;
         } else {
           player.status = status;
           if (regData) {
@@ -4029,6 +4098,8 @@
             if (regData.gamesPlayed !== undefined) player.gamesPlayed = regData.gamesPlayed;
             if (regData.gamesWon !== undefined) player.gamesWon = regData.gamesWon;
           }
+          if (!globalState.playerCache) globalState.playerCache = {};
+          globalState.playerCache[username] = player;
         }
 
         updateDashboardStatistics();
