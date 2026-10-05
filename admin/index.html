@@ -4,9 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>BINGO Server | Master Admin Console</title>
-  <link rel="icon" type="image/png" href="favicon.png">
-  <link rel="apple-touch-icon" href="icon-192.png">
-  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/png" href="/BINGO/admin/favicon.png">
+  <link rel="apple-touch-icon" href="/BINGO/admin/icon-192.png">
+  <link rel="manifest" href="/BINGO/admin/manifest.json?v=2">
   <meta name="theme-color" content="#000000">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -321,8 +321,19 @@
       <div class="w-[500px] h-[500px] bg-emerald-500/10 dark:bg-emerald-500/5 rounded-full blur-3xl -z-10 animate-pulse" style="animation-duration: 4s;"></div>
     </div>
 
-    <!-- Theme Toggle Button on Login Screen (Top Right - Icon Only) -->
-    <div class="absolute top-4 right-4 sm:top-5 sm:right-5 z-20">
+    <!-- Theme Toggle & Install Buttons on Login Screen (Top Right) -->
+    <div class="absolute top-4 right-4 sm:top-5 sm:right-5 z-20 flex items-center gap-2">
+      <button 
+        type="button" 
+        onclick="promptPwaInstall()" 
+        id="lockInstallBtn"
+        class="hidden px-2.5 py-2 sm:px-3 sm:py-2 rounded-xl flex items-center gap-1.5 text-xs font-bold shadow-lg transition-all active:scale-95 border theme-subtle hover:scale-105 cursor-pointer text-emerald-400"
+        title="Install Bingo Server App"
+      >
+        <i class="fa-solid fa-download"></i>
+        <span>Install</span>
+      </button>
+
       <button 
         type="button" 
         onclick="toggleTheme()" 
@@ -2200,45 +2211,73 @@
     let deferredInstallPrompt = null;
 
     function initPwa() {
+      // 1. Immediately register the Service Worker without waiting for 'load'
       if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('./sw.js')
-            .then((reg) => {
-              console.log('PWA ServiceWorker registered successfully:', reg.scope);
-            })
-            .catch((err) => {
-              console.warn('PWA ServiceWorker registration failed:', err);
-            });
-        });
+        navigator.serviceWorker.register('/BINGO/admin/sw.js?v=2', { scope: '/BINGO/admin/' })
+          .then((reg) => {
+            console.log('PWA ServiceWorker registered successfully:', reg.scope);
+            reg.update();
+          })
+          .catch((err) => {
+            console.warn('PWA ServiceWorker registration failed:', err);
+          });
       }
 
+      // 2. Check if already running in standalone mode (already installed)
+      const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+      if (isStandalone) {
+        console.log('Running in standalone PWA mode');
+        const installCard = document.getElementById('pwaInstallCard');
+        if (installCard) installCard.classList.add('hidden');
+        const lockBtn = document.getElementById('lockInstallBtn');
+        if (lockBtn) lockBtn.classList.add('hidden');
+        return;
+      }
+
+      // If not running as standalone app, show Install button on lock screen
+      const lockBtn = document.getElementById('lockInstallBtn');
+      if (lockBtn) lockBtn.classList.remove('hidden');
+
+      // 3. Capture beforeinstallprompt event
       window.addEventListener('beforeinstallprompt', (e) => {
         e.preventDefault();
         deferredInstallPrompt = e;
         console.log('PWA beforeinstallprompt captured');
         const installCard = document.getElementById('pwaInstallCard');
         if (installCard) installCard.classList.remove('hidden');
+        if (lockBtn) lockBtn.classList.remove('hidden');
       });
 
+      // 4. Handle completed installation
       window.addEventListener('appinstalled', () => {
         console.log('Bingo Server PWA was installed successfully');
         deferredInstallPrompt = null;
         const installCard = document.getElementById('pwaInstallCard');
         if (installCard) installCard.classList.add('hidden');
+        const lockBtn = document.getElementById('lockInstallBtn');
+        if (lockBtn) lockBtn.classList.add('hidden');
         showToast('Bingo Server installed as standalone App!', 'success');
       });
     }
 
     async function promptPwaInstall() {
       if (!deferredInstallPrompt) {
-        showToast('To install: tap your browser menu (⋮) -> Install App', 'info');
+        showToast('To install: tap your browser menu (⋮) -> Install app (or Add to Home screen)', 'info');
         return;
       }
-      deferredInstallPrompt.prompt();
-      const { outcome } = await deferredInstallPrompt.userChoice;
-      console.log('User response to install prompt:', outcome);
-      if (outcome === 'accepted') {
-        showToast('Installing Bingo Server App...', 'success');
+      try {
+        deferredInstallPrompt.prompt();
+        const { outcome } = await deferredInstallPrompt.userChoice;
+        console.log('User response to install prompt:', outcome);
+        if (outcome === 'accepted') {
+          showToast('Installing Bingo Server App...', 'success');
+          const lockBtn = document.getElementById('lockInstallBtn');
+          if (lockBtn) lockBtn.classList.add('hidden');
+          const installCard = document.getElementById('pwaInstallCard');
+          if (installCard) installCard.classList.add('hidden');
+        }
+      } catch (err) {
+        console.warn('Install prompt error:', err);
       }
       deferredInstallPrompt = null;
     }

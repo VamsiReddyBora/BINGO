@@ -1,41 +1,43 @@
 // Bingo Server Admin Service Worker (PWA)
-const CACHE_NAME = 'bingo-admin-v1';
+const CACHE_NAME = 'bingo-admin-v2';
 const ASSETS_TO_CACHE = [
-  './',
-  './index.html',
-  './manifest.json',
-  './favicon.png',
-  './icon-192.png',
-  './icon-512.png',
-  './icon-maskable-192.png',
-  './icon-maskable-512.png'
+  '/BINGO/admin/',
+  '/BINGO/admin/index.html',
+  '/BINGO/admin/manifest.json',
+  '/BINGO/admin/favicon.png',
+  '/BINGO/admin/icon-192.png',
+  '/BINGO/admin/icon-512.png',
+  '/BINGO/admin/icon-maskable-192.png',
+  '/BINGO/admin/icon-maskable-512.png'
 ];
 
-// Install: Cache critical app shell assets
+// Install: Cache core assets and activate immediately
 self.addEventListener('install', (event) => {
+  self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(ASSETS_TO_CACHE);
-    }).then(() => self.skipWaiting())
+      return cache.addAll(ASSETS_TO_CACHE).catch((err) => {
+        console.warn('Cache addAll warning:', err);
+      });
+    })
   );
 });
 
-// Activate: Clean up old caches
+// Activate: Claim clients immediately and clear old caches
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) => {
-      return Promise.all(
-        keys.map((key) => {
-          if (key !== CACHE_NAME) {
-            return caches.delete(key);
-          }
-        })
-      );
-    }).then(() => self.clients.claim())
+    Promise.all([
+      self.clients.claim(),
+      caches.keys().then((keys) => {
+        return Promise.all(
+          keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))
+        );
+      })
+    ])
   );
 });
 
-// Fetch: Pass through dynamic APIs (KeyValue, MQTT, GitHub) and cache app shell
+// Fetch: Pass through dynamic APIs (KeyValue, MQTT, GitHub) and serve app shell
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
@@ -65,7 +67,7 @@ self.addEventListener('fetch', (event) => {
         return caches.match(event.request).then((cachedResponse) => {
           if (cachedResponse) return cachedResponse;
           if (event.request.mode === 'navigate') {
-            return caches.match('./index.html');
+            return caches.match('/BINGO/admin/index.html').then((r) => r || caches.match('/BINGO/admin/'));
           }
         });
       })
