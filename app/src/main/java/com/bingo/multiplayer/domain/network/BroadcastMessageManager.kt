@@ -239,7 +239,7 @@ object BroadcastMessageManager {
         val current = _activeBroadcast.value
         if (current != null) {
             val ctx = context ?: lastApplicationContext
-            if (current.isOnlyOnce) {
+            if (current.isOnlyOnce || current.isDirectMessage) {
                 markMessageAsSeen(ctx, current.id)
                 // If this was a direct targeted message, automatically deactivate it in the cloud!
                 if (current.isDirectMessage) {
