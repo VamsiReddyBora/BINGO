@@ -215,8 +215,10 @@ object FriendRequestManager {
 
     /**
      * Cloud sync: fetches cloud-persisted friends list for username.
+     * Returns null on network/server failures to protect local cache when offline.
+     * Returns a valid List<Friend> (including emptyList()) when cloud responded successfully.
      */
-    suspend fun fetchCloudFriends(username: String): List<Friend> = withContext(Dispatchers.IO) {
+    suspend fun fetchCloudFriends(username: String): List<Friend>? = withContext(Dispatchers.IO) {
         val clean = username.trim().lowercase().removePrefix("@")
         if (clean.isBlank()) return@withContext emptyList()
 
@@ -231,20 +233,56 @@ object FriendRequestManager {
                 else response.body?.string()?.trim()?.removeSurrounding("\"")
             }
 
-            if (!raw.isNullOrBlank() && raw != "null") {
-                val jsonStr = try {
-                    decodeBase64Url(raw)
-                } catch (_: Exception) {
-                    raw
-                }
-                if (jsonStr.startsWith("[")) {
-                    return@withContext json.decodeFromString<List<Friend>>(jsonStr)
-                }
+            if (raw == null) return@withContext null
+
+            if (raw.isBlank() || raw == "null") {
+                return@withContext emptyList()
             }
+
+            val jsonStr = try {
+                decodeBase64Url(raw)
+            } catch (_: Exception) {
+                raw
+            }
+            if (jsonStr.startsWith("[")) {
+                return@withContext json.decodeFromString<List<Friend>>(jsonStr)
+            }
+            return@withContext emptyList()
         } catch (e: Exception) {
             Log.w(TAG, "Failed to fetch cloud friends for @$clean: ${e.message}")
+            null
         }
-        emptyList()
+    }
+
+    /**
+     * Fetches authoritative registered user directory from database.
+     * Used to automatically prune friends whose accounts have been deleted.
+     */
+    suspend fun fetchValidUsernames(): Set<String>? = withContext(Dispatchers.IO) {
+        try {
+            val req = Request.Builder()
+                .url("$BASE_URL/GetValue/$API_KEY/user_directory")
+                .get()
+                .build()
+
+            val raw = client.newCall(req).execute().use { response ->
+                if (!response.isSuccessful) null
+                else response.body?.string()?.trim()?.removeSurrounding("\"")
+            }
+
+            if (!raw.isNullOrBlank() && raw != "null") {
+                val decoded = if (raw.contains(",")) raw else {
+                    try { decodeBase64Url(raw) } catch (_: Exception) { raw }
+                }
+                return@withContext decoded.split(",")
+                    .map { it.trim().lowercase().removePrefix("@") }
+                    .filter { it.isNotBlank() }
+                    .toSet()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to fetch valid user directory: ${e.message}")
+        }
+        null
     }
 
     /**
@@ -273,7 +311,7 @@ object FriendRequestManager {
     }
 
     private suspend fun addFriendToCloudList(username: String, friend: Friend) {
-        val current = fetchCloudFriends(username).toMutableList()
+        val current = (fetchCloudFriends(username) ?: emptyList()).toMutableList()
         current.removeAll { it.uid == friend.uid || it.username.equals(friend.username, ignoreCase = true) }
         current.add(0, friend)
         saveCloudFriends(username, current)

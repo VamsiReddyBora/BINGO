@@ -64,38 +64,47 @@ class FriendsRepository(
                 val now = System.currentTimeMillis()
                 recentlyRemoved.entries.removeIf { (now - it.value) > 60_000L }
 
-                // 1. Sync cloud friends
+                // 1. Fetch authoritative user directory to prune database-deleted user accounts
+                val validUsers = FriendRequestManager.fetchValidUsernames()
+
+                // 2. Sync cloud friends
                 val cloudFriends = FriendRequestManager.fetchCloudFriends(clean)
-                if (cloudFriends.isNotEmpty()) {
-                    val currentMap = _friends.value
-                        .filterNot { it.uid in recentlyRemoved.keys || it.username.trim().lowercase().removePrefix("@") in recentlyRemoved.keys }
-                        .associateBy { it.uid.ifBlank { it.username.lowercase() } }
-                        .toMutableMap()
-
-                    var hadStaleFriendInCloud = false
-                    cloudFriends.forEach { cf ->
-                        val cfClean = cf.username.trim().lowercase().removePrefix("@")
-                        if (cf.uid in recentlyRemoved.keys || cfClean in recentlyRemoved.keys) {
-                            hadStaleFriendInCloud = true
-                        } else {
-                            val key = cf.uid.ifBlank { cf.username.lowercase() }
-                            currentMap[key] = cf
-                        }
-                    }
-                    val merged = currentMap.values.toList()
-                    _friends.value = merged
-                    persistFriends(merged)
-
-                    // If stale cloud returned a deleted friend, overwrite cloud immediately with sanitized list
-                    if (hadStaleFriendInCloud) {
-                        FriendRequestManager.saveCloudFriends(clean, merged)
+                if (cloudFriends != null) {
+                    // Cloud returned an authoritative list (even if empty).
+                    // Sanitize against recentlyRemoved and verify player account exists in database.
+                    val sanitized = cloudFriends.filter { friend ->
+                        val fUser = friend.username.trim().lowercase().removePrefix("@")
+                        val fUid = friend.uid
+                        if (fUid in recentlyRemoved.keys || fUser in recentlyRemoved.keys) return@filter false
+                        if (validUsers != null && fUser.isNotBlank() && fUser !in validUsers) return@filter false
+                        true
                     }
 
-                    val friendUsernames = merged.map { it.username }.filter { it.isNotBlank() }
+                    _friends.value = sanitized
+                    persistFriends(sanitized)
+
+                    // If cloud had stale, removed, or deleted database accounts, update cloud immediately
+                    if (sanitized.size != cloudFriends.size) {
+                        FriendRequestManager.saveCloudFriends(clean, sanitized)
+                    }
+
+                    val friendUsernames = sanitized.map { it.username }.filter { it.isNotBlank() }
                     if (friendUsernames.isNotEmpty()) {
                         com.bingo.multiplayer.domain.network.PresenceManager.fetchCloudPresenceForUsers(friendUsernames)
                     }
                 } else {
+                    // Offline / network failure: retain cached friends, but still prune any user accounts deleted from database
+                    if (validUsers != null) {
+                        val currentSanitized = _friends.value.filter {
+                            val fUser = it.username.trim().lowercase().removePrefix("@")
+                            fUser.isBlank() || fUser in validUsers
+                        }
+                        if (currentSanitized.size != _friends.value.size) {
+                            _friends.value = currentSanitized
+                            persistFriends(currentSanitized)
+                        }
+                    }
+
                     val currentFriendUsernames = _friends.value.map { it.username }.filter { it.isNotBlank() }
                     if (currentFriendUsernames.isNotEmpty()) {
                         com.bingo.multiplayer.domain.network.PresenceManager.fetchCloudPresenceForUsers(currentFriendUsernames)

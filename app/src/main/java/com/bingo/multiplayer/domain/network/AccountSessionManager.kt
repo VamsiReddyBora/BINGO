@@ -57,7 +57,9 @@ data class PlayerRegistryEntry(
     val currentStreak: Int = 0,
     val bestStreak: Int = 0,
     val level: Int = 1,
-    val lastSeenTimestamp: Long = System.currentTimeMillis()
+    val lastSeenTimestamp: Long = System.currentTimeMillis(),
+    val appVersion: String = NetworkConfig.APP_VERSION_NAME,
+    val appVersionCode: Int = NetworkConfig.APP_VERSION_CODE
 ) {
     val isOnline: Boolean
         get() = (System.currentTimeMillis() - lastSeenTimestamp) < 120_000L

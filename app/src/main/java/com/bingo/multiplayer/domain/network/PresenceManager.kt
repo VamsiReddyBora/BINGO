@@ -49,7 +49,9 @@ data class AvatarUpdatePayload(
 data class PlayerPresence(
     val username: String = "",
     val status: String = "OFFLINE", // "ONLINE", "IN_LOBBY", "PLAYING", or "OFFLINE"
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val appVersion: String = NetworkConfig.APP_VERSION_NAME,
+    val appVersionCode: Int = NetworkConfig.APP_VERSION_CODE
 ) {
     /**
      * A player is considered active in the app if their status is ONLINE, IN_LOBBY, or PLAYING,
@@ -153,7 +155,9 @@ object PresenceManager {
         if (clean.isBlank()) return
         try {
             val encKey = URLEncoder.encode("pres_$clean", "UTF-8")
-            val encVal = URLEncoder.encode("$status:$timestamp", "UTF-8")
+            val vName = NetworkConfig.APP_VERSION_NAME
+            val vCode = NetworkConfig.APP_VERSION_CODE
+            val encVal = URLEncoder.encode("$status:$timestamp:$vName:$vCode", "UTF-8")
             val url = "${NetworkConfig.KEYVALUE_API_URL}/UpdateValue/$appKey/$encKey?value=$encVal"
             val emptyBody = "".toRequestBody(null)
             val request = Request.Builder()
@@ -176,7 +180,9 @@ object PresenceManager {
         if (clean.isBlank()) return@withContext false
         try {
             val encKey = URLEncoder.encode("pres_$clean", "UTF-8")
-            val encVal = URLEncoder.encode("$status:$timestamp", "UTF-8")
+            val vName = NetworkConfig.APP_VERSION_NAME
+            val vCode = NetworkConfig.APP_VERSION_CODE
+            val encVal = URLEncoder.encode("$status:$timestamp:$vName:$vCode", "UTF-8")
             val url = "${NetworkConfig.KEYVALUE_API_URL}/UpdateValue/$appKey/$encKey?value=$encVal"
             val emptyBody = "".toRequestBody(null)
             val request = Request.Builder()
@@ -229,7 +235,9 @@ object PresenceManager {
                 val parts = raw.split(":")
                 val status = parts[0]
                 val ts = parts.getOrNull(1)?.toLongOrNull() ?: return@withContext null
-                val p = PlayerPresence(clean, status, ts)
+                val vName = parts.getOrNull(2)?.ifBlank { null } ?: NetworkConfig.APP_VERSION_NAME
+                val vCode = parts.getOrNull(3)?.toIntOrNull() ?: NetworkConfig.APP_VERSION_CODE
+                val p = PlayerPresence(clean, status, ts, appVersion = vName, appVersionCode = vCode)
                 presenceMap[clean] = p
                 _presenceFlow.value = HashMap(presenceMap)
                 p

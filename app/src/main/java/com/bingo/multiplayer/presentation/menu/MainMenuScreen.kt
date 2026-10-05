@@ -4,6 +4,9 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.rememberUpdatedState
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -101,6 +104,17 @@ fun MainMenuScreen(
     var selectedAiDifficulty by remember { mutableStateOf(AiDifficulty.EASY) }
     var ongoingMatch by remember { mutableStateOf(OngoingMatchStore.getOngoingMatch(context)) }
 
+    // ── Ping 1-Second Stabilized Display (Matches GameScreen exactly) ──
+    val realtimePing by com.bingo.multiplayer.domain.network.NetworkPingMonitor.pingMs.collectAsState()
+    val latestPingMs by rememberUpdatedState(if (realtimePing > 0L) realtimePing else 28L)
+    var displayedPingMs by remember { mutableLongStateOf(if (realtimePing > 0L) realtimePing else 28L) }
+    LaunchedEffect(Unit) {
+        while (isActive) {
+            delay(1000L)
+            displayedPingMs = latestPingMs
+        }
+    }
+
     LaunchedEffect(Unit) {
         ongoingMatch = OngoingMatchStore.getOngoingMatch(context)
     }
@@ -181,6 +195,35 @@ fun MainMenuScreen(
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Ping Display (Matches GameScreen exactly, updates every 1 second, just left of Theme Toggle)
+                    val pingColor = when {
+                        displayedPingMs <= 250L -> Color(0xFF16A34A)
+                        displayedPingMs <= 500L -> Color(0xFFEAB308)
+                        else -> Color(0xFFDC2626)
+                    }
+                    val pingText = if (displayedPingMs > 999L) "999+ms" else "${displayedPingMs}ms"
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Wifi,
+                            contentDescription = "Ping",
+                            tint = tokens.cellNeutralText,
+                            modifier = Modifier.size(17.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = pingText,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = pingColor
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(12.dp))
+
                     // Quick Theme Toggle (Light / AMOLED Dark Mode)
                     Surface(
                         onClick = {

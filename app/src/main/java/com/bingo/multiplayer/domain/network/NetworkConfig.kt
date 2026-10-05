@@ -26,6 +26,12 @@ object NetworkConfig {
     const val KEYVALUE_APP_KEY = "2464j24f"
 
     /**
+     * Current client application version metadata.
+     */
+    const val APP_VERSION_NAME = "1.3.1"
+    const val APP_VERSION_CODE = 37
+
+    /**
      * Configures MqttConnectOptions with credentials and tuned low-latency socket factory.
      */
     fun applyMqttOptions(options: MqttConnectOptions) {
