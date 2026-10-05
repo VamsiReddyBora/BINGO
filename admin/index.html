@@ -415,6 +415,17 @@
           >
             <i class="fa-solid fa-gear text-purple-400 text-xs sm:text-sm"></i>
           </button>
+
+          <!-- Session Lock Button -->
+          <button 
+            type="button"
+            onclick="lockConsole()" 
+            id="adminHeaderLockBtn" 
+            class="p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl theme-subtle hover:bg-rose-500/10 hover:border-rose-500/30 border theme-border active:scale-95 transition-all flex items-center justify-center cursor-pointer"
+            title="Lock Session Now"
+          >
+            <i class="fa-solid fa-lock text-rose-500 text-xs sm:text-sm"></i>
+          </button>
         </div>
       </div>
 
@@ -1251,6 +1262,16 @@
               <i class="fa-solid fa-shield-halved text-amber-400"></i>
               <span>Test Sensor</span>
             </button>
+            <button 
+              id="bioLockSessionBtn" 
+              type="button" 
+              onclick="lockConsole()" 
+              class="px-3.5 py-2 rounded-xl theme-subtle hover:bg-rose-500/10 hover:border-rose-500/30 text-rose-500 font-semibold text-xs transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer border theme-border"
+              title="Lock Admin Session"
+            >
+              <i class="fa-solid fa-lock text-rose-500"></i>
+              <span>Lock Session</span>
+            </button>
           </div>
 
           <!-- Auto-prompt on page launch toggle -->
@@ -1263,6 +1284,32 @@
               <input type="checkbox" id="biometricAutoPromptCheck" onchange="toggleBiometricAutoPrompt(this.checked)" class="sr-only peer">
               <div class="w-9 h-5 bg-neutral-300 dark:bg-neutral-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
             </label>
+          </div>
+        </div>
+
+        <!-- Session Lock & Immediate Exit Card -->
+        <div class="theme-card rounded-2xl p-5 space-y-4">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <h3 class="text-sm font-bold theme-title flex items-center gap-2">
+                <i class="fa-solid fa-lock text-rose-500 text-base"></i>
+                <span>Admin Session Lock</span>
+              </h3>
+              <p class="text-xs theme-dimtext mt-1">Immediately terminate this active operator session and lock the admin console. Re-authentication via fingerprint or master password will be required to re-enter.</p>
+            </div>
+            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider bg-rose-500/10 text-rose-500 border border-rose-500/20 shrink-0">Session Active</span>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-3 pt-1">
+            <button 
+              type="button" 
+              onclick="lockConsole()" 
+              class="px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs transition-all active:scale-95 flex items-center gap-2 cursor-pointer shadow-md shadow-rose-600/20"
+            >
+              <i class="fa-solid fa-lock text-white"></i>
+              <span>Lock Admin Console</span>
+            </button>
+            <span class="text-[11px] theme-dimtext">Clears cached session authorization from this browser</span>
           </div>
         </div>
 
