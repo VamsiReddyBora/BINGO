@@ -262,9 +262,16 @@ class AccountSessionManager(
             try {
                 val jsonPayload = json.encodeToString(backup)
 
+                val cleanUser = backup.profile.username.trim().lowercase().removePrefix("@")
                 var binId = binIdCache[gid]
+                if (binId.isNullOrBlank() && cleanUser.isNotBlank()) {
+                    binId = binIdCache["user_$cleanUser"]
+                }
                 if (binId.isNullOrBlank()) {
                     binId = getKeyValue("gid_$gid")
+                }
+                if (binId.isNullOrBlank() && cleanUser.isNotBlank()) {
+                    binId = getKeyValue("user_$cleanUser")
                 }
 
                 var success = false
@@ -272,6 +279,7 @@ class AccountSessionManager(
                     val updated = updateJsonBin(binId, jsonPayload)
                     if (updated) {
                         binIdCache[gid] = binId
+                        if (cleanUser.isNotBlank()) binIdCache["user_$cleanUser"] = binId
                         success = true
                     }
                 }
@@ -286,7 +294,6 @@ class AccountSessionManager(
                     }
                 }
 
-                val cleanUser = backup.profile.username.trim().lowercase().removePrefix("@")
                 backupMemoryCache[gid] = backup
                 if (cleanUser.isNotBlank()) {
                     backupMemoryCache["user_$cleanUser"] = backup
@@ -329,7 +336,11 @@ class AccountSessionManager(
         val gid = googleId.trim()
         if (gid.isBlank()) return
         scope.launch(Dispatchers.IO) {
-            backupUserDataSync(gid, backup)
+            val ok = backupUserDataSync(gid, backup)
+            if (!ok) {
+                kotlinx.coroutines.delay(2000L)
+                backupUserDataSync(gid, backup)
+            }
         }
     }
 
