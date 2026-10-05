@@ -1462,8 +1462,8 @@
               <div class="flex items-center gap-1 theme-subtle rounded-lg px-2 py-1">
                 <span class="text-[11px] theme-dimtext">Per page:</span>
                 <select id="matchPageSizeSelect" onchange="changeMatchPageSize(this.value)" class="bg-transparent theme-title text-[11px] font-bold focus:outline-none cursor-pointer">
-                  <option value="20" selected class="theme-card">20</option>
-                  <option value="50" class="theme-card">50</option>
+                  <option value="20" class="theme-card">20</option>
+                  <option value="50" selected class="theme-card">50</option>
                   <option value="100" class="theme-card">100</option>
                   <option value="999999" class="theme-card">All</option>
                 </select>
@@ -2977,13 +2977,13 @@
       if (!player) return;
       globalState.selectedPlayer = player;
       globalState.matchCurrentPage = 1;
-      globalState.matchPageSize = 20;
+      globalState.matchPageSize = 50;
       globalState.matchOutcomeFilter = 'ALL';
       globalState.matchSearchQuery = '';
       const searchInput = document.getElementById('matchSearchInput');
       if (searchInput) searchInput.value = '';
       const pageSizeSelect = document.getElementById('matchPageSizeSelect');
-      if (pageSizeSelect) pageSizeSelect.value = '20';
+      if (pageSizeSelect) pageSizeSelect.value = '50';
 
       if (!isHandlingPopState) {
         window.history.pushState({ screen: 'inspector', username }, '');
@@ -3236,11 +3236,18 @@
       if (p && p.gamesPlayed > allMatches.length) {
         statsBanner.classList.remove('hidden');
         statsBanner.innerHTML = `
-          <div class="flex items-center gap-2">
-            <i class="fa-solid fa-cloud-arrow-down text-sky-400"></i>
-            <span>Showing <strong class="theme-title font-mono">${allMatches.length}</strong> cloud match records</span>
+          <div class="w-full space-y-1.5">
+            <div class="flex items-center justify-between flex-wrap gap-2">
+              <div class="flex items-center gap-2">
+                <i class="fa-solid fa-cloud-arrow-down text-sky-400"></i>
+                <span>Showing <strong class="theme-title font-mono">${allMatches.length}</strong> cloud match logs (Latest from device backup)</span>
+              </div>
+              <span class="theme-dimtext font-mono text-[11px]">Total Lifetime Games: <strong class="theme-title">${p.gamesPlayed}</strong> (${p.gamesWon}W • ${Math.max(0, p.gamesPlayed - p.gamesWon)}L)</span>
+            </div>
+            <p class="text-[11px] theme-dimtext opacity-80 leading-normal">
+              Note: Earlier Android client builds pruned local match telemetry to the 20 most recent games before cloud sync. Player lifetime counters and level accurately reflect all ${p.gamesPlayed} games.
+            </p>
           </div>
-          <span class="theme-dimtext font-mono text-[11px]">Total Lifetime Games: ${p.gamesPlayed}</span>
         `;
       } else {
         statsBanner.classList.add('hidden');
