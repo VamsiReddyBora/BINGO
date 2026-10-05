@@ -45,6 +45,7 @@ class LanP2pSessionManager {
     private val clientWriters = java.util.concurrent.CopyOnWriteArrayList<PrintWriter>()
     private val clientSockets = java.util.concurrent.CopyOnWriteArrayList<Socket>()
     private val clientJobs = java.util.concurrent.CopyOnWriteArrayList<Job>()
+    private val socketToPlayerId = ConcurrentHashMap<Socket, String>()
 
     private var serverJob: Job? = null
     private var clientReadJob: Job? = null
@@ -157,7 +158,10 @@ class LanP2pSessionManager {
 
         serverJob = scope.launch(Dispatchers.IO) {
             try {
-                serverSocket = ServerSocket(port)
+                serverSocket = ServerSocket().apply {
+                    reuseAddress = true
+                    bind(java.net.InetSocketAddress(port))
+                }
                 while (isActive) {
                     val socket = serverSocket?.accept() ?: break
                     socket.tcpNoDelay = true
@@ -182,6 +186,9 @@ class LanP2pSessionManager {
                             while (isActive) {
                                 val line = reader.readLine() ?: break
                                 val packet = json.decodeFromString<RoomMessagePacket>(line)
+                                if (packet.playerId.isNotBlank()) {
+                                    socketToPlayerId[socket] = packet.playerId
+                                }
                                 handleIncomingPacket(packet)
 
                                 // Host relays to all other connected clients
@@ -195,9 +202,22 @@ class LanP2pSessionManager {
                         } catch (e: Exception) {
                             Log.w("LanP2p", "Client socket disconnected: ${e.message}")
                         } finally {
+                            val leavingPlayerId = socketToPlayerId.remove(socket)
                             clientWriters.remove(writer)
                             clientSockets.remove(socket)
                             try { socket.close() } catch (_: Exception) {}
+                            if (!leavingPlayerId.isNullOrBlank()) {
+                                val leavePacket = RoomMessagePacket(
+                                    type = "LEAVE",
+                                    playerId = leavingPlayerId,
+                                    timestamp = System.currentTimeMillis()
+                                )
+                                handleIncomingPacket(leavePacket)
+                                val leavePayload = json.encodeToString(leavePacket)
+                                for (otherWriter in clientWriters) {
+                                    try { otherWriter.println(leavePayload) } catch (_: Exception) {}
+                                }
+                            }
                         }
                     }
                     clientJobs.add(job)
@@ -275,6 +295,15 @@ class LanP2pSessionManager {
                     }
                 } catch (e: Exception) {
                     Log.e("LanP2p", "Read error", e)
+                } finally {
+                    if (localPlayer?.isHost == false) {
+                        val hostLeftPacket = RoomMessagePacket(
+                            type = "HOST_LEFT",
+                            playerId = "",
+                            timestamp = System.currentTimeMillis()
+                        )
+                        _incomingPackets.tryEmit(hostLeftPacket)
+                    }
                 }
             }
 
@@ -578,13 +607,22 @@ class LanP2pSessionManager {
     fun disconnect() {
         val p = localPlayer
         if (p != null) {
-            broadcastPacket(
-                RoomMessagePacket(
-                    type = "LEAVE",
-                    playerId = p.id,
-                    timestamp = System.currentTimeMillis()
-                )
+            val packet = RoomMessagePacket(
+                type = if (p.isHost) "HOST_LEFT" else "LEAVE",
+                playerId = p.id,
+                timestamp = System.currentTimeMillis()
             )
+            try {
+                val payload = json.encodeToString(packet)
+                outWriter?.println(payload)
+                outWriter?.flush()
+                for (w in clientWriters) {
+                    try {
+                        w.println(payload)
+                        w.flush()
+                    } catch (_: Exception) {}
+                }
+            } catch (_: Exception) {}
         }
         heartbeatJob?.cancel()
         livenessJob?.cancel()
@@ -615,6 +653,7 @@ class LanP2pSessionManager {
         }
         clientSockets.clear()
 
+        socketToPlayerId.clear()
         outWriter = null
         inReader = null
         clientSocket = null

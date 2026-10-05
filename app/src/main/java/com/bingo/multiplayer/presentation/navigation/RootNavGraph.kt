@@ -920,7 +920,7 @@ fun RootNavGraph(
         currentTurnPlayerId = firstTurnUid
         isMyTurn = (currentTurnPlayerId == myUid)
 
-        if ((mode == GameMode.ONLINE_ROOM || mode == GameMode.NEARBY_NETWORK) && roomCode.isNotBlank()) {
+        if (mode == GameMode.ONLINE_ROOM && roomCode.isNotBlank()) {
             com.bingo.multiplayer.domain.network.OngoingMatchStore.saveOngoingMatch(
                 context = context,
                 matchData = com.bingo.multiplayer.domain.network.OngoingMatchData(
@@ -1013,7 +1013,7 @@ fun RootNavGraph(
                 onlineRoomSync.resetInGameHeartbeats(allParticipantIds)
                 lanP2pSync.resetInGameHeartbeats(allParticipantIds)
 
-                if ((currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) && roomCode.isNotBlank()) {
+                if (currentGameMode == GameMode.ONLINE_ROOM && roomCode.isNotBlank()) {
                     com.bingo.multiplayer.domain.network.OngoingMatchStore.saveOngoingMatch(
                         context = context,
                         matchData = com.bingo.multiplayer.domain.network.OngoingMatchData(
@@ -2333,6 +2333,11 @@ fun RootNavGraph(
                 },
                 onRejoinMatch = { matchData ->
                     coroutineScope.launch {
+                        if (matchData.roomCode.startsWith("LAN_")) {
+                            Toast.makeText(context, "Nearby match has already ended.", Toast.LENGTH_SHORT).show()
+                            com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
+                            return@launch
+                        }
                         val activeRoom = com.bingo.multiplayer.domain.network.OnlineRoomRegistry.getRoom(matchData.roomCode)
                         if (activeRoom != null && activeRoom.status == "CLOSED") {
                             Toast.makeText(context, "This match has already ended.", Toast.LENGTH_SHORT).show()
@@ -3690,6 +3695,9 @@ fun RootNavGraph(
             val realtimeNetworkPing by com.bingo.multiplayer.domain.network.NetworkPingMonitor.pingMs.collectAsState()
             val realtimeOnlinePing by onlineRoomSync.pingMs.collectAsState()
             val currentPing = when {
+                currentGameMode == GameMode.NEARBY_NETWORK -> {
+                    if (realtimeNetworkPing in 1..40) realtimeNetworkPing.coerceAtMost(8L) else 4L
+                }
                 currentGameMode == GameMode.ONLINE_ROOM && realtimeOnlinePing > 0L -> realtimeOnlinePing
                 realtimeNetworkPing > 0L -> realtimeNetworkPing
                 else -> 28L

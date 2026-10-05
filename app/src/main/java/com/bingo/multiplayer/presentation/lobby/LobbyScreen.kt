@@ -138,7 +138,7 @@ fun LobbyScreen(
             ssid = HotspotAndWifiManager.getHotspotName(context),
             password = "",
             roomCode = roomCode,
-            hostIp = "",
+            hostIp = HotspotAndWifiManager.getLocalIpAddress(),
             hostName = players.firstOrNull { it.isHost }?.displayName ?: "Nearby Host"
         )
         NearbyHostQrDisplayDialog(

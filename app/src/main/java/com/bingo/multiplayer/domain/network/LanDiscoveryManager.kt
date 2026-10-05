@@ -66,7 +66,8 @@ class LanDiscoveryManager(
 
     private var broadcastJob: Job? = null
     private var udpListenJob: Job? = null
-    private var mqttClient: MqttAsyncClient? = null
+    private var mqttPublisherClient: MqttAsyncClient? = null
+    private var mqttSubscriberClient: MqttAsyncClient? = null
     private var multicastLock: WifiManager.MulticastLock? = null
 
     private var isBroadcasting = false
@@ -92,7 +93,7 @@ class LanDiscoveryManager(
         val gameInfo = LanDiscoveredGame(
             hostId = host.id,
             hostDisplayName = host.displayName,
-            hostUsername = host.id,
+            hostUsername = host.username.ifBlank { host.displayName },
             avatarUrl = host.avatarUrl,
             boardSize = boardSize,
             roomCode = internalRoomCode,
@@ -106,8 +107,10 @@ class LanDiscoveryManager(
         broadcastJob = scope.launch(Dispatchers.IO) {
             var udpSocket: DatagramSocket? = null
             try {
-                udpSocket = DatagramSocket().apply {
+                udpSocket = DatagramSocket(null).apply {
+                    reuseAddress = true
                     broadcast = true
+                    bind(java.net.InetSocketAddress(0))
                 }
             } catch (e: Exception) {
                 Log.w("LanDiscovery", "Could not bind UDP broadcast socket: ${e.message}")
@@ -139,6 +142,7 @@ class LanDiscoveryManager(
                 }
             } catch (_: Exception) {}
 
+            var mqttCycleCounter = 0
             while (isActive && isBroadcasting) {
                 val currentInfo = currentBroadcastGameInfo?.copy(broadcastTimestamp = System.currentTimeMillis()) ?: gameInfo
                 val payload = json.encodeToString(currentInfo)
@@ -150,6 +154,12 @@ class LanDiscoveryManager(
                         val packet = DatagramPacket(bytes, bytes.size, bcastAddr, udpPort)
                         udpSocket?.send(packet)
                     } catch (_: Exception) {}
+                }
+
+                // 2. Periodically refresh MQTT broadcast every ~2.4 seconds so routers filtering UDP don't expire after 4s
+                mqttCycleCounter++
+                if (mqttCycleCounter % 2 == 0) {
+                    publishMqttBroadcast(currentInfo)
                 }
 
                 delay(1200L)
@@ -183,18 +193,18 @@ class LanDiscoveryManager(
 
         scope.launch(Dispatchers.IO) {
             try {
-                if (codeToClear != null && mqttClient?.isConnected == true) {
+                if (codeToClear != null && mqttPublisherClient?.isConnected == true) {
                     val topic = "bingo/v4/lan_hosts/$codeToClear"
                     val emptyMsg = MqttMessage(ByteArray(0)).apply {
                         qos = 1
                         isRetained = false
                     }
-                    mqttClient?.publish(topic, emptyMsg)?.waitForCompletion(1000L)
+                    mqttPublisherClient?.publish(topic, emptyMsg)?.waitForCompletion(1000L)
                 }
-                mqttClient?.disconnect()
-                mqttClient?.close()
+                mqttPublisherClient?.disconnect()
+                mqttPublisherClient?.close()
             } catch (_: Exception) {}
-            mqttClient = null
+            mqttPublisherClient = null
         }
     }
 
@@ -212,13 +222,14 @@ class LanDiscoveryManager(
 
         acquireMulticastLock()
 
-        // 1. Listen for UDP broadcasts
+        // 1. Listen for UDP broadcasts with SO_REUSEADDR set before bind
         udpListenJob = scope.launch(Dispatchers.IO) {
             var socket: DatagramSocket? = null
             try {
-                socket = DatagramSocket(udpPort).apply {
+                socket = DatagramSocket(null).apply {
                     reuseAddress = true
                     broadcast = true
+                    bind(java.net.InetSocketAddress(udpPort))
                 }
                 val buffer = ByteArray(2048)
 
@@ -229,11 +240,13 @@ class LanDiscoveryManager(
                         val dataStr = String(packet.data, 0, packet.length, StandardCharsets.UTF_8)
                         val game = json.decodeFromString<LanDiscoveredGame>(dataStr)
                         val senderIp = packet.address?.hostAddress ?: ""
-                        val resolvedGame = if (senderIp.isNotBlank() && !senderIp.startsWith("127.") && (game.hostIp.isBlank() || game.hostIp == "0.0.0.0" || game.hostIp == "127.0.0.1")) {
-                            game.copy(hostIp = senderIp)
-                        } else {
-                            game
+                        // Physical sender IP is guaranteed reachable on this subnet
+                        val resolvedHostIp = when {
+                            senderIp.isNotBlank() && !senderIp.startsWith("127.") && !senderIp.startsWith("0.") -> senderIp
+                            game.hostIp.isNotBlank() && !game.hostIp.startsWith("127.") && !game.hostIp.startsWith("0.") -> game.hostIp
+                            else -> "192.168.43.1"
                         }
+                        val resolvedGame = game.copy(hostIp = resolvedHostIp)
                         onGameDiscovered(resolvedGame)
                     } catch (_: Exception) {}
                 }
@@ -271,10 +284,10 @@ class LanDiscoveryManager(
 
         scope.launch(Dispatchers.IO) {
             try {
-                mqttClient?.disconnect()
-                mqttClient?.close()
+                mqttSubscriberClient?.disconnect()
+                mqttSubscriberClient?.close()
             } catch (_: Exception) {}
-            mqttClient = null
+            mqttSubscriberClient = null
         }
         gamesCache.clear()
         _discoveredGames.value = emptyList()
@@ -296,43 +309,7 @@ class LanDiscoveryManager(
     // Original MQTT subscriber removed (duplicate)
 
     // Restores getLocalIpAddress utility prioritizing Hotspot / Wi-Fi interfaces over cellular
-    fun getLocalIpAddress(): String {
-        return try {
-            val interfaces = java.net.NetworkInterface.getNetworkInterfaces()?.toList() ?: emptyList()
-            val ipv4List = mutableListOf<Pair<String, String>>()
-
-            for (iface in interfaces) {
-                if (!iface.isUp || iface.isLoopback) continue
-                val name = iface.name.lowercase()
-                for (addr in iface.inetAddresses) {
-                    if (!addr.isLoopbackAddress && addr is java.net.Inet4Address) {
-                        val host = addr.hostAddress ?: continue
-                        ipv4List.add(name to host)
-                    }
-                }
-            }
-
-            // 1. Hotspot interfaces
-            ipv4List.firstOrNull { (name, ip) ->
-                name.contains("ap") || name.contains("swlan") || name.contains("softap") ||
-                        ip.startsWith("192.168.43.") || ip.startsWith("192.168.49.")
-            }?.second
-            // 2. Wi-Fi / Ethernet interfaces
-            ?: ipv4List.firstOrNull { (name, _) ->
-                name.contains("wlan") || name.contains("wifi") || name.contains("eth")
-            }?.second
-            // 3. Non-cellular LAN interface
-            ?: ipv4List.firstOrNull { (name, _) ->
-                !name.contains("rmnet") && !name.contains("ccmni") && !name.contains("dummy") &&
-                        !name.contains("pdp") && !name.contains("tun")
-            }?.second
-            // 4. Any IPv4 fallback
-            ?: ipv4List.firstOrNull()?.second
-            ?: "192.168.43.1"
-        } catch (_: Exception) {
-            "192.168.43.1"
-        }
-    }
+    fun getLocalIpAddress(): String = HotspotAndWifiManager.getLocalIpAddress()
 
     private fun acquireMulticastLock() {
         try {
@@ -375,13 +352,27 @@ class LanDiscoveryManager(
         }
     }
 
+    private fun publishMqttBroadcast(game: LanDiscoveredGame) {
+        val client = mqttPublisherClient ?: return
+        if (!client.isConnected) return
+        try {
+            val topic = "bingo/v4/lan_hosts/${game.roomCode}"
+            val payload = json.encodeToString(game)
+            val msg = MqttMessage(payload.toByteArray(StandardCharsets.UTF_8)).apply {
+                qos = 1
+                isRetained = false
+            }
+            client.publish(topic, msg)
+        } catch (_: Exception) {}
+    }
+
     // Updated MQTT publisher with logging
     private fun startMqttPublisher(game: LanDiscoveredGame) {
         scope.launch(Dispatchers.IO) {
             try {
                 val clientId = "lan_host_${UUID.randomUUID().toString().take(8)}"
                 val client = MqttAsyncClient(brokerUrl, clientId, MemoryPersistence())
-                mqttClient = client
+                mqttPublisherClient = client
                 val options = MqttConnectOptions().apply {
                     isCleanSession = true
                     connectionTimeout = 3
@@ -389,15 +380,7 @@ class LanDiscoveryManager(
                 }
                 client.connect(options).waitForCompletion(2000L)
                 Log.d("LanDiscovery", "MQTT publisher connected for room ${game.roomCode}")
-
-                val topic = "bingo/v4/lan_hosts/${game.roomCode}"
-                val payload = json.encodeToString(game)
-                val msg = MqttMessage(payload.toByteArray(StandardCharsets.UTF_8)).apply {
-                    qos = 1
-                    isRetained = false
-                }
-                client.publish(topic, msg)
-                Log.d("LanDiscovery", "Published MQTT for room ${game.roomCode} to $topic")
+                publishMqttBroadcast(game)
             } catch (ex: Exception) {
                 Log.w("LanDiscovery", "Failed MQTT publish: ${ex.message}")
             }
@@ -410,7 +393,7 @@ class LanDiscoveryManager(
             try {
                 val clientId = "lan_disc_${UUID.randomUUID().toString().take(8)}"
                 val client = MqttAsyncClient(brokerUrl, clientId, MemoryPersistence())
-                mqttClient = client
+                mqttSubscriberClient = client
                 val options = MqttConnectOptions().apply {
                     isCleanSession = true
                     connectionTimeout = 3

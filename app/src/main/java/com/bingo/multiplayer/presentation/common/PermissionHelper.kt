@@ -12,12 +12,6 @@ object PermissionHelper {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions.add(Manifest.permission.NEARBY_WIFI_DEVICES)
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            permissions.add(Manifest.permission.BLUETOOTH_SCAN)
-            permissions.add(Manifest.permission.BLUETOOTH_ADVERTISE)
-            permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
-        }
-        permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
         return permissions
     }
 

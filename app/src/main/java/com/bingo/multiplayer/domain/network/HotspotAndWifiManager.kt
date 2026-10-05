@@ -378,4 +378,45 @@ object HotspotAndWifiManager {
             }
         }
     }
+
+    /**
+     * Resolves the primary local IPv4 address across Hotspot, Wi-Fi, and active network interfaces.
+     */
+    fun getLocalIpAddress(): String {
+        return try {
+            val interfaces = java.net.NetworkInterface.getNetworkInterfaces()?.toList() ?: emptyList()
+            val ipv4List = mutableListOf<Pair<String, String>>()
+
+            for (iface in interfaces) {
+                if (!iface.isUp || iface.isLoopback) continue
+                val name = iface.name.lowercase()
+                for (addr in iface.inetAddresses) {
+                    if (!addr.isLoopbackAddress && addr is java.net.Inet4Address) {
+                        val host = addr.hostAddress ?: continue
+                        ipv4List.add(name to host)
+                    }
+                }
+            }
+
+            // 1. Hotspot interfaces
+            ipv4List.firstOrNull { (name, ip) ->
+                name.contains("ap") || name.contains("swlan") || name.contains("softap") ||
+                        ip.startsWith("192.168.43.") || ip.startsWith("192.168.49.")
+            }?.second
+            // 2. Wi-Fi / Ethernet interfaces
+            ?: ipv4List.firstOrNull { (name, _) ->
+                name.contains("wlan") || name.contains("wifi") || name.contains("eth")
+            }?.second
+            // 3. Non-cellular LAN interface
+            ?: ipv4List.firstOrNull { (name, _) ->
+                !name.contains("rmnet") && !name.contains("ccmni") && !name.contains("dummy") &&
+                        !name.contains("pdp") && !name.contains("tun")
+            }?.second
+            // 4. Any IPv4 fallback
+            ?: ipv4List.firstOrNull()?.second
+            ?: "192.168.43.1"
+        } catch (_: Exception) {
+            "192.168.43.1"
+        }
+    }
 }
