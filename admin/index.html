@@ -253,6 +253,26 @@
 
         <!-- PIN / Password Form -->
         <div id="authForm" class="space-y-3 sm:space-y-4">
+
+          <!-- Biometric Quick Unlock (Fingerprint / Touch ID / Face Unlock) -->
+          <div id="biometricAuthContainer" class="hidden">
+            <button 
+              type="button" 
+              id="biometricUnlockBtn"
+              onclick="triggerBiometricUnlock()" 
+              class="w-full py-3 sm:py-3.5 px-4 rounded-xl border border-neutral-300 dark:border-neutral-700 theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 font-bold text-sm active:scale-[0.98] transition-all flex items-center justify-center gap-2.5 cursor-pointer shadow-sm group"
+            >
+              <i class="fa-solid fa-fingerprint text-emerald-500 text-lg group-hover:scale-110 transition-transform"></i>
+              <span class="theme-title">Unlock with Fingerprint</span>
+            </button>
+
+            <div class="flex items-center gap-2 my-2.5 opacity-40">
+              <div class="h-px bg-neutral-300 dark:bg-neutral-700 flex-1"></div>
+              <span class="text-[10px] font-bold tracking-widest uppercase theme-dimtext">Or Enter Password</span>
+              <div class="h-px bg-neutral-300 dark:bg-neutral-700 flex-1"></div>
+            </div>
+          </div>
+
           <div class="relative">
             <input 
               type="password" 
@@ -310,6 +330,18 @@
             <i class="fa-solid fa-unlock-keyhole text-emerald-400"></i>
             <span>Unlock Admin Console</span>
           </button>
+
+          <!-- Quick Enroll Option when biometric supported but not yet registered -->
+          <div id="biometricEnrollHint" class="hidden text-center pt-1.5">
+            <button 
+              type="button" 
+              onclick="promptEnrollBiometricFromLogin()" 
+              class="text-xs theme-dimtext hover:theme-title font-medium inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <i class="fa-solid fa-fingerprint text-emerald-500"></i>
+              <span>Link Fingerprint to this device</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -1173,6 +1205,67 @@
       <!-- ==================================================== -->
       <section id="tabView-settings" class="hidden space-y-5">
         
+        <!-- Fingerprint & Biometric Authentication Card -->
+        <div class="theme-card rounded-2xl p-5 space-y-4">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <h3 class="text-sm font-bold theme-title flex items-center gap-2">
+                <i class="fa-solid fa-fingerprint text-emerald-500 text-base"></i>
+                <span>Fingerprint & Biometric Security</span>
+              </h3>
+              <p class="text-xs theme-dimtext mt-1">Unlock the admin console instantly using your device's fingerprint scanner, Touch ID, Face Unlock, or system screen lock.</p>
+            </div>
+            <span id="biometricBadge" class="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider theme-subtle border theme-border theme-title shrink-0">Checking...</span>
+          </div>
+
+          <div id="biometricStatusInfo" class="text-xs p-3 rounded-xl theme-subtle border theme-border flex items-center gap-2.5">
+            <i id="biometricStatusIcon" class="fa-solid fa-info-circle text-sky-400 text-sm"></i>
+            <span id="biometricStatusText" class="theme-title">Detecting hardware biometric support...</span>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-2.5 pt-1">
+            <button 
+              id="enrollBiometricBtn" 
+              type="button" 
+              onclick="enrollBiometrics()" 
+              class="px-4 py-2 rounded-xl bg-neutral-900 text-white dark:bg-white dark:text-black hover:bg-neutral-800 dark:hover:bg-neutral-200 font-semibold text-xs transition-all active:scale-95 flex items-center gap-2 cursor-pointer shadow-sm"
+            >
+              <i class="fa-solid fa-fingerprint text-emerald-400"></i>
+              <span id="enrollBiometricBtnText">Enable Fingerprint Unlock</span>
+            </button>
+            <button 
+              id="removeBiometricBtn" 
+              type="button" 
+              onclick="removeBiometrics()" 
+              class="hidden px-4 py-2 rounded-xl theme-subtle hover:bg-rose-500/10 hover:border-rose-500/30 text-rose-500 font-semibold text-xs transition-all active:scale-95 flex items-center gap-2 cursor-pointer border theme-border"
+            >
+              <i class="fa-solid fa-trash-can text-rose-400"></i>
+              <span>Remove Fingerprint</span>
+            </button>
+            <button 
+              id="testBiometricBtn" 
+              type="button" 
+              onclick="testBiometrics()" 
+              class="hidden px-3.5 py-2 rounded-xl theme-subtle theme-title font-semibold text-xs transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer border theme-border"
+            >
+              <i class="fa-solid fa-shield-halved text-amber-400"></i>
+              <span>Test Sensor</span>
+            </button>
+          </div>
+
+          <!-- Auto-prompt on page launch toggle -->
+          <div id="biometricAutoPromptRow" class="hidden items-center justify-between pt-3 border-t theme-border text-xs">
+            <div>
+              <span class="font-semibold theme-title block">Auto-prompt Fingerprint on Launch</span>
+              <span class="text-[11px] theme-dimtext">Automatically display the fingerprint scanner prompt immediately when visiting the admin page</span>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" id="biometricAutoPromptCheck" onchange="toggleBiometricAutoPrompt(this.checked)" class="sr-only peer">
+              <div class="w-9 h-5 bg-neutral-300 dark:bg-neutral-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+            </label>
+          </div>
+        </div>
+
         <!-- Admin Password Configuration -->
         <div class="theme-card rounded-2xl p-5 space-y-4">
           <h3 class="text-sm font-bold theme-title flex items-center gap-2">
@@ -1572,6 +1665,23 @@
         Are you sure you want to proceed with this operation?
       </div>
 
+      <!-- Quick Biometric Authorize (if enrolled) -->
+      <div id="confirmBiometricRow" class="hidden">
+        <button 
+          type="button" 
+          onclick="confirmActionWithBiometrics()" 
+          class="w-full py-2.5 px-3.5 rounded-xl border border-neutral-300 dark:border-neutral-700 theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 text-xs font-bold flex items-center justify-center gap-2 transition-all active:scale-95 cursor-pointer shadow-sm group"
+        >
+          <i class="fa-solid fa-fingerprint text-emerald-500 text-sm group-hover:scale-110 transition-transform"></i>
+          <span class="theme-title">Authorize with Fingerprint</span>
+        </button>
+        <div class="flex items-center gap-2 my-2.5 opacity-40">
+          <div class="h-px bg-neutral-300 dark:bg-neutral-700 flex-1"></div>
+          <span class="text-[9px] font-bold uppercase theme-dimtext">Or Enter Password</span>
+          <div class="h-px bg-neutral-300 dark:bg-neutral-700 flex-1"></div>
+        </div>
+      </div>
+
       <!-- Password Input Field -->
       <div class="space-y-2">
         <label class="text-xs font-bold theme-title uppercase tracking-wider block">Admin Password</label>
@@ -1873,6 +1983,7 @@
     // --- INITIALIZATION ---
     window.addEventListener('DOMContentLoaded', () => {
       initTheme();
+      initBiometrics();
       checkStoredAuth();
       setupKeyListeners();
     });
@@ -1945,6 +2056,309 @@
       });
     }
 
+    // --- FINGERPRINT & BIOMETRIC AUTHENTICATION (WEBAUTHN) ---
+    const BIOMETRIC_KEY_CRED_ID = 'bingo_biometric_cred_id';
+    const BIOMETRIC_KEY_AUTOPROMPT = 'bingo_biometric_autoprompt';
+
+    function bufferToBase64(buffer) {
+      const bytes = new Uint8Array(buffer);
+      let binary = '';
+      for (let i = 0; i < bytes.byteLength; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      return window.btoa(binary);
+    }
+
+    function base64ToBuffer(base64) {
+      const binary = window.atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      return bytes.buffer;
+    }
+
+    function isBiometricSupported() {
+      return !!(window.PublicKeyCredential && 
+        navigator.credentials && 
+        typeof navigator.credentials.create === 'function' &&
+        typeof navigator.credentials.get === 'function');
+    }
+
+    function isBiometricEnrolled() {
+      return !!localStorage.getItem(BIOMETRIC_KEY_CRED_ID);
+    }
+
+    async function initBiometrics() {
+      updateBiometricUI();
+    }
+
+    function updateBiometricUI() {
+      const supported = isBiometricSupported();
+      const enrolled = isBiometricEnrolled();
+
+      // 1. Auth Gate UI
+      const authContainer = document.getElementById('biometricAuthContainer');
+      const enrollHint = document.getElementById('biometricEnrollHint');
+
+      if (authContainer) {
+        if (supported && enrolled) {
+          authContainer.classList.remove('hidden');
+        } else {
+          authContainer.classList.add('hidden');
+        }
+      }
+
+      if (enrollHint) {
+        if (supported && !enrolled) {
+          enrollHint.classList.remove('hidden');
+        } else {
+          enrollHint.classList.add('hidden');
+        }
+      }
+
+      // 2. Settings Tab UI
+      const badge = document.getElementById('biometricStatusBadge');
+      const badgeText = document.getElementById('biometricStatusText');
+      const enrollBtn = document.getElementById('enrollBiometricBtn');
+      const enrollBtnText = document.getElementById('enrollBiometricBtnText');
+      const removeBtn = document.getElementById('removeBiometricBtn');
+      const testBtn = document.getElementById('testBiometricBtn');
+      const autoPromptRow = document.getElementById('biometricAutoPromptRow');
+      const autoPromptCheck = document.getElementById('biometricAutoPromptCheck');
+
+      if (!badge || !enrollBtn) return;
+
+      if (!supported) {
+        badge.className = 'px-2.5 py-1 rounded-full text-[11px] font-bold bg-neutral-500/10 text-neutral-500 border border-neutral-500/20 flex items-center gap-1.5';
+        badgeText.innerText = 'Not Supported';
+        enrollBtn.disabled = true;
+        enrollBtn.classList.add('opacity-50', 'cursor-not-allowed');
+        if (enrollBtnText) enrollBtnText.innerText = 'Sensor Not Supported';
+        if (removeBtn) removeBtn.classList.add('hidden');
+        if (testBtn) testBtn.classList.add('hidden');
+        if (autoPromptRow) autoPromptRow.classList.add('hidden');
+        return;
+      }
+
+      enrollBtn.disabled = false;
+      enrollBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+
+      if (enrolled) {
+        badge.className = 'px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 flex items-center gap-1.5';
+        badgeText.innerText = 'Configured & Active';
+        if (enrollBtnText) enrollBtnText.innerText = 'Re-enroll Fingerprint';
+        if (removeBtn) removeBtn.classList.remove('hidden');
+        if (testBtn) testBtn.classList.remove('hidden');
+        if (autoPromptRow) {
+          autoPromptRow.classList.remove('hidden');
+          autoPromptRow.classList.add('flex');
+        }
+        if (autoPromptCheck) {
+          const autoPrompt = localStorage.getItem(BIOMETRIC_KEY_AUTOPROMPT);
+          autoPromptCheck.checked = (autoPrompt !== 'false');
+        }
+      } else {
+        badge.className = 'px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-500/10 text-amber-500 border border-amber-500/20 flex items-center gap-1.5';
+        badgeText.innerText = 'Not Configured';
+        if (enrollBtnText) enrollBtnText.innerText = 'Enable Fingerprint Unlock';
+        if (removeBtn) removeBtn.classList.add('hidden');
+        if (testBtn) testBtn.classList.add('hidden');
+        if (autoPromptRow) {
+          autoPromptRow.classList.add('hidden');
+          autoPromptRow.classList.remove('flex');
+        }
+      }
+    }
+
+    async function checkBiometricOnLaunch() {
+      if (!isBiometricSupported() || !isBiometricEnrolled()) return;
+      const autoPrompt = localStorage.getItem(BIOMETRIC_KEY_AUTOPROMPT);
+      if (autoPrompt === 'false') return;
+
+      setTimeout(() => {
+        const authGate = document.getElementById('authGate');
+        if (authGate && !authGate.classList.contains('hidden')) {
+          triggerBiometricUnlock(true);
+        }
+      }, 350);
+    }
+
+    async function enrollBiometrics() {
+      if (!isBiometricSupported()) {
+        showToast('WebAuthn / Biometrics are not supported by this browser.', 'error');
+        return;
+      }
+
+      try {
+        const challenge = new Uint8Array(32);
+        window.crypto.getRandomValues(challenge);
+        const userId = new Uint8Array(16);
+        window.crypto.getRandomValues(userId);
+
+        const rpId = (window.location.hostname && !/^[0-9.]+$/.test(window.location.hostname)) ? window.location.hostname : undefined;
+
+        showToast('Touch your fingerprint sensor or verify your screen lock...', 'info');
+
+        const credential = await navigator.credentials.create({
+          publicKey: {
+            challenge: challenge,
+            rp: {
+              name: "Bingo Server Admin",
+              ...(rpId ? { id: rpId } : {})
+            },
+            user: {
+              id: userId,
+              name: "admin",
+              displayName: "Bingo Administrator"
+            },
+            pubKeyCredParams: [
+              { type: "public-key", alg: -7 },   // ES256
+              { type: "public-key", alg: -257 }  // RS256
+            ],
+            authenticatorSelection: {
+              authenticatorAttachment: "platform",
+              userVerification: "required",
+              requireResidentKey: false
+            },
+            timeout: 60000,
+            attestation: "none"
+          }
+        });
+
+        if (credential && credential.rawId) {
+          const credIdBase64 = bufferToBase64(credential.rawId);
+          localStorage.setItem(BIOMETRIC_KEY_CRED_ID, credIdBase64);
+          if (localStorage.getItem(BIOMETRIC_KEY_AUTOPROMPT) === null) {
+            localStorage.setItem(BIOMETRIC_KEY_AUTOPROMPT, 'true');
+          }
+          updateBiometricUI();
+          showToast('Fingerprint registered successfully! You can now unlock with your fingerprint.', 'success');
+        }
+      } catch (err) {
+        if (err.name === 'NotAllowedError') {
+          console.log('Biometric registration cancelled by operator.');
+        } else {
+          console.error('Biometric enrollment failed:', err);
+          showToast('Fingerprint enrollment failed: ' + (err.message || err.name), 'error');
+        }
+      }
+    }
+
+    function removeBiometrics() {
+      if (!confirm('Are you sure you want to disable Fingerprint Unlock? Your master password will remain unchanged.')) {
+        return;
+      }
+      localStorage.removeItem(BIOMETRIC_KEY_CRED_ID);
+      localStorage.removeItem(BIOMETRIC_KEY_AUTOPROMPT);
+      updateBiometricUI();
+      showToast('Fingerprint removed. Master password remains active.', 'info');
+    }
+
+    function toggleBiometricAutoPrompt(enabled) {
+      localStorage.setItem(BIOMETRIC_KEY_AUTOPROMPT, enabled ? 'true' : 'false');
+      showToast(enabled ? 'Fingerprint auto-prompt enabled on launch' : 'Fingerprint auto-prompt disabled on launch', 'info');
+    }
+
+    async function testBiometrics() {
+      if (!isBiometricEnrolled()) {
+        showToast('No fingerprint enrolled to test.', 'error');
+        return;
+      }
+
+      try {
+        const credId = localStorage.getItem(BIOMETRIC_KEY_CRED_ID);
+        const challenge = new Uint8Array(32);
+        window.crypto.getRandomValues(challenge);
+        const rpId = (window.location.hostname && !/^[0-9.]+$/.test(window.location.hostname)) ? window.location.hostname : undefined;
+
+        showToast('Touch your fingerprint sensor to test...', 'info');
+
+        const assertion = await navigator.credentials.get({
+          publicKey: {
+            challenge: challenge,
+            ...(rpId ? { rpId: rpId } : {}),
+            allowCredentials: [{
+              type: "public-key",
+              id: base64ToBuffer(credId),
+              transports: ["internal"]
+            }],
+            userVerification: "required",
+            timeout: 60000
+          }
+        });
+
+        if (assertion) {
+          showToast('Sensor verified! Fingerprint authentication is working perfectly.', 'success');
+        }
+      } catch (err) {
+        if (err.name === 'NotAllowedError') {
+          console.log('Biometric test cancelled.');
+        } else {
+          console.error('Biometric test error:', err);
+          showToast('Fingerprint test failed: ' + err.message, 'error');
+        }
+      }
+    }
+
+    async function triggerBiometricUnlock(isAuto = false) {
+      if (!isBiometricEnrolled()) {
+        showToast('Fingerprint is not configured. Please use your master password.', 'info');
+        return;
+      }
+
+      try {
+        const credId = localStorage.getItem(BIOMETRIC_KEY_CRED_ID);
+        const challenge = new Uint8Array(32);
+        window.crypto.getRandomValues(challenge);
+        const rpId = (window.location.hostname && !/^[0-9.]+$/.test(window.location.hostname)) ? window.location.hostname : undefined;
+
+        if (!isAuto) {
+          showToast('Touch your fingerprint sensor...', 'info');
+        }
+
+        const assertion = await navigator.credentials.get({
+          publicKey: {
+            challenge: challenge,
+            ...(rpId ? { rpId: rpId } : {}),
+            allowCredentials: [{
+              type: "public-key",
+              id: base64ToBuffer(credId),
+              transports: ["internal"]
+            }],
+            userVerification: "required",
+            timeout: 60000
+          }
+        });
+
+        if (assertion) {
+          const remember = document.getElementById('rememberSessionCheck')?.checked;
+          if (remember) {
+            localStorage.setItem('bingo_admin_auth', 'true');
+          } else {
+            sessionStorage.setItem('bingo_admin_auth', 'true');
+          }
+          unlockConsole();
+          showToast('Fingerprint Authorized. Welcome back, Admin!', 'success');
+        }
+      } catch (err) {
+        if (err.name === 'NotAllowedError') {
+          console.log('Biometric unlock dismissed.');
+        } else {
+          console.error('Biometric unlock error:', err);
+          if (!isAuto) {
+            showToast('Biometric unlock failed: ' + (err.message || 'Verification error'), 'error');
+          }
+        }
+      }
+    }
+
+    function promptEnrollBiometricFromLogin() {
+      showToast('Enter your Admin Password to unlock first, then configure Fingerprint in Settings!', 'info');
+      const pinInput = document.getElementById('adminPinInput');
+      if (pinInput) pinInput.focus();
+    }
+
     // --- AUTHENTICATION GATE LOGIC ---
     function getStoredAdminPassword() {
       return localStorage.getItem('bingo_custom_admin_pass') || DEFAULT_ADMIN_PASS;
@@ -1958,6 +2372,7 @@
       } else {
         document.getElementById('authGate').classList.remove('hidden');
         document.getElementById('adminPinInput').focus();
+        checkBiometricOnLaunch();
       }
     }
 
@@ -2046,6 +2461,7 @@
       document.getElementById('authGate').classList.remove('hidden');
       document.getElementById('adminPinInput').value = '';
       document.getElementById('adminPinInput').focus();
+      updateBiometricUI();
       showToast('Console Locked', 'info');
     }
 
@@ -2163,6 +2579,8 @@
         renderBroadcastHistory();
       } else if (tabId === 'ota') {
         fetchCurrentOtaReleaseStatus();
+      } else if (tabId === 'settings') {
+        updateBiometricUI();
       }
     }
 
@@ -3649,6 +4067,16 @@
       document.getElementById('confirmPasswordInput').value = '';
       document.getElementById('confirmModalError').classList.add('hidden');
       document.getElementById('confirmBtnText').innerText = 'Authorize & Delete';
+
+      const bioRow = document.getElementById('confirmBiometricRow');
+      if (bioRow) {
+        if (isBiometricEnrolled()) {
+          bioRow.classList.remove('hidden');
+        } else {
+          bioRow.classList.add('hidden');
+        }
+      }
+
       if (!isHandlingPopState) {
         window.history.pushState({ screen: 'confirmModal' }, '');
       }
@@ -3678,23 +4106,10 @@
       }
     }
 
-    async function executeConfirmedAction() {
+    async function performPendingAction() {
       if (!pendingAction) return;
-
-      const enteredPass = document.getElementById('confirmPasswordInput').value.trim();
-      const validPass = getStoredAdminPassword();
-      const modalBox = document.getElementById('confirmModalBox');
-      const errorDiv = document.getElementById('confirmModalError');
       const btnText = document.getElementById('confirmBtnText');
-
-      if (enteredPass !== validPass) {
-        errorDiv.classList.remove('hidden');
-        modalBox.classList.add('shake-anim');
-        setTimeout(() => modalBox.classList.remove('shake-anim'), 400);
-        return;
-      }
-
-      btnText.innerText = 'Deleting...';
+      if (btnText) btnText.innerText = 'Processing...';
       const action = pendingAction;
 
       try {
@@ -3719,7 +4134,65 @@
       } catch (err) {
         console.error('Error during execution:', err);
         showToast('Operation failed: ' + err.message, 'error');
-        btnText.innerText = 'Authorize & Delete';
+        if (btnText) btnText.innerText = 'Authorize & Delete';
+      }
+    }
+
+    async function executeConfirmedAction() {
+      if (!pendingAction) return;
+
+      const enteredPass = document.getElementById('confirmPasswordInput').value.trim();
+      const validPass = getStoredAdminPassword();
+      const modalBox = document.getElementById('confirmModalBox');
+      const errorDiv = document.getElementById('confirmModalError');
+
+      if (enteredPass !== validPass) {
+        errorDiv.classList.remove('hidden');
+        modalBox.classList.add('shake-anim');
+        setTimeout(() => modalBox.classList.remove('shake-anim'), 400);
+        return;
+      }
+
+      await performPendingAction();
+    }
+
+    async function confirmActionWithBiometrics() {
+      if (!isBiometricEnrolled()) {
+        showToast('Fingerprint not configured. Please enter password.', 'info');
+        return;
+      }
+
+      try {
+        const credId = localStorage.getItem(BIOMETRIC_KEY_CRED_ID);
+        const challenge = new Uint8Array(32);
+        window.crypto.getRandomValues(challenge);
+        const rpId = (window.location.hostname && !/^[0-9.]+$/.test(window.location.hostname)) ? window.location.hostname : undefined;
+
+        showToast('Touch your fingerprint sensor to authorize...', 'info');
+        const assertion = await navigator.credentials.get({
+          publicKey: {
+            challenge: challenge,
+            ...(rpId ? { rpId: rpId } : {}),
+            allowCredentials: [{
+              type: "public-key",
+              id: base64ToBuffer(credId),
+              transports: ["internal"]
+            }],
+            userVerification: "required",
+            timeout: 60000
+          }
+        });
+
+        if (assertion) {
+          showToast('Biometric verified. Executing operation...', 'success');
+          await performPendingAction();
+        }
+      } catch (err) {
+        if (err.name === 'NotAllowedError') {
+          console.log('Biometric authorization cancelled.');
+        } else {
+          showToast('Fingerprint verification failed. Please enter password.', 'error');
+        }
       }
     }
 
