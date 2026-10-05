@@ -5027,7 +5027,16 @@
       if (topic === 'bingo/global/broadcast') {
         try {
           const bcast = JSON.parse(payload);
-          updateLiveBroadcastCardUI(bcast);
+          if (bcast && bcast.targetUsername && bcast.targetUsername !== 'ALL') {
+            const cleanUser = bcast.targetUsername.replace(/^@/, '').toLowerCase();
+            if (!bcast.active) {
+              showToast(`@${cleanUser} opened the app & received your message! ✅`, 'success');
+              removeActiveDirectRecipient(cleanUser);
+            } else {
+              addActiveDirectRecipient(cleanUser);
+            }
+          }
+          fetchCurrentCloudBroadcast();
         } catch {}
       }
 
@@ -5515,100 +5524,211 @@
       }, 350);
     }
 
-    async function fetchCurrentCloudBroadcast() {
-      const targetInput = document.getElementById('broadcastTargetInput');
-      const rawTarget = targetInput ? targetInput.value.trim() : '';
-      const clean = rawTarget.replace(/^@/, '').toLowerCase();
-      const isDirect = clean && clean !== 'all';
-      const storageKey = isDirect ? `user_msg_${clean}` : 'global_broadcast_message';
+    // --- ACTIVE DIRECT RECIPIENTS TRACKER ---
+    async function getActiveDirectRecipients() {
+      let list = [];
+      try {
+        const raw = await getKeyValueDirect('active_direct_recipients');
+        if (raw && raw !== '""' && raw !== 'null') {
+          let cleanStr = raw.trim();
+          if (cleanStr.startsWith('"') && cleanStr.endsWith('"') && cleanStr.length >= 2) {
+            cleanStr = cleanStr.substring(1, cleanStr.length - 1).replace(/\\"/g, '"');
+          }
+          const parsed = JSON.parse(cleanStr);
+          if (Array.isArray(parsed)) list = parsed;
+        }
+      } catch {}
+      try {
+        const local = JSON.parse(localStorage.getItem('bingo_admin_active_direct_recipients') || '[]');
+        if (Array.isArray(local)) {
+          list = Array.from(new Set([...list, ...local]));
+        }
+      } catch {}
+      return list.map(u => String(u).trim().toLowerCase().replace(/^@/, '')).filter(Boolean);
+    }
 
+    async function addActiveDirectRecipient(username) {
+      if (!username) return;
+      const clean = username.trim().toLowerCase().replace(/^@/, '');
+      if (!clean || clean === 'all') return;
+      const current = await getActiveDirectRecipients();
+      if (!current.includes(clean)) {
+        current.push(clean);
+        localStorage.setItem('bingo_admin_active_direct_recipients', JSON.stringify(current));
+        await setKeyValueDirect('active_direct_recipients', JSON.stringify(current));
+      }
+    }
+
+    async function removeActiveDirectRecipient(username) {
+      if (!username) return;
+      const clean = username.trim().toLowerCase().replace(/^@/, '');
+      const current = await getActiveDirectRecipients();
+      const updated = current.filter(u => u !== clean);
+      localStorage.setItem('bingo_admin_active_direct_recipients', JSON.stringify(updated));
+      await setKeyValueDirect('active_direct_recipients', JSON.stringify(updated));
+    }
+
+    async function fetchCurrentCloudBroadcast() {
       const dot = document.getElementById('liveBroadcastDot');
       const badge = document.getElementById('liveBroadcastBadge');
       const content = document.getElementById('liveBroadcastContent');
 
       if (badge) {
         badge.className = "px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-neutral-800 text-neutral-400";
-        badge.innerText = "FETCHING...";
+        badge.innerText = "CHECKING LIVE STATUS...";
       }
 
+      const activeList = [];
+
       try {
-        const raw = await getKeyValueDirect(storageKey);
-        if (!raw || raw === '""' || raw === 'null') {
-          updateLiveBroadcastCardUI(null, isDirect ? `@${clean}` : 'ALL PLAYERS');
-          return;
+        // 1. Check Global Broadcast
+        try {
+          const rawGlobal = await getKeyValueDirect('global_broadcast_message');
+          if (rawGlobal && rawGlobal !== '""' && rawGlobal !== 'null') {
+            let cleanStr = rawGlobal.trim();
+            if (cleanStr.startsWith('"') && cleanStr.endsWith('"') && cleanStr.length >= 2) {
+              cleanStr = cleanStr.substring(1, cleanStr.length - 1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+            }
+            const gBcast = JSON.parse(cleanStr);
+            if (gBcast && gBcast.active && gBcast.message && gBcast.message.trim().length > 0) {
+              activeList.push({
+                ...gBcast,
+                isDirect: false,
+                targetLabel: 'ALL PLAYERS'
+              });
+            }
+          }
+        } catch (e) {}
+
+        // 2. Check Direct Player Messages
+        const recipients = await getActiveDirectRecipients();
+        // Also always include currently typed recipient in composer if not 'ALL'
+        const targetInput = document.getElementById('broadcastTargetInput');
+        const typedTarget = targetInput ? targetInput.value.trim().replace(/^@/, '').toLowerCase() : '';
+        if (typedTarget && typedTarget !== 'all' && !recipients.includes(typedTarget)) {
+          recipients.push(typedTarget);
         }
 
-        let cleanStr = raw.trim();
-        if (cleanStr.startsWith('"') && cleanStr.endsWith('"') && cleanStr.length >= 2) {
-          cleanStr = cleanStr.substring(1, cleanStr.length - 1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+        const validRecipients = [];
+        for (const u of recipients) {
+          try {
+            const rawUser = await getKeyValueDirect(`user_msg_${u}`);
+            if (rawUser && rawUser !== '""' && rawUser !== 'null') {
+              let cleanUserStr = rawUser.trim();
+              if (cleanUserStr.startsWith('"') && cleanUserStr.endsWith('"') && cleanUserStr.length >= 2) {
+                cleanUserStr = cleanUserStr.substring(1, cleanUserStr.length - 1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+              }
+              const uBcast = JSON.parse(cleanUserStr);
+              if (uBcast && uBcast.active && uBcast.message && uBcast.message.trim().length > 0) {
+                activeList.push({
+                  ...uBcast,
+                  isDirect: true,
+                  targetLabel: `@${u}`,
+                  targetUser: u
+                });
+                validRecipients.push(u);
+              }
+            }
+          } catch (e) {}
         }
-        const bcast = JSON.parse(cleanStr);
-        updateLiveBroadcastCardUI(bcast, isDirect ? `@${clean}` : 'ALL PLAYERS');
-      } catch (e) {
-        updateLiveBroadcastCardUI(null, isDirect ? `@${clean}` : 'ALL PLAYERS');
+
+        // Update tracking list with only still-active recipients
+        localStorage.setItem('bingo_admin_active_direct_recipients', JSON.stringify(validRecipients));
+        setKeyValueDirect('active_direct_recipients', JSON.stringify(validRecipients)).catch(() => {});
+
+        updateLiveBroadcastCardUI(activeList);
+      } catch (err) {
+        updateLiveBroadcastCardUI([]);
       }
     }
 
-    function updateLiveBroadcastCardUI(bcast, currentTargetScope = 'ALL PLAYERS') {
-      currentActiveBroadcastData = bcast;
+    function updateLiveBroadcastCardUI(activeList = []) {
       const dot = document.getElementById('liveBroadcastDot');
       const badge = document.getElementById('liveBroadcastBadge');
       const content = document.getElementById('liveBroadcastContent');
       if (!dot || !badge || !content) return;
 
-      if (bcast && bcast.active && bcast.message && bcast.message.trim().length > 0) {
+      if (Array.isArray(activeList) && activeList.length > 0) {
         dot.className = "w-2 h-2 rounded-full bg-emerald-500 animate-pulse";
-        
-        let typeBadge = "📢 ANNOUNCEMENT";
-        if (bcast.type === 'ALERT') {
-          typeBadge = "⚠️ ALERT";
-        } else if (bcast.type === 'MAINTENANCE') {
-          typeBadge = "🛠️ MAINTENANCE";
-        } else if (bcast.type === 'DIRECT' || (bcast.targetUsername && bcast.targetUsername !== 'ALL')) {
-          typeBadge = "👤 DIRECT";
-        }
-
-        const deliveryMode = bcast.deliveryMode || 'STARTUP';
-        const modeBadge = deliveryMode === 'ONCE' 
-          ? '<span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold theme-subtle theme-title border theme-border">🎯 ONLY ONCE</span>'
-          : '<span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold theme-subtle theme-title border theme-border">🔄 EVERY STARTUP</span>';
-
-        const sizeMode = bcast.size || 'STANDARD';
-        const sizeBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-neutral-800 text-neutral-300 border border-neutral-700/50">${sizeMode === 'COMPACT' ? '▫️ COMPACT' : (sizeMode === 'EXPANDED' ? '◻️ EXPANDED' : '◽ STANDARD')}</span>`;
-
         badge.className = "px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30";
-        badge.innerText = `● ACTIVE (${typeBadge})`;
+        badge.innerText = `● ${activeList.length} ACTIVE ${activeList.length === 1 ? 'BROADCAST' : 'BROADCASTS'}`;
 
-        const targetLabel = (bcast.targetUsername && bcast.targetUsername !== 'ALL') ? bcast.targetUsername : 'ALL PLAYERS';
-        const dateStr = bcast.timestamp ? new Date(bcast.timestamp).toLocaleString() : 'Recent';
+        let html = '<div class="space-y-3 pt-1">';
+        activeList.forEach((bcast) => {
+          let typeBadge = "📢 ANNOUNCEMENT";
+          if (bcast.type === 'ALERT') typeBadge = "⚠️ ALERT";
+          else if (bcast.type === 'MAINTENANCE') typeBadge = "🛠️ MAINTENANCE";
+          else if (bcast.isDirect) typeBadge = "👤 DIRECT MESSAGE";
+
+          const deliveryMode = bcast.deliveryMode || 'STARTUP';
+          const modeBadge = deliveryMode === 'ONCE' 
+            ? '<span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold theme-subtle theme-title border theme-border">🎯 ONLY ONCE</span>'
+            : '<span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold theme-subtle theme-title border theme-border">🔄 EVERY STARTUP</span>';
+
+          const sizeMode = bcast.size || 'STANDARD';
+          const sizeBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-neutral-800 text-neutral-300 border border-neutral-700/50">${sizeMode === 'COMPACT' ? '▫️ COMPACT' : (sizeMode === 'EXPANDED' ? '◻️ EXPANDED' : '◽ STANDARD')}</span>`;
+
+          const targetLabel = bcast.targetLabel || (bcast.isDirect ? `@${bcast.targetUser}` : 'ALL PLAYERS');
+          const dateStr = bcast.timestamp ? new Date(bcast.timestamp).toLocaleString() : 'Recent';
+          const statusBadge = bcast.isDirect 
+            ? '<span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30 flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span> Pending App Open</span>'
+            : '<span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">Active for All Players</span>';
+
+          const clearTargetParam = bcast.isDirect ? bcast.targetUser : 'ALL';
+
+          html += `
+            <div class="p-3.5 rounded-xl border border-neutral-800/80 bg-neutral-950/40 space-y-2.5">
+              <div class="flex items-center justify-between flex-wrap gap-1.5">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="font-bold theme-title text-sm">${escapeHtml(bcast.title || 'Untitled Notice')}</span>
+                  <span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-neutral-900 border border-neutral-800 text-neutral-300">${typeBadge}</span>
+                </div>
+                <div class="flex items-center gap-1.5 flex-wrap">
+                  ${statusBadge}
+                  ${modeBadge}
+                  ${sizeBadge}
+                  <span class="text-[10px] theme-dimtext">${dateStr}</span>
+                </div>
+              </div>
+              <p class="theme-dimtext text-xs leading-relaxed bg-black/30 p-2.5 rounded-lg border border-neutral-800/60 whitespace-pre-wrap">${escapeHtml(bcast.message)}</p>
+              <div class="flex items-center justify-between text-[11px] pt-1">
+                <span class="font-semibold theme-title font-mono flex items-center gap-1.5">
+                  <i class="${bcast.isDirect ? 'fa-solid fa-user text-amber-400' : 'fa-solid fa-bullhorn text-emerald-400'} text-xs"></i>
+                  Recipient: <strong>${escapeHtml(targetLabel)}</strong>
+                </span>
+                <button 
+                  type="button" 
+                  onclick="clearSpecificNotice('${clearTargetParam}')" 
+                  class="px-2.5 py-1 rounded-lg text-rose-500 hover:bg-rose-500/10 font-bold text-xs transition-all cursor-pointer flex items-center gap-1 border border-rose-500/20"
+                  title="Clear this specific notice"
+                >
+                  <i class="fa-solid fa-trash-can text-[10px]"></i>
+                  <span>Clear Notice</span>
+                </button>
+              </div>
+            </div>
+          `;
+        });
+        html += '</div>';
 
         content.className = "text-xs space-y-2";
-        content.innerHTML = `
-          <div class="flex items-center justify-between flex-wrap gap-1.5">
-            <span class="font-bold theme-title text-sm">${escapeHtml(bcast.title || 'Untitled Notice')}</span>
-            <div class="flex items-center gap-1.5 flex-wrap">
-              ${modeBadge}
-              ${sizeBadge}
-              <span class="text-[10px] theme-dimtext">${dateStr}</span>
-            </div>
-          </div>
-          <p class="theme-dimtext leading-relaxed bg-neutral-950/40 p-2.5 rounded-lg border border-neutral-800/60">${escapeHtml(bcast.message)}</p>
-          <div class="flex items-center justify-between text-[11px] pt-1">
-            <span class="font-semibold theme-title font-mono">Recipient: ${escapeHtml(targetLabel)}</span>
-            <button type="button" onclick="clearCloudBroadcast(false)" class="px-2.5 py-1 rounded-lg text-rose-500 hover:bg-rose-500/10 font-bold text-xs transition-all cursor-pointer flex items-center gap-1 border border-rose-500/20">
-              <i class="fa-solid fa-trash-can text-[10px]"></i>
-              <span>Clear Notice</span>
-            </button>
-          </div>
-        `;
+        content.innerHTML = html;
       } else {
         dot.className = "w-2 h-2 rounded-full bg-neutral-500";
         badge.className = "px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-neutral-800 text-neutral-400 border border-neutral-700/60";
-        badge.innerText = "○ NO ACTIVE BROADCAST";
+        badge.innerText = "○ NO ACTIVE BROADCASTS";
 
         content.className = "text-xs theme-dimtext";
-        content.innerHTML = `<span>No active announcement currently broadcasted for <strong>${escapeHtml(currentTargetScope)}</strong>. Player apps will not display any popup dialog on startup.</span>`;
+        content.innerHTML = `<span>No active announcements or pending direct messages. Player apps will not display any popup dialog on startup.</span>`;
       }
+    }
+
+    async function clearSpecificNotice(target) {
+      const clean = target.replace(/^@/, '').trim();
+      const isDirect = clean && clean.toUpperCase() !== 'ALL';
+      const targetInput = document.getElementById('broadcastTargetInput');
+      if (targetInput) targetInput.value = isDirect ? `@${clean}` : 'ALL';
+      await clearCloudBroadcast(false);
     }
 
     async function dispatchEnhancedBroadcast() {
@@ -5684,12 +5804,18 @@
         }
 
         if (kvSuccess) {
+          if (isDirect) {
+            await addActiveDirectRecipient(cleanTarget.toLowerCase());
+          }
           showToast(`Broadcast dispatched ${isDirect ? 'to @' + cleanTarget : 'globally to ALL players'}! 🚀`, 'success');
-          updateLiveBroadcastCardUI(payloadObj, targetUsername);
+          await fetchCurrentCloudBroadcast();
           saveBroadcastToHistory(payloadObj);
         } else {
           showToast('Dispatched via MQTT! Cloud persistence had a delay.', 'info');
-          updateLiveBroadcastCardUI(payloadObj, targetUsername);
+          if (isDirect) {
+            await addActiveDirectRecipient(cleanTarget.toLowerCase());
+          }
+          await fetchCurrentCloudBroadcast();
           saveBroadcastToHistory(payloadObj);
         }
       } catch (err) {
@@ -5735,7 +5861,11 @@
           // 1. Wipe global broadcast in cloud
           await setKeyValueDirect('global_broadcast_message', jsonStr);
 
-          // 2. Wipe direct message mailboxes for all known users
+          // 2. Wipe tracking list
+          await setKeyValueDirect('active_direct_recipients', '[]');
+          localStorage.setItem('bingo_admin_active_direct_recipients', '[]');
+
+          // 3. Wipe direct message mailboxes for all known users
           try {
             const userDir = await getKeyValueDirect('user_directory');
             if (userDir) {
@@ -5747,7 +5877,7 @@
             }
           } catch {}
 
-          // 3. Clear MQTT retained topic
+          // 4. Clear MQTT retained topic
           if (globalState.mqttClient && globalState.mqttClient.isConnected()) {
             const mqttMsg = new Paho.MQTT.Message(jsonStr);
             mqttMsg.destinationName = 'bingo/global/broadcast';
@@ -5755,11 +5885,14 @@
             globalState.mqttClient.send(mqttMsg);
           }
 
-          updateLiveBroadcastCardUI(null, 'ALL PLAYERS');
+          await fetchCurrentCloudBroadcast();
           showToast('All global & direct player broadcasts purged! 🧹', 'success');
         } else {
           // Deactivate the selected target
           await setKeyValueDirect(storageKey, jsonStr);
+          if (isDirect) {
+            await removeActiveDirectRecipient(cleanTarget.toLowerCase());
+          }
 
           // If target is ALL, wipe the retained broker message
           if (!isDirect && globalState.mqttClient && globalState.mqttClient.isConnected()) {
@@ -5769,7 +5902,7 @@
             globalState.mqttClient.send(mqttMsg);
           }
 
-          updateLiveBroadcastCardUI(null, isDirect ? `@${cleanTarget}` : 'ALL PLAYERS');
+          await fetchCurrentCloudBroadcast();
           showToast(`Broadcast cleared ${isDirect ? 'for @' + cleanTarget : 'for all players'}!`, 'success');
         }
       } catch (err) {
