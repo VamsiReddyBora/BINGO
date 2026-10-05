@@ -6,7 +6,8 @@
   <title>BINGO Server | Master Admin Console</title>
   <link rel="icon" type="image/png" href="/BINGO/admin/favicon.png">
   <link rel="apple-touch-icon" href="/BINGO/admin/icon-192.png">
-  <link rel="manifest" href="/BINGO/admin/manifest.json?v=2">
+  <link rel="preload" as="image" href="/BINGO/admin/splash-logo.png">
+  <link rel="manifest" href="/BINGO/admin/manifest.json?v=3">
   <meta name="theme-color" content="#000000">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -307,9 +308,93 @@
       from { transform: rotate(0deg); }
       to { transform: rotate(360deg); }
     }
+
+    /* APP LAUNCH OPENING ANIMATION (MATCHES ANDROID AUTHGATESCREEN) */
+    #appSplashScreen {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background-color: #000000;
+      transition: opacity 350ms cubic-bezier(0.4, 0, 0.2, 1);
+      pointer-events: none;
+    }
+    .splash-glow-aura {
+      position: absolute;
+      width: 320px;
+      height: 320px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(16, 185, 129, 0.25) 0%, rgba(16, 185, 129, 0) 70%);
+      filter: blur(28px);
+      z-index: -1;
+      animation: splashGlowPulse 1.4s ease-in-out infinite alternate;
+    }
+    @keyframes splashGlowPulse {
+      0% { transform: scale(0.92); opacity: 0.5; }
+      100% { transform: scale(1.10); opacity: 0.95; }
+    }
+    #splashLogoImg {
+      width: 260px;
+      height: 260px;
+      max-width: 75vw;
+      max-height: 75vw;
+      object-fit: contain;
+      user-select: none;
+      filter: drop-shadow(0 20px 35px rgba(0, 0, 0, 0.8));
+      transform: scale(0.58);
+      opacity: 0;
+      will-change: transform, opacity;
+    }
+    /* Entry: Scale 0.58 -> 1.0 (650ms, CubicBezier(0.16, 1, 0.3, 1)), Alpha 0 -> 1 (400ms Linear) */
+    #splashLogoImg.splash-enter {
+      animation: splashEnterScale 650ms cubic-bezier(0.16, 1, 0.3, 1) forwards,
+                 splashEnterFade 400ms linear forwards;
+    }
+    @keyframes splashEnterScale {
+      0% { transform: scale(0.58); }
+      100% { transform: scale(1.0); }
+    }
+    @keyframes splashEnterFade {
+      0% { opacity: 0; }
+      100% { opacity: 1; }
+    }
+    /* Exit: Scale 1.0 -> 1.35 (380ms, FastOutSlowInEasing), Alpha 1 -> 0 (350ms Linear) */
+    #splashLogoImg.splash-exit {
+      animation: splashExitScale 380ms cubic-bezier(0.4, 0, 0.2, 1) forwards,
+                 splashExitFade 350ms linear forwards;
+    }
+    @keyframes splashExitScale {
+      0% { transform: scale(1.0); }
+      100% { transform: scale(1.35); }
+    }
+    @keyframes splashExitFade {
+      0% { opacity: 1; }
+      100% { opacity: 0; }
+    }
+    #appSplashScreen.splash-fade-out {
+      opacity: 0;
+    }
   </style>
 </head>
 <body class="min-h-screen font-sans antialiased select-none overflow-x-hidden">
+
+  <!-- ======================================================== -->
+  <!-- 0. APP LAUNCH OPENING SPLASH SCREEN (MATCHES MOBILE APP)  -->
+  <!-- ======================================================== -->
+  <div id="appSplashScreen" class="fixed inset-0 z-[100] flex items-center justify-center bg-black select-none pointer-events-none">
+    <div class="relative flex flex-col items-center justify-center">
+      <!-- Ambient emerald glow aura matching app branding -->
+      <div class="splash-glow-aura"></div>
+      <img 
+        id="splashLogoImg" 
+        src="/BINGO/admin/splash-logo.png" 
+        alt="Bingo App Logo" 
+        class="w-[260px] h-[260px] sm:w-[280px] sm:h-[280px] object-contain select-none pointer-events-none"
+      >
+    </div>
+  </div>
 
   <!-- ======================================================== -->
   <!-- 1. FULLSCREEN HIGH-SECURITY BIOMETRIC GATEWAY SCREEN      -->
@@ -2238,6 +2323,7 @@
 
     // --- INITIALIZATION ---
     window.addEventListener('DOMContentLoaded', () => {
+      runLaunchSplashAnimation();
       initTheme();
       initBiometrics();
       checkStoredAuth();
@@ -2245,13 +2331,36 @@
       initPwa();
     });
 
+    // --- APP LAUNCH OPENING SPLASH ANIMATION (MATCHES ANDROID AUTHGATESCREEN) ---
+    function runLaunchSplashAnimation() {
+      const splash = document.getElementById('appSplashScreen');
+      const logo = document.getElementById('splashLogoImg');
+      if (!splash || !logo) return;
+
+      // 1. Smooth opening zoom-in and alpha reveal animation (~650ms, cubic-bezier(0.16, 1, 0.3, 1))
+      logo.classList.add('splash-enter');
+
+      // 2. Keep launch icon visible during opening (~950ms, exact match to AuthGateScreen delay(950L))
+      setTimeout(() => {
+        // 3. Smooth cinematic zoom-in transition on exit (scale 1.0 -> 1.35, FastOutSlowInEasing over 380ms)
+        logo.classList.remove('splash-enter');
+        logo.classList.add('splash-exit');
+        splash.classList.add('splash-fade-out');
+
+        // 4. Remove splash overlay after transition finishes
+        setTimeout(() => {
+          if (splash) splash.remove();
+        }, 400);
+      }, 950);
+    }
+
     // --- PWA SERVICE WORKER REGISTRATION & INSTALL LOGIC ---
     let deferredInstallPrompt = null;
 
     function initPwa() {
       // 1. Immediately register the Service Worker without waiting for 'load'
       if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('/BINGO/admin/sw.js?v=2', { scope: '/BINGO/admin/' })
+        navigator.serviceWorker.register('/BINGO/admin/sw.js?v=3', { scope: '/BINGO/admin/' })
           .then((reg) => {
             console.log('PWA ServiceWorker registered successfully:', reg.scope);
             reg.update();
