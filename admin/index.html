@@ -220,12 +220,14 @@
     .gateway-card {
       position: relative;
       background: var(--modal-bg);
-      border: 1px solid var(--border-strong);
+      border: none !important;
+      outline: none !important;
       box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7), 0 0 40px -10px rgba(16, 185, 129, 0.15);
       transition: all 0.3s ease;
     }
     html.dark .gateway-card {
-      border: 1px solid rgba(16, 185, 129, 0.25);
+      border: none !important;
+      outline: none !important;
       box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.9), 0 0 50px -10px rgba(16, 185, 129, 0.2);
     }
     .scanner-pod {
@@ -312,42 +314,26 @@
       <div class="w-[500px] h-[500px] bg-emerald-500/10 dark:bg-emerald-500/5 rounded-full blur-3xl -z-10 animate-pulse" style="animation-duration: 4s;"></div>
     </div>
 
-    <!-- Theme Toggle Switch on Login Screen (Top Right) -->
+    <!-- Theme Toggle Button on Login Screen (Top Right - Icon Only) -->
     <div class="absolute top-4 right-4 sm:top-5 sm:right-5 z-20">
       <button 
         type="button" 
         onclick="toggleTheme()" 
         id="authThemeToggleBtn"
-        class="px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl flex items-center gap-2 text-xs font-bold shadow-lg transition-all active:scale-95 border theme-subtle hover:scale-105"
-        title="Toggle Theme (AMOLED Black / Light)"
+        class="w-10 h-10 rounded-xl flex items-center justify-center shadow-lg transition-all active:scale-95 border theme-subtle hover:scale-105 cursor-pointer"
+        title="Toggle Theme"
       >
-        <i id="authThemeIcon" class="fa-solid fa-moon text-indigo-400"></i>
-        <span id="authThemeLabel" class="font-mono text-xs theme-title">AMOLED</span>
+        <i id="authThemeIcon" class="fa-solid fa-moon text-indigo-400 text-sm sm:text-base"></i>
       </button>
     </div>
 
-    <!-- Auth Gateway Modal Container -->
-    <div class="w-full max-w-md gateway-card rounded-3xl p-6 sm:p-8 shadow-2xl relative overflow-hidden backdrop-blur-2xl max-h-[92vh] overflow-y-auto">
+    <!-- Auth Gateway Modal Container (No Outline / Border) -->
+    <div class="w-full max-w-md gateway-card rounded-3xl p-6 sm:p-8 shadow-2xl relative overflow-hidden backdrop-blur-2xl max-h-[92vh] overflow-y-auto border-0">
       
-      <!-- Top Cyber Status Accent -->
-      <div class="flex items-center justify-between mb-5">
-        <div class="flex items-center gap-2">
-          <div class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping"></div>
-          <span class="text-[10px] font-mono font-bold tracking-widest uppercase text-emerald-500">SECURE GATEWAY</span>
-        </div>
-        <div class="text-[10px] font-mono text-neutral-400 dark:text-neutral-500 flex items-center gap-1.5">
-          <i class="fa-solid fa-shield-halved text-emerald-500"></i>
-          <span>BIOMETRIC LOCK</span>
-        </div>
-      </div>
-
-      <div class="text-center relative z-10">
+      <div class="text-center relative z-10 pt-2">
         <!-- Single Heading as Requested: "Bingo Server" -->
-        <h1 class="text-2xl sm:text-3xl font-black tracking-tight theme-title mb-1">Bingo Server</h1>
-        <p class="text-xs font-mono text-emerald-500 dark:text-emerald-400 tracking-wider mb-6 flex items-center justify-center gap-1.5">
-          <i class="fa-solid fa-lock text-[11px]"></i>
-          <span id="gatewaySubtitleText">Biometric Protected System</span>
-        </p>
+        <h1 class="text-2xl sm:text-3xl font-black tracking-tight theme-title mb-6">Bingo Server</h1>
+        <span id="gatewaySubtitleText" class="hidden"></span>
 
         <!-- VIEW 1: BIOMETRIC FINGERPRINT GATEWAY (PRIMARY / DEFAULT) -->
         <div id="authViewBiometric" class="space-y-6">
@@ -2201,11 +2187,11 @@
         html.classList.add('dark');
         if (authIcon) {
           authIcon.className = "fa-solid fa-moon text-indigo-400";
-          authLabel.innerText = "AMOLED";
+          if (authLabel) authLabel.innerText = "AMOLED";
         }
         if (adminIcon) {
           adminIcon.className = "fa-solid fa-moon text-indigo-400";
-          adminLabel.innerText = "AMOLED";
+          if (adminLabel) adminLabel.innerText = "AMOLED";
         }
         if (notify) showToast('Switched to Pure AMOLED Dark Theme', 'info');
       } else {
@@ -2213,11 +2199,11 @@
         html.classList.add('light');
         if (authIcon) {
           authIcon.className = "fa-solid fa-sun text-amber-500";
-          authLabel.innerText = "Light";
+          if (authLabel) authLabel.innerText = "Light";
         }
         if (adminIcon) {
           adminIcon.className = "fa-solid fa-sun text-amber-500";
-          adminLabel.innerText = "Light";
+          if (adminLabel) adminLabel.innerText = "Light";
         }
         if (notify) showToast('Switched to Crisp Light Theme', 'info');
       }
