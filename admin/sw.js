@@ -1,5 +1,5 @@
 // Bingo Server Admin Service Worker (PWA)
-const CACHE_NAME = 'bingo-admin-v3';
+const CACHE_NAME = 'bingo-admin-v4';
 const ASSETS_TO_CACHE = [
   '/BINGO/admin/',
   '/BINGO/admin/index.html',

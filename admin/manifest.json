@@ -1,6 +1,6 @@
 {
   "id": "/BINGO/admin/",
-  "name": "Bingo Server Admin",
+  "name": "Bingo Server",
   "short_name": "Bingo Server",
   "description": "Bingo Multiplayer Server Administration & Operator Console",
   "start_url": "/BINGO/admin/",
