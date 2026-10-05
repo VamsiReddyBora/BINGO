@@ -1,8 +1,8 @@
 {
-  "versionCode": 36,
-  "versionName": "1.3",
-  "tag_name": "v1.3",
-  "downloadUrl": "https://github.com/VamsiReddyBora/BINGO/releases/download/v1.3/Bingo.apk",
-  "releaseNotes": "• In-App OTA Update Engine\n• Resilient Anycast DNS\n• Multiplayer stability enhancements",
-  "apkSize": 5497848
+  "versionCode": 37,
+  "versionName": "1.3.1",
+  "tag_name": "v1.3.1",
+  "downloadUrl": "https://github.com/VamsiReddyBora/BINGO/releases/download/v1.3.1/Bingo.apk",
+  "releaseNotes": "• Real-time home screen ping indicator (1-second refresh)\n• Instant friends deletion sync & deleted account pruning\n• Admin console client version telemetry & OTA status reporting",
+  "apkSize": 5501939
 }

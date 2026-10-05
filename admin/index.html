@@ -1298,6 +1298,7 @@
             <div class="flex items-center gap-1.5 sm:gap-2">
               <h2 id="inspDisplayName" class="text-base sm:text-lg font-black theme-title truncate">Player Name</h2>
               <span id="inspLevelBadge" class="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold theme-subtle theme-title border theme-border flex-shrink-0">Lvl 1</span>
+              <span id="inspHeaderVersionBadge" class="hidden px-2 py-0.5 rounded-full text-[10px] font-mono font-bold theme-subtle theme-title border theme-border flex-shrink-0">v1.3.1</span>
             </div>
             <div class="flex items-center gap-1.5 sm:gap-2 mt-0.5 text-xs theme-dimtext truncate">
               <span id="inspUsername" class="font-mono theme-title truncate">@username</span>
@@ -1386,6 +1387,27 @@
             </button>
           </div>
 
+          <!-- Client Version & Diagnostics Section -->
+          <div class="theme-subtle rounded-xl p-4 space-y-3">
+            <div class="flex items-center justify-between flex-wrap gap-2">
+              <h4 class="text-xs font-bold theme-title uppercase tracking-wider flex items-center gap-2">
+                <i class="fa-solid fa-code-branch text-purple-400"></i>
+                <span>Client Application Version & Status</span>
+              </h4>
+              <span id="inspVersionStatusBadge" class="px-2 py-0.5 rounded text-[10px] font-bold theme-subtle border theme-border">Checking...</span>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <div>
+                <span class="theme-dimtext block mb-0.5">Installed Client Build:</span>
+                <span id="inspAppVersion" class="font-mono font-bold theme-title">Loading...</span>
+              </div>
+              <div>
+                <span class="theme-dimtext block mb-0.5">OTA Update Stream:</span>
+                <span id="inspOtaStatus" class="font-semibold theme-title">Checking update stream...</span>
+              </div>
+            </div>
+          </div>
+
           <!-- Technical & Account Metadata -->
           <div class="theme-subtle rounded-xl p-4 space-y-3">
             <h4 class="text-xs font-bold theme-title uppercase tracking-wider">Account Metadata</h4>
@@ -1410,6 +1432,10 @@
               <div>
                 <span class="theme-dimtext block mb-0.5">Last Seen:</span>
                 <span id="inspLastSeen" class="theme-title">Unknown</span>
+              </div>
+              <div>
+                <span class="theme-dimtext block mb-0.5">App Version:</span>
+                <span id="inspMetaAppVersion" class="font-mono theme-title">Unknown</span>
               </div>
             </div>
           </div>
@@ -2445,10 +2471,11 @@
               } catch {}
             }
 
+            let rawPres = null;
             // Step D: Fallback to pres_{uname} from KeyValue if lastSeen is still not found
             if (!binLastSeen && !regData?.lastSeenTimestamp) {
               try {
-                const rawPres = await getKeyValueDirect(`pres_${uname}`, 2);
+                rawPres = await getKeyValueDirect(`pres_${uname}`, 2);
                 if (rawPres && rawPres.includes(':')) {
                   const pParts = rawPres.split(':');
                   const pTs = parseInt(pParts[1]);
@@ -2459,6 +2486,17 @@
 
             const existing = globalState.playerCache[uname] || {};
             const matchHistoryLen = Array.isArray(matchHistory) ? matchHistory.length : 0;
+
+            // Extract App Version info
+            let presVersion = null;
+            let presVersionCode = null;
+            if (rawPres && rawPres.includes(':')) {
+              const pParts = rawPres.split(':');
+              if (pParts.length >= 3 && pParts[2]) presVersion = pParts[2];
+              if (pParts.length >= 4 && pParts[3]) presVersionCode = parseInt(pParts[3]) || null;
+            }
+            const appVersion = binProfile?.appVersion || regData?.appVersion || presVersion || existing.appVersion || null;
+            const appVersionCode = binProfile?.appVersionCode || regData?.appVersionCode || presVersionCode || existing.appVersionCode || null;
 
             // Monotonic stats: Never overwrite valid stats with 0!
             const gamesPlayed = Math.max(existing.gamesPlayed || 0, binProfile?.gamesPlayed || 0, matchHistoryLen, regData?.gamesPlayed || 0);
@@ -2482,7 +2520,9 @@
               lastSeenTimestamp: lastSeen,
               status: existing.status || 'OFFLINE',
               binId: binId,
-              rawReg: regData || existing.rawReg || null
+              rawReg: regData || existing.rawReg || null,
+              appVersion: appVersion,
+              appVersionCode: appVersionCode
             };
 
             globalState.playerCache[uname] = playerObj;
@@ -2528,6 +2568,10 @@
           p.status = computedStatus;
           if (livePres && livePres.timestamp > 0) {
             p.lastSeenTimestamp = Math.max(p.lastSeenTimestamp || 0, livePres.timestamp);
+          }
+          if (livePres && livePres.appVersion) {
+            p.appVersion = livePres.appVersion;
+            if (livePres.appVersionCode) p.appVersionCode = livePres.appVersionCode;
           }
           updatedPlayers.push(p);
         }
@@ -2771,7 +2815,10 @@
               <div class="flex items-center gap-3 cursor-pointer" onclick="openPlayerInspector('${p.username}')">
                 ${avatarHtml}
                 <div>
-                  <div class="font-bold theme-title group-hover:text-neutral-900 dark:group-hover:text-white transition-colors">${escapeHtml(p.displayName)}</div>
+                  <div class="font-bold theme-title group-hover:text-neutral-900 dark:group-hover:text-white transition-colors flex items-center gap-1.5">
+                    <span>${escapeHtml(p.displayName)}</span>
+                    ${p.appVersion ? `<span class="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold ${p.appVersionCode && p.appVersionCode >= 37 ? 'bg-neutral-900 text-white dark:bg-white dark:text-black' : 'theme-subtle theme-title border theme-border'}">v${escapeHtml(p.appVersion)}</span>` : '<span class="px-1.5 py-0.2 rounded text-[9px] font-mono theme-subtle theme-dimtext border theme-border">legacy</span>'}
+                  </div>
                   <div class="text-xs font-mono theme-dimtext">@${escapeHtml(p.username)}</div>
                 </div>
               </div>
@@ -2861,7 +2908,10 @@
               <div class="flex items-center gap-3 cursor-pointer" onclick="openPlayerInspector('${p.username}')">
                 ${avatarHtml}
                 <div>
-                  <h4 class="font-bold theme-title group-hover:text-neutral-900 dark:group-hover:text-white transition-colors">${escapeHtml(p.displayName)}</h4>
+                  <div class="flex items-center gap-1.5">
+                    <h4 class="font-bold theme-title group-hover:text-neutral-900 dark:group-hover:text-white transition-colors truncate">${escapeHtml(p.displayName)}</h4>
+                    ${p.appVersion ? `<span class="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold ${p.appVersionCode && p.appVersionCode >= 37 ? 'bg-neutral-900 text-white dark:bg-white dark:text-black' : 'theme-subtle theme-title border theme-border'} flex-shrink-0">v${escapeHtml(p.appVersion)}</span>` : '<span class="px-1.5 py-0.2 rounded text-[9px] font-mono theme-subtle theme-dimtext border theme-border flex-shrink-0">legacy</span>'}
+                  </div>
                   <span class="text-xs font-mono theme-dimtext">@${escapeHtml(p.username)}</span>
                 </div>
               </div>
@@ -3043,6 +3093,54 @@
       document.getElementById('inspUid').innerText = p.uid;
       document.getElementById('inspBinId').innerText = p.binId || 'None assigned';
       document.getElementById('inspLastSeen').innerText = p.lastSeenTimestamp ? `${new Date(p.lastSeenTimestamp).toLocaleString()} (${formatRelativeTime(p.lastSeenTimestamp)})` : 'Never';
+
+      // App Version and Update Status Diagnostics
+      const versionEl = document.getElementById('inspAppVersion');
+      const versionBadgeEl = document.getElementById('inspVersionStatusBadge');
+      const headerVersionEl = document.getElementById('inspHeaderVersionBadge');
+      const otaStatusEl = document.getElementById('inspOtaStatus');
+      const metaVersionEl = document.getElementById('inspMetaAppVersion');
+
+      const vName = p.appVersion || '';
+      const vCode = p.appVersionCode || null;
+      const latestCode = 37;
+      const latestName = '1.3.1';
+
+      if (vName || vCode) {
+        const fullVerText = `v${vName}${vCode ? ` (Build ${vCode})` : ''}`;
+        if (versionEl) versionEl.innerText = fullVerText;
+        if (metaVersionEl) metaVersionEl.innerText = fullVerText;
+        if (headerVersionEl) {
+          headerVersionEl.classList.remove('hidden');
+          headerVersionEl.innerText = `v${vName}`;
+        }
+
+        if (vCode && vCode >= latestCode) {
+          if (versionBadgeEl) {
+            versionBadgeEl.className = "px-2 py-0.5 rounded text-[10px] font-bold bg-neutral-900 text-white dark:bg-white dark:text-black";
+            versionBadgeEl.innerHTML = '<i class="fa-solid fa-circle-check text-emerald-400 mr-1"></i>Latest Version';
+          }
+          if (otaStatusEl) otaStatusEl.innerHTML = '<span class="text-emerald-500 font-semibold flex items-center gap-1"><i class="fa-solid fa-check"></i>Up to Date (Build ' + vCode + ')</span>';
+        } else {
+          if (versionBadgeEl) {
+            versionBadgeEl.className = "px-2 py-0.5 rounded text-[10px] font-bold theme-subtle text-amber-500 border theme-border";
+            versionBadgeEl.innerHTML = `<i class="fa-solid fa-arrow-up-from-bracket text-amber-400 mr-1"></i>Update Available (v${latestName})`;
+          }
+          if (otaStatusEl) otaStatusEl.innerHTML = `<span class="text-amber-500 font-semibold flex items-center gap-1"><i class="fa-solid fa-triangle-exclamation"></i>Older Build (v${latestName} Available)</span>`;
+        }
+      } else {
+        if (versionEl) versionEl.innerText = 'Not reported (Legacy Client)';
+        if (metaVersionEl) metaVersionEl.innerText = 'Not reported (Pre-v1.3.1)';
+        if (headerVersionEl) {
+          headerVersionEl.classList.remove('hidden');
+          headerVersionEl.innerText = 'Legacy';
+        }
+        if (versionBadgeEl) {
+          versionBadgeEl.className = "px-2 py-0.5 rounded text-[10px] font-bold theme-subtle theme-dimtext border theme-border";
+          versionBadgeEl.innerHTML = '<i class="fa-solid fa-clock-rotate-left mr-1"></i>Pre-v1.3.1';
+        }
+        if (otaStatusEl) otaStatusEl.innerHTML = '<span class="theme-dimtext font-medium">Legacy Build - Needs Update to v1.3.1</span>';
+      }
     }
 
     async function loadPlayerDeepData(username) {
@@ -3094,6 +3192,8 @@
                 if (profileData.displayName) p.displayName = profileData.displayName;
                 if (profileData.avatarBase64) p.avatarBase64 = profileData.avatarBase64;
                 if (profileData.avatarUrl) p.avatarUrl = profileData.avatarUrl;
+                if (profileData.appVersion) p.appVersion = profileData.appVersion;
+                if (profileData.appVersionCode) p.appVersionCode = profileData.appVersionCode;
                 if (globalState.playerCache && globalState.playerCache[username]) {
                   Object.assign(globalState.playerCache[username], p);
                 }
@@ -3428,6 +3528,15 @@
         resolvedFriends = globalState.directFriendsMap[username];
       }
 
+      // Exclude any friends whose user accounts were deleted from the database
+      resolvedFriends = (resolvedFriends || []).filter(f => {
+        const friendUser = (f.username || '').toLowerCase().replace(/^@/, '');
+        if (globalState.validUsernamesSet && globalState.validUsernamesSet.size > 0) {
+          return globalState.validUsernamesSet.has(friendUser);
+        }
+        return globalState.players.some(p => p.username === friendUser);
+      });
+
       document.getElementById('inspFriendCount').innerText = resolvedFriends.length;
       document.getElementById('inspFriendResolvedCount').innerText = resolvedFriends.length;
 
@@ -3659,6 +3768,31 @@
       await setKeyValueDirect(`pres_${clean}`, 'OFFLINE:0');
       await setKeyValueDirect(`friends_${clean}`, '[]');
       delete KNOWN_USER_BINS[clean];
+
+      // 3b. Remove deleted player from all other users' friends lists across cloud and memory
+      try {
+        if (globalState.directFriendsMap) {
+          delete globalState.directFriendsMap[clean];
+        }
+        if (globalState.mutualFriendsMap) {
+          delete globalState.mutualFriendsMap[clean];
+        }
+        const otherUsernames = Object.keys(globalState.directFriendsMap || {});
+        for (const otherU of otherUsernames) {
+          const fList = globalState.directFriendsMap[otherU] || [];
+          const hasClean = fList.some(f => (f.username || '').toLowerCase().replace(/^@/, '') === clean);
+          if (hasClean) {
+            const updatedF = fList.filter(f => (f.username || '').toLowerCase().replace(/^@/, '') !== clean);
+            globalState.directFriendsMap[otherU] = updatedF;
+            try {
+              await setKeyValueDirect(`friends_${otherU}`, safeB64Encode(JSON.stringify(updatedF)));
+            } catch (_) {}
+          }
+        }
+        computeMutualFriendsGraph();
+      } catch (err) {
+        console.warn('Error purging deleted player from friends maps:', err);
+      }
 
       // 4. Purge retained MQTT messages from EMQX broker permanently
       if (globalState.mqttClient && globalState.mqttClient.isConnected()) {
@@ -4020,16 +4154,22 @@
 
       let status = 'OFFLINE';
       let ts = 0;
+      let appVersion = null;
+      let appVersionCode = null;
 
       try {
         if (payload && payload.startsWith('{')) {
           const pObj = JSON.parse(payload);
           status = (pObj.status || 'OFFLINE').trim().toUpperCase();
           ts = (typeof pObj.timestamp === 'number') ? pObj.timestamp : (parseInt(pObj.timestamp) || 0);
+          if (pObj.appVersion) appVersion = pObj.appVersion;
+          if (pObj.appVersionCode) appVersionCode = parseInt(pObj.appVersionCode) || null;
         } else if (payload && payload.includes(':')) {
           const parts = payload.split(':');
           status = (parts[0] || 'OFFLINE').trim().toUpperCase();
           ts = parseInt(parts[1]) || 0;
+          if (parts.length >= 3 && parts[2]) appVersion = parts[2];
+          if (parts.length >= 4 && parts[3]) appVersionCode = parseInt(parts[3]) || null;
         } else if (payload) {
           status = payload.trim().toUpperCase();
           ts = 0;
@@ -4057,25 +4197,31 @@
         status = 'OFFLINE';
       }
 
-      globalState.onlineStatuses[uname] = { status, timestamp: ts };
+      globalState.onlineStatuses[uname] = { status, timestamp: ts, appVersion, appVersionCode };
 
       let player = globalState.players.find(p => p.username === uname);
       if (player) {
         player.status = status;
         if (ts > 0) player.lastSeenTimestamp = Math.max(player.lastSeenTimestamp || 0, ts);
+        if (appVersion) player.appVersion = appVersion;
+        if (appVersionCode) player.appVersionCode = appVersionCode;
         if (globalState.playerCache && globalState.playerCache[uname]) {
           globalState.playerCache[uname].status = status;
           if (ts > 0) globalState.playerCache[uname].lastSeenTimestamp = Math.max(globalState.playerCache[uname].lastSeenTimestamp || 0, ts);
+          if (appVersion) globalState.playerCache[uname].appVersion = appVersion;
+          if (appVersionCode) globalState.playerCache[uname].appVersionCode = appVersionCode;
         }
         updateDashboardStatistics();
         applyPlayerFilters();
         if (globalState.selectedPlayer && globalState.selectedPlayer.username === uname) {
           globalState.selectedPlayer.status = status;
+          if (appVersion) globalState.selectedPlayer.appVersion = appVersion;
+          if (appVersionCode) globalState.selectedPlayer.appVersionCode = appVersionCode;
           renderInspectorHeader();
         }
       } else if (globalState.validUsernamesSet && globalState.validUsernamesSet.has(uname)) {
         // Discovered a new registered player via live presence! Fetch them immediately!
-        fetchSinglePlayerImmediate(uname, status, ts);
+        fetchSinglePlayerImmediate(uname, status, ts, appVersion, appVersionCode);
       }
     }
 
@@ -4090,6 +4236,8 @@
       const liveStatus = globalState.onlineStatuses[clean];
       const initialStatus = (liveStatus && (Date.now() - liveStatus.timestamp < 35000)) ? liveStatus.status : 'OFFLINE';
       const knownBin = KNOWN_USER_BINS[clean] || null;
+      const initialVer = entry.appVersion || liveStatus?.appVersion || null;
+      const initialVerCode = entry.appVersionCode || liveStatus?.appVersionCode || null;
 
       if (!player) {
         player = {
@@ -4105,7 +4253,9 @@
           lastSeenTimestamp: entry.lastSeenTimestamp || 0,
           status: initialStatus,
           binId: knownBin,
-          rawReg: entry
+          rawReg: entry,
+          appVersion: initialVer,
+          appVersionCode: initialVerCode
         };
         globalState.players.push(player);
         if (!globalState.playerCache) globalState.playerCache = {};
@@ -4129,6 +4279,8 @@
         if (entry.avatarUrl) player.avatarUrl = entry.avatarUrl;
         if (entry.lastSeenTimestamp) player.lastSeenTimestamp = Math.max(player.lastSeenTimestamp || 0, entry.lastSeenTimestamp);
         if (!player.binId && knownBin) player.binId = knownBin;
+        if (entry.appVersion) player.appVersion = entry.appVersion;
+        if (entry.appVersionCode) player.appVersionCode = entry.appVersionCode;
         player.rawReg = { ...(player.rawReg || {}), ...entry };
         if (!globalState.playerCache) globalState.playerCache = {};
         globalState.playerCache[clean] = player;
@@ -4143,7 +4295,7 @@
       }
     }
 
-    async function fetchSinglePlayerImmediate(username, status = 'ONLINE', ts = 0) {
+    async function fetchSinglePlayerImmediate(username, status = 'ONLINE', ts = 0, presVersion = null, presVersionCode = null) {
       if (!username || globalState.fetchingPlayers.has(username)) return;
       if (globalState.validUsernamesSet && globalState.validUsernamesSet.size > 0 && !globalState.validUsernamesSet.has(username)) {
         return; // Refuse to fetch deleted / unregistered accounts
@@ -4195,6 +4347,8 @@
               const pParts = rawPres.split(':');
               const pTs = parseInt(pParts[1]);
               if (pTs > 0) binLastSeen = pTs;
+              if (pParts.length >= 3 && pParts[2] && !presVersion) presVersion = pParts[2];
+              if (pParts.length >= 4 && pParts[3] && !presVersionCode) presVersionCode = parseInt(pParts[3]) || null;
             }
           } catch {}
         }
@@ -4207,6 +4361,8 @@
         const bestStreak = Math.max(existing.bestStreak || 0, binProfile?.bestStreak || 0, regData?.bestStreak || 0);
         const currentStreak = binProfile?.currentStreak !== undefined ? binProfile.currentStreak : (regData?.currentStreak !== undefined ? regData.currentStreak : (existing.currentStreak || 0));
         const lastSeen = Math.max(existing.lastSeenTimestamp || 0, binLastSeen || 0, regData?.lastSeenTimestamp || 0, ts || 0);
+        const appVersion = binProfile?.appVersion || regData?.appVersion || presVersion || existing.appVersion || null;
+        const appVersionCode = binProfile?.appVersionCode || regData?.appVersionCode || presVersionCode || existing.appVersionCode || null;
 
         let player = globalState.players.find(p => p.username === username);
         if (!player) {
@@ -4224,7 +4380,9 @@
             lastSeenTimestamp: lastSeen,
             status: status,
             binId: binId,
-            rawReg: regData || existing.rawReg || null
+            rawReg: regData || existing.rawReg || null,
+            appVersion: appVersion,
+            appVersionCode: appVersionCode
           };
           globalState.players.push(player);
         } else {
@@ -4239,6 +4397,8 @@
           if (binProfile?.avatarUrl || regData?.avatarUrl) player.avatarUrl = binProfile?.avatarUrl || regData?.avatarUrl;
           if (binId) player.binId = binId;
           if (lastSeen > 0) player.lastSeenTimestamp = Math.max(player.lastSeenTimestamp || 0, lastSeen);
+          if (appVersion) player.appVersion = appVersion;
+          if (appVersionCode) player.appVersionCode = appVersionCode;
         }
 
         if (!globalState.playerCache) globalState.playerCache = {};
