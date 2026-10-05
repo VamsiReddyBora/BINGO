@@ -607,8 +607,8 @@
           id="tabBtn-mqtt" 
           class="nav-tab px-3 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all whitespace-nowrap theme-dimtext hover:text-neutral-900 dark:hover:text-white flex-shrink-0"
         >
-          <i class="fa-solid fa-tower-broadcast text-amber-500"></i>
-          <span>Live Telemetry & Broadcast</span>
+          <i class="fa-solid fa-bullhorn text-amber-500"></i>
+          <span>Broadcast</span>
         </button>
 
         <button 
@@ -867,237 +867,275 @@
 
 
       <!-- ==================================================== -->
-      <!-- TAB 3: LIVE TELEMETRY & BROADCAST                    -->
       <!-- ==================================================== -->
-      <section id="tabView-mqtt" class="hidden space-y-5">
+      <!-- TAB 3: BROADCAST & ANNOUNCEMENTS                     -->
+      <!-- ==================================================== -->
+      <section id="tabView-mqtt" class="hidden space-y-4 max-w-4xl mx-auto">
         
-        <!-- Broadcast & Direct Message Announcement Manager -->
-        <div class="theme-card rounded-2xl p-5 space-y-4">
-          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <div class="flex items-center gap-2.5">
-              <div class="w-8 h-8 rounded-xl theme-subtle border theme-border flex items-center justify-center text-sm">
-                <i class="fa-solid fa-bullhorn text-amber-500"></i>
-              </div>
-              <div>
-                <h3 class="text-sm font-bold theme-title">Broadcast & Direct Message Manager</h3>
-                <p class="text-[11px] theme-dimtext">Transmit announcements to all mobile apps or send targeted notices to a specific player.</p>
-              </div>
+        <!-- Header -->
+        <div class="flex items-center justify-between pb-1">
+          <div>
+            <h2 class="text-base sm:text-lg font-black theme-title tracking-tight flex items-center gap-2">
+              <i class="fa-solid fa-bullhorn text-amber-500"></i>
+              <span>Broadcast & Announcements</span>
+            </h2>
+            <p class="text-xs theme-dimtext">Send announcements to all players or a direct message to a player.</p>
+          </div>
+          <button 
+            type="button" 
+            onclick="fetchCurrentCloudBroadcast()" 
+            class="px-3 py-1.5 rounded-xl theme-subtle theme-title text-xs font-semibold flex items-center gap-1.5 hover:scale-105 active:scale-95 transition-all cursor-pointer"
+            title="Refresh current cloud status"
+          >
+            <i class="fa-solid fa-rotate-right text-xs text-emerald-400"></i>
+            <span class="hidden sm:inline">Refresh</span>
+          </button>
+        </div>
+
+        <!-- 1. Active Cloud Notice Status (Simple & Clean) -->
+        <div id="liveBroadcastStatusCard" class="theme-card rounded-2xl p-4 transition-all">
+          <div class="flex items-center justify-between gap-2 pb-2 border-b theme-border">
+            <div class="flex items-center gap-2 text-xs font-semibold theme-title">
+              <span id="liveBroadcastDot" class="w-2 h-2 rounded-full bg-neutral-500"></span>
+              <span>Active Announcement Status</span>
             </div>
-            <button onclick="fetchCurrentCloudBroadcast()" class="self-start sm:self-auto px-3 py-1.5 rounded-lg theme-subtle theme-title text-xs font-semibold flex items-center gap-1.5 hover:border-neutral-400 dark:hover:border-neutral-600 transition-all cursor-pointer">
-              <i class="fa-solid fa-arrows-rotate text-[10px] text-emerald-500"></i>
-              <span>Refresh Status</span>
+            <span id="liveBroadcastBadge" class="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold theme-subtle text-neutral-400">CHECKING...</span>
+          </div>
+          <div id="liveBroadcastContent" class="pt-2 text-xs theme-dimtext italic">
+            Loading current status from cloud...
+          </div>
+        </div>
+
+        <!-- 2. Simple Message Composer -->
+        <div class="theme-card rounded-2xl p-4 sm:p-5 space-y-4">
+          <div class="flex items-center justify-between flex-wrap gap-2">
+            <span class="text-xs font-bold theme-title uppercase tracking-wider text-emerald-400">Compose Message</span>
+            
+            <!-- Recipient Segmented Selector: All vs Direct -->
+            <div class="flex items-center p-1 rounded-xl theme-subtle border theme-border gap-1">
+              <button 
+                type="button" 
+                id="bcastAudienceAllBtn" 
+                onclick="setBroadcastAudience('all')"
+                class="px-3 py-1 rounded-lg text-xs font-semibold bg-neutral-900 text-white dark:bg-white dark:text-black shadow-sm transition-all cursor-pointer"
+              >
+                <i class="fa-solid fa-bullhorn text-[10px] mr-1"></i> All Players
+              </button>
+              <button 
+                type="button" 
+                id="bcastAudienceDirectBtn" 
+                onclick="setBroadcastAudience('direct')"
+                class="px-3 py-1 rounded-lg text-xs font-semibold theme-dimtext hover:theme-title transition-all cursor-pointer"
+              >
+                <i class="fa-solid fa-user text-[10px] mr-1"></i> Direct Player
+              </button>
+            </div>
+          </div>
+
+          <!-- Direct Target Player Input (Only visible when Direct Player is selected) -->
+          <div id="bcastDirectTargetContainer" class="hidden p-3 rounded-xl bg-neutral-950/40 border theme-border space-y-1.5">
+            <label class="block text-xs font-semibold theme-title">Recipient Player Username</label>
+            <div class="relative">
+              <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-xs theme-dimtext">@</span>
+              <input 
+                type="text" 
+                id="broadcastTargetInput" 
+                oninput="onBroadcastTargetChanged()" 
+                placeholder="username" 
+                value="ALL"
+                class="w-full pl-7 pr-3 py-2 rounded-xl theme-input text-xs font-mono placeholder:theme-dimtext focus:outline-none focus:border-emerald-500"
+              >
+            </div>
+            <p class="text-[11px] theme-dimtext">The message will only appear for this player when they launch the app.</p>
+          </div>
+
+          <!-- Message Title & Notice Tone -->
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div class="sm:col-span-2 space-y-1">
+              <label class="block text-xs font-semibold theme-title">Title</label>
+              <input 
+                type="text" 
+                id="broadcastTitleInput" 
+                placeholder="e.g. Server Maintenance Notice" 
+                class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs placeholder:theme-dimtext focus:outline-none focus:border-emerald-500"
+              >
+            </div>
+
+            <!-- Notice Type Selector -->
+            <div class="space-y-1">
+              <label class="block text-xs font-semibold theme-title">Type</label>
+              <select 
+                id="broadcastTypeSelect" 
+                class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs focus:outline-none focus:border-emerald-500 cursor-pointer"
+              >
+                <option value="INFO">📢 Announcement</option>
+                <option value="ALERT">⚠️ Critical Alert</option>
+                <option value="MAINTENANCE">🛠️ Maintenance</option>
+                <option value="DIRECT">👤 Direct Notice</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Message Body -->
+          <div class="space-y-1">
+            <label class="block text-xs font-semibold theme-title">Message Body</label>
+            <textarea 
+              id="broadcastMsgInput" 
+              rows="3" 
+              placeholder="Type your message here. This will display as a popup dialog on player devices..." 
+              class="w-full px-3.5 py-2 rounded-xl theme-input text-xs placeholder:theme-dimtext focus:outline-none focus:border-emerald-500 leading-relaxed"
+            ></textarea>
+          </div>
+
+          <!-- Quick Autofill Presets -->
+          <div class="flex items-center gap-1.5 flex-wrap pt-1">
+            <span class="text-[11px] font-semibold theme-dimtext mr-1">Quick Presets:</span>
+            <button 
+              type="button" 
+              onclick="applyBroadcastTemplate('maintenance')" 
+              class="px-2.5 py-1 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title text-[11px] font-medium transition-all cursor-pointer"
+            >
+              🛠️ Maintenance
+            </button>
+            <button 
+              type="button" 
+              onclick="applyBroadcastTemplate('app_update')" 
+              class="px-2.5 py-1 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title text-[11px] font-medium transition-all cursor-pointer"
+            >
+              🚀 New Update
+            </button>
+            <button 
+              type="button" 
+              onclick="applyBroadcastTemplate('welcome')" 
+              class="px-2.5 py-1 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title text-[11px] font-medium transition-all cursor-pointer"
+            >
+              👋 Welcome
             </button>
           </div>
 
-          <!-- Live Cloud Broadcast Status Card -->
-          <div id="liveBroadcastStatusCard" class="p-3.5 rounded-xl border border-dashed border-neutral-700/60 bg-neutral-900/40 space-y-2">
-            <div class="flex items-center justify-between">
-              <span class="text-[10px] font-mono uppercase tracking-wider text-neutral-400 font-bold flex items-center gap-1.5">
-                <span id="liveBroadcastDot" class="w-2 h-2 rounded-full bg-neutral-500"></span>
-                <span>Active Cloud Announcement</span>
+          <!-- Optional Advanced Settings (Collapsed) -->
+          <details class="rounded-xl theme-subtle p-3 text-xs border theme-border group">
+            <summary class="font-semibold theme-title cursor-pointer flex items-center justify-between select-none">
+              <span class="flex items-center gap-1.5">
+                <i class="fa-solid fa-sliders text-indigo-400"></i>
+                <span>Advanced Settings (Delivery mode, popup size, signature)</span>
               </span>
-              <span id="liveBroadcastBadge" class="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-neutral-800 text-neutral-400">CHECKING...</span>
-            </div>
-            <div id="liveBroadcastContent" class="text-xs theme-dimtext italic">
-              Loading current status from cloud...
-            </div>
-          </div>
-
-          <!-- Broadcast Form Inputs -->
-          <div class="space-y-3 pt-1">
-            <!-- Quick Preset Templates Bar -->
-            <div class="space-y-1.5 pb-1">
-              <span class="text-[11px] font-semibold theme-dimtext flex items-center gap-1.5">
-                <i class="fa-solid fa-wand-magic-sparkles text-purple-400"></i>
-                <span>Quick Message Presets (Click to autofill):</span>
-              </span>
-              <div class="flex items-center gap-1.5 flex-wrap">
-                <button 
-                  type="button" 
-                  onclick="applyBroadcastTemplate('maintenance')" 
-                  class="px-2.5 py-1 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-800 dark:text-neutral-200 border theme-border text-[11px] font-medium flex items-center gap-1 transition-all cursor-pointer"
-                >
-                  <i class="fa-solid fa-screwdriver-wrench text-[10px] text-amber-500"></i> Server Maintenance
-                </button>
-                <button 
-                  type="button" 
-                  onclick="applyBroadcastTemplate('event_xp')" 
-                  class="px-2.5 py-1 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-800 dark:text-neutral-200 border theme-border text-[11px] font-medium flex items-center gap-1 transition-all cursor-pointer"
-                >
-                  <i class="fa-solid fa-star text-[10px] text-yellow-400"></i> Double XP Weekend
-                </button>
-                <button 
-                  type="button" 
-                  onclick="applyBroadcastTemplate('app_update')" 
-                  class="px-2.5 py-1 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-800 dark:text-neutral-200 border theme-border text-[11px] font-medium flex items-center gap-1 transition-all cursor-pointer"
-                >
-                  <i class="fa-solid fa-rocket text-[10px] text-sky-400"></i> New App Update
-                </button>
-                <button 
-                  type="button" 
-                  onclick="applyBroadcastTemplate('warning')" 
-                  class="px-2.5 py-1 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-800 dark:text-neutral-200 border theme-border text-[11px] font-medium flex items-center gap-1 transition-all cursor-pointer"
-                >
-                  <i class="fa-solid fa-shield-halved text-[10px] text-emerald-400"></i> Fair Play Warning
-                </button>
-                <button 
-                  type="button" 
-                  onclick="applyBroadcastTemplate('welcome')" 
-                  class="px-2.5 py-1 rounded-lg theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-800 dark:text-neutral-200 border theme-border text-[11px] font-medium flex items-center gap-1 transition-all cursor-pointer"
-                >
-                  <i class="fa-solid fa-hand-wave text-[10px] text-amber-400"></i> Welcome Notice
-                </button>
-              </div>
-            </div>
-
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <i class="fa-solid fa-chevron-down text-[10px] theme-dimtext group-open:rotate-180 transition-transform"></i>
+            </summary>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 mt-2 border-t theme-border">
               <div>
-                <label class="block text-[11px] font-semibold theme-title mb-1">Announcement Title</label>
-                <input 
-                  type="text" 
-                  id="broadcastTitleInput" 
-                  placeholder="e.g. Server Maintenance Notice" 
-                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs placeholder:theme-dimtext focus:outline-none focus:border-neutral-900 dark:focus:border-white focus:ring-0"
-                >
-              </div>
-              <div>
-                <label class="block text-[11px] font-semibold theme-title mb-1">Message Type</label>
-                <select 
-                  id="broadcastTypeSelect" 
-                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs focus:outline-none focus:border-neutral-900 dark:focus:border-white focus:ring-0 cursor-pointer"
-                >
-                  <option value="INFO">📢 Info / Announcement</option>
-                  <option value="ALERT">⚠️ Critical Alert / Warning</option>
-                  <option value="MAINTENANCE">🛠️ Server Maintenance / Fix</option>
-                  <option value="DIRECT">💜 Direct Player Notice</option>
-                </select>
-              </div>
-              <div>
-                <label class="block text-[11px] font-semibold theme-title mb-1">
-                  Delivery Mode
-                </label>
+                <label class="block text-[11px] font-semibold theme-dimtext mb-1">Delivery Frequency</label>
                 <select 
                   id="broadcastModeSelect" 
-                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs focus:outline-none focus:border-neutral-900 dark:focus:border-white focus:ring-0 cursor-pointer"
+                  class="w-full px-3 py-2 rounded-xl theme-input text-xs focus:outline-none"
                 >
-                  <option value="ONCE">🎯 Only Once (Auto-Expires on Ack)</option>
-                  <option value="STARTUP">🔄 Every Startup (Until Stopped)</option>
+                  <option value="STARTUP">🔄 Every Startup (Recommended)</option>
+                  <option value="ONCE">🎯 Only Once (Auto-Expires on Dismiss)</option>
                 </select>
               </div>
-            </div>
-
-            <div>
-              <label class="block text-[11px] font-semibold theme-title mb-1">Message Content (Appears as themed popup on player startup)</label>
-              <textarea 
-                id="broadcastMsgInput" 
-                rows="3" 
-                placeholder="Type the message body to display on players' screens on app launch..." 
-                class="w-full px-3.5 py-2 rounded-xl theme-input text-xs placeholder:theme-dimtext focus:outline-none focus:border-neutral-900 dark:focus:border-white focus:ring-0"
-              ></textarea>
-            </div>
-
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
-                <label class="block text-[11px] font-semibold theme-title mb-1">
-                  Target Player <span class="theme-dimtext font-normal">(Leave empty for ALL)</span>
-                </label>
-                <input 
-                  type="text" 
-                  id="broadcastTargetInput" 
-                  oninput="onBroadcastTargetChanged()" 
-                  placeholder="All Players (or type @username)" 
-                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs placeholder:theme-dimtext focus:outline-none focus:border-neutral-900 dark:focus:border-white focus:ring-0 font-mono"
-                >
-              </div>
-              <div>
-                <label class="block text-[11px] font-semibold theme-title mb-1">Popup Dialog Size</label>
+                <label class="block text-[11px] font-semibold theme-dimtext mb-1">Popup Size</label>
                 <select 
                   id="broadcastSizeSelect" 
-                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs focus:outline-none focus:border-neutral-900 dark:focus:border-white focus:ring-0 cursor-pointer"
+                  class="w-full px-3 py-2 rounded-xl theme-input text-xs focus:outline-none"
                 >
-                  <option value="STANDARD">◽ Standard (Medium - Default)</option>
+                  <option value="STANDARD">◽ Standard (Medium)</option>
                   <option value="COMPACT">▫️ Compact (Small)</option>
-                  <option value="EXPANDED">◻️ Expanded (Large / Detailed)</option>
+                  <option value="EXPANDED">◻️ Expanded (Large)</option>
                 </select>
               </div>
               <div>
-                <label class="block text-[11px] font-semibold theme-title mb-1">Author / Sender Signature</label>
+                <label class="block text-[11px] font-semibold theme-dimtext mb-1">Author Signature</label>
                 <input 
                   type="text" 
                   id="broadcastAuthorInput" 
-                  value="Admin / Bora" 
-                  placeholder="Admin / Bora" 
-                  class="w-full px-3.5 py-2.5 rounded-xl theme-input text-xs placeholder:theme-dimtext focus:outline-none focus:border-neutral-900 dark:focus:border-white focus:ring-0"
+                  value="Admin" 
+                  placeholder="Admin" 
+                  class="w-full px-3 py-2 rounded-xl theme-input text-xs focus:outline-none"
                 >
               </div>
             </div>
+          </details>
 
-            <!-- Buttons: Send, Clear, Preview -->
-            <div class="flex flex-wrap items-center gap-2 pt-2">
-              <button 
-                onclick="dispatchEnhancedBroadcast()" 
-                id="btnDispatchBroadcast"
-                class="px-5 py-2.5 rounded-xl bg-neutral-900 text-white dark:bg-white dark:text-black hover:bg-neutral-800 dark:hover:bg-neutral-200 font-semibold text-xs active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <i class="fa-solid fa-paper-plane text-sky-400"></i>
-                <span id="btnDispatchText">Transmit Broadcast 🚀</span>
-              </button>
-
-              <button 
-                onclick="clearCloudBroadcast()" 
-                id="btnClearBroadcast"
-                class="px-4 py-2.5 rounded-xl theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border font-semibold text-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <i class="fa-solid fa-trash-can text-[11px] text-rose-500"></i>
-                <span>Clear Active</span>
-              </button>
-
-              <button 
-                onclick="previewBroadcastModal()" 
-                class="px-4 py-2.5 rounded-xl theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border font-semibold text-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <i class="fa-solid fa-eye text-[11px] text-sky-400"></i>
-                <span>Preview Popup</span>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Recent Sent Broadcasts History Log -->
-        <div class="theme-card rounded-2xl p-5 space-y-3">
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-2">
-              <i class="fa-solid fa-clock-rotate-left text-indigo-400"></i>
-              <h3 class="text-sm font-bold theme-title">Recent Sent Broadcasts History</h3>
-            </div>
+          <!-- Action Buttons -->
+          <div class="flex flex-wrap items-center gap-2 pt-2">
             <button 
               type="button" 
-              onclick="clearBroadcastHistory()" 
-              class="text-[11px] theme-dimtext hover:theme-title transition-colors cursor-pointer"
+              onclick="dispatchEnhancedBroadcast()" 
+              id="btnDispatchBroadcast"
+              class="px-5 py-2.5 rounded-xl bg-neutral-900 text-white dark:bg-white dark:text-black hover:bg-neutral-800 dark:hover:bg-neutral-200 font-bold text-xs active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md"
             >
-              Clear Log
+              <i class="fa-solid fa-paper-plane text-emerald-400"></i>
+              <span id="btnDispatchText">Send Announcement 🚀</span>
             </button>
-          </div>
-          <div id="broadcastHistoryContainer" class="space-y-2 max-h-64 overflow-y-auto pr-1">
-            <div class="text-xs theme-dimtext italic text-center py-4">No broadcasts saved in local history yet.</div>
+
+            <button 
+              type="button" 
+              onclick="clearCloudBroadcast()" 
+              id="btnClearBroadcast"
+              class="px-4 py-2.5 rounded-xl theme-subtle hover:bg-rose-500/10 hover:text-rose-500 theme-title border theme-border font-semibold text-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <i class="fa-solid fa-trash-can text-rose-500"></i>
+              <span>Clear Active Notice</span>
+            </button>
+
+            <button 
+              type="button" 
+              onclick="previewBroadcastModal()" 
+              class="px-3.5 py-2.5 rounded-xl theme-subtle hover:bg-neutral-200 dark:hover:bg-neutral-800 theme-title border theme-border font-semibold text-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer ml-auto"
+            >
+              <i class="fa-solid fa-eye text-sky-400"></i>
+              <span class="hidden sm:inline">Preview</span>
+            </button>
           </div>
         </div>
 
-        <!-- Real-time MQTT Packet Stream Console -->
-        <div class="theme-card rounded-2xl overflow-hidden">
-          <div class="p-4 theme-subtle border-b border-inherit flex items-center justify-between gap-2">
+        <!-- 3. Recent Broadcasts History (Collapsed) -->
+        <details class="theme-card rounded-2xl p-4 group">
+          <summary class="font-bold text-xs theme-title cursor-pointer flex items-center justify-between select-none">
             <div class="flex items-center gap-2">
-              <span class="w-2.5 h-2.5 rounded-full bg-neutral-900 dark:bg-white"></span>
-              <h3 class="text-xs font-mono font-bold theme-title">MQTT LIVE PACKET STREAM (<span id="packetCount">0</span>)</h3>
+              <i class="fa-solid fa-clock-rotate-left text-indigo-400"></i>
+              <span>Recent Sent Messages Log</span>
             </div>
             <div class="flex items-center gap-2">
-              <button onclick="clearPacketLogs()" class="px-2.5 py-1 rounded theme-card theme-title text-[11px] font-mono">Clear Logs</button>
+              <button 
+                type="button" 
+                onclick="event.stopPropagation(); clearBroadcastHistory();" 
+                class="text-[11px] theme-dimtext hover:theme-title transition-colors cursor-pointer"
+              >
+                Clear Log
+              </button>
+              <i class="fa-solid fa-chevron-down text-[10px] theme-dimtext group-open:rotate-180 transition-transform ml-1"></i>
             </div>
+          </summary>
+          <div id="broadcastHistoryContainer" class="space-y-2 max-h-56 overflow-y-auto pr-1 pt-3 mt-2 border-t theme-border">
+            <div class="text-xs theme-dimtext italic text-center py-3">No broadcasts saved in local history yet.</div>
           </div>
-          <div id="mqttLogsTerminal" class="h-96 p-4 font-mono text-xs overflow-y-auto space-y-1.5 bg-neutral-950 text-slate-200">
+        </details>
+
+        <!-- 4. Developer Tools: MQTT Live Stream (Collapsed by Default) -->
+        <details class="theme-card rounded-2xl overflow-hidden group">
+          <summary class="p-3.5 theme-subtle border-b border-inherit flex items-center justify-between gap-2 cursor-pointer select-none">
+            <div class="flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              <span class="text-xs font-mono font-bold theme-title">Developer Tools: MQTT Live Stream (<span id="packetCount">0</span>)</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <button 
+                type="button" 
+                onclick="event.stopPropagation(); clearPacketLogs();" 
+                class="px-2 py-0.5 rounded theme-card theme-title text-[10px] font-mono cursor-pointer"
+              >
+                Clear
+              </button>
+              <i class="fa-solid fa-chevron-down text-[10px] theme-dimtext group-open:rotate-180 transition-transform"></i>
+            </div>
+          </summary>
+          <div id="mqttLogsTerminal" class="h-64 p-3 font-mono text-xs overflow-y-auto space-y-1 bg-neutral-950 text-slate-200">
             <div class="text-neutral-500 italic">[Waiting for MQTT stream events on bingo/v3/#...]</div>
           </div>
-        </div>
+        </details>
+
       </section>
 
 
@@ -2791,11 +2829,42 @@
       const isMobile = window.innerWidth < 768;
       setPlayerViewMode(isMobile ? 'grid' : 'table');
 
+      // Restore previously active tab on launch / refresh
+      restoreActiveTabOnLaunch();
+
       initMqtt();
       fetchGlobalData(true);
       fetchCurrentOtaReleaseStatus();
-      renderBroadcastHistory();
       startAutoRefresh();
+    }
+
+    function restoreActiveTabOnLaunch() {
+      const validTabs = ['players', 'rooms', 'mqtt', 'ota', 'settings'];
+      let targetTab = null;
+
+      // 1. Check URL hash first
+      const hash = (window.location.hash || '').replace('#', '').trim().toLowerCase();
+      if (hash === 'broadcast' || hash === 'telemetry') {
+        targetTab = 'mqtt';
+      } else if (validTabs.includes(hash)) {
+        targetTab = hash;
+      }
+
+      // 2. Fall back to localStorage
+      if (!targetTab) {
+        try {
+          const stored = localStorage.getItem('bingo_admin_active_tab');
+          if (validTabs.includes(stored)) {
+            targetTab = stored;
+          }
+        } catch (e) {}
+      }
+
+      targetTab = targetTab || 'players';
+
+      // Reset globalState.activeTab so switchTab executes unconditionally
+      globalState.activeTab = null;
+      switchTab(targetTab, false);
     }
 
     function lockConsole() {
@@ -2828,13 +2897,18 @@
     function initNavigationHistory() {
       if (navigationHistoryInitialized) return;
       navigationHistoryInitialized = true;
-      try {
-        window.history.replaceState({ screen: 'home', tab: 'players' }, '');
-        window.history.pushState({ screen: 'app', tab: 'players' }, '');
-      } catch (e) {}
 
       window.addEventListener('popstate', (e) => {
         handleBackNavigation(e);
+      });
+
+      window.addEventListener('hashchange', () => {
+        if (!globalState.authenticated) return;
+        const hash = (window.location.hash || '').replace('#', '').trim().toLowerCase();
+        const mapped = (hash === 'broadcast' || hash === 'telemetry') ? 'mqtt' : hash;
+        if (['players', 'rooms', 'mqtt', 'ota', 'settings'].includes(mapped) && globalState.activeTab !== mapped) {
+          switchTab(mapped, false);
+        }
       });
     }
 
@@ -2845,7 +2919,7 @@
         const confirmModal = document.getElementById('confirmActionModal');
         if (confirmModal && !confirmModal.classList.contains('hidden')) {
           closeConfirmModal(false);
-          window.history.pushState({ screen: 'app', tab: globalState.activeTab || 'players' }, '');
+          window.history.pushState({ screen: 'app', tab: globalState.activeTab || 'players' }, '', '#' + (globalState.activeTab || 'players'));
           return;
         }
 
@@ -2853,7 +2927,7 @@
         const addModal = document.getElementById('addPlayerModal');
         if (addModal && !addModal.classList.contains('hidden')) {
           closeAddPlayerModal(false);
-          window.history.pushState({ screen: 'app', tab: globalState.activeTab || 'players' }, '');
+          window.history.pushState({ screen: 'app', tab: globalState.activeTab || 'players' }, '', '#' + (globalState.activeTab || 'players'));
           return;
         }
 
@@ -2861,7 +2935,7 @@
         const bcastModal = document.getElementById('broadcastPreviewModal');
         if (bcastModal && !bcastModal.classList.contains('hidden')) {
           closeBroadcastPreviewModal(false);
-          window.history.pushState({ screen: 'app', tab: globalState.activeTab || 'mqtt' }, '');
+          window.history.pushState({ screen: 'app', tab: globalState.activeTab || 'mqtt' }, '', '#' + (globalState.activeTab || 'mqtt'));
           return;
         }
 
@@ -2869,7 +2943,7 @@
         const editModal = document.getElementById('editPlayerModal');
         if (editModal && !editModal.classList.contains('hidden')) {
           closeEditPlayerModal(false);
-          window.history.pushState({ screen: 'app', tab: globalState.activeTab || 'players' }, '');
+          window.history.pushState({ screen: 'app', tab: globalState.activeTab || 'players' }, '', '#' + (globalState.activeTab || 'players'));
           return;
         }
 
@@ -2877,7 +2951,7 @@
         const roomModal = document.getElementById('roomDetailsModal');
         if (roomModal && !roomModal.classList.contains('hidden')) {
           closeRoomDetailsModal(false);
-          window.history.pushState({ screen: 'app', tab: globalState.activeTab || 'rooms' }, '');
+          window.history.pushState({ screen: 'app', tab: globalState.activeTab || 'rooms' }, '', '#' + (globalState.activeTab || 'rooms'));
           return;
         }
 
@@ -2885,14 +2959,14 @@
         const drawer = document.getElementById('playerInspectorDrawer');
         if (drawer && !drawer.classList.contains('hidden')) {
           closePlayerInspector(false);
-          window.history.pushState({ screen: 'app', tab: globalState.activeTab || 'players' }, '');
+          window.history.pushState({ screen: 'app', tab: globalState.activeTab || 'players' }, '', '#' + (globalState.activeTab || 'players'));
           return;
         }
 
         // 4. If on another tab, return to players directory (Home screen)
         if (globalState.activeTab && globalState.activeTab !== 'players') {
           switchTab('players', false);
-          window.history.pushState({ screen: 'app', tab: 'players' }, '');
+          window.history.pushState({ screen: 'app', tab: 'players' }, '', '#players');
           return;
         }
 
@@ -2902,7 +2976,7 @@
           window.history.back();
         } else {
           lastBackPressTime = now;
-          window.history.pushState({ screen: 'home', tab: 'players' }, '');
+          window.history.pushState({ screen: 'home', tab: 'players' }, '', '#players');
           showToast('Swipe back again to exit', 'info');
         }
       } finally {
@@ -2912,11 +2986,29 @@
 
     // --- TAB SWITCHING ---
     function switchTab(tabId, pushHistory = true) {
+      if (!['players', 'rooms', 'mqtt', 'ota', 'settings'].includes(tabId)) return;
       if (globalState.activeTab === tabId) return;
       globalState.activeTab = tabId;
-      if (pushHistory && !isHandlingPopState && tabId !== 'players') {
-        window.history.pushState({ screen: 'tab', tab: tabId }, '');
+
+      // Persist active tab to localStorage so refreshes always restore it
+      try {
+        localStorage.setItem('bingo_admin_active_tab', tabId);
+      } catch (e) {}
+
+      // Keep URL hash updated with active tab
+      const targetHash = '#' + tabId;
+      if (window.location.hash !== targetHash) {
+        try {
+          if (pushHistory && !isHandlingPopState) {
+            window.history.pushState({ screen: 'tab', tab: tabId }, '', targetHash);
+          } else {
+            window.history.replaceState({ screen: 'tab', tab: tabId }, '', targetHash);
+          }
+        } catch (e) {
+          window.location.hash = targetHash;
+        }
       }
+
       ['players', 'rooms', 'mqtt', 'ota', 'settings'].forEach(t => {
         const view = document.getElementById(`tabView-${t}`);
         const btn = document.getElementById(`tabBtn-${t}`);
@@ -5362,17 +5454,44 @@
     // --- BROADCAST & DIRECT MESSAGE ANNOUNCEMENT SERVICES ---
     let currentActiveBroadcastData = null;
 
+    function setBroadcastAudience(type, username = '') {
+      const directBtn = document.getElementById('bcastAudienceDirectBtn');
+      const allBtn = document.getElementById('bcastAudienceAllBtn');
+      const directContainer = document.getElementById('bcastDirectTargetContainer');
+      const targetInput = document.getElementById('broadcastTargetInput');
+      const typeSelect = document.getElementById('broadcastTypeSelect');
+
+      if (type === 'direct') {
+        if (allBtn) allBtn.className = "px-3 py-1 rounded-lg text-xs font-semibold theme-dimtext hover:theme-title transition-all cursor-pointer";
+        if (directBtn) directBtn.className = "px-3 py-1 rounded-lg text-xs font-semibold bg-neutral-900 text-white dark:bg-white dark:text-black shadow-sm transition-all cursor-pointer";
+        if (directContainer) directContainer.classList.remove('hidden');
+        if (targetInput) {
+          targetInput.value = username ? (username.startsWith('@') ? username : `@${username}`) : '';
+          targetInput.focus();
+        }
+        if (typeSelect) typeSelect.value = 'DIRECT';
+      } else {
+        if (directBtn) directBtn.className = "px-3 py-1 rounded-lg text-xs font-semibold theme-dimtext hover:theme-title transition-all cursor-pointer";
+        if (allBtn) allBtn.className = "px-3 py-1 rounded-lg text-xs font-semibold bg-neutral-900 text-white dark:bg-white dark:text-black shadow-sm transition-all cursor-pointer";
+        if (directContainer) directContainer.classList.add('hidden');
+        if (targetInput) targetInput.value = 'ALL';
+        if (typeSelect && typeSelect.value === 'DIRECT') typeSelect.value = 'INFO';
+      }
+      onBroadcastTargetChanged();
+      fetchCurrentCloudBroadcast();
+    }
+
     function onBroadcastTargetChanged() {
       const targetInput = document.getElementById('broadcastTargetInput');
       const val = targetInput ? targetInput.value.trim() : '';
       const btnText = document.getElementById('btnDispatchText');
       if (!btnText) return;
 
-      const clean = val.replace(/^@/, '');
+      const clean = val.replace(/^@/, '').trim();
       if (clean && clean.toUpperCase() !== 'ALL') {
-        btnText.innerText = `Transmit to @${clean} 🚀`;
+        btnText.innerText = `Send to @${clean} 🚀`;
       } else {
-        btnText.innerText = 'Transmit Broadcast to All Players 🚀';
+        btnText.innerText = 'Send Announcement 🚀';
       }
     }
 
@@ -5460,7 +5579,10 @@
           <p class="theme-dimtext leading-relaxed bg-neutral-950/40 p-2.5 rounded-lg border border-neutral-800/60">${escapeHtml(bcast.message)}</p>
           <div class="flex items-center justify-between text-[11px] pt-1">
             <span class="font-semibold theme-title font-mono">Target: ${escapeHtml(targetLabel)}</span>
-            <span class="theme-dimtext">From: <strong class="theme-title">${escapeHtml(bcast.author || 'Admin')}</strong></span>
+            <button type="button" onclick="clearCloudBroadcast()" class="px-2.5 py-1 rounded-lg text-rose-500 hover:bg-rose-500/10 font-bold text-xs transition-all cursor-pointer flex items-center gap-1 border border-rose-500/20">
+              <i class="fa-solid fa-trash-can text-[10px]"></i>
+              <span>Clear Notice</span>
+            </button>
           </div>
         `;
       } else if (bcast && bcast.active === false) {
@@ -5865,11 +5987,13 @@
         if (typeSelect) typeSelect.value = item.type || 'INFO';
         if (modeSelect) modeSelect.value = item.deliveryMode || 'STARTUP';
         if (sizeSelect) sizeSelect.value = item.size || 'STANDARD';
-        if (targetInput) {
-          const target = item.targetUsername || 'ALL';
-          targetInput.value = target === 'ALL' ? '' : target;
+        const target = item.targetUsername || 'ALL';
+        if (target && target !== 'ALL') {
+          setBroadcastAudience('direct', target);
+        } else {
+          setBroadcastAudience('all');
         }
-        if (authorInput) authorInput.value = item.author || 'Admin / Bora';
+        if (authorInput) authorInput.value = item.author || 'Admin';
 
         onBroadcastTargetChanged();
         showToast('Loaded broadcast into composer', 'info');
@@ -5900,15 +6024,10 @@
       const clean = username.replace(/^@/, '').trim();
       closePlayerInspector(false);
       switchTab('mqtt');
-      const targetInput = document.getElementById('broadcastTargetInput');
-      if (targetInput) targetInput.value = `@${clean}`;
-      const typeSelect = document.getElementById('broadcastTypeSelect');
-      if (typeSelect) typeSelect.value = 'DIRECT';
+      setBroadcastAudience('direct', clean);
+
       const modeSelect = document.getElementById('broadcastModeSelect');
       if (modeSelect) modeSelect.value = 'ONCE';
-
-      onBroadcastTargetChanged();
-      fetchCurrentCloudBroadcast();
 
       const msgInput = document.getElementById('broadcastMsgInput');
       if (msgInput) {
