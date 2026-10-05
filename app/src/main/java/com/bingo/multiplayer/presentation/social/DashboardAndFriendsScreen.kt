@@ -574,7 +574,7 @@ private fun DashboardTabContent(
             }
         } else {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                matchHistory.take(10).forEach { record ->
+                matchHistory.take(50).forEach { record ->
                     MatchRecordCard(record = record)
                 }
             }

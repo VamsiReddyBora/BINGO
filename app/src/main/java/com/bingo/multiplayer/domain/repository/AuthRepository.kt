@@ -685,7 +685,7 @@ class AuthRepository(
             isDraw = isDraw
         )
         currentHistory.add(0, record)
-        val trimmed = currentHistory.take(20)
+        val trimmed = if (currentHistory.size > 1000) currentHistory.take(1000) else currentHistory
         prefs.edit().putString("match_history", Json.encodeToString(trimmed)).apply()
         recordGameFinished(didWin = didWin, isDraw = isDraw)
     }
@@ -770,7 +770,12 @@ class AuthRepository(
         setSavedGoogleUsername(googleId, finalProfile.username)
         updateSettings(cloudData.settings)
         if (cloudData.matchHistory.isNotEmpty()) {
-            prefs.edit().putString("match_history", Json.encodeToString(cloudData.matchHistory)).apply()
+            val localHistory = getMatchHistory()
+            val merged = (localHistory + cloudData.matchHistory)
+                .distinctBy { it.id }
+                .sortedByDescending { it.timestamp }
+                .let { if (it.size > 1000) it.take(1000) else it }
+            prefs.edit().putString("match_history", Json.encodeToString(merged)).apply()
         }
         _authState.value = AuthState.Authenticated(finalProfile)
         sessionManager.startSessionWatcher(googleId, deviceId) {
