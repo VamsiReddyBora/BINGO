@@ -3083,6 +3083,40 @@
       return null;
     }
 
+    // Safely parse JSON strings or objects returned from KeyValue store
+    function parseKeyValueJson(raw) {
+      if (raw === null || raw === undefined) return null;
+      if (typeof raw === "object") return raw;
+      let s = String(raw).trim();
+      if (!s || s === "null" || s === '""') return null;
+
+      // If wrapped in outer quotes, unwrap or JSON.parse once
+      if (s.startsWith('"') && s.endsWith('"') && s.length >= 2) {
+        try {
+          const unwrapped = JSON.parse(s);
+          if (typeof unwrapped === "object" && unwrapped !== null) return unwrapped;
+          if (typeof unwrapped === "string") s = unwrapped.trim();
+        } catch {
+          s = s.substring(1, s.length - 1).trim();
+        }
+      }
+
+      if (!s || s === "null" || s === '""') return null;
+
+      // Try direct parse
+      try {
+        return JSON.parse(s);
+      } catch (e1) {
+        // If it fails, unescape \" and \\
+        try {
+          const unescaped = s.replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+          return JSON.parse(unescaped);
+        } catch (e2) {
+          return null;
+        }
+      }
+    }
+
     // Live Cloud Database Ping & Latency Monitor (Visible on Mobile & Desktop)
     async function measureCloudPing(manual = false) {
       const latencyEl = document.getElementById('keyValLatency');
@@ -5032,6 +5066,8 @@
             if (!bcast.active) {
               showToast(`@${cleanUser} opened the app & received your message! ✅`, 'success');
               removeActiveDirectRecipient(cleanUser);
+              removeLocalActiveBroadcast(cleanUser);
+              markBroadcastHistoryAcknowledged(cleanUser);
             } else {
               addActiveDirectRecipient(cleanUser);
             }
@@ -5524,54 +5560,121 @@
       }, 350);
     }
 
+    // --- LOCAL ACTIVE BROADCAST STORAGE & STATE MANAGEMENT ---
+    function getLocalActiveBroadcasts() {
+      try {
+        const stored = localStorage.getItem("bingo_admin_active_broadcasts");
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed)) return parsed;
+        }
+      } catch {}
+      return [];
+    }
+
+    function saveLocalActiveBroadcasts(list) {
+      try {
+        localStorage.setItem("bingo_admin_active_broadcasts", JSON.stringify(list || []));
+      } catch {}
+    }
+
+    function removeLocalActiveBroadcast(targetUser) {
+      if (!targetUser) return;
+      const clean = targetUser.replace(/^@/, "").trim().toLowerCase();
+      const current = getLocalActiveBroadcasts();
+      const filtered = current.filter(item => {
+        if (clean === "all") return item.isDirect;
+        return !(item.isDirect && (item.targetUser === clean || (item.targetUsername && item.targetUsername.toLowerCase() === `@${clean}`)));
+      });
+      saveLocalActiveBroadcasts(filtered);
+      updateLiveBroadcastCardUI(filtered);
+    }
+
+    function markBroadcastHistoryAcknowledged(targetUser) {
+      if (!targetUser) return;
+      const clean = targetUser.replace(/^@/, "").trim().toLowerCase();
+      try {
+        let history = JSON.parse(localStorage.getItem("bingo_admin_broadcast_history") || "[]");
+        if (Array.isArray(history)) {
+          let updated = false;
+          for (const item of history) {
+            const itemUser = (item.targetUser || item.targetUsername || "").replace(/^@/, "").trim().toLowerCase();
+            if (item.isDirect && itemUser === clean && item.status !== "ACKNOWLEDGED") {
+              item.status = "ACKNOWLEDGED";
+              item.acknowledgedAt = Date.now();
+              updated = true;
+              break;
+            }
+          }
+          if (updated) {
+            localStorage.setItem("bingo_admin_broadcast_history", JSON.stringify(history));
+            renderBroadcastHistory();
+          }
+        }
+      } catch {}
+    }
+
     // --- ACTIVE DIRECT RECIPIENTS TRACKER ---
     async function getActiveDirectRecipients() {
-      let list = [];
+      const set = new Set();
       try {
-        const raw = await getKeyValueDirect('active_direct_recipients');
-        if (raw && raw !== '""' && raw !== 'null') {
-          let cleanStr = raw.trim();
-          if (cleanStr.startsWith('"') && cleanStr.endsWith('"') && cleanStr.length >= 2) {
-            cleanStr = cleanStr.substring(1, cleanStr.length - 1).replace(/\\"/g, '"');
-          }
-          const parsed = JSON.parse(cleanStr);
-          if (Array.isArray(parsed)) list = parsed;
-        }
-      } catch {}
-      try {
-        const local = JSON.parse(localStorage.getItem('bingo_admin_active_direct_recipients') || '[]');
+        const local = JSON.parse(localStorage.getItem("bingo_admin_active_direct_recipients") || "[]");
         if (Array.isArray(local)) {
-          list = Array.from(new Set([...list, ...local]));
+          local.forEach(u => set.add(String(u).trim().toLowerCase().replace(/^@/, "")));
         }
       } catch {}
-      return list.map(u => String(u).trim().toLowerCase().replace(/^@/, '')).filter(Boolean);
+
+      try {
+        const cached = getLocalActiveBroadcasts();
+        cached.forEach(b => {
+          if (b.isDirect && b.targetUser) {
+            set.add(String(b.targetUser).trim().toLowerCase().replace(/^@/, ""));
+          }
+        });
+      } catch {}
+
+      try {
+        const raw = await getKeyValueDirect("active_direct_recipients", 2);
+        const parsed = parseKeyValueJson(raw);
+        if (Array.isArray(parsed)) {
+          parsed.forEach(u => set.add(String(u).trim().toLowerCase().replace(/^@/, "")));
+        }
+      } catch {}
+
+      return Array.from(set).filter(Boolean);
     }
 
     async function addActiveDirectRecipient(username) {
       if (!username) return;
-      const clean = username.trim().toLowerCase().replace(/^@/, '');
-      if (!clean || clean === 'all') return;
+      const clean = username.trim().toLowerCase().replace(/^@/, "");
+      if (!clean || clean === "all") return;
       const current = await getActiveDirectRecipients();
       if (!current.includes(clean)) {
         current.push(clean);
-        localStorage.setItem('bingo_admin_active_direct_recipients', JSON.stringify(current));
-        await setKeyValueDirect('active_direct_recipients', JSON.stringify(current));
+        localStorage.setItem("bingo_admin_active_direct_recipients", JSON.stringify(current));
+        await setKeyValueDirect("active_direct_recipients", JSON.stringify(current));
       }
     }
 
     async function removeActiveDirectRecipient(username) {
       if (!username) return;
-      const clean = username.trim().toLowerCase().replace(/^@/, '');
+      const clean = username.trim().toLowerCase().replace(/^@/, "");
       const current = await getActiveDirectRecipients();
       const updated = current.filter(u => u !== clean);
-      localStorage.setItem('bingo_admin_active_direct_recipients', JSON.stringify(updated));
-      await setKeyValueDirect('active_direct_recipients', JSON.stringify(updated));
+      localStorage.setItem("bingo_admin_active_direct_recipients", JSON.stringify(updated));
+      await setKeyValueDirect("active_direct_recipients", JSON.stringify(updated));
     }
 
     async function fetchCurrentCloudBroadcast() {
-      const dot = document.getElementById('liveBroadcastDot');
-      const badge = document.getElementById('liveBroadcastBadge');
-      const content = document.getElementById('liveBroadcastContent');
+      const dot = document.getElementById("liveBroadcastDot");
+      const badge = document.getElementById("liveBroadcastBadge");
+      const content = document.getElementById("liveBroadcastContent");
+
+      // 1. Immediately show cached active notices to avoid any blanking/flicker
+      const cachedActive = getLocalActiveBroadcasts();
+      if (cachedActive && cachedActive.length > 0) {
+        updateLiveBroadcastCardUI(cachedActive);
+      }
 
       if (badge) {
         badge.className = "px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-neutral-800 text-neutral-400";
@@ -5581,106 +5684,127 @@
       const activeList = [];
 
       try {
-        // 1. Check Global Broadcast
+        // 1. Check Global Broadcast from Cloud
         try {
-          const rawGlobal = await getKeyValueDirect('global_broadcast_message');
-          if (rawGlobal && rawGlobal !== '""' && rawGlobal !== 'null') {
-            let cleanStr = rawGlobal.trim();
-            if (cleanStr.startsWith('"') && cleanStr.endsWith('"') && cleanStr.length >= 2) {
-              cleanStr = cleanStr.substring(1, cleanStr.length - 1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
-            }
-            const gBcast = JSON.parse(cleanStr);
-            if (gBcast && gBcast.active && gBcast.message && gBcast.message.trim().length > 0) {
-              activeList.push({
-                ...gBcast,
-                isDirect: false,
-                targetLabel: 'ALL PLAYERS'
-              });
-            }
+          const rawGlobal = await getKeyValueDirect("global_broadcast_message", 2);
+          const gBcast = parseKeyValueJson(rawGlobal);
+          if (gBcast && gBcast.active && gBcast.message && gBcast.message.trim().length > 0) {
+            activeList.push({
+              ...gBcast,
+              isDirect: false,
+              targetLabel: "ALL PLAYERS"
+            });
           }
         } catch (e) {}
 
-        // 2. Check Direct Player Messages
-        const recipients = await getActiveDirectRecipients();
-        // Also always include currently typed recipient in composer if not 'ALL'
-        const targetInput = document.getElementById('broadcastTargetInput');
-        const typedTarget = targetInput ? targetInput.value.trim().replace(/^@/, '').toLowerCase() : '';
-        if (typedTarget && typedTarget !== 'all' && !recipients.includes(typedTarget)) {
-          recipients.push(typedTarget);
+        // 2. Gather candidate direct message recipients to check
+        const candidateSet = new Set(await getActiveDirectRecipients());
+
+        // Always check the recipient currently in the input box if not ALL
+        const targetInput = document.getElementById("broadcastTargetInput");
+        const typedTarget = targetInput ? targetInput.value.trim().replace(/^@/, "").toLowerCase() : "";
+        if (typedTarget && typedTarget !== "all") {
+          candidateSet.add(typedTarget);
         }
 
-        const validRecipients = [];
-        for (const u of recipients) {
+        // Also check any registered users from validUsernamesSet or user_directory
+        if (globalState.validUsernamesSet && globalState.validUsernamesSet.size > 0) {
+          globalState.validUsernamesSet.forEach(u => candidateSet.add(u.toLowerCase()));
+        } else {
           try {
-            const rawUser = await getKeyValueDirect(`user_msg_${u}`);
-            if (rawUser && rawUser !== '""' && rawUser !== 'null') {
-              let cleanUserStr = rawUser.trim();
-              if (cleanUserStr.startsWith('"') && cleanUserStr.endsWith('"') && cleanUserStr.length >= 2) {
-                cleanUserStr = cleanUserStr.substring(1, cleanUserStr.length - 1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
-              }
-              const uBcast = JSON.parse(cleanUserStr);
-              if (uBcast && uBcast.active && uBcast.message && uBcast.message.trim().length > 0) {
-                activeList.push({
+            const rawDir = await getKeyValueDirect("user_directory", 1);
+            if (rawDir) {
+              rawDir.replace(/"/g, "").split(",").forEach(u => {
+                const c = u.trim().toLowerCase().replace(/^@/, "");
+                if (c) candidateSet.add(c);
+              });
+            }
+          } catch {}
+        }
+
+        const candidates = Array.from(candidateSet).filter(Boolean);
+        const validRecipients = [];
+
+        // Check each candidate recipient in parallel (~150ms total)
+        const checkPromises = candidates.map(async (u) => {
+          try {
+            const rawUser = await getKeyValueDirect(`user_msg_${u}`, 2);
+            const uBcast = parseKeyValueJson(rawUser);
+            if (uBcast && uBcast.active && uBcast.message && uBcast.message.trim().length > 0) {
+              return {
+                user: u,
+                bcast: {
                   ...uBcast,
                   isDirect: true,
                   targetLabel: `@${u}`,
                   targetUser: u
-                });
-                validRecipients.push(u);
-              }
+                }
+              };
             }
           } catch (e) {}
+          return null;
+        });
+
+        const checkResults = await Promise.all(checkPromises);
+        for (const res of checkResults) {
+          if (res && res.bcast) {
+            activeList.push(res.bcast);
+            validRecipients.push(res.user);
+          }
         }
 
-        // Update tracking list with only still-active recipients
-        localStorage.setItem('bingo_admin_active_direct_recipients', JSON.stringify(validRecipients));
-        setKeyValueDirect('active_direct_recipients', JSON.stringify(validRecipients)).catch(() => {});
+        // Update local and cloud tracking lists
+        saveLocalActiveBroadcasts(activeList);
+        localStorage.setItem("bingo_admin_active_direct_recipients", JSON.stringify(validRecipients));
+        setKeyValueDirect("active_direct_recipients", JSON.stringify(validRecipients)).catch(() => {});
 
         updateLiveBroadcastCardUI(activeList);
       } catch (err) {
-        updateLiveBroadcastCardUI([]);
+        // Retain local cache rather than erroneously blanking UI
+        const fallback = getLocalActiveBroadcasts();
+        updateLiveBroadcastCardUI(fallback);
       }
     }
 
     function updateLiveBroadcastCardUI(activeList = []) {
-      const dot = document.getElementById('liveBroadcastDot');
-      const badge = document.getElementById('liveBroadcastBadge');
-      const content = document.getElementById('liveBroadcastContent');
+      const dot = document.getElementById("liveBroadcastDot");
+      const badge = document.getElementById("liveBroadcastBadge");
+      const content = document.getElementById("liveBroadcastContent");
       if (!dot || !badge || !content) return;
 
       if (Array.isArray(activeList) && activeList.length > 0) {
         dot.className = "w-2 h-2 rounded-full bg-emerald-500 animate-pulse";
         badge.className = "px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30";
-        badge.innerText = `● ${activeList.length} ACTIVE ${activeList.length === 1 ? 'BROADCAST' : 'BROADCASTS'}`;
+        badge.innerText = `● ${activeList.length} ACTIVE ${activeList.length === 1 ? "BROADCAST" : "BROADCASTS"}`;
 
-        let html = '<div class="space-y-3 pt-1">';
+        let html = "<div class=\"space-y-3 pt-1\">";
         activeList.forEach((bcast) => {
           let typeBadge = "📢 ANNOUNCEMENT";
-          if (bcast.type === 'ALERT') typeBadge = "⚠️ ALERT";
-          else if (bcast.type === 'MAINTENANCE') typeBadge = "🛠️ MAINTENANCE";
+          if (bcast.type === "ALERT") typeBadge = "⚠️ ALERT";
+          else if (bcast.type === "MAINTENANCE") typeBadge = "🛠️ MAINTENANCE";
           else if (bcast.isDirect) typeBadge = "👤 DIRECT MESSAGE";
 
-          const deliveryMode = bcast.deliveryMode || 'STARTUP';
-          const modeBadge = deliveryMode === 'ONCE' 
-            ? '<span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold theme-subtle theme-title border theme-border">🎯 ONLY ONCE</span>'
-            : '<span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold theme-subtle theme-title border theme-border">🔄 EVERY STARTUP</span>';
+          const deliveryMode = bcast.deliveryMode || "STARTUP";
+          const modeBadge = deliveryMode === "ONCE" 
+            ? "<span class=\"px-2 py-0.5 rounded text-[10px] font-mono font-bold theme-subtle theme-title border theme-border\">🎯 ONLY ONCE</span>"
+            : "<span class=\"px-2 py-0.5 rounded text-[10px] font-mono font-bold theme-subtle theme-title border theme-border\">🔄 EVERY STARTUP</span>";
 
-          const sizeMode = bcast.size || 'STANDARD';
-          const sizeBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-neutral-800 text-neutral-300 border border-neutral-700/50">${sizeMode === 'COMPACT' ? '▫️ COMPACT' : (sizeMode === 'EXPANDED' ? '◻️ EXPANDED' : '◽ STANDARD')}</span>`;
+          const sizeMode = bcast.size || "STANDARD";
+          const sizeBadge = `<span class=\"px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-neutral-800 text-neutral-300 border border-neutral-700/50\">${sizeMode === "COMPACT" ? "▫️ COMPACT" : (sizeMode === "EXPANDED" ? "◻️ EXPANDED" : "◽ STANDARD")}</span>`;
 
-          const targetLabel = bcast.targetLabel || (bcast.isDirect ? `@${bcast.targetUser}` : 'ALL PLAYERS');
-          const dateStr = bcast.timestamp ? new Date(bcast.timestamp).toLocaleString() : 'Recent';
+          const targetLabel = bcast.targetLabel || (bcast.isDirect ? `@${bcast.targetUser}` : "ALL PLAYERS");
+          const dateStr = bcast.timestamp ? new Date(bcast.timestamp).toLocaleString() : "Recent";
           const statusBadge = bcast.isDirect 
-            ? '<span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30 flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span> Pending App Open</span>'
-            : '<span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">Active for All Players</span>';
+            ? "<span class=\"px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30 flex items-center gap-1\"><span class=\"w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse\"></span> Pending App Open</span>"
+            : "<span class=\"px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30\">Active for All Players</span>";
 
-          const clearTargetParam = bcast.isDirect ? bcast.targetUser : 'ALL';
+          const clearTargetParam = bcast.isDirect ? (bcast.targetUser || bcast.targetUsername?.replace(/^@/, "")) : "ALL";
 
           html += `
             <div class="p-3.5 rounded-xl border border-neutral-800/80 bg-neutral-950/40 space-y-2.5">
               <div class="flex items-center justify-between flex-wrap gap-1.5">
                 <div class="flex items-center gap-2 flex-wrap">
-                  <span class="font-bold theme-title text-sm">${escapeHtml(bcast.title || 'Untitled Notice')}</span>
+                  <span class="font-bold theme-title text-sm">${escapeHtml(bcast.title || "Untitled Notice")}</span>
                   <span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-neutral-900 border border-neutral-800 text-neutral-300">${typeBadge}</span>
                 </div>
                 <div class="flex items-center gap-1.5 flex-wrap">
@@ -5693,7 +5817,7 @@
               <p class="theme-dimtext text-xs leading-relaxed bg-black/30 p-2.5 rounded-lg border border-neutral-800/60 whitespace-pre-wrap">${escapeHtml(bcast.message)}</p>
               <div class="flex items-center justify-between text-[11px] pt-1">
                 <span class="font-semibold theme-title font-mono flex items-center gap-1.5">
-                  <i class="${bcast.isDirect ? 'fa-solid fa-user text-amber-400' : 'fa-solid fa-bullhorn text-emerald-400'} text-xs"></i>
+                  <i class="${bcast.isDirect ? "fa-solid fa-user text-amber-400" : "fa-solid fa-bullhorn text-emerald-400"} text-xs"></i>
                   Recipient: <strong>${escapeHtml(targetLabel)}</strong>
                 </span>
                 <button 
@@ -5709,7 +5833,7 @@
             </div>
           `;
         });
-        html += '</div>';
+        html += "</div>";
 
         content.className = "text-xs space-y-2";
         content.innerHTML = html;
@@ -5724,41 +5848,43 @@
     }
 
     async function clearSpecificNotice(target) {
-      const clean = target.replace(/^@/, '').trim();
-      const isDirect = clean && clean.toUpperCase() !== 'ALL';
-      const targetInput = document.getElementById('broadcastTargetInput');
-      if (targetInput) targetInput.value = isDirect ? `@${clean}` : 'ALL';
-      await clearCloudBroadcast(false);
+      const clean = (target || "").replace(/^@/, "").trim();
+      const isDirect = clean && clean.toUpperCase() !== "ALL";
+      
+      // Optimistically remove from local active UI immediately
+      removeLocalActiveBroadcast(isDirect ? clean : "ALL");
+
+      await clearCloudBroadcast(false, isDirect ? `@${clean}` : "ALL");
     }
 
     async function dispatchEnhancedBroadcast() {
-      const titleInput = document.getElementById('broadcastTitleInput');
-      const msgInput = document.getElementById('broadcastMsgInput');
-      const typeSelect = document.getElementById('broadcastTypeSelect');
-      const targetInput = document.getElementById('broadcastTargetInput');
-      const authorInput = document.getElementById('broadcastAuthorInput');
-      const btnDispatch = document.getElementById('btnDispatchBroadcast');
+      const titleInput = document.getElementById("broadcastTitleInput");
+      const msgInput = document.getElementById("broadcastMsgInput");
+      const typeSelect = document.getElementById("broadcastTypeSelect");
+      const targetInput = document.getElementById("broadcastTargetInput");
+      const authorInput = document.getElementById("broadcastAuthorInput");
+      const btnDispatch = document.getElementById("btnDispatchBroadcast");
 
       const title = titleInput.value.trim();
       const message = msgInput.value.trim();
-      const type = typeSelect ? typeSelect.value : 'INFO';
-      const rawTarget = targetInput ? targetInput.value.trim() : '';
-      const author = (authorInput ? authorInput.value.trim() : '') || 'Admin / Bora';
-      const deliveryMode = (document.getElementById('broadcastModeSelect') ? document.getElementById('broadcastModeSelect').value : 'STARTUP') || 'STARTUP';
-      const size = (document.getElementById('broadcastSizeSelect') ? document.getElementById('broadcastSizeSelect').value : 'STANDARD') || 'STANDARD';
+      const type = typeSelect ? typeSelect.value : "INFO";
+      const rawTarget = targetInput ? targetInput.value.trim() : "";
+      const author = (authorInput ? authorInput.value.trim() : "") || "Admin / Bora";
+      const deliveryMode = (document.getElementById("broadcastModeSelect") ? document.getElementById("broadcastModeSelect").value : "STARTUP") || "STARTUP";
+      const size = (document.getElementById("broadcastSizeSelect") ? document.getElementById("broadcastSizeSelect").value : "STANDARD") || "STANDARD";
 
       if (!title || !message) {
-        showToast('Please provide both an announcement title and message content', 'error');
+        showToast("Please provide both an announcement title and message content", "error");
         return;
       }
 
-      const cleanTarget = rawTarget.replace(/^@/, '').trim();
-      const isDirect = cleanTarget && cleanTarget.toUpperCase() !== 'ALL';
-      const targetUsername = isDirect ? `@${cleanTarget}` : 'ALL';
-      const storageKey = isDirect ? `user_msg_${cleanTarget.toLowerCase()}` : 'global_broadcast_message';
+      const cleanTarget = rawTarget.replace(/^@/, "").trim();
+      const isDirect = cleanTarget && cleanTarget.toUpperCase() !== "ALL";
+      const targetUsername = isDirect ? `@${cleanTarget}` : "ALL";
+      const storageKey = isDirect ? `user_msg_${cleanTarget.toLowerCase()}` : "global_broadcast_message";
 
       const payloadObj = {
-        id: 'bcast_' + Math.random().toString(36).substring(2, 10),
+        id: "bcast_" + Math.random().toString(36).substring(2, 10),
         title: title,
         message: message,
         type: type,
@@ -5767,38 +5893,60 @@
         author: author,
         targetUsername: targetUsername,
         timestamp: Date.now(),
-        active: true
+        active: true,
+        isDirect: isDirect,
+        targetLabel: targetUsername,
+        targetUser: cleanTarget.toLowerCase(),
+        status: isDirect ? "PENDING" : "SENT"
       };
 
       const jsonStr = JSON.stringify(payloadObj);
 
+      // --- 0. OPTIMISTIC INSTANT UI UPDATE (0ms) ---
+      // Admin sees the active card IMMEDIATELY upon clicking send!
+      const currentActive = getLocalActiveBroadcasts();
+      const updatedActive = currentActive.filter(item => {
+        if (isDirect) {
+          return !(item.isDirect && (item.targetUser === cleanTarget.toLowerCase() || (item.targetUsername && item.targetUsername.toLowerCase() === targetUsername.toLowerCase())));
+        } else {
+          return item.isDirect; // keep direct messages, replace global
+        }
+      });
+      updatedActive.unshift(payloadObj);
+      saveLocalActiveBroadcasts(updatedActive);
+      if (isDirect) {
+        const currentRecipients = Array.from(new Set([...(JSON.parse(localStorage.getItem("bingo_admin_active_direct_recipients") || "[]")), cleanTarget.toLowerCase()]));
+        localStorage.setItem("bingo_admin_active_direct_recipients", JSON.stringify(currentRecipients));
+      }
+      updateLiveBroadcastCardUI(updatedActive);
+      saveBroadcastToHistory(payloadObj);
+
       if (btnDispatch) {
         btnDispatch.disabled = true;
-        btnDispatch.classList.add('opacity-60');
+        btnDispatch.classList.add("opacity-60");
       }
-      showToast('Dispatching broadcast to cloud and MQTT...', 'info');
+      showToast("Dispatching broadcast to cloud and MQTT...", "info");
 
       try {
         // 1. Write persistent key to KeyValue cloud store
         const kvSuccess = await setKeyValueDirect(storageKey, jsonStr);
 
         // 2. Publish real-time MQTT message to bingo/global/broadcast
-        // ONLY retain for global broadcast (ALL players). Do NOT retain direct messages globally!
         if (globalState.mqttClient && globalState.mqttClient.isConnected()) {
           const mqttMsg = new Paho.MQTT.Message(jsonStr);
-          mqttMsg.destinationName = 'bingo/global/broadcast';
+          mqttMsg.destinationName = "bingo/global/broadcast";
           mqttMsg.retained = !isDirect;
           globalState.mqttClient.send(mqttMsg);
 
           // Also publish legacy notice for backwards web compatibility
           try {
             const legacyNotice = new Paho.MQTT.Message(JSON.stringify({
-              type: 'SYSTEM_NOTICE',
+              type: "SYSTEM_NOTICE",
               sender: author,
               text: `[${title}] ${message}`,
               timestamp: Date.now()
             }));
-            legacyNotice.destinationName = 'bingo/v3/system/notice';
+            legacyNotice.destinationName = "bingo/v3/system/notice";
             globalState.mqttClient.send(legacyNotice);
           } catch {}
         }
@@ -5807,23 +5955,22 @@
           if (isDirect) {
             await addActiveDirectRecipient(cleanTarget.toLowerCase());
           }
-          showToast(`Broadcast dispatched ${isDirect ? 'to @' + cleanTarget : 'globally to ALL players'}! 🚀`, 'success');
-          await fetchCurrentCloudBroadcast();
-          saveBroadcastToHistory(payloadObj);
+          showToast(`Broadcast dispatched ${isDirect ? "to @" + cleanTarget : "globally to ALL players"}! 🚀`, "success");
         } else {
-          showToast('Dispatched via MQTT! Cloud persistence had a delay.', 'info');
+          showToast("Dispatched via MQTT! Cloud persistence had a delay.", "info");
           if (isDirect) {
             await addActiveDirectRecipient(cleanTarget.toLowerCase());
           }
-          await fetchCurrentCloudBroadcast();
-          saveBroadcastToHistory(payloadObj);
         }
+
+        // Verify state with cloud
+        await fetchCurrentCloudBroadcast();
       } catch (err) {
-        showToast('Error sending broadcast: ' + err.message, 'error');
+        showToast("Error sending broadcast: " + err.message, "error");
       } finally {
         if (btnDispatch) {
           btnDispatch.disabled = false;
-          btnDispatch.classList.remove('opacity-60');
+          btnDispatch.classList.remove("opacity-60");
         }
       }
     }
@@ -5833,43 +5980,62 @@
       dispatchEnhancedBroadcast();
     }
 
-    async function clearCloudBroadcast(purgeAll = false) {
-      const targetInput = document.getElementById('broadcastTargetInput');
-      const rawTarget = targetInput ? targetInput.value.trim() : '';
-      const cleanTarget = rawTarget.replace(/^@/, '').trim();
-      const isDirect = cleanTarget && cleanTarget.toUpperCase() !== 'ALL';
-      const targetUsername = isDirect ? `@${cleanTarget}` : 'ALL';
-      const storageKey = isDirect ? `user_msg_${cleanTarget.toLowerCase()}` : 'global_broadcast_message';
+    async function clearCloudBroadcast(purgeAll = false, specificTarget = null) {
+      let targetUsername = "ALL";
+      let cleanTarget = "";
+      let isDirect = false;
+
+      if (specificTarget) {
+        cleanTarget = specificTarget.replace(/^@/, "").trim();
+        isDirect = cleanTarget && cleanTarget.toUpperCase() !== "ALL";
+        targetUsername = isDirect ? `@${cleanTarget}` : "ALL";
+      } else {
+        const targetInput = document.getElementById("broadcastTargetInput");
+        const rawTarget = targetInput ? targetInput.value.trim() : "";
+        cleanTarget = rawTarget.replace(/^@/, "").trim();
+        isDirect = cleanTarget && cleanTarget.toUpperCase() !== "ALL";
+        targetUsername = isDirect ? `@${cleanTarget}` : "ALL";
+      }
+
+      const storageKey = isDirect ? `user_msg_${cleanTarget.toLowerCase()}` : "global_broadcast_message";
 
       const clearPayload = {
-        id: '',
-        title: '',
-        message: '',
-        type: 'INFO',
-        deliveryMode: 'STARTUP',
-        size: 'STANDARD',
-        author: 'Admin',
+        id: "",
+        title: "",
+        message: "",
+        type: "INFO",
+        deliveryMode: "STARTUP",
+        size: "STANDARD",
+        author: "Admin",
         targetUsername: targetUsername,
         timestamp: Date.now(),
         active: false
       };
       const jsonStr = JSON.stringify(clearPayload);
 
-      showToast(purgeAll ? 'Purging ALL announcements from cloud...' : 'Clearing active broadcast from cloud...', 'info');
+      // Optimistically remove from local active state
+      if (purgeAll) {
+        saveLocalActiveBroadcasts([]);
+        updateLiveBroadcastCardUI([]);
+      } else {
+        removeLocalActiveBroadcast(isDirect ? cleanTarget : "ALL");
+      }
+
+      showToast(purgeAll ? "Purging ALL announcements from cloud..." : "Clearing active broadcast from cloud...", "info");
       try {
         if (purgeAll) {
           // 1. Wipe global broadcast in cloud
-          await setKeyValueDirect('global_broadcast_message', jsonStr);
+          await setKeyValueDirect("global_broadcast_message", jsonStr);
 
           // 2. Wipe tracking list
-          await setKeyValueDirect('active_direct_recipients', '[]');
-          localStorage.setItem('bingo_admin_active_direct_recipients', '[]');
+          await setKeyValueDirect("active_direct_recipients", "[]");
+          localStorage.setItem("bingo_admin_active_direct_recipients", "[]");
 
           // 3. Wipe direct message mailboxes for all known users
           try {
-            const userDir = await getKeyValueDirect('user_directory');
+            const userDir = await getKeyValueDirect("user_directory");
             if (userDir) {
-              const uList = userDir.replace(/"/g, '').split(',').map(u => u.trim().toLowerCase()).filter(Boolean);
+              const uList = userDir.replace(/"/g, "").split(",").map(u => u.trim().toLowerCase()).filter(Boolean);
               for (const u of uList) {
                 const uPayload = JSON.stringify({ ...clearPayload, targetUsername: `@${u}` });
                 setKeyValueDirect(`user_msg_${u}`, uPayload);
@@ -5880,13 +6046,13 @@
           // 4. Clear MQTT retained topic
           if (globalState.mqttClient && globalState.mqttClient.isConnected()) {
             const mqttMsg = new Paho.MQTT.Message(jsonStr);
-            mqttMsg.destinationName = 'bingo/global/broadcast';
+            mqttMsg.destinationName = "bingo/global/broadcast";
             mqttMsg.retained = true;
             globalState.mqttClient.send(mqttMsg);
           }
 
           await fetchCurrentCloudBroadcast();
-          showToast('All global & direct player broadcasts purged! 🧹', 'success');
+          showToast("All global & direct player broadcasts purged! 🧹", "success");
         } else {
           // Deactivate the selected target
           await setKeyValueDirect(storageKey, jsonStr);
@@ -5897,16 +6063,16 @@
           // If target is ALL, wipe the retained broker message
           if (!isDirect && globalState.mqttClient && globalState.mqttClient.isConnected()) {
             const mqttMsg = new Paho.MQTT.Message(jsonStr);
-            mqttMsg.destinationName = 'bingo/global/broadcast';
+            mqttMsg.destinationName = "bingo/global/broadcast";
             mqttMsg.retained = true;
             globalState.mqttClient.send(mqttMsg);
           }
 
           await fetchCurrentCloudBroadcast();
-          showToast(`Broadcast cleared ${isDirect ? 'for @' + cleanTarget : 'for all players'}!`, 'success');
+          showToast(`Broadcast cleared ${isDirect ? "for @" + cleanTarget : "for all players"}!`, "success");
         }
       } catch (err) {
-        showToast('Error clearing broadcast: ' + err.message, 'error');
+        showToast("Error clearing broadcast: " + err.message, "error");
       }
     }
 
@@ -6096,11 +6262,22 @@
           const modeBadge = item.deliveryMode === 'ONCE' ? '🎯 ONCE' : '🔄 STARTUP';
           const sizeBadge = item.size || 'STANDARD';
 
+          const isDirect = item.isDirect || (item.targetUsername && item.targetUsername !== 'ALL');
+          let statusBadge = '';
+          if (isDirect) {
+            if (item.status === 'ACKNOWLEDGED') {
+              statusBadge = `<span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center gap-1"><i class="fa-solid fa-check text-[9px]"></i> Seen by ${escapeHtml(targetStr)}</span>`;
+            } else {
+              statusBadge = `<span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30 flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span> Pending App Open</span>`;
+            }
+          }
+
           html += `
             <div class="p-3 rounded-xl border border-inherit theme-subtle space-y-2">
               <div class="flex items-center justify-between flex-wrap gap-1">
                 <span class="font-bold text-xs theme-title">${escapeHtml(item.title || 'Untitled')}</span>
                 <div class="flex items-center gap-1.5 flex-wrap">
+                  ${statusBadge}
                   <span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-neutral-800 text-neutral-300">${modeBadge}</span>
                   <span class="px-1.5 py-0.5 rounded text-[10px] font-mono text-neutral-400 bg-neutral-900 border border-neutral-800">${sizeBadge}</span>
                   <span class="text-[10px] theme-dimtext">${dateStr}</span>
@@ -6448,17 +6625,7 @@
       try {
         // 1. Fetch live latest_app_version from KeyValue cloud store
         const raw = await getKeyValueDirect('latest_app_version');
-        let data = null;
-
-        if (raw && raw !== '""' && raw !== 'null') {
-          let cleanStr = raw.trim();
-          if (cleanStr.startsWith('"') && cleanStr.endsWith('"') && cleanStr.length >= 2) {
-            cleanStr = cleanStr.substring(1, cleanStr.length - 1).replace(/\\"/g, '"').replace(/\\\\/g, '\\');
-          }
-          try {
-            data = JSON.parse(cleanStr);
-          } catch {}
-        }
+        let data = parseKeyValueJson(raw);
 
         // Fallback to official v1.3 default if KeyValue empty
         if (!data) {
