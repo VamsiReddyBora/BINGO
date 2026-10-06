@@ -1,5 +1,5 @@
-// Bingo Multiplayer Service Worker
-const CACHE_NAME = 'bingo-pwa-v1';
+// Bingo Multiplayer Service Worker - Version 2.1
+const CACHE_NAME = 'bingo-pwa-v2.1';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -24,6 +24,7 @@ self.addEventListener('activate', (event) => {
       return Promise.all(
         keys.map((key) => {
           if (key !== CACHE_NAME) {
+            console.log('[SW] Purging old cache:', key);
             return caches.delete(key);
           }
         })
@@ -33,16 +34,46 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
+
 self.addEventListener('fetch', (event) => {
-  // Only cache GET requests
   if (event.request.method !== 'GET') return;
-  
-  // Skip WebSocket connections and external MQTT brokers
+
   const url = new URL(event.request.url);
-  if (url.protocol === 'ws:' || url.protocol === 'wss:' || url.hostname.includes('broker.')) {
+  // Skip WebSocket connections and external MQTT / dynamic API endpoints
+  if (
+    url.protocol === 'ws:' ||
+    url.protocol === 'wss:' ||
+    url.hostname.includes('broker.') ||
+    url.hostname.includes('keyvalue.immanuel.co') ||
+    url.hostname.includes('extendsclass.com')
+  ) {
     return;
   }
 
+  // Network-First for HTML navigation requests (ensures fresh app on refresh)
+  if (event.request.mode === 'navigate' || event.request.destination === 'document') {
+    event.respondWith(
+      fetch(event.request)
+        .then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            const clone = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
+          return networkResponse;
+        })
+        .catch(() => {
+          return caches.match('./index.html') || caches.match('./');
+        })
+    );
+    return;
+  }
+
+  // Cache-First with Network fallback for static hashed assets (JS, CSS, images, fonts)
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
       if (cachedResponse) {
@@ -57,11 +88,6 @@ self.addEventListener('fetch', (event) => {
           cache.put(event.request, responseToCache).catch(() => {});
         });
         return networkResponse;
-      }).catch(() => {
-        // Fallback to cached index.html for navigation requests
-        if (event.request.mode === 'navigate') {
-          return caches.match('./index.html');
-        }
       });
     })
   );
