@@ -2264,8 +2264,15 @@
 
     function initPwa() {
       // 1. Immediately register the Service Worker without waiting for 'load'
+      if ('caches' in window) {
+        caches.keys().then((keys) => {
+          keys.forEach((k) => {
+            if (k !== 'bingo-admin-v6') caches.delete(k);
+          });
+        });
+      }
       if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('/BINGO/admin/sw.js?v=4', { scope: '/BINGO/admin/' })
+        navigator.serviceWorker.register('/BINGO/admin/sw.js?v=6', { scope: '/BINGO/admin/' })
           .then((reg) => {
             console.log('PWA ServiceWorker registered successfully:', reg.scope);
             reg.update();
@@ -3047,6 +3054,27 @@
 
     // --- DATA FETCHING & API SERVICES WITH RETRY ---
     async function setKeyValueDirect(key, value) {
+      if (key === 'user_directory' && typeof value === 'string') {
+        const isTemp = (u) => {
+          if (!u) return true;
+          return u.startsWith('user_') || 
+                 u.startsWith('guest_') || 
+                 u === 'guest' || 
+                 u === 'dummymail' || 
+                 u === 'g_player' || 
+                 u === 'player' || 
+                 u === 'player4' || 
+                 u === 'sim_host' || 
+                 u === 'test_vamsi_player' || 
+                 u === 'hjskakj' ||
+                 u.startsWith('webtest_');
+        };
+        const cleaned = value.split(',')
+          .map(x => x.trim().toLowerCase())
+          .filter(x => x.length > 0 && !isTemp(x))
+          .join(',');
+        value = cleaned;
+      }
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
           const encKey = encodeURIComponent(key.trim());
