@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   LogOut,
   Wifi,
@@ -59,16 +59,34 @@ export const GameScreen: React.FC<Props> = ({
 }) => {
   const { tokens, isDark } = useTheme();
 
-  const mySeed = isAiMode
+  // CRITICAL: AI mode is strictly ONLY active if roomCode is explicitly 'AI_SOLO' AND isAiMode is true.
+  // In an online room match (6-digit room code or P2P code), effectiveAiMode is ALWAYS false.
+  const effectiveAiMode = Boolean(isAiMode && roomCode === 'AI_SOLO');
+
+  // Resolve authentic opponent from prop or MQTT player registry
+  const resolvedOpponent = useMemo(() => {
+    if (opponent && opponent.id && opponent.id !== localPlayer.id) return opponent;
+    const fromMqtt = roomSync.getPlayers().find((p) => p.id !== localPlayer.id);
+    if (fromMqtt) return fromMqtt;
+    return opponent;
+  }, [opponent, localPlayer.id]);
+
+  const mySeed = effectiveAiMode
     ? (localPlayer.isHost ? seed : seed + 1)
     : BingoEngine.resolvePlayerBoardSeed(seed, localPlayer, localPlayer.isHost ? 0 : 1);
-  const oppSeed = isAiMode
+  const oppSeed = effectiveAiMode
     ? (localPlayer.isHost ? seed + 1 : seed)
-    : (opponent ? BingoEngine.resolvePlayerBoardSeed(seed, opponent, opponent.isHost ? 0 : 1) : BigInt(seed + 99999));
+    : (resolvedOpponent
+        ? BingoEngine.resolvePlayerBoardSeed(seed, resolvedOpponent, resolvedOpponent.isHost ? 0 : 1)
+        : BingoEngine.resolvePlayerBoardSeed(seed, { id: 'guest', username: 'guest', isHost: !localPlayer.isHost }, localPlayer.isHost ? 1 : 0));
 
   const [board, setBoard] = useState<Board>(() => BingoEngine.generateBoard(5, mySeed));
   const [opponentBoard, setOpponentBoard] = useState<Board>(() => BingoEngine.generateBoard(5, oppSeed));
-  const [currentTurnPlayerId, setCurrentTurnPlayerId] = useState<string>(initialTurnPlayerId);
+  const [currentTurnPlayerId, setCurrentTurnPlayerId] = useState<string>(() => {
+    if (initialTurnPlayerId && initialTurnPlayerId.trim()) return initialTurnPlayerId;
+    if (effectiveAiMode) return localPlayer.id;
+    return localPlayer.isHost ? localPlayer.id : (resolvedOpponent?.id || 'host');
+  });
   const [turnNumber, setTurnNumber] = useState<number>(1);
   const [turnTimer, setTurnTimer] = useState<number>(30);
   const [pickedNumbersHistory, setPickedNumbersHistory] = useState<number[]>([]);
@@ -216,10 +234,14 @@ export const GameScreen: React.FC<Props> = ({
         if (prev <= 1) {
           // Timeout switch turn
           if (isMyTurn) {
-            const nextTurnId = isAiMode ? 'ai_bot' : opponent?.id || 'opponent';
+            const nextTurnId = effectiveAiMode ? 'ai_bot' : resolvedOpponent?.id || 'opponent';
             setCurrentTurnPlayerId(nextTurnId);
             setTurnNumber((t) => t + 1);
             soundEffects.playTurnAlert();
+
+            if (!effectiveAiMode) {
+              roomSync.sendTurnTimeout(turnNumber, nextTurnId, pickedNumbersHistory, seed);
+            }
           }
           return 30;
         }
@@ -228,13 +250,15 @@ export const GameScreen: React.FC<Props> = ({
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [isGameOver, isGamePaused, isMyTurn, isAiMode, opponent?.id]);
+  }, [isGameOver, isGamePaused, isMyTurn, effectiveAiMode, resolvedOpponent?.id, turnNumber, pickedNumbersHistory, seed]);
 
   // Execute pick
   const handlePickNumber = useCallback(
     (number: number) => {
       if (!isMyTurn || isGameOver || isGamePaused) return;
+      if (pickedNumbersHistory.includes(number)) return;
 
+      // 1. Mark on My Board
       const { board: newBoard, newLinesCompleted } = BingoEngine.markCell(
         board,
         number,
@@ -246,7 +270,20 @@ export const GameScreen: React.FC<Props> = ({
       const newMyLines = newBoard.completedLines.length;
       setMyLinesCount(newMyLines);
 
-      setPickedNumbersHistory((prev) => [...prev, number]);
+      // 2. Mark on Opponent Board (so both boards accurately track all picked numbers!)
+      const { board: newOppBoard } = BingoEngine.markCell(
+        opponentBoard,
+        number,
+        localPlayer.id,
+        false,
+        turnNumber
+      );
+      setOpponentBoard(newOppBoard);
+      const newOppLines = newOppBoard.completedLines.length;
+      setOpponentLinesCount(newOppLines);
+
+      const updatedHistory = [...pickedNumbersHistory, number];
+      setPickedNumbersHistory(updatedHistory);
 
       if (newLinesCompleted > 0) {
         soundEffects.playLineComplete();
@@ -258,9 +295,9 @@ export const GameScreen: React.FC<Props> = ({
         setIsGameOver(true);
         setIsWinner(true);
         setWinnerName(localPlayer.displayName);
-        syncMatchResults(true, opponent?.displayName || (isAiMode ? 'AI Bot' : 'Opponent'));
+        syncMatchResults(true, resolvedOpponent?.displayName || (effectiveAiMode ? 'AI Bot' : 'Opponent'));
 
-        if (!isAiMode) {
+        if (!effectiveAiMode) {
           roomSync.sendPacket({
             type: 'BINGO_CLAIMED',
             playerId: localPlayer.id,
@@ -272,33 +309,35 @@ export const GameScreen: React.FC<Props> = ({
       }
 
       // Switch turn
-      const nextTurnId = isAiMode ? 'ai_bot' : opponent?.id || 'opponent';
+      const nextTurnId = effectiveAiMode ? 'ai_bot' : resolvedOpponent?.id || 'opponent';
       setCurrentTurnPlayerId(nextTurnId);
       setTurnNumber((prev) => prev + 1);
       setTurnTimer(30);
 
       // Broadcast move to opponent
-      if (!isAiMode) {
-        roomSync.sendPick(number, turnNumber, nextTurnId, [...pickedNumbersHistory, number], seed);
+      if (!effectiveAiMode) {
+        roomSync.sendPick(number, turnNumber, nextTurnId, updatedHistory, seed);
       }
     },
     [
       board,
-      isAiMode,
+      effectiveAiMode,
       isGameOver,
       isGamePaused,
       isMyTurn,
       localPlayer,
-      opponent,
+      resolvedOpponent,
+      opponentBoard,
       pickedNumbersHistory,
       turnNumber,
-      syncMatchResults
+      syncMatchResults,
+      seed
     ]
   );
 
-  // AI Turn Logic
+  // AI Turn Logic (STRICTLY ONLY for solo AI mode against bot, NEVER in online room match)
   useEffect(() => {
-    if (!isAiMode || isGameOver || isGamePaused || isMyTurn) return;
+    if (!effectiveAiMode || isGameOver || isGamePaused || isMyTurn) return;
 
     const timer = setTimeout(() => {
       // Find available unmarked numbers on AI board
@@ -367,7 +406,7 @@ export const GameScreen: React.FC<Props> = ({
   }, [
     board,
     currentTurnPlayerId,
-    isAiMode,
+    effectiveAiMode,
     isGameOver,
     isGamePaused,
     isMyTurn,
@@ -379,64 +418,83 @@ export const GameScreen: React.FC<Props> = ({
 
   // Handle incoming MQTT packets
   useEffect(() => {
-    if (isAiMode) return;
+    if (effectiveAiMode) return;
 
-    roomSync.onPacketReceived = (packet: RoomMessagePacket) => {
+    const unsubscribe = roomSync.addPacketListener((packet: RoomMessagePacket) => {
       if (packet.type === 'PICK_NUMBER' && packet.number) {
         const pickNum = packet.number;
+        const incomingHistory = packet.pickedHistory || [pickNum];
 
         let newMyLines = 0;
         let newOppLines = 0;
 
-        // 1. Mark on my board
+        // 1. Mark on My Board (isOwnPick = false)
         setBoard((prevMy) => {
-          const { board: updatedMy, newLinesCompleted } = BingoEngine.markCell(
-            prevMy,
-            pickNum,
-            packet.playerId,
-            false,
-            packet.turnNumber || turnNumber
-          );
-          newMyLines = updatedMy.completedLines.length;
+          let cur = prevMy;
+          incomingHistory.forEach((num) => {
+            if (num > 0 && !cur.cells.find((c) => c.number === num && c.markState.type === 'Marked')) {
+              const res = BingoEngine.markCell(
+                cur,
+                num,
+                packet.playerId,
+                false,
+                packet.turnNumber || turnNumber
+              );
+              cur = res.board;
+              if (res.newLinesCompleted > 0) {
+                soundEffects.playLineComplete();
+              }
+            }
+          });
+          newMyLines = cur.completedLines.length;
           setMyLinesCount(newMyLines);
-          if (newLinesCompleted > 0) {
-            soundEffects.playLineComplete();
-          }
-          return updatedMy;
+          return cur;
         });
 
-        // 2. Mark on opponent board
+        // 2. Mark on Opponent Board (isOwnPick = true)
         setOpponentBoard((prevOpp) => {
-          const { board: updatedOpp } = BingoEngine.markCell(
-            prevOpp,
-            pickNum,
-            packet.playerId,
-            true,
-            packet.turnNumber || turnNumber
-          );
-          newOppLines = updatedOpp.completedLines.length;
+          let cur = prevOpp;
+          incomingHistory.forEach((num) => {
+            if (num > 0 && !cur.cells.find((c) => c.number === num && c.markState.type === 'Marked')) {
+              const res = BingoEngine.markCell(
+                cur,
+                num,
+                packet.playerId,
+                true,
+                packet.turnNumber || turnNumber
+              );
+              cur = res.board;
+            }
+          });
+          newOppLines = cur.completedLines.length;
           setOpponentLinesCount(newOppLines);
-          return updatedOpp;
+          return cur;
         });
+
+        setPickedNumbersHistory((prev) => Array.from(new Set([...prev, ...incomingHistory, pickNum])));
 
         // 3. Evaluate win conditions
         if (newOppLines >= 5) {
           soundEffects.playGameOver();
           setIsGameOver(true);
           setIsWinner(false);
-          setWinnerName(packet.displayName || opponent?.displayName || 'Opponent');
-          syncMatchResults(false, packet.displayName || opponent?.displayName || 'Opponent');
+          setWinnerName(packet.displayName || resolvedOpponent?.displayName || 'Opponent');
+          syncMatchResults(false, packet.displayName || resolvedOpponent?.displayName || 'Opponent');
           return;
         } else if (newMyLines >= 5) {
           soundEffects.playBingoWin();
           setIsGameOver(true);
           setIsWinner(true);
           setWinnerName(localPlayer.displayName);
-          syncMatchResults(true, packet.displayName || opponent?.displayName || 'Opponent');
+          syncMatchResults(true, packet.displayName || resolvedOpponent?.displayName || 'Opponent');
           return;
         }
 
-        setPickedNumbersHistory((prev) => [...prev, pickNum]);
+        setCurrentTurnPlayerId(localPlayer.id);
+        setTurnNumber((prev) => (packet.turnNumber ? packet.turnNumber + 1 : prev + 1));
+        setTurnTimer(30);
+        soundEffects.playTurnAlert();
+      } else if (packet.type === 'TURN_TIMEOUT') {
         setCurrentTurnPlayerId(localPlayer.id);
         setTurnNumber((prev) => (packet.turnNumber ? packet.turnNumber + 1 : prev + 1));
         setTurnTimer(30);
@@ -445,10 +503,10 @@ export const GameScreen: React.FC<Props> = ({
         soundEffects.playGameOver();
         setIsGameOver(true);
         setIsWinner(false);
-        setWinnerName(packet.displayName || 'Opponent');
-        syncMatchResults(false, packet.displayName || 'Opponent');
+        setWinnerName(packet.displayName || resolvedOpponent?.displayName || 'Opponent');
+        syncMatchResults(false, packet.displayName || resolvedOpponent?.displayName || 'Opponent');
       } else if (packet.type === 'EMOTE' && packet.payload) {
-        spawnEmote(packet.payload, false, packet.displayName || 'Opponent');
+        spawnEmote(packet.payload, false, packet.displayName || resolvedOpponent?.displayName || 'Opponent');
         soundEffects.playEmotePop();
       } else if (packet.type === 'CHAT_MESSAGE' && packet.payload) {
         setChatMessages((prev) => [
@@ -457,16 +515,35 @@ export const GameScreen: React.FC<Props> = ({
             id: `${Date.now()}_${Math.random()}`,
             text: packet.payload!,
             isSelf: false,
-            senderName: packet.displayName || 'Opponent',
+            senderName: packet.displayName || resolvedOpponent?.displayName || 'Opponent',
             timestamp: Date.now()
           }
         ]);
         soundEffects.playTap();
       } else if (packet.type === 'PLAY_AGAIN') {
-        setWantsPlayAgainName(packet.displayName || 'Opponent');
+        setWantsPlayAgainName(packet.displayName || resolvedOpponent?.displayName || 'Opponent');
+        if (packet.seed) {
+          const newSeed = packet.seed;
+          const myNewSeed = BingoEngine.resolvePlayerBoardSeed(newSeed, localPlayer, localPlayer.isHost ? 0 : 1);
+          const oppNewSeed = resolvedOpponent
+            ? BingoEngine.resolvePlayerBoardSeed(newSeed, resolvedOpponent, resolvedOpponent.isHost ? 0 : 1)
+            : BingoEngine.resolvePlayerBoardSeed(newSeed, { id: 'guest', username: 'guest', isHost: !localPlayer.isHost }, localPlayer.isHost ? 1 : 0);
+          setBoard(BingoEngine.generateBoard(5, myNewSeed));
+          setOpponentBoard(BingoEngine.generateBoard(5, oppNewSeed));
+          setIsGameOver(false);
+          setIsWinner(false);
+          setWinnerName('');
+          setTurnNumber(1);
+          setTurnTimer(30);
+          setPickedNumbersHistory([]);
+          setMyLinesCount(0);
+          setOpponentLinesCount(0);
+          setSelectedReviewBoard('local');
+          setCurrentTurnPlayerId(packet.playerId || localPlayer.id);
+        }
       } else if (packet.type === 'PAUSE_GAME') {
         setIsGamePaused(true);
-        setPausedByPlayerName(packet.displayName || 'Opponent');
+        setPausedByPlayerName(packet.displayName || resolvedOpponent?.displayName || 'Opponent');
       } else if (packet.type === 'RESUME_GAME') {
         setIsGamePaused(false);
         setPausedByPlayerName('');
@@ -475,15 +552,18 @@ export const GameScreen: React.FC<Props> = ({
         setIsGameOver(true);
         setIsWinner(true);
         setWinnerName(localPlayer.displayName);
-        syncMatchResults(true, packet.displayName || 'Opponent');
-        alert(`${packet.displayName || 'Opponent'} left the game. You win! 🏆`);
+        syncMatchResults(true, packet.displayName || resolvedOpponent?.displayName || 'Opponent');
+        alert(`${packet.displayName || resolvedOpponent?.displayName || 'Opponent'} left the game. You win! 🏆`);
       }
+    });
+
+    return () => {
+      unsubscribe();
     };
   }, [
-    isAiMode,
-    localPlayer.id,
-    localPlayer.displayName,
-    opponent?.displayName,
+    effectiveAiMode,
+    localPlayer,
+    resolvedOpponent,
     turnNumber,
     spawnEmote,
     syncMatchResults
@@ -493,7 +573,7 @@ export const GameScreen: React.FC<Props> = ({
   const handleSendEmote = (emoji: string, scale: number = 1.0) => {
     spawnEmote(emoji, true, localPlayer.displayName, scale);
     soundEffects.playEmotePop();
-    if (!isAiMode) {
+    if (!effectiveAiMode) {
       roomSync.sendPacket({
         type: 'EMOTE',
         playerId: localPlayer.id,
@@ -515,7 +595,7 @@ export const GameScreen: React.FC<Props> = ({
         timestamp: Date.now()
       }
     ]);
-    if (!isAiMode) {
+    if (!effectiveAiMode) {
       roomSync.sendPacket({
         type: 'CHAT_MESSAGE',
         playerId: localPlayer.id,
@@ -529,7 +609,7 @@ export const GameScreen: React.FC<Props> = ({
   const handleTogglePause = () => {
     const nextState = !isGamePaused;
     setIsGamePaused(nextState);
-    if (!isAiMode) {
+    if (!effectiveAiMode) {
       roomSync.sendPacket({
         type: nextState ? 'PAUSE_GAME' : 'RESUME_GAME',
         playerId: localPlayer.id,
@@ -541,8 +621,14 @@ export const GameScreen: React.FC<Props> = ({
   // Play Again
   const handlePlayAgain = () => {
     const newSeed = Math.floor(Math.random() * 100000) + 1;
-    const myNewSeed = localPlayer.isHost || isAiMode ? newSeed : newSeed + 1;
-    const oppNewSeed = localPlayer.isHost || isAiMode ? newSeed + 1 : newSeed;
+    const myNewSeed = effectiveAiMode
+      ? (localPlayer.isHost ? newSeed : newSeed + 1)
+      : BingoEngine.resolvePlayerBoardSeed(newSeed, localPlayer, localPlayer.isHost ? 0 : 1);
+    const oppNewSeed = effectiveAiMode
+      ? (localPlayer.isHost ? newSeed + 1 : newSeed)
+      : (resolvedOpponent
+          ? BingoEngine.resolvePlayerBoardSeed(newSeed, resolvedOpponent, resolvedOpponent.isHost ? 0 : 1)
+          : BingoEngine.resolvePlayerBoardSeed(newSeed, { id: 'guest', username: 'guest', isHost: !localPlayer.isHost }, localPlayer.isHost ? 1 : 0));
 
     setBoard(BingoEngine.generateBoard(5, myNewSeed));
     setOpponentBoard(BingoEngine.generateBoard(5, oppNewSeed));
@@ -557,7 +643,7 @@ export const GameScreen: React.FC<Props> = ({
     setWantsPlayAgainName(null);
     setCurrentTurnPlayerId(localPlayer.id);
 
-    if (!isAiMode) {
+    if (!effectiveAiMode) {
       roomSync.sendPacket({
         type: 'PLAY_AGAIN',
         playerId: localPlayer.id,
@@ -572,7 +658,7 @@ export const GameScreen: React.FC<Props> = ({
   const handleSyncGame = () => {
     setIsSyncing(true);
     soundEffects.playTap();
-    if (!isAiMode) {
+    if (!effectiveAiMode) {
       roomSync.sendPacket({
         type: 'SYNC_GAME',
         playerId: localPlayer.id,
@@ -586,7 +672,7 @@ export const GameScreen: React.FC<Props> = ({
   const pingColor = displayedPing <= 250 ? '#16A34A' : displayedPing <= 500 ? '#EAB308' : '#DC2626';
 
   // Dynamic humorous / informative turn status message matching Android GameScreen.kt
-  const activeOpponentName = opponent?.displayName || (isAiMode ? 'Master Bot' : 'Opponent');
+  const activeOpponentName = resolvedOpponent?.displayName || (effectiveAiMode ? 'Master Bot' : 'Opponent');
   const statusMessage = isMyTurn
     ? turnTimer > 20
       ? `You are choosing${animatedDots}`

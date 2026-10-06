@@ -493,6 +493,103 @@ describe('Multiplayer Lobby & Game End-to-End Simulation', { timeout: 60000 }, (
     assert.ok(hostOppLines >= 5, `Host should detect guest reached 5 lines (host loses), got ${hostOppLines}`);
   });
 
+  it('Alternating Dual-Client Match: Real-Time Board Marking and Review Parity', () => {
+    const seed = 54321;
+    const playerA: Player = {
+      id: 'pA_alice',
+      displayName: 'Alice',
+      username: 'alice',
+      isHost: true,
+      avatarUrl: null,
+      score: 0,
+      completedLinesCount: 0,
+      gamesPlayed: 0,
+      gamesWon: 0,
+      currentStreak: 0,
+      level: 1,
+      lastSeenTimestamp: Date.now(),
+      lobbyReadyStatus: 'READY',
+      readyVersion: 1
+    };
+
+    const playerB: Player = {
+      id: 'pB_bob',
+      displayName: 'Bob',
+      username: 'bob',
+      isHost: false,
+      avatarUrl: null,
+      score: 0,
+      completedLinesCount: 0,
+      gamesPlayed: 0,
+      gamesWon: 0,
+      currentStreak: 0,
+      level: 1,
+      lastSeenTimestamp: Date.now(),
+      lobbyReadyStatus: 'READY',
+      readyVersion: 1
+    };
+
+    // Deterministic seeds for both players
+    const seedA = BingoEngine.resolvePlayerBoardSeed(seed, playerA, 0);
+    const seedB = BingoEngine.resolvePlayerBoardSeed(seed, playerB, 1);
+
+    // Initial state on Alice's device:
+    let aliceMyBoard = BingoEngine.generateBoard(5, seedA);
+    let aliceOppBoard = BingoEngine.generateBoard(5, seedB);
+
+    // Initial state on Bob's device:
+    let bobMyBoard = BingoEngine.generateBoard(5, seedB);
+    let bobOppBoard = BingoEngine.generateBoard(5, seedA);
+
+    // Verify initial boards are identical across devices
+    assert.deepStrictEqual(
+      aliceMyBoard.cells.map(c => c.number),
+      bobOppBoard.cells.map(c => c.number),
+      "Alice's local board numbers must be 100% identical to Bob's opponent review board"
+    );
+    assert.deepStrictEqual(
+      bobMyBoard.cells.map(c => c.number),
+      aliceOppBoard.cells.map(c => c.number),
+      "Bob's local board numbers must be 100% identical to Alice's opponent review board"
+    );
+
+    // Simulate alternating moves:
+    // Turn 1: Alice picks 12
+    const pick1 = 12;
+    // Alice marks on her board (own) AND opponent board (not own):
+    aliceMyBoard = BingoEngine.markCell(aliceMyBoard, pick1, playerA.id, true, 1).board;
+    aliceOppBoard = BingoEngine.markCell(aliceOppBoard, pick1, playerA.id, false, 1).board;
+    // Bob receives pick1 and marks on his board (not own) AND opponent board (own):
+    bobMyBoard = BingoEngine.markCell(bobMyBoard, pick1, playerA.id, false, 1).board;
+    bobOppBoard = BingoEngine.markCell(bobOppBoard, pick1, playerA.id, true, 1).board;
+
+    // Turn 2: Bob picks 18
+    const pick2 = 18;
+    // Bob marks on his board (own) AND opponent board (not own):
+    bobMyBoard = BingoEngine.markCell(bobMyBoard, pick2, playerB.id, true, 2).board;
+    bobOppBoard = BingoEngine.markCell(bobOppBoard, pick2, playerB.id, false, 2).board;
+    // Alice receives pick2 and marks on her board (not own) AND opponent board (own):
+    aliceMyBoard = BingoEngine.markCell(aliceMyBoard, pick2, playerB.id, false, 2).board;
+    aliceOppBoard = BingoEngine.markCell(aliceOppBoard, pick2, playerB.id, true, 2).board;
+
+    // Verify cell mark states across both devices after 2 alternating moves:
+    for (let i = 0; i < 25; i++) {
+      assert.strictEqual(
+        aliceMyBoard.cells[i].markState.type,
+        bobOppBoard.cells[i].markState.type,
+        `Cell ${i} mark state on Alice's board must match Bob's review board`
+      );
+      assert.strictEqual(
+        bobMyBoard.cells[i].markState.type,
+        aliceOppBoard.cells[i].markState.type,
+        `Cell ${i} mark state on Bob's board must match Alice's review board`
+      );
+    }
+
+    assert.strictEqual(aliceMyBoard.completedLines.length, bobOppBoard.completedLines.length);
+    assert.strictEqual(bobMyBoard.completedLines.length, aliceOppBoard.completedLines.length);
+  });
+
   after(() => {
     roomSync.destroy();
     setTimeout(() => process.exit(0), 100);

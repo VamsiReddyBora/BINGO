@@ -25,6 +25,15 @@ export class MqttRoomManager {
   public onConnectionChanged: ((connected: boolean) => void) | null = null;
   public onInviteReceived: ((invite: any) => void) | null = null;
 
+  private packetListeners: Set<(packet: RoomMessagePacket) => void> = new Set();
+
+  public addPacketListener(listener: (packet: RoomMessagePacket) => void): () => void {
+    this.packetListeners.add(listener);
+    return () => {
+      this.packetListeners.delete(listener);
+    };
+  }
+
   private smoothedPing: number = 24;
 
   public initGlobalClient(player: Player) {
@@ -185,12 +194,26 @@ export class MqttRoomManager {
     });
   }
 
-  public sendStartGame(seed: number, starterId: string) {
+  public sendStartGame(seed: number, starterId: string, players?: Player[]) {
+    const participants = (players && players.length > 0) ? players : this.getPlayers();
     this.sendPacket({
       type: 'START_GAME',
       playerId: this.localPlayer?.id || starterId,
       seed,
-      currentTurnPlayerId: starterId
+      currentTurnPlayerId: starterId,
+      boardSize: 5,
+      players: participants
+    });
+  }
+
+  public sendTurnTimeout(turnNumber: number, nextTurnId: string, pickedHistory: number[], seed: number = 0) {
+    this.sendPacket({
+      type: 'TURN_TIMEOUT',
+      playerId: this.localPlayer?.id || '',
+      turnNumber,
+      currentTurnPlayerId: nextTurnId,
+      pickedHistory,
+      seed
     });
   }
 
@@ -395,6 +418,14 @@ export class MqttRoomManager {
         this.notifyPlayers();
       }
     }
+
+    this.packetListeners.forEach((listener) => {
+      try {
+        listener(packet);
+      } catch (err) {
+        console.warn('Packet listener error:', err);
+      }
+    });
 
     this.onPacketReceived?.(packet);
   }

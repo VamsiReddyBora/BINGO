@@ -3,6 +3,7 @@ import { ArrowLeft, ArrowRight, AlertCircle } from 'lucide-react';
 import { useTheme } from '../theme/theme';
 import { soundEffects } from '../audio/sounds';
 import { CloudRegistry } from '../network/cloudRegistry';
+import { roomSync } from '../network/mqttSync';
 
 interface Props {
   onJoinRoom: (roomCode: string) => void;
@@ -29,21 +30,25 @@ export const JoinRoomScreen: React.FC<Props> = ({ onJoinRoom, onBack }) => {
 
     try {
       const room = await CloudRegistry.getRoom(clean);
-      if (!room) {
-        setErrorMessage(`Room "${clean}" not found. Verify the code with the host.`);
-        setIsValidating(false);
-        return;
-      }
-
-      if (room.status === 'CLOSED') {
+      if (room && room.status === 'CLOSED') {
         setErrorMessage(`Room "${clean}" has already closed.`);
         setIsValidating(false);
         return;
       }
 
+      if (!room) {
+        // Also check retained MQTT room meta (e.g. if room was created on Android mobile app)
+        const mqttMeta = await roomSync.getRoomMetaMqtt(clean);
+        if (mqttMeta && mqttMeta.status === 'CLOSED') {
+          setErrorMessage(`Room "${clean}" has already closed.`);
+          setIsValidating(false);
+          return;
+        }
+      }
+
       onJoinRoom(clean);
     } catch {
-      // If network lookup fails, proceed anyway to allow P2P/MQTT join
+      // If network lookup encounters temporary issues, proceed anyway so MQTT connect will link peers
       onJoinRoom(clean);
     } finally {
       setIsValidating(false);

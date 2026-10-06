@@ -166,14 +166,23 @@ export const AppContent: React.FC = () => {
       if (opp) setOpponent(opp);
     };
 
-    roomSync.onPacketReceived = (packet) => {
+    const unsubscribePacket = roomSync.addPacketListener((packet) => {
       if (packet.type === 'START_GAME') {
         soundEffects.playTurnAlert();
-        setMatchSeed(packet.seed || Math.floor(Math.random() * 100000) + 1);
-        setFirstTurnPlayerId(packet.currentTurnPlayerId || localPlayer.id);
+        setIsAiMode(false);
+        const matchSeed = packet.seed || Math.floor(Math.random() * 100000) + 1;
+        setMatchSeed(matchSeed);
+        const firstTurn = packet.currentTurnPlayerId || localPlayer.id;
+        setFirstTurnPlayerId(firstTurn);
+
+        if (packet.players && packet.players.length > 0) {
+          setPlayersInLobby(packet.players);
+          const opp = packet.players.find((p) => p.id !== localPlayer.id);
+          if (opp) setOpponent(opp);
+        }
         navigateTo('GAME', 0);
       }
-    };
+    });
 
     roomSync.onInviteReceived = (invite: GameInvite) => {
       soundEffects.playTurnAlert();
@@ -183,6 +192,7 @@ export const AppContent: React.FC = () => {
     };
 
     return () => {
+      unsubscribePacket();
       clearInterval(presenceTimer);
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
@@ -348,14 +358,20 @@ export const AppContent: React.FC = () => {
   // Host starts game from Lobby
   const handleHostStartLobbyGame = () => {
     if (!localPlayer) return;
+    setIsAiMode(false);
     const generatedSeed = Math.floor(Math.random() * 100000) + 1;
     const starterId = localPlayer.id;
 
     setMatchSeed(generatedSeed);
     setFirstTurnPlayerId(starterId);
 
+    const opp = playersInLobby.find((p) => p.id !== localPlayer.id) || null;
+    if (opp) setOpponent(opp);
+
+    const participants = playersInLobby.length > 0 ? playersInLobby : [localPlayer];
+
     // Broadcast to room
-    roomSync.sendStartGame(generatedSeed, starterId);
+    roomSync.sendStartGame(generatedSeed, starterId, participants);
     navigateTo('GAME', 0);
   };
 
