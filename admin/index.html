@@ -3261,16 +3261,34 @@
       'ammu': 'bbdfeaa',
       'bob': 'bfbafff',
       'bora': 'dbadeef',
+      'chandankumar0393': 'bbddcdc',
       'charan': 'bdddadf',
+      'dangersmiley': 'eabdbcd',
+      'dummymail': null,
+      'g_player': null,
+      'guest_sim_2': null,
       'hari': 'cddcadf',
       'hjskakj': 'ddbeded',
       'navii': 'ddbeded',
       'player4': 'feaccfc',
       'realme': 'abbaabe',
       'shivuu': 'cefdade',
+      'sim_host': null,
+      'test_vamsi_player': 'dfccfce',
+      'user_1566': 'aafadac',
+      'user_1989': 'aaededf',
+      'user_2814': 'bceafbd',
+      'user_2957': 'bbeabdd',
+      'user_7508': 'cfefeda',
+      'user_8136': 'bcbccdd',
+      'user_8171': 'faddadd',
+      'user_8407': 'bdcdaac',
+      'user_9716': null,
       'vampire': 'ddfdbbe',
       'vamsi': 'defffae',
-      'vani': 'fdedeba'
+      'vanabha': 'dafaaac',
+      'vani': 'fdedeba',
+      'webtest_676': 'dfcdfbc'
     };
 
     // Concurrency guard to prevent overlapping polls
@@ -3300,9 +3318,31 @@
             .map(u => u.trim().toLowerCase().replace(/^@/, ''))
             .filter(u => u.length > 0);
         }
-        usernames = Array.from(new Set(usernames));
 
-        // Authoritative set of valid users - ONLY users in user_directory exist!
+        // Always merge with known registered players and existing cache to prevent accidental wipe
+        const baseKnown = Object.keys(KNOWN_USER_BINS);
+        baseKnown.forEach(u => {
+          if (!usernames.includes(u)) usernames.push(u);
+        });
+        if (globalState.playerCache) {
+          Object.keys(globalState.playerCache).forEach(u => {
+            if (!usernames.includes(u)) usernames.push(u);
+          });
+        }
+
+        // Exclude explicitly deleted users in current session
+        if (globalState.deletedUsernamesSet) {
+          usernames = usernames.filter(u => !globalState.deletedUsernamesSet.has(u));
+        }
+
+        usernames = Array.from(new Set(usernames)).sort();
+
+        // If cloud user_directory was empty or missing registered users, auto-repair it immediately
+        if (!rawDir || usernames.length > rawDir.split(',').filter(x => x.trim().length > 0).length) {
+          setKeyValueDirect('user_directory', usernames.join(',')).catch(console.warn);
+        }
+
+        // Authoritative set of valid users
         const validSet = new Set(usernames);
         globalState.validUsernamesSet = validSet;
 
@@ -4708,6 +4748,8 @@
       const clean = username.trim().toLowerCase().replace(/^@/, '');
 
       // 1. Immediately purge from local state so UI updates in 0ms!
+      if (!globalState.deletedUsernamesSet) globalState.deletedUsernamesSet = new Set();
+      globalState.deletedUsernamesSet.add(clean);
       if (globalState.validUsernamesSet) globalState.validUsernamesSet.delete(clean);
       if (globalState.playerCache) delete globalState.playerCache[clean];
       delete globalState.onlineStatuses[clean];
@@ -5198,17 +5240,22 @@
           if (appVersionCode) globalState.selectedPlayer.appVersionCode = appVersionCode;
           renderInspectorHeader();
         }
-      } else if (globalState.validUsernamesSet && globalState.validUsernamesSet.has(uname)) {
-        // Discovered a new registered player via live presence! Fetch them immediately!
-        fetchSinglePlayerImmediate(uname, status, ts, appVersion, appVersionCode);
+      } else {
+        // Discovered a new player via live presence! Fetch them immediately unless deleted
+        if (!globalState.deletedUsernamesSet || !globalState.deletedUsernamesSet.has(uname)) {
+          if (globalState.validUsernamesSet) {
+            globalState.validUsernamesSet.add(uname);
+          }
+          fetchSinglePlayerImmediate(uname, status, ts, appVersion, appVersionCode);
+        }
       }
     }
 
     function upsertPlayerFromRegistry(clean, entry) {
       if (!clean || !entry) return;
-      // Strict filter: Ignore registry updates for deleted / unregistered users
-      if (globalState.validUsernamesSet && globalState.validUsernamesSet.size > 0 && !globalState.validUsernamesSet.has(clean)) {
-        return;
+      if (globalState.deletedUsernamesSet && globalState.deletedUsernamesSet.has(clean)) return;
+      if (globalState.validUsernamesSet) {
+        globalState.validUsernamesSet.add(clean);
       }
 
       let player = globalState.players.find(p => p.username === clean);
