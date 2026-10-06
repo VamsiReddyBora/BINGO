@@ -10,6 +10,7 @@ import { GameScreen } from './screens/GameScreen';
 import { roomSync } from './network/mqttSync';
 import { CloudRegistry, GameInvite } from './network/cloudRegistry';
 import { soundEffects } from './audio/sounds';
+import { useRealtimePing } from './hooks/useRealtimePing';
 
 export type ScreenState =
   | 'LOGIN'
@@ -70,7 +71,7 @@ export const AppContent: React.FC = () => {
   const [matchSeed, setMatchSeed] = useState<number>(0);
   const [firstTurnPlayerId, setFirstTurnPlayerId] = useState<string>('');
   const [isAiMode, setIsAiMode] = useState<boolean>(false);
-  const [pingMs, setPingMs] = useState<number>(24);
+  const pingMs = useRealtimePing();
 
   // Unified navigation helper with browser history state
   const navigateTo = (screen: ScreenState, tab: number = 0) => {
@@ -142,10 +143,6 @@ export const AppContent: React.FC = () => {
     if (localPlayer) {
       roomSync.initGlobalClient(localPlayer);
       CloudRegistry.publishPresence(localPlayer.username, 'ONLINE');
-
-      roomSync.onPingChanged = (ms) => {
-        setPingMs(ms);
-      };
 
       roomSync.onPlayersChanged = (newPlayers) => {
         setPlayersInLobby(newPlayers);

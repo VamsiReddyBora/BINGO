@@ -1,6 +1,7 @@
 import mqtt, { MqttClient } from 'mqtt';
 import { Player, RoomMessagePacket } from '../types/models';
 import { FastPacketCodec } from './codec';
+import { NetworkPingMonitor } from './pingMonitor';
 
 export const MQTT_WS_URL = 'wss://broker.emqx.io:8084/mqtt';
 
@@ -303,6 +304,7 @@ export class MqttRoomManager {
         const rtt = Math.max(1, Date.now() - packet.pingTimestamp);
         this.smoothedPing = Math.round(this.smoothedPing * 0.65 + rtt * 0.35);
         this.onPingChanged?.(this.smoothedPing);
+        NetworkPingMonitor.recordExternalPing(this.smoothedPing);
       }
     } else if (packet.type === 'KICK_PLAYER') {
       if (this.localPlayer && packet.targetPlayerId === this.localPlayer.id) {
@@ -412,7 +414,7 @@ export class MqttRoomManager {
         playerId: this.localPlayer.id,
         pingTimestamp: Date.now()
       });
-    }, 2000);
+    }, 1000);
   }
 
   private startLivenessLoop() {

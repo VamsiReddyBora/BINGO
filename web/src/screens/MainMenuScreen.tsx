@@ -6,6 +6,7 @@ import { soundEffects } from '../audio/sounds';
 import { PlayerAvatar } from '../components/PlayerAvatar';
 import { DeveloperNoteModal } from '../components/DeveloperNoteModal';
 import { NearbyNetworkModal } from '../components/NearbyNetworkModal';
+import { useRealtimePing } from '../hooks/useRealtimePing';
 
 interface OngoingMatch {
   roomCode: string;
@@ -72,14 +73,9 @@ export const MainMenuScreen: React.FC<Props> = ({
     }
   };
 
-  // 1-second stabilized ping display matching Android
-  const [displayedPing, setDisplayedPing] = useState(pingMs > 0 ? pingMs : 28);
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setDisplayedPing(pingMs > 0 ? pingMs : 28);
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [pingMs]);
+  // 1-second real-time network ping monitor directly matching Android NetworkPingMonitor
+  const realtimePing = useRealtimePing();
+  const displayedPing = realtimePing > 0 ? realtimePing : (pingMs > 0 ? pingMs : 28);
 
   const pingColor =
     displayedPing <= 250

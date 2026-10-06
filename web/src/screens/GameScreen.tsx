@@ -32,6 +32,7 @@ import { QuickChatDrawer } from '../components/QuickChatDrawer';
 import { FloatingEmotes } from '../components/FloatingEmotes';
 import { PlayerAvatar } from '../components/PlayerAvatar';
 import { RecentPicksQueuePill } from '../components/RecentPicksQueuePill';
+import { useRealtimePing } from '../hooks/useRealtimePing';
 
 interface Props {
   roomCode: string;
@@ -91,17 +92,9 @@ export const GameScreen: React.FC<Props> = ({
   const [isQuickChatOpen, setIsQuickChatOpen] = useState<boolean>(false);
   const [soundOn, setSoundOn] = useState<boolean>(soundEffects.isEnabled());
 
-  // 1-second stabilized ping
-  const [pingMs, setPingMs] = useState<number>(24);
-  const [displayedPing, setDisplayedPing] = useState<number>(24);
-
-  useEffect(() => {
-    roomSync.onPingChanged = (p) => setPingMs(p);
-    const interval = setInterval(() => {
-      setDisplayedPing(pingMs > 0 ? pingMs : 24);
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [pingMs]);
+  // 1-second real-time network ping monitor directly matching Android NetworkPingMonitor
+  const realtimePing = useRealtimePing();
+  const displayedPing = realtimePing > 0 ? realtimePing : 28;
 
   // Animated dots for "choosing..."
   const [dotPhase, setDotPhase] = useState<number>(1);
