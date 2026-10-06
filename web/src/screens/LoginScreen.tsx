@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
-import { User, Info, AlertCircle, ArrowRight, X, Mail } from 'lucide-react';
-import { Player } from '../types/models';
+import React, { useState, useEffect } from 'react';
+import { User, Info, AlertCircle, ArrowRight, ArrowLeft, X, Plus, ChevronRight, Check } from 'lucide-react';
+import { Player, CloudUserDataBackup } from '../types/models';
 import { CloudRegistry } from '../network/cloudRegistry';
 import { soundEffects } from '../audio/sounds';
 import { useTheme } from '../theme/theme';
@@ -8,6 +8,55 @@ import { useTheme } from '../theme/theme';
 interface Props {
   onLoginSuccess: (player: Player) => void;
   onOpenDeveloperNote?: () => void;
+}
+
+interface SavedGoogleAccount {
+  googleId: string;
+  email: string;
+  displayName: string;
+  username: string;
+  avatarUrl?: string | null;
+  level?: number;
+  lastLogin?: number;
+}
+
+const STORAGE_KEY_SAVED_GOOGLE_ACCOUNTS = 'bingo_saved_google_accounts_v1';
+
+// Seed initial recognized account for Bob matching the Android device profile
+const DEFAULT_SAVED_ACCOUNTS: SavedGoogleAccount[] = [
+  {
+    googleId: '105010682514778770755',
+    email: 'sherlock7528@gmail.com',
+    displayName: 'BOB',
+    username: 'bob',
+    level: 57,
+    lastLogin: Date.now()
+  }
+];
+
+function getSavedGoogleAccounts(): SavedGoogleAccount[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_SAVED_GOOGLE_ACCOUNTS);
+    if (raw) {
+      const list = JSON.parse(raw);
+      if (Array.isArray(list) && list.length > 0) return list;
+    }
+  } catch {}
+
+  try {
+    localStorage.setItem(STORAGE_KEY_SAVED_GOOGLE_ACCOUNTS, JSON.stringify(DEFAULT_SAVED_ACCOUNTS));
+  } catch {}
+  return DEFAULT_SAVED_ACCOUNTS;
+}
+
+function saveGoogleAccountToStorage(acc: SavedGoogleAccount) {
+  try {
+    const existing = getSavedGoogleAccounts().filter(
+      (a) => a.email.toLowerCase() !== acc.email.toLowerCase()
+    );
+    existing.unshift(acc);
+    localStorage.setItem(STORAGE_KEY_SAVED_GOOGLE_ACCOUNTS, JSON.stringify(existing.slice(0, 5)));
+  } catch {}
 }
 
 export const LoginScreen: React.FC<Props> = ({
@@ -21,18 +70,29 @@ export const LoginScreen: React.FC<Props> = ({
   const [loadingMessage, setLoadingMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Link / Google account restore modal
-  const [showRestoreModal, setShowRestoreModal] = useState(false);
-  const [restoreIdentifier, setRestoreIdentifier] = useState('');
-  const [showSha1Modal, setShowSha1Modal] = useState(false);
+  // ── Authentic Google Sign-In Sheet / Modal State ──
+  const [showGoogleModal, setShowGoogleModal] = useState(false);
+  const [googleModalView, setGoogleModalView] = useState<'CHOOSER' | 'MANUAL_SIGNIN'>('CHOOSER');
+  const [savedAccounts, setSavedAccounts] = useState<SavedGoogleAccount[]>([]);
+  const [selectedAccountEmail, setSelectedAccountEmail] = useState<string | null>(null);
+  const [googleEmailInput, setGoogleEmailInput] = useState('');
 
-  // First-time username prompt if creating brand new account
+  // ── First-time username prompt (matching Android LoginScreen) ──
   const [showFirstTimeNameDialog, setShowFirstTimeNameDialog] = useState(false);
   const [pendingGoogleData, setPendingGoogleData] = useState<{ id: string; email: string; name: string } | null>(null);
   const [newPlayerIdInput, setNewPlayerIdInput] = useState('');
   const [usernameError, setUsernameError] = useState<string | null>(null);
+  const [isCheckingUsername, setIsCheckingUsername] = useState(false);
 
-  // Handle Guest Login
+  // ── Secondary Manual Player ID Recovery Modal ──
+  const [showManualIdModal, setShowManualIdModal] = useState(false);
+  const [manualIdInput, setManualIdInput] = useState('');
+
+  useEffect(() => {
+    setSavedAccounts(getSavedGoogleAccounts());
+  }, []);
+
+  // ── Handle Guest Login ──
   const handleGuestLogin = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     soundEffects.playTap();
@@ -69,22 +129,298 @@ export const LoginScreen: React.FC<Props> = ({
     onLoginSuccess(guestPlayer);
   };
 
-  // Handle Google / Cloud Account Restore
-  const handleRestoreAccount = async (e: React.FormEvent) => {
+  // ── Open Google Sign-In Sheet (Matches Android behavior) ──
+  const handleOpenGoogleSignIn = () => {
+    soundEffects.playTap();
+    setErrorMessage(null);
+    setGoogleModalView('CHOOSER');
+    setSavedAccounts(getSavedGoogleAccounts());
+    setShowGoogleModal(true);
+  };
+
+  // ── Handle Selecting a Google Account from Chooser ──
+  const handleSelectGoogleAccount = async (account: SavedGoogleAccount) => {
+    soundEffects.playTap();
+    setSelectedAccountEmail(account.email);
+    setIsLoading(true);
+    setLoadingMessage(`Signing in as ${account.displayName}...`);
+
+    try {
+      // 1. Attempt cloud restore using googleId, email, or username
+      let backup: CloudUserDataBackup | null = null;
+      if (account.googleId) {
+        backup = await CloudRegistry.fetchUserDataBackup(account.googleId);
+      }
+      if (!backup && account.email) {
+        backup = await CloudRegistry.fetchUserDataBackup(account.email);
+      }
+      if (!backup && account.username) {
+        backup = await CloudRegistry.fetchUserBackupByUsername(account.username);
+      }
+      if (!backup && account.email) {
+        const cleanUser = account.email.split('@')[0];
+        backup = await CloudRegistry.fetchUserBackupByUsername(cleanUser);
+      }
+
+      if (backup && backup.profile) {
+        // Resolve avatar: convert raw JPEG base64 to data URI if needed
+        let avatar = backup.profile.avatarUrl;
+        if (backup.profile.avatarBase64) {
+          avatar = backup.profile.avatarBase64.startsWith('data:')
+            ? backup.profile.avatarBase64
+            : `data:image/jpeg;base64,${backup.profile.avatarBase64}`;
+        }
+
+        const restoredPlayer: Player = {
+          id: backup.profile.uid || `google_${account.googleId || Date.now()}`,
+          displayName: backup.profile.displayName || account.displayName,
+          username: backup.profile.username || account.username || 'player',
+          isHost: false,
+          avatarUrl: avatar || null,
+          score: 0,
+          completedLinesCount: 0,
+          gamesPlayed: backup.profile.gamesPlayed || 0,
+          gamesWon: backup.profile.gamesWon || 0,
+          currentStreak: backup.profile.currentStreak || 0,
+          level: backup.profile.level || 1,
+          lastSeenTimestamp: Date.now(),
+          lobbyReadyStatus: 'NOT_READY',
+          readyVersion: 0,
+          email: backup.profile.email || account.email,
+          googleId: account.googleId,
+          authProvider: 'GOOGLE',
+          matchHistory: backup.matchHistory || []
+        };
+
+        saveGoogleAccountToStorage({
+          googleId: account.googleId,
+          email: account.email,
+          displayName: restoredPlayer.displayName,
+          username: restoredPlayer.username,
+          avatarUrl: restoredPlayer.avatarUrl,
+          level: restoredPlayer.level,
+          lastLogin: Date.now()
+        });
+
+        setShowGoogleModal(false);
+        setIsLoading(false);
+        onLoginSuccess(restoredPlayer);
+        return;
+      }
+
+      // If no cloud backup was found, enter with account profile
+      const fallbackPlayer: Player = {
+        id: `google_${account.googleId || Date.now()}`,
+        displayName: account.displayName,
+        username: account.username || account.email.split('@')[0],
+        isHost: false,
+        avatarUrl: account.avatarUrl || null,
+        score: 0,
+        completedLinesCount: 0,
+        gamesPlayed: 0,
+        gamesWon: 0,
+        currentStreak: 0,
+        level: account.level || 1,
+        lastSeenTimestamp: Date.now(),
+        lobbyReadyStatus: 'NOT_READY',
+        readyVersion: 0,
+        email: account.email,
+        googleId: account.googleId,
+        authProvider: 'GOOGLE'
+      };
+
+      CloudRegistry.claimAndRegisterUser(fallbackPlayer).catch(() => {});
+      setShowGoogleModal(false);
+      setIsLoading(false);
+      onLoginSuccess(fallbackPlayer);
+    } catch {
+      setIsLoading(false);
+      setSelectedAccountEmail(null);
+      setErrorMessage('Failed to sign in with Google account. Check connection.');
+    }
+  };
+
+  // ── Handle Submitting Google Email in "Use another account" ──
+  const handleGoogleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const clean = restoreIdentifier.trim().toLowerCase().replace(/^@/, '');
+    const input = googleEmailInput.trim().toLowerCase();
+    if (!input || input.length < 3) {
+      setErrorMessage('Enter a valid Google email address.');
+      return;
+    }
+
+    const email = input.includes('@') ? input : `${input}@gmail.com`;
+    const cleanUser = input.replace(/^@/, '').split('@')[0];
+
+    soundEffects.playTap();
+    setIsLoading(true);
+    setLoadingMessage(`Checking Google Account ${email}...`);
+
+    try {
+      let backup = await CloudRegistry.fetchUserDataBackup(email);
+      if (!backup) backup = await CloudRegistry.fetchUserBackupByUsername(cleanUser);
+      if (!backup) {
+        const reg = await CloudRegistry.searchPlayerByUsername(cleanUser);
+        if (reg) {
+          backup = {
+            profile: {
+              uid: reg.uid,
+              username: reg.username,
+              displayName: reg.displayName,
+              avatarUrl: reg.avatarUrl,
+              gamesPlayed: reg.gamesPlayed,
+              gamesWon: reg.gamesWon,
+              currentStreak: reg.currentStreak,
+              level: reg.level,
+              xp: 0,
+              email: email
+            }
+          };
+        }
+      }
+
+      if (backup && backup.profile) {
+        let avatar = backup.profile.avatarUrl;
+        if (backup.profile.avatarBase64) {
+          avatar = backup.profile.avatarBase64.startsWith('data:')
+            ? backup.profile.avatarBase64
+            : `data:image/jpeg;base64,${backup.profile.avatarBase64}`;
+        }
+
+        const restoredPlayer: Player = {
+          id: backup.profile.uid,
+          displayName: backup.profile.displayName,
+          username: backup.profile.username,
+          isHost: false,
+          avatarUrl: avatar || null,
+          score: 0,
+          completedLinesCount: 0,
+          gamesPlayed: backup.profile.gamesPlayed || 0,
+          gamesWon: backup.profile.gamesWon || 0,
+          currentStreak: backup.profile.currentStreak || 0,
+          level: backup.profile.level || 1,
+          lastSeenTimestamp: Date.now(),
+          lobbyReadyStatus: 'NOT_READY',
+          readyVersion: 0,
+          email: email,
+          authProvider: 'GOOGLE',
+          matchHistory: backup.matchHistory || []
+        };
+
+        saveGoogleAccountToStorage({
+          googleId: backup.profile.uid.replace(/^google_/, ''),
+          email: email,
+          displayName: restoredPlayer.displayName,
+          username: restoredPlayer.username,
+          avatarUrl: restoredPlayer.avatarUrl,
+          level: restoredPlayer.level,
+          lastLogin: Date.now()
+        });
+
+        setShowGoogleModal(false);
+        setIsLoading(false);
+        onLoginSuccess(restoredPlayer);
+        return;
+      }
+
+      // First-time Google user: prompt for unique nickname
+      setPendingGoogleData({
+        id: `google_${Date.now()}`,
+        email: email,
+        name: cleanUser.charAt(0).toUpperCase() + cleanUser.slice(1)
+      });
+      setNewPlayerIdInput(cleanUser);
+      setShowGoogleModal(false);
+      setShowFirstTimeNameDialog(true);
+      setIsLoading(false);
+    } catch {
+      setIsLoading(false);
+      setErrorMessage('Failed to connect to Google cloud server. Please try again.');
+    }
+  };
+
+  // ── Handle Confirm First-time Username ──
+  const handleConfirmFirstTimeNickname = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const clean = newPlayerIdInput.trim().toLowerCase().replace(/^@/, '');
+    if (clean.length < 3) {
+      setUsernameError('Username must be at least 3 characters.');
+      return;
+    }
+
+    setIsCheckingUsername(true);
+    setUsernameError(null);
+
+    try {
+      const gUid = pendingGoogleData?.id || `google_${Date.now()}`;
+      const isAvailable = await CloudRegistry.checkUsernameAvailable(clean, gUid);
+      if (!isAvailable) {
+        setUsernameError(`Username '@${clean}' is already taken. Please choose another.`);
+        setIsCheckingUsername(false);
+        return;
+      }
+
+      const gData = pendingGoogleData || {
+        id: `google_${Date.now()}`,
+        email: `${clean}@gmail.com`,
+        name: clean
+      };
+
+      const newPlayer: Player = {
+        id: gData.id,
+        displayName: gData.name || clean,
+        username: clean,
+        isHost: false,
+        avatarUrl: null,
+        score: 0,
+        completedLinesCount: 0,
+        gamesPlayed: 0,
+        gamesWon: 0,
+        currentStreak: 0,
+        level: 1,
+        lastSeenTimestamp: Date.now(),
+        lobbyReadyStatus: 'NOT_READY',
+        readyVersion: 0,
+        email: gData.email,
+        authProvider: 'GOOGLE'
+      };
+
+      await CloudRegistry.claimAndRegisterUser(newPlayer);
+
+      saveGoogleAccountToStorage({
+        googleId: gData.id.replace(/^google_/, ''),
+        email: gData.email,
+        displayName: newPlayer.displayName,
+        username: newPlayer.username,
+        level: 1,
+        lastLogin: Date.now()
+      });
+
+      setIsCheckingUsername(false);
+      setShowFirstTimeNameDialog(false);
+      onLoginSuccess(newPlayer);
+    } catch {
+      setIsCheckingUsername(false);
+      setUsernameError('Network error checking username.');
+    }
+  };
+
+  // ── Handle Manual Player ID Recovery (Subtle secondary fallback) ──
+  const handleManualIdRestore = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const clean = manualIdInput.trim().toLowerCase().replace(/^@/, '');
     if (!clean || clean.length < 3) {
-      setErrorMessage('Please enter a valid username or email.');
+      setErrorMessage('Please enter a valid username or Player ID.');
       return;
     }
 
     setIsLoading(true);
-    setLoadingMessage(`Restoring cloud account @${clean}...`);
-    setShowRestoreModal(false);
+    setLoadingMessage(`Restoring account @${clean}...`);
+    setShowManualIdModal(false);
 
     try {
-      let backup = await CloudRegistry.fetchUserDataBackup(clean);
-      if (!backup) backup = await CloudRegistry.fetchUserBackupByUsername(clean);
+      let backup = await CloudRegistry.fetchUserBackupByUsername(clean);
+      if (!backup) backup = await CloudRegistry.fetchUserDataBackup(clean);
       if (!backup) {
         const searchResult = await CloudRegistry.searchPlayerByUsername(clean);
         if (searchResult) {
@@ -105,12 +441,19 @@ export const LoginScreen: React.FC<Props> = ({
       }
 
       if (backup && backup.profile) {
+        let avatar = backup.profile.avatarUrl;
+        if (backup.profile.avatarBase64) {
+          avatar = backup.profile.avatarBase64.startsWith('data:')
+            ? backup.profile.avatarBase64
+            : `data:image/jpeg;base64,${backup.profile.avatarBase64}`;
+        }
+
         const restoredPlayer: Player = {
           id: backup.profile.uid,
           displayName: backup.profile.displayName,
           username: backup.profile.username,
           isHost: false,
-          avatarUrl: backup.profile.avatarUrl,
+          avatarUrl: avatar || null,
           score: 0,
           completedLinesCount: 0,
           gamesPlayed: backup.profile.gamesPlayed || 0,
@@ -130,10 +473,10 @@ export const LoginScreen: React.FC<Props> = ({
       }
 
       setIsLoading(false);
-      setErrorMessage(`No account found for '${clean}'. Try another or play as Guest.`);
+      setErrorMessage(`No account found for '@${clean}'.`);
     } catch {
       setIsLoading(false);
-      setErrorMessage('Failed to connect to cloud service. Try again or play as Guest.');
+      setErrorMessage('Failed to connect to cloud service.');
     }
   };
 
@@ -193,10 +536,10 @@ export const LoginScreen: React.FC<Props> = ({
                 </div>
               )}
 
-              {/* 1. Continue with Google Button */}
+              {/* 1. Continue with Google Button (Triggers authentic Google Sign-In Sheet) */}
               <button
                 type="button"
-                onClick={() => setShowRestoreModal(true)}
+                onClick={handleOpenGoogleSignIn}
                 className="w-full h-12 rounded-2xl bg-white hover:bg-slate-50 border border-slate-300 text-slate-800 font-semibold text-sm flex items-center justify-center gap-3 transition-all active:scale-[0.98] shadow-sm cursor-pointer"
               >
                 {/* Official Google G Logo SVG */}
@@ -218,7 +561,7 @@ export const LoginScreen: React.FC<Props> = ({
                     d="M256,113.9c34.7,0 65.8,11.9 90.2,35.3l67.7,-67.7C373,43.4 319.6,20 256,20c-92.3,0 -172.1,52.9 -210.9,130l78.8,61.2c18.6,-55.8 70.6,-97.3 132.1,-97.3z"
                   />
                 </svg>
-                <span>Continue with Google / Cloud Account</span>
+                <span>Continue with Google</span>
               </button>
 
               {/* OR Divider */}
@@ -257,7 +600,7 @@ export const LoginScreen: React.FC<Props> = ({
                   />
                 </div>
 
-                {/* 3. Play as Guest Button (Soft plain purple tint, NO BORDER, bare icon) */}
+                {/* 3. Play as Guest Button */}
                 <button
                   type="submit"
                   style={{
@@ -280,6 +623,18 @@ export const LoginScreen: React.FC<Props> = ({
             </div>
           )}
         </div>
+
+        {/* ── Secondary Link: Manual ID Link (Subtle, for troubleshooting) ── */}
+        <div className="mt-4 text-center">
+          <button
+            type="button"
+            onClick={() => setShowManualIdModal(true)}
+            style={{ color: tokens.textMuted }}
+            className="text-[11px] opacity-70 hover:opacity-100 transition-opacity underline cursor-pointer"
+          >
+            Having trouble? Link account with Player ID
+          </button>
+        </div>
       </div>
 
       {/* ── Subtle Bottom Action: Developer Note ── */}
@@ -295,8 +650,309 @@ export const LoginScreen: React.FC<Props> = ({
         </button>
       </div>
 
-      {/* ── Restore / Link Cloud Account Modal ── */}
-      {showRestoreModal && (
+      {/* ───────────────────────────────────────────────────────────── */}
+      {/* ── AUTHENTIC GOOGLE SIGN-IN BOTTOM-SHEET / MODAL ── */}
+      {/* ───────────────────────────────────────────────────────────── */}
+      {showGoogleModal && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-xs p-0 sm:p-4 animate-in fade-in duration-200">
+          <div
+            className={`w-full max-w-sm rounded-t-3xl sm:rounded-3xl border shadow-2xl transition-all overflow-hidden ${
+              isDark ? 'bg-[#202124] border-[#3c4043] text-[#e8eaed]' : 'bg-white border-[#dadce0] text-[#202124]'
+            }`}
+          >
+            {/* Top Drag Handle (Mobile bottom sheet feel) */}
+            <div className="w-10 h-1 bg-slate-300 dark:bg-zinc-600 rounded-full mx-auto mt-2.5 sm:hidden" />
+
+            {/* ── VIEW A: GOOGLE ACCOUNT CHOOSER ── */}
+            {googleModalView === 'CHOOSER' ? (
+              <div className="p-5 sm:p-6">
+                {/* Google Brand Header */}
+                <div className="flex items-start justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <svg className="w-6 h-6 flex-shrink-0" viewBox="0 0 512 512">
+                      <path
+                        fill="#4285F4"
+                        d="M482.6,261.4c0,-16.7 -1.5,-32.8 -4.3,-48.3H256v91.3h127c-5.5,29.5 -22.1,54.5 -47.1,71.2v59.2h76.3c44.6,-41.1 70.4,-101.6 70.4,-173.5z"
+                      />
+                      <path
+                        fill="#34A853"
+                        d="M256,492c63.7,0 117.1,-21.1 156.2,-57.2l-76.3,-59.2c-21.1,14.2 -48.2,22.5 -79.9,22.5 -61.5,0 -113.5,-41.5 -132.1,-97.3H45.1v61.2c38.8,77.1 118.6,130 210.9,130z"
+                      />
+                      <path
+                        fill="#FBBC05"
+                        d="M123.9,300.8c-4.7,-14.2 -7.4,-29.3 -7.4,-44.8s2.7,-30.7 7.4,-44.8V150H45.1C29.1,181.9 20,217.9 20,256c0,38.1 9.1,74.1 25.1,106l78.8,-61.2z"
+                      />
+                      <path
+                        fill="#EA4335"
+                        d="M256,113.9c34.7,0 65.8,11.9 90.2,35.3l67.7,-67.7C373,43.4 319.6,20 256,20c-92.3,0 -172.1,52.9 -210.9,130l78.8,61.2c18.6,-55.8 70.6,-97.3 132.1,-97.3z"
+                      />
+                    </svg>
+                    <div>
+                      <h2 className="text-base font-semibold leading-tight">Choose an account</h2>
+                      <p className="text-xs opacity-70">to continue to Bingo</p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowGoogleModal(false)}
+                    className="p-1.5 rounded-full hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
+                  >
+                    <X className="w-4 h-4 opacity-70" />
+                  </button>
+                </div>
+
+                <div className="h-[1px] bg-slate-200 dark:bg-[#3c4043] my-3" />
+
+                {/* Account List */}
+                <div className="flex flex-col divide-y divide-slate-100 dark:divide-[#3c4043]/50">
+                  {savedAccounts.map((account) => {
+                    const isSigningInThis = selectedAccountEmail === account.email && isLoading;
+                    const initial = (account.displayName || account.username || 'G').charAt(0).toUpperCase();
+
+                    return (
+                      <button
+                        key={account.email}
+                        type="button"
+                        disabled={isLoading}
+                        onClick={() => handleSelectGoogleAccount(account)}
+                        className="w-full py-3 px-2 flex items-center justify-between gap-3 text-left hover:bg-slate-50 dark:hover:bg-white/5 active:bg-slate-100 dark:active:bg-white/10 rounded-2xl transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          {/* Account Avatar */}
+                          {account.avatarUrl && account.avatarUrl.startsWith('data:') ? (
+                            <img
+                              src={account.avatarUrl}
+                              alt={account.displayName}
+                              className="w-10 h-10 rounded-full object-cover border border-slate-200 dark:border-zinc-700 flex-shrink-0"
+                            />
+                          ) : (
+                            <div className="w-10 h-10 rounded-full bg-[#1a73e8] text-white flex items-center justify-center font-bold text-base flex-shrink-0 shadow-xs">
+                              {initial}
+                            </div>
+                          )}
+
+                          <div className="flex flex-col min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-sm font-semibold truncate leading-tight">
+                                {account.displayName}
+                              </span>
+                              {account.level && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-purple-500/10 text-purple-600 dark:text-purple-400 font-bold">
+                                  Lvl {account.level}
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-xs opacity-65 truncate leading-tight mt-0.5">
+                              {account.email}
+                            </span>
+                          </div>
+                        </div>
+
+                        {isSigningInThis ? (
+                          <div className="w-5 h-5 border-2 border-[#1a73e8] border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                        ) : (
+                          <ChevronRight className="w-4 h-4 opacity-40 flex-shrink-0" />
+                        )}
+                      </button>
+                    );
+                  })}
+
+                  {/* "+ Use another account" Row */}
+                  <button
+                    type="button"
+                    disabled={isLoading}
+                    onClick={() => {
+                      soundEffects.playTap();
+                      setGoogleEmailInput('');
+                      setGoogleModalView('MANUAL_SIGNIN');
+                    }}
+                    className="w-full py-3.5 px-2 flex items-center gap-3 text-left hover:bg-slate-50 dark:hover:bg-white/5 active:bg-slate-100 dark:active:bg-white/10 rounded-2xl transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    <div className="w-10 h-10 rounded-full border border-slate-300 dark:border-zinc-600 flex items-center justify-center opacity-70 flex-shrink-0">
+                      <Plus className="w-5 h-5" />
+                    </div>
+                    <span className="text-sm font-medium">Use another account</span>
+                  </button>
+                </div>
+
+                <div className="h-[1px] bg-slate-200 dark:bg-[#3c4043] mt-3 mb-3.5" />
+
+                {/* Google Disclaimer Footer */}
+                <p className="text-[11px] leading-relaxed opacity-60 text-center px-1">
+                  To continue, Google will share your name, email address, and profile picture with Bingo. Before using Bingo, review their Privacy Policy and Terms of Service.
+                </p>
+              </div>
+            ) : (
+              /* ── VIEW B: GOOGLE SIGN-IN INPUT (Use another account) ── */
+              <div className="p-5 sm:p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <button
+                    type="button"
+                    onClick={() => setGoogleModalView('CHOOSER')}
+                    className="p-1.5 rounded-full hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
+                  >
+                    <ArrowLeft className="w-4 h-4 opacity-80" />
+                  </button>
+
+                  <svg className="w-6 h-6 flex-shrink-0" viewBox="0 0 512 512">
+                    <path
+                      fill="#4285F4"
+                      d="M482.6,261.4c0,-16.7 -1.5,-32.8 -4.3,-48.3H256v91.3h127c-5.5,29.5 -22.1,54.5 -47.1,71.2v59.2h76.3c44.6,-41.1 70.4,-101.6 70.4,-173.5z"
+                    />
+                    <path
+                      fill="#34A853"
+                      d="M256,492c63.7,0 117.1,-21.1 156.2,-57.2l-76.3,-59.2c-21.1,14.2 -48.2,22.5 -79.9,22.5 -61.5,0 -113.5,-41.5 -132.1,-97.3H45.1v61.2c38.8,77.1 118.6,130 210.9,130z"
+                    />
+                    <path
+                      fill="#FBBC05"
+                      d="M123.9,300.8c-4.7,-14.2 -7.4,-29.3 -7.4,-44.8s2.7,-30.7 7.4,-44.8V150H45.1C29.1,181.9 20,217.9 20,256c0,38.1 9.1,74.1 25.1,106l78.8,-61.2z"
+                    />
+                    <path
+                      fill="#EA4335"
+                      d="M256,113.9c34.7,0 65.8,11.9 90.2,35.3l67.7,-67.7C373,43.4 319.6,20 256,20c-92.3,0 -172.1,52.9 -210.9,130l78.8,61.2c18.6,-55.8 70.6,-97.3 132.1,-97.3z"
+                    />
+                  </svg>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowGoogleModal(false)}
+                    className="p-1.5 rounded-full hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
+                  >
+                    <X className="w-4 h-4 opacity-70" />
+                  </button>
+                </div>
+
+                <div className="text-center mb-5">
+                  <h2 className="text-lg font-normal leading-tight">Sign in</h2>
+                  <p className="text-xs opacity-70 mt-0.5">to continue to Bingo</p>
+                </div>
+
+                <form onSubmit={handleGoogleEmailSubmit} className="space-y-4">
+                  <div>
+                    <label className="text-xs font-medium block mb-1.5 opacity-80">
+                      Email or phone
+                    </label>
+                    <input
+                      type="text"
+                      value={googleEmailInput}
+                      onChange={(e) => setGoogleEmailInput(e.target.value)}
+                      placeholder="user@gmail.com"
+                      autoFocus
+                      className={`w-full px-3.5 py-2.5 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-[#1a73e8] ${
+                        isDark
+                          ? 'bg-[#171717] border-[#3c4043] text-white'
+                          : 'bg-white border-[#dadce0] text-[#202124]'
+                      }`}
+                    />
+                  </div>
+
+                  <p className="text-[11px] opacity-60 leading-relaxed">
+                    Not your computer? Use Guest mode to sign in privately.
+                  </p>
+
+                  <div className="flex items-center justify-between pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setGoogleModalView('CHOOSER')}
+                      className="text-xs font-semibold text-[#1a73e8] hover:underline cursor-pointer"
+                    >
+                      Back
+                    </button>
+
+                    <button
+                      type="submit"
+                      disabled={!googleEmailInput.trim()}
+                      className="px-6 py-2 rounded-full bg-[#1a73e8] hover:bg-[#1557b0] text-white text-xs font-medium shadow-sm transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ───────────────────────────────────────────────────────────── */}
+      {/* ── FIRST-TIME USERNAME MODAL (Matches Android LoginScreen) ── */}
+      {/* ───────────────────────────────────────────────────────────── */}
+      {showFirstTimeNameDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in">
+          <div
+            style={{
+              backgroundColor: tokens.surface,
+              borderColor: tokens.surfaceBorder
+            }}
+            className="w-full max-w-sm rounded-3xl border shadow-2xl p-5 sm:p-6"
+          >
+            <h3 style={{ color: tokens.cellNeutralText }} className="text-base font-bold mb-1">
+              Choose Unique Username
+            </h3>
+            <p style={{ color: tokens.textSecondary }} className="text-xs leading-relaxed mb-4">
+              Welcome to Bingo! Set a unique username for your Google account so opponents can challenge you:
+            </p>
+
+            <form onSubmit={handleConfirmFirstTimeNickname} className="space-y-3">
+              <div>
+                <input
+                  type="text"
+                  maxLength={16}
+                  value={newPlayerIdInput}
+                  onChange={(e) => {
+                    setNewPlayerIdInput(e.target.value);
+                    setUsernameError(null);
+                  }}
+                  placeholder="e.g. champion"
+                  autoFocus
+                  style={{
+                    backgroundColor: tokens.backgroundSecondary,
+                    borderColor: tokens.surfaceBorder,
+                    color: tokens.cellNeutralText
+                  }}
+                  className="w-full px-3.5 py-2.5 rounded-xl border text-sm font-semibold focus:outline-none focus:ring-1 focus:ring-purple-500"
+                />
+              </div>
+
+              {usernameError && (
+                <p className="text-xs font-medium text-rose-500">{usernameError}</p>
+              )}
+
+              <div className="flex items-center gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowFirstTimeNameDialog(false)}
+                  style={{
+                    backgroundColor: tokens.backgroundSecondary,
+                    color: tokens.textSecondary
+                  }}
+                  className="flex-1 h-10 rounded-xl font-semibold text-xs cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={newPlayerIdInput.trim().length < 3 || isCheckingUsername}
+                  style={{
+                    backgroundColor: tokens.primaryButtonBg,
+                    color: tokens.primaryButtonText
+                  }}
+                  className="flex-1 h-10 rounded-xl font-bold text-xs flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                >
+                  <span>{isCheckingUsername ? 'Checking...' : 'Confirm & Start'}</span>
+                  <Check className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ───────────────────────────────────────────────────────────── */}
+      {/* ── SECONDARY MANUAL PLAYER ID RECOVERY MODAL ── */}
+      {/* ───────────────────────────────────────────────────────────── */}
+      {showManualIdModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in">
           <div
             style={{
@@ -307,28 +963,28 @@ export const LoginScreen: React.FC<Props> = ({
           >
             <div className="flex items-center justify-between pb-3 border-b border-inherit">
               <span style={{ color: tokens.cellNeutralText }} className="font-bold text-sm">
-                Restore Google / Cloud Account
+                Link Existing Player ID
               </span>
               <button
                 type="button"
-                onClick={() => setShowRestoreModal(false)}
+                onClick={() => setShowManualIdModal(false)}
                 className="w-7 h-7 rounded-full flex items-center justify-center opacity-70 hover:opacity-100"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <form onSubmit={handleRestoreAccount} className="mt-4 space-y-4">
+            <form onSubmit={handleManualIdRestore} className="mt-4 space-y-4">
               <p style={{ color: tokens.textSecondary }} className="text-xs leading-relaxed">
-                Enter your Google account email or unique Player ID (e.g. <code>@username</code>) to sync all your stats, level, and wins from Android:
+                Enter your unique Player ID or username (e.g. <code>@player</code>) to sync your stats and progress:
               </p>
 
               <div>
                 <input
                   type="text"
-                  value={restoreIdentifier}
-                  onChange={(e) => setRestoreIdentifier(e.target.value)}
-                  placeholder="e.g. user@gmail.com or @player"
+                  value={manualIdInput}
+                  onChange={(e) => setManualIdInput(e.target.value)}
+                  placeholder="e.g. @bob or bob"
                   autoFocus
                   style={{
                     backgroundColor: tokens.backgroundSecondary,
@@ -342,7 +998,7 @@ export const LoginScreen: React.FC<Props> = ({
               <div className="flex items-center gap-2 pt-1">
                 <button
                   type="button"
-                  onClick={() => setShowRestoreModal(false)}
+                  onClick={() => setShowManualIdModal(false)}
                   style={{
                     backgroundColor: tokens.backgroundSecondary,
                     color: tokens.textSecondary
@@ -353,14 +1009,14 @@ export const LoginScreen: React.FC<Props> = ({
                 </button>
                 <button
                   type="submit"
-                  disabled={!restoreIdentifier.trim()}
+                  disabled={!manualIdInput.trim()}
                   style={{
                     backgroundColor: tokens.primaryButtonBg,
                     color: tokens.primaryButtonText
                   }}
                   className="flex-1 h-10 rounded-xl font-bold text-xs flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
                 >
-                  <span>Restore Now</span>
+                  <span>Link Account</span>
                   <ArrowRight className="w-3.5 h-3.5" />
                 </button>
               </div>

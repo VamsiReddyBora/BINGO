@@ -1,5 +1,5 @@
-// Bingo Multiplayer Service Worker - Version 2.1
-const CACHE_NAME = 'bingo-pwa-v2.1';
+// Bingo Multiplayer Service Worker - Version 2.2
+const CACHE_NAME = 'bingo-pwa-v2.2';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
