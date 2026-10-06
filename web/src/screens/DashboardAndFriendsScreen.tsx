@@ -8,7 +8,8 @@ import {
   Award,
   Clock,
   CheckCircle2,
-  Share2
+  Share2,
+  Trash2
 } from 'lucide-react';
 import { Player, MatchRecord } from '../types/models';
 import { CloudRegistry, PlayerRegistryEntry } from '../network/cloudRegistry';
@@ -56,23 +57,15 @@ export const DashboardAndFriendsScreen: React.FC<Props> = ({
     return [];
   });
 
-  // Sync friends with cloud registry
+  // Sync friends with cloud registry authoritatively (matching Android FriendsRepository)
   useEffect(() => {
+    if (!localPlayer.username) return;
     CloudRegistry.fetchCloudFriends(localPlayer.username).then((cloudFriends) => {
-      if (cloudFriends && cloudFriends.length > 0) {
-        setFriendsList((prev) => {
-          const merged = [...cloudFriends];
-          prev.forEach((p) => {
-            if (!merged.some((m) => m.username === p.username)) {
-              merged.push(p);
-            }
-          });
-          try {
-            localStorage.setItem(STORAGE_KEY_FRIENDS, JSON.stringify(merged));
-          } catch {}
-          return merged;
-        });
-      }
+      // Authoritative cloud sync: cloud is source of truth, never resurrect deleted friends
+      setFriendsList(cloudFriends || []);
+      try {
+        localStorage.setItem(STORAGE_KEY_FRIENDS, JSON.stringify(cloudFriends || []));
+      } catch {}
     });
   }, [localPlayer.username]);
 
@@ -105,6 +98,16 @@ export const DashboardAndFriendsScreen: React.FC<Props> = ({
       localStorage.setItem(STORAGE_KEY_FRIENDS, JSON.stringify(updated));
     } catch {}
     CloudRegistry.addFriendToCloudList(localPlayer.username, entry).catch(() => {});
+  };
+
+  const handleRemoveFriend = async (entry: PlayerRegistryEntry) => {
+    soundEffects.playTap();
+    const updated = friendsList.filter((f) => f.username !== entry.username);
+    setFriendsList(updated);
+    try {
+      localStorage.setItem(STORAGE_KEY_FRIENDS, JSON.stringify(updated));
+    } catch {}
+    CloudRegistry.removeFriendFromCloudList(localPlayer.username, entry.username).catch(() => {});
   };
 
   const winRate =
@@ -517,18 +520,38 @@ export const DashboardAndFriendsScreen: React.FC<Props> = ({
                       </div>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => onInvitePlayerToMatch(friend.username)}
-                      style={{
-                        backgroundColor: tokens.primaryButtonBg,
-                        color: tokens.primaryButtonText
-                      }}
-                      className="px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer active:scale-95 shadow-xs"
-                    >
-                      <span>Invite</span>
-                      <Share2 className="w-3 h-3" />
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => onInvitePlayerToMatch(friend.username)}
+                        style={{
+                          backgroundColor: tokens.primaryButtonBg,
+                          color: tokens.primaryButtonText
+                        }}
+                        className="px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer active:scale-95 shadow-xs"
+                      >
+                        <span>Invite</span>
+                        <Share2 className="w-3 h-3" />
+                      </button>
+
+                      <button
+                        type="button"
+                        title={`Remove @${friend.username} from friends`}
+                        onClick={() => {
+                          if (window.confirm(`Are you sure you want to remove @${friend.username} from your friends?`)) {
+                            handleRemoveFriend(friend);
+                          }
+                        }}
+                        style={{
+                          backgroundColor: tokens.backgroundSecondary,
+                          borderColor: tokens.surfaceBorder,
+                          color: '#EF4444'
+                        }}
+                        className="w-8 h-8 rounded-xl border flex items-center justify-center cursor-pointer active:scale-95 hover:bg-red-500/10"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>

@@ -22,9 +22,14 @@ export interface Player {
 
 export interface MatchRecord {
   id: string;
-  mode: string;
+  mode?: string;
+  roomCode?: string;
   opponentName: string;
-  didWin: boolean;
+  opponentAvatarUrl?: string | null;
+  didWin?: boolean;
+  result?: 'WIN' | 'LOSS' | 'DRAW';
+  myLinesCompleted?: number;
+  opponentLinesCompleted?: number;
   boardSize: number;
   timestamp: number;
   matchTitle?: string;
@@ -50,6 +55,7 @@ export interface CloudUserDataBackup {
     gamesPlayed: number;
     gamesWon: number;
     currentStreak: number;
+    bestStreak?: number;
     level: number;
     xp: number;
   };
@@ -119,7 +125,7 @@ export interface RecentPick {
 }
 
 export interface InGameChatMessage {
-  id: number;
+  id: number | string;
   text: string;
   isSelf: boolean;
   senderName?: string;

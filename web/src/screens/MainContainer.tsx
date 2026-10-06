@@ -17,6 +17,8 @@ interface Props {
   localPlayer: Player;
   pingMs: number;
   ongoingMatch?: OngoingMatch | null;
+  selectedTab?: number;
+  onSelectTab?: (tab: number) => void;
   onDismissOngoingMatch?: () => void;
   onRejoinOngoingMatch?: () => void;
   onPlayAi: (difficulty: 'EASY' | 'HARD') => void;
@@ -36,6 +38,8 @@ export const MainContainer: React.FC<Props> = ({
   localPlayer,
   pingMs,
   ongoingMatch,
+  selectedTab: controlledTab,
+  onSelectTab,
   onDismissOngoingMatch,
   onRejoinOngoingMatch,
   onPlayAi,
@@ -45,7 +49,10 @@ export const MainContainer: React.FC<Props> = ({
   onSignOut
 }) => {
   const { tokens, isDark } = useTheme();
-  const [selectedTab, setSelectedTab] = useState<number>(0);
+  const [internalTab, setInternalTab] = useState<number>(0);
+
+  const activeTab = controlledTab !== undefined ? controlledTab : internalTab;
+  const setActiveTab = onSelectTab || setInternalTab;
 
   return (
     <div
@@ -54,7 +61,7 @@ export const MainContainer: React.FC<Props> = ({
     >
       {/* ── Active Tab Page ── */}
       <div className="flex-1 flex flex-col">
-        {selectedTab === 0 && (
+        {activeTab === 0 && (
           <MainMenuScreen
             localPlayer={localPlayer}
             pingMs={pingMs}
@@ -63,24 +70,24 @@ export const MainContainer: React.FC<Props> = ({
             onRejoinOngoingMatch={onRejoinOngoingMatch}
             onPlayAi={onPlayAi}
             onPlayOnline={onPlayOnline}
-            onNavigateToSettings={() => setSelectedTab(2)}
+            onNavigateToSettings={() => setActiveTab(2)}
           />
         )}
 
-        {selectedTab === 1 && (
+        {activeTab === 1 && (
           <DashboardAndFriendsScreen
             localPlayer={localPlayer}
-            onBack={() => setSelectedTab(0)}
+            onBack={() => setActiveTab(0)}
             onInvitePlayerToMatch={onInvitePlayerToMatch}
           />
         )}
 
-        {selectedTab === 2 && (
+        {activeTab === 2 && (
           <SettingsScreen
             localPlayer={localPlayer}
             onUpdatePlayer={onUpdatePlayer}
             onSignOut={onSignOut}
-            onBack={() => setSelectedTab(0)}
+            onBack={() => setActiveTab(0)}
           />
         )}
       </div>
@@ -98,7 +105,7 @@ export const MainContainer: React.FC<Props> = ({
           className="p-1.5 rounded-full border flex items-center gap-1 backdrop-blur-md"
         >
           {NAV_ITEMS.map((item) => {
-            const isSelected = selectedTab === item.id;
+            const isSelected = activeTab === item.id;
             const IconComponent = item.icon;
 
             const activeBg = isDark
@@ -113,7 +120,7 @@ export const MainContainer: React.FC<Props> = ({
                 type="button"
                 onClick={() => {
                   soundEffects.playTap();
-                  setSelectedTab(item.id);
+                  setActiveTab(item.id);
                 }}
                 style={{
                   backgroundColor: isSelected ? activeBg : 'transparent',

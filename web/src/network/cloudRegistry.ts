@@ -677,7 +677,7 @@ export class CloudRegistry {
   }
 
   /**
-   * Saves real friends list to KeyVal storage (friends_{cleanUsername}) matching Android.
+   * Saves real friends list to KeyVal storage (friends_{cleanUsername}) matching Android format verbatim.
    */
   public static async saveCloudFriends(username: string, friends: PlayerRegistryEntry[]): Promise<boolean> {
     const clean = username.trim().toLowerCase().replace(/^@/, '');
@@ -689,11 +689,13 @@ export class CloudRegistry {
         username: f.username,
         displayName: f.displayName,
         avatarUrl: f.avatarUrl,
-        status: 'ACCEPTED'
+        isOnline: f.lastSeenTimestamp ? Date.now() - f.lastSeenTimestamp < 120_000 : false,
+        lastSeenTimestamp: f.lastSeenTimestamp || Date.now()
       }));
 
       const jsonStr = JSON.stringify(androidFormat);
-      const b64 = await safeBase64EncodeAsync(jsonStr);
+      // Plain URL-safe Base64 matching Android FriendRequestManager.encodeBase64Url
+      const b64 = safeBase64Encode(jsonStr);
       return await this.setKeyValue(`friends_${clean}`, b64);
     } catch (e) {
       console.warn('saveCloudFriends error for ' + clean, e);
@@ -707,8 +709,20 @@ export class CloudRegistry {
   public static async addFriendToCloudList(myUsername: string, friend: PlayerRegistryEntry): Promise<PlayerRegistryEntry[]> {
     const clean = myUsername.trim().toLowerCase().replace(/^@/, '');
     const current = await this.fetchCloudFriends(clean);
-    const filtered = current.filter(f => f.username !== friend.username);
+    const filtered = current.filter(f => f.username !== friend.username && f.uid !== friend.uid);
     const updated = [friend, ...filtered];
+    await this.saveCloudFriends(clean, updated);
+    return updated;
+  }
+
+  /**
+   * Removes friend from cloud list (friends_{cleanUsername}) matching Android FriendsRepository.removeFriend.
+   */
+  public static async removeFriendFromCloudList(myUsername: string, targetUsernameOrUid: string): Promise<PlayerRegistryEntry[]> {
+    const clean = myUsername.trim().toLowerCase().replace(/^@/, '');
+    const cleanTarget = targetUsernameOrUid.trim().toLowerCase().replace(/^@/, '');
+    const current = await this.fetchCloudFriends(clean);
+    const updated = current.filter(f => f.username !== cleanTarget && f.uid !== targetUsernameOrUid);
     await this.saveCloudFriends(clean, updated);
     return updated;
   }
