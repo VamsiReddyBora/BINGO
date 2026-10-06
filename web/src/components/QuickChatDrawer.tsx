@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, Send } from 'lucide-react';
 import { soundEffects } from '../audio/sounds';
+import { useTheme } from '../theme/theme';
 
 interface Props {
   isOpen: boolean;
@@ -11,7 +12,7 @@ interface Props {
 const QUICK_PHRASES = [
   'Hello! 👋',
   'Nice move! 🎯',
-  'Almost Bingo! ⚡',
+  "I'm close to BINGO! ⚡",
   'Good game! 🤝',
   'Hurry up! ⏳',
   'Well played! 👏',
@@ -28,6 +29,7 @@ export const QuickChatDrawer: React.FC<Props> = ({
   onClose,
   onSendMessage
 }) => {
+  const { tokens, isDark } = useTheme();
   const [customInput, setCustomInput] = useState<string>('');
 
   if (!isOpen) return null;
@@ -49,52 +51,80 @@ export const QuickChatDrawer: React.FC<Props> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/40 backdrop-blur-sm animate-fade-in select-none">
+    <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/60 backdrop-blur-sm animate-fade-in select-none">
       {/* Click outside backdrop to close */}
       <div className="flex-1" onClick={onClose} />
 
-      <div className="w-full max-w-lg mx-auto bg-white border-t border-slate-200 rounded-t-3xl p-4 sm:p-5 shadow-2xl animate-slide-up">
+      <div
+        style={{
+          backgroundColor: tokens.surface,
+          borderColor: tokens.surfaceBorder
+        }}
+        className="w-full max-w-md mx-auto border-t rounded-t-3xl p-4 sm:p-5 shadow-2xl animate-slide-up"
+      >
         {/* Header */}
-        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+        <div
+          style={{ borderColor: tokens.surfaceBorder }}
+          className="flex items-center justify-between pb-3 border-b"
+        >
           <div className="flex items-center gap-2">
             <span className="text-base">💬</span>
-            <span className="text-sm font-bold tracking-wide text-slate-800">
+            <span
+              style={{ color: tokens.cellNeutralText }}
+              className="text-sm font-bold tracking-wide"
+            >
               In-Game Live Chat
             </span>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-800 flex items-center justify-center transition-all cursor-pointer active:scale-95"
+            style={{
+              backgroundColor: tokens.backgroundSecondary,
+              color: tokens.textSecondary
+            }}
+            className="w-8 h-8 rounded-full flex items-center justify-center transition-all cursor-pointer active:scale-95"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Custom Message Input (Full width matching Android) */}
+        {/* Custom Message Input */}
         <form onSubmit={handleSendCustom} className="mt-3.5">
           <div className="relative flex items-center">
             <input
               type="text"
               maxLength={100}
               value={customInput}
-              onChange={e => setCustomInput(e.target.value)}
+              onChange={(e) => setCustomInput(e.target.value)}
               placeholder="Type your message..."
               autoFocus
-              className="w-full pl-3.5 pr-20 py-2.5 rounded-2xl bg-slate-50 border border-slate-200 text-slate-800 text-sm focus:outline-none focus:border-purple-500 focus:bg-white focus:ring-2 focus:ring-purple-500/20 transition-all select-text"
+              style={{
+                backgroundColor: tokens.backgroundSecondary,
+                borderColor: tokens.surfaceBorder,
+                color: tokens.cellNeutralText
+              }}
+              className="w-full pl-3.5 pr-20 py-2.5 rounded-2xl border text-sm focus:outline-none focus:ring-1 focus:ring-purple-500 transition-all select-text"
             />
             <div className="absolute right-1.5 flex items-center gap-1.5">
-              <span className="text-[10px] font-semibold text-slate-400">
+              <span
+                style={{ color: tokens.textMuted }}
+                className="text-[10px] font-semibold"
+              >
                 {customInput.length}/100
               </span>
               <button
                 type="submit"
                 disabled={!customInput.trim()}
-                className={`w-8 h-8 rounded-xl flex items-center justify-center transition-all cursor-pointer ${
-                  customInput.trim()
-                    ? 'bg-[#7C3AED] hover:bg-[#6D28D9] text-white shadow-md active:scale-95'
-                    : 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                }`}
+                style={{
+                  backgroundColor: customInput.trim()
+                    ? tokens.primaryButtonBg
+                    : tokens.surfaceBorder,
+                  color: customInput.trim()
+                    ? tokens.primaryButtonText
+                    : tokens.textMuted
+                }}
+                className="w-8 h-8 rounded-xl flex items-center justify-center transition-all cursor-pointer disabled:cursor-not-allowed"
               >
                 <Send className="w-3.5 h-3.5" />
               </button>
@@ -104,7 +134,10 @@ export const QuickChatDrawer: React.FC<Props> = ({
 
         {/* Quick Phrases Section */}
         <div className="mt-3.5">
-          <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400 block mb-2">
+          <span
+            style={{ color: tokens.textMuted }}
+            className="text-[11px] font-extrabold uppercase tracking-wider block mb-2"
+          >
             Quick Phrases
           </span>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 max-h-48 overflow-y-auto no-scrollbar pr-0.5">
@@ -113,7 +146,12 @@ export const QuickChatDrawer: React.FC<Props> = ({
                 key={idx}
                 type="button"
                 onClick={() => handleSelectPhrase(phrase)}
-                className="py-2 px-2.5 rounded-xl bg-slate-50 hover:bg-purple-50 active:bg-purple-100 border border-slate-200/80 hover:border-purple-300 text-left text-xs font-semibold text-slate-700 hover:text-purple-700 transition-all cursor-pointer truncate"
+                style={{
+                  backgroundColor: tokens.backgroundSecondary,
+                  borderColor: tokens.surfaceBorder,
+                  color: tokens.cellNeutralText
+                }}
+                className="py-2 px-2.5 rounded-xl border text-left text-xs font-semibold hover:border-purple-400 active:scale-95 transition-all cursor-pointer truncate"
               >
                 {phrase}
               </button>

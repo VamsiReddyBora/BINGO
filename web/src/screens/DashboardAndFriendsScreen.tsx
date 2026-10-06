@@ -1,8 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Search, UserPlus, Users, Trophy, Flame, Play, Check, Clock, UserCheck } from 'lucide-react';
-import { Player } from '../types/models';
+import {
+  ArrowLeft,
+  Search,
+  UserPlus,
+  Trophy,
+  Flame,
+  Award,
+  Clock,
+  CheckCircle2,
+  Share2
+} from 'lucide-react';
+import { Player, MatchRecord } from '../types/models';
 import { CloudRegistry, PlayerRegistryEntry } from '../network/cloudRegistry';
 import { soundEffects } from '../audio/sounds';
+import { useTheme } from '../theme/theme';
 import { PlayerAvatar } from '../components/PlayerAvatar';
 
 interface Props {
@@ -12,17 +23,29 @@ interface Props {
 }
 
 const STORAGE_KEY_FRIENDS = 'bingo_web_friends_v1';
+const STORAGE_KEY_MATCHES = 'bingo_web_match_history_v1';
 
 export const DashboardAndFriendsScreen: React.FC<Props> = ({
   localPlayer,
   onBack,
   onInvitePlayerToMatch
 }) => {
-  const [activeTab, setActiveTab] = useState<'STATS' | 'FRIENDS'>('FRIENDS');
+  const { tokens, isDark } = useTheme();
+
+  const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'FRIENDS'>('DASHBOARD');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [searchResult, setSearchResult] = useState<PlayerRegistryEntry | null>(null);
   const [searchMessage, setSearchMessage] = useState<string | null>(null);
+
+  // Match history
+  const [matchHistory, setMatchHistory] = useState<MatchRecord[]>(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY_MATCHES);
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return [];
+  });
 
   // Saved friends
   const [friendsList, setFriendsList] = useState<PlayerRegistryEntry[]>(() => {
@@ -33,15 +56,14 @@ export const DashboardAndFriendsScreen: React.FC<Props> = ({
     return [];
   });
 
-  // Automatically sync friends from Cloud Storage (matching Android friends_{username})
+  // Sync friends with cloud registry
   useEffect(() => {
-    let isMounted = true;
-    CloudRegistry.fetchCloudFriends(localPlayer.username).then(cloudFriends => {
-      if (isMounted && cloudFriends.length > 0) {
-        setFriendsList(prev => {
+    CloudRegistry.fetchCloudFriends(localPlayer.username).then((cloudFriends) => {
+      if (cloudFriends && cloudFriends.length > 0) {
+        setFriendsList((prev) => {
           const merged = [...cloudFriends];
-          prev.forEach(p => {
-            if (!merged.some(m => m.username === p.username)) {
+          prev.forEach((p) => {
+            if (!merged.some((m) => m.username === p.username)) {
               merged.push(p);
             }
           });
@@ -52,15 +74,7 @@ export const DashboardAndFriendsScreen: React.FC<Props> = ({
         });
       }
     });
-    return () => { isMounted = false; };
   }, [localPlayer.username]);
-
-  const saveFriends = (newList: PlayerRegistryEntry[]) => {
-    setFriendsList(newList);
-    try {
-      localStorage.setItem(STORAGE_KEY_FRIENDS, JSON.stringify(newList));
-    } catch {}
-  };
 
   const handleSearch = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -84,269 +98,444 @@ export const DashboardAndFriendsScreen: React.FC<Props> = ({
 
   const handleAddFriend = async (entry: PlayerRegistryEntry) => {
     soundEffects.playTap();
-    if (friendsList.some(f => f.username === entry.username)) return;
+    if (friendsList.some((f) => f.username === entry.username)) return;
     const updated = [entry, ...friendsList];
-    saveFriends(updated);
-    // Sync with KeyVal cloud storage for Android cross-platform sync
-    CloudRegistry.addFriendToCloudList(localPlayer.username, entry).catch(console.warn);
+    setFriendsList(updated);
+    try {
+      localStorage.setItem(STORAGE_KEY_FRIENDS, JSON.stringify(updated));
+    } catch {}
+    CloudRegistry.addFriendToCloudList(localPlayer.username, entry).catch(() => {});
   };
 
-  // Win rate calculation
-  const winRate = localPlayer.gamesPlayed > 0
-    ? Math.round((localPlayer.gamesWon / localPlayer.gamesPlayed) * 100)
-    : 0;
+  const winRate =
+    localPlayer.gamesPlayed > 0
+      ? Math.round((localPlayer.gamesWon / localPlayer.gamesPlayed) * 100)
+      : 0;
 
   const rankTitle =
-    localPlayer.level >= 8 ? 'Grandmaster' :
-    localPlayer.level >= 5 ? 'Gold Master' :
-    localPlayer.level >= 3 ? 'Silver Competitor' : 'Bronze Player';
+    localPlayer.level >= 8
+      ? 'Grandmaster'
+      : localPlayer.level >= 5
+      ? 'Champion'
+      : localPlayer.level >= 3
+      ? 'Pro'
+      : 'Novice';
 
   return (
-    <div className="min-h-[100dvh] w-full flex flex-col justify-between max-w-lg md:max-w-2xl lg:max-w-3xl mx-auto p-3 sm:p-6 select-none bg-[#FAFAFC] text-slate-800 box-border overflow-x-hidden">
-      {/* Header */}
-      <header className="flex items-center gap-3 py-2">
+    <div
+      style={{ backgroundColor: tokens.background }}
+      className="min-h-[100dvh] w-full flex flex-col max-w-md mx-auto p-4 sm:p-5 select-none transition-colors duration-300 pb-24"
+    >
+      {/* ── Top Bar ── */}
+      <div className="flex items-center gap-3 py-2">
         <button
           type="button"
           onClick={() => {
             soundEffects.playTap();
             onBack();
           }}
-          className="w-10 h-10 rounded-full bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50 flex items-center justify-center transition-all cursor-pointer shadow-sm active:scale-95"
+          style={{
+            backgroundColor: tokens.surface,
+            color: tokens.cellNeutralText
+          }}
+          className="w-9 h-9 rounded-xl flex items-center justify-center cursor-pointer active:scale-95 transition-transform"
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
-        <div>
-          <h1 className="text-xl sm:text-2xl font-black font-heading tracking-wide text-slate-800">
-            Dashboard & Friends
-          </h1>
-          <p className="text-xs sm:text-sm text-slate-500">Stats, player search & match invites</p>
-        </div>
-      </header>
+        <h1
+          style={{ color: tokens.cellNeutralText }}
+          className="text-xl font-bold font-heading"
+        >
+          Dashboard & Friends
+        </h1>
+      </div>
 
-      {/* Tab Switcher */}
-      <div className="my-3 flex items-center p-1 bg-slate-200/70 rounded-2xl">
+      {/* ── Profile Banner Card ── */}
+      <div
+        style={{
+          backgroundColor: tokens.surface,
+          borderColor: tokens.surfaceBorder
+        }}
+        className="w-full rounded-2xl p-5 border shadow-sm flex items-center gap-4 mt-3 transition-colors"
+      >
+        <PlayerAvatar
+          avatarUrl={localPlayer.avatarUrl}
+          displayName={localPlayer.displayName}
+          username={localPlayer.username}
+          size={52}
+          borderWidth={2}
+          borderColor={tokens.accentBrand}
+        />
+
+        <div className="flex flex-col flex-1 min-w-0">
+          <div className="flex items-center justify-between">
+            <span
+              style={{ color: tokens.cellNeutralText }}
+              className="text-base font-bold truncate"
+            >
+              {localPlayer.displayName}
+            </span>
+            <span
+              style={{
+                backgroundColor: `${tokens.accentBrand}22`,
+                color: tokens.accentBrand
+              }}
+              className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full"
+            >
+              {rankTitle}
+            </span>
+          </div>
+
+          <span style={{ color: tokens.textMuted }} className="text-xs font-mono">
+            @{localPlayer.username}
+          </span>
+
+          {/* Level & XP */}
+          <div className="mt-2 flex items-center gap-2">
+            <span
+              style={{ color: tokens.textSecondary }}
+              className="text-[11px] font-bold"
+            >
+              Lvl {localPlayer.level}
+            </span>
+            <div
+              style={{ backgroundColor: tokens.backgroundSecondary }}
+              className="flex-1 h-2 rounded-full overflow-hidden border border-inherit"
+            >
+              <div
+                style={{
+                  width: `${Math.min(100, (localPlayer.gamesWon % 5) * 20 + 20)}%`,
+                  backgroundColor: tokens.accentBrand
+                }}
+                className="h-full rounded-full transition-all duration-500"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Segmented Navigation Tabs ── */}
+      <div
+        style={{ backgroundColor: tokens.surface, borderColor: tokens.surfaceBorder }}
+        className="w-full p-1 rounded-xl flex items-center border mt-4 mb-3"
+      >
+        <button
+          type="button"
+          onClick={() => {
+            soundEffects.playTap();
+            setActiveTab('DASHBOARD');
+          }}
+          style={{
+            backgroundColor:
+              activeTab === 'DASHBOARD'
+                ? isDark
+                  ? '#222222'
+                  : tokens.backgroundSecondary
+                : 'transparent',
+            color:
+              activeTab === 'DASHBOARD'
+                ? tokens.cellNeutralText
+                : tokens.textMuted
+          }}
+          className="flex-1 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer text-center"
+        >
+          Stats & History
+        </button>
+
         <button
           type="button"
           onClick={() => {
             soundEffects.playTap();
             setActiveTab('FRIENDS');
           }}
-          className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
-            activeTab === 'FRIENDS'
-              ? 'bg-white text-[#7C3AED] shadow-sm font-extrabold'
-              : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          Friends & Players
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            soundEffects.playTap();
-            setActiveTab('STATS');
+          style={{
+            backgroundColor:
+              activeTab === 'FRIENDS'
+                ? isDark
+                  ? '#222222'
+                  : tokens.backgroundSecondary
+                : 'transparent',
+            color:
+              activeTab === 'FRIENDS'
+                ? tokens.cellNeutralText
+                : tokens.textMuted
           }}
-          className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
-            activeTab === 'STATS'
-              ? 'bg-white text-[#7C3AED] shadow-sm font-extrabold'
-              : 'text-slate-600 hover:text-slate-900'
-          }`}
+          className="flex-1 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer text-center"
         >
-          Overview & Stats
+          Friends ({friendsList.length})
         </button>
       </div>
 
-      {/* Tab Content */}
-      <main className="my-auto space-y-4 py-2 flex-1">
-        {activeTab === 'STATS' ? (
-          <div className="space-y-4 animate-fade-in">
-            {/* Player Profile Card */}
-            <div className="p-5 rounded-3xl bg-white border border-slate-200 shadow-sm flex items-center gap-4">
-              <PlayerAvatar
-                avatarUrl={localPlayer.avatarUrl}
-                displayName={localPlayer.displayName}
-                sizeClassName="w-16 h-16 text-3xl"
-                fallbackIcon="🧑"
-                className="border-2 border-purple-200 bg-[#F5EEFF] shadow-sm"
-              />
-              <div className="flex-1">
-                <div className="flex items-center gap-2">
-                  <h2 className="text-lg font-black text-slate-800">{localPlayer.displayName}</h2>
-                  <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-[#F5EEFF] text-[#7C3AED] border border-purple-200">
-                    Lvl {localPlayer.level}
-                  </span>
-                </div>
-                <p className="text-xs text-[#7C3AED] font-bold">@{localPlayer.username}</p>
-                <p className="text-xs text-slate-500 mt-1 font-medium">{rankTitle}</p>
-              </div>
+      {/* ── TAB 1: Stats & History ── */}
+      {activeTab === 'DASHBOARD' ? (
+        <div className="flex flex-col gap-3">
+          {/* Stats Grid */}
+          <div className="grid grid-cols-2 gap-2.5">
+            <div
+              style={{ backgroundColor: tokens.surface, borderColor: tokens.surfaceBorder }}
+              className="p-3.5 rounded-2xl border shadow-xs flex flex-col"
+            >
+              <span style={{ color: tokens.textMuted }} className="text-[11px] font-bold">
+                Games Played
+              </span>
+              <span
+                style={{ color: tokens.cellNeutralText }}
+                className="text-2xl font-black font-mono mt-1"
+              >
+                {localPlayer.gamesPlayed}
+              </span>
             </div>
 
-            {/* Stats Grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-sm">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  Matches Won
+            <div
+              style={{ backgroundColor: tokens.surface, borderColor: tokens.surfaceBorder }}
+              className="p-3.5 rounded-2xl border shadow-xs flex flex-col"
+            >
+              <div className="flex items-center justify-between">
+                <span style={{ color: tokens.textMuted }} className="text-[11px] font-bold">
+                  Wins
                 </span>
-                <div className="mt-1 flex items-baseline gap-2">
-                  <span className="text-2xl font-black text-slate-800">{localPlayer.gamesWon}</span>
-                  <span className="text-xs text-slate-500">/ {localPlayer.gamesPlayed}</span>
-                </div>
+                <Trophy className="w-3.5 h-3.5 text-amber-500" />
               </div>
+              <span
+                style={{ color: tokens.cellNeutralText }}
+                className="text-2xl font-black font-mono mt-1"
+              >
+                {localPlayer.gamesWon}
+              </span>
+            </div>
 
-              <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-sm">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  Win Rate
-                </span>
-                <div className="mt-1 flex items-baseline gap-2">
-                  <span className="text-2xl font-black text-emerald-600">{winRate}%</span>
-                </div>
-              </div>
+            <div
+              style={{ backgroundColor: tokens.surface, borderColor: tokens.surfaceBorder }}
+              className="p-3.5 rounded-2xl border shadow-xs flex flex-col"
+            >
+              <span style={{ color: tokens.textMuted }} className="text-[11px] font-bold">
+                Win Rate
+              </span>
+              <span
+                style={{ color: tokens.cellNeutralText }}
+                className="text-2xl font-black font-mono mt-1"
+              >
+                {winRate}%
+              </span>
+            </div>
 
-              <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-sm">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  Current Streak
+            <div
+              style={{ backgroundColor: tokens.surface, borderColor: tokens.surfaceBorder }}
+              className="p-3.5 rounded-2xl border shadow-xs flex flex-col"
+            >
+              <div className="flex items-center justify-between">
+                <span style={{ color: tokens.textMuted }} className="text-[11px] font-bold">
+                  Streak
                 </span>
-                <div className="mt-1 flex items-baseline gap-2 text-amber-600">
-                  <Flame className="w-5 h-5 fill-current" />
-                  <span className="text-2xl font-black text-slate-800">{localPlayer.currentStreak}</span>
-                </div>
+                <Flame className="w-3.5 h-3.5 text-orange-500" />
               </div>
-
-              <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-sm">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  Total Lines
-                </span>
-                <div className="mt-1 flex items-baseline gap-2">
-                  <span className="text-2xl font-black text-[#7C3AED]">{localPlayer.completedLinesCount}</span>
-                </div>
-              </div>
+              <span
+                style={{ color: tokens.cellNeutralText }}
+                className="text-2xl font-black font-mono mt-1"
+              >
+                {localPlayer.currentStreak || 0}
+              </span>
             </div>
           </div>
-        ) : (
-          <div className="space-y-4 animate-fade-in">
-            {/* Search Bar Form */}
-            <form onSubmit={handleSearch} className="relative flex items-center">
+
+          {/* Match History */}
+          <div
+            style={{ backgroundColor: tokens.surface, borderColor: tokens.surfaceBorder }}
+            className="w-full rounded-2xl p-4 border shadow-sm flex flex-col mt-2"
+          >
+            <span
+              style={{ color: tokens.textMuted }}
+              className="text-[11px] font-bold uppercase tracking-wider mb-2"
+            >
+              Recent Matches
+            </span>
+
+            {matchHistory.length === 0 ? (
+              <div className="py-6 text-center">
+                <p style={{ color: tokens.textMuted }} className="text-xs">
+                  No matches recorded yet. Play a match to start your record!
+                </p>
+              </div>
+            ) : (
+              <div className="divide-y divide-inherit">
+                {matchHistory.slice(0, 10).map((record) => (
+                  <div key={record.id} className="py-2.5 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`text-[10px] font-black px-2 py-0.5 rounded-md ${
+                          record.didWin
+                            ? 'bg-emerald-500/20 text-emerald-500'
+                            : 'bg-rose-500/20 text-rose-500'
+                        }`}
+                      >
+                        {record.didWin ? 'WIN' : 'LOSS'}
+                      </span>
+                      <span style={{ color: tokens.cellNeutralText }} className="text-xs font-bold">
+                        vs {record.opponentName}
+                      </span>
+                    </div>
+                    <span style={{ color: tokens.textMuted }} className="text-[10px] font-mono">
+                      {new Date(record.timestamp).toLocaleDateString()}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        /* ── TAB 2: Friends & Search ── */
+        <div className="flex flex-col gap-3">
+          {/* Search Bar */}
+          <form onSubmit={handleSearch} className="flex gap-2">
+            <div className="relative flex-1">
               <input
                 type="text"
                 value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                placeholder="Search friend by @username..."
-                className="w-full pl-10 pr-24 py-3 rounded-2xl bg-white border border-slate-300 text-slate-800 text-sm font-semibold focus:outline-none focus:border-[#7C3AED] shadow-sm transition-colors"
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search by Player ID (@username)..."
+                style={{
+                  backgroundColor: tokens.surface,
+                  borderColor: tokens.surfaceBorder,
+                  color: tokens.cellNeutralText
+                }}
+                className="w-full pl-3.5 pr-9 py-2.5 rounded-xl border text-xs focus:outline-none focus:ring-1 focus:ring-purple-500 transition-colors"
               />
-              <Search className="w-4 h-4 text-slate-400 absolute left-3.5" />
+              <Search className="w-4 h-4 text-slate-400 absolute right-3 top-3 pointer-events-none" />
+            </div>
+
+            <button
+              type="submit"
+              disabled={isSearching || !searchQuery.trim()}
+              style={{
+                backgroundColor: tokens.primaryButtonBg,
+                color: tokens.primaryButtonText
+              }}
+              className="px-4 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center cursor-pointer active:scale-95 disabled:opacity-50"
+            >
+              {isSearching ? '...' : 'Search'}
+            </button>
+          </form>
+
+          {/* Search Result Card */}
+          {searchResult && (
+            <div
+              style={{
+                backgroundColor: tokens.surface,
+                borderColor: tokens.accentBrand
+              }}
+              className="p-3.5 rounded-2xl border shadow-sm flex items-center justify-between animate-fade-in"
+            >
+              <div className="flex items-center gap-3">
+                <PlayerAvatar
+                  avatarUrl={searchResult.avatarUrl}
+                  displayName={searchResult.displayName}
+                  username={searchResult.username}
+                  size={36}
+                />
+                <div className="flex flex-col">
+                  <span style={{ color: tokens.cellNeutralText }} className="text-xs font-bold">
+                    {searchResult.displayName}
+                  </span>
+                  <span style={{ color: tokens.textMuted }} className="text-[10px] font-mono">
+                    @{searchResult.username}
+                  </span>
+                </div>
+              </div>
+
               <button
-                type="submit"
-                disabled={isSearching}
-                className="absolute right-1.5 px-4 py-2 rounded-xl bg-[#7C3AED] hover:bg-[#6D28D9] text-white text-xs font-bold transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+                type="button"
+                onClick={() => handleAddFriend(searchResult)}
+                style={{
+                  backgroundColor: tokens.backgroundSecondary,
+                  borderColor: tokens.surfaceBorder,
+                  color: tokens.cellNeutralText
+                }}
+                className="px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 cursor-pointer active:scale-95 hover:border-purple-400"
               >
-                {isSearching ? 'Finding...' : 'Search'}
+                <UserPlus className="w-3.5 h-3.5" />
+                <span>Add Friend</span>
               </button>
-            </form>
+            </div>
+          )}
 
-            {searchMessage && (
-              <p className="text-xs text-center text-slate-500 py-1">{searchMessage}</p>
-            )}
+          {searchMessage && (
+            <p style={{ color: tokens.textMuted }} className="text-xs text-center py-2">
+              {searchMessage}
+            </p>
+          )}
 
-            {/* Search Result Card */}
-            {searchResult && (
-              <div className="p-4 rounded-2xl bg-white border-2 border-purple-200 shadow-sm animate-fade-in">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <PlayerAvatar
-                      avatarUrl={searchResult.avatarUrl}
-                      displayName={searchResult.displayName}
-                      sizeClassName="w-11 h-11 text-xl"
-                      fallbackIcon="🧑"
-                      className="border border-purple-200 bg-[#F5EEFF]"
-                    />
-                    <div>
-                      <h3 className="text-sm font-black text-slate-800">{searchResult.displayName}</h3>
-                      <p className="text-xs text-[#7C3AED] font-bold">@{searchResult.username}</p>
-                      <div className="flex items-center gap-1.5 mt-0.5">
-                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                        <span className="text-[10px] text-slate-500 font-semibold">
-                          Online • Lvl {searchResult.level}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
+          {/* Friends List */}
+          <div
+            style={{ backgroundColor: tokens.surface, borderColor: tokens.surfaceBorder }}
+            className="w-full rounded-2xl p-4 border shadow-sm flex flex-col mt-1"
+          >
+            <span
+              style={{ color: tokens.textMuted }}
+              className="text-[11px] font-bold uppercase tracking-wider mb-2"
+            >
+              All Friends ({friendsList.length})
+            </span>
 
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleAddFriend(searchResult)}
-                      title="Add to friends list"
-                      className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition-all cursor-pointer"
-                    >
-                      <UserPlus className="w-4 h-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onInvitePlayerToMatch(searchResult.username)}
-                      className="px-3 py-1.5 rounded-xl bg-[#7C3AED] hover:bg-[#6D28D9] text-white text-xs font-extrabold flex items-center gap-1.5 shadow transition-all active:scale-95 cursor-pointer"
-                    >
-                      <Play className="w-3.5 h-3.5 fill-current" />
-                      <span>Invite</span>
-                    </button>
-                  </div>
-                </div>
+            {friendsList.length === 0 ? (
+              <div className="py-6 text-center">
+                <p style={{ color: tokens.textMuted }} className="text-xs">
+                  You haven't added any friends yet. Search above to add!
+                </p>
               </div>
-            )}
-
-            {/* Saved Friends List */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between px-1">
-                <span className="text-xs font-extrabold uppercase tracking-wider text-slate-400">
-                  Saved Friends ({friendsList.length})
-                </span>
-              </div>
-
-              {friendsList.length === 0 ? (
-                <div className="p-8 rounded-3xl bg-white border border-slate-200 text-center text-slate-400">
-                  <Users className="w-8 h-8 mx-auto mb-2 text-slate-300" />
-                  <p className="text-xs font-semibold">No friends added yet.</p>
-                  <p className="text-[11px] text-slate-400 mt-1">
-                    Search your friend's @username above to add them and invite to matches!
-                  </p>
-                </div>
-              ) : (
-                friendsList.map(friend => (
+            ) : (
+              <div className="divide-y divide-inherit">
+                {friendsList.map((friend) => (
                   <div
                     key={friend.username}
-                    className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-sm flex items-center justify-between"
+                    className="py-2.5 flex items-center justify-between"
                   >
                     <div className="flex items-center gap-3">
-                      <PlayerAvatar
-                        avatarUrl={friend.avatarUrl}
-                        displayName={friend.displayName}
-                        sizeClassName="w-10 h-10 text-lg"
-                        fallbackIcon="🧑"
-                        className="bg-slate-100"
-                      />
-                      <div>
-                        <h4 className="text-xs font-bold text-slate-800">{friend.displayName}</h4>
-                        <p className="text-[11px] text-[#7C3AED] font-semibold">@{friend.username}</p>
+                      <div className="relative">
+                        <PlayerAvatar
+                          avatarUrl={friend.avatarUrl}
+                          displayName={friend.displayName}
+                          username={friend.username}
+                          size={36}
+                        />
+                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-white dark:border-black absolute -bottom-0.5 -right-0.5" />
+                      </div>
+
+                      <div className="flex flex-col">
+                        <span
+                          style={{ color: tokens.cellNeutralText }}
+                          className="text-xs font-bold"
+                        >
+                          {friend.displayName}
+                        </span>
+                        <span
+                          style={{ color: tokens.textMuted }}
+                          className="text-[10px] font-mono"
+                        >
+                          @{friend.username}
+                        </span>
                       </div>
                     </div>
 
                     <button
                       type="button"
                       onClick={() => onInvitePlayerToMatch(friend.username)}
-                      className="px-3 py-1.5 rounded-xl bg-[#7C3AED] hover:bg-[#6D28D9] text-white text-xs font-bold flex items-center gap-1 shadow-sm transition-all active:scale-95 cursor-pointer"
+                      style={{
+                        backgroundColor: tokens.primaryButtonBg,
+                        color: tokens.primaryButtonText
+                      }}
+                      className="px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer active:scale-95 shadow-xs"
                     >
-                      <Play className="w-3 h-3 fill-current" />
                       <span>Invite</span>
+                      <Share2 className="w-3 h-3" />
                     </button>
                   </div>
-                ))
-              )}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
-        )}
-      </main>
-
-      <footer className="py-2 text-center text-[11px] text-slate-400">
-        Universal Cross-Play with Android App
-      </footer>
+        </div>
+      )}
     </div>
   );
 };

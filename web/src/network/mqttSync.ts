@@ -117,6 +117,38 @@ export class MqttRoomManager {
     this.client.subscribe(topic, { qos: 1 });
   }
 
+  public joinRoom(roomCode: string, player: Player) {
+    this.connect(roomCode, player);
+  }
+
+  public leaveRoom() {
+    this.disconnect();
+  }
+
+  public sendStartGame(seed: number, starterId: string) {
+    this.sendPacket({
+      type: 'START_GAME',
+      playerId: this.localPlayer?.id || starterId,
+      seed,
+      currentTurnPlayerId: starterId
+    });
+  }
+
+  public sendReadyStatus(status: 'READY' | 'NOT_READY' | 'IN_GAME') {
+    this.updateLocalReadyStatus(status);
+  }
+
+  public sendPick(number: number, turnNumber: number, nextTurnId: string, pickedHistory: number[]) {
+    this.sendPacket({
+      type: 'PICK_NUMBER',
+      playerId: this.localPlayer?.id || '',
+      number,
+      turnNumber,
+      currentTurnPlayerId: nextTurnId,
+      pickedHistory
+    });
+  }
+
   public sendPacket(packet: RoomMessagePacket) {
     if (!this.client || !this.client.connected || !this.currentRoomCode) return;
     const topic = `bingo/v3/room/${this.currentRoomCode}`;

@@ -1,60 +1,68 @@
 import React, { useState } from 'react';
+import { useTheme } from '../theme/theme';
 
 interface Props {
   avatarUrl?: string | null;
   displayName?: string;
-  sizeClassName?: string;
-  fallbackIcon?: string;
+  username?: string;
+  size?: number; // Size in px, default 40
+  borderWidth?: number;
+  borderColor?: string;
   className?: string;
 }
 
 export const PlayerAvatar: React.FC<Props> = ({
   avatarUrl,
-  displayName,
-  sizeClassName = 'w-10 h-10 text-lg',
-  fallbackIcon = '🧑',
+  displayName = 'Player',
+  username,
+  size = 40,
+  borderWidth = 1.5,
+  borderColor,
   className = ''
 }) => {
-  const [imageError, setImageError] = useState(false);
+  const { tokens, isDark } = useTheme();
+  const [imgError, setImgError] = useState(false);
 
-  const cleanAvatar = avatarUrl?.trim() || null;
+  const clean = avatarUrl?.trim() || null;
+  const isImage =
+    clean &&
+    !imgError &&
+    (clean.startsWith('http://') ||
+      clean.startsWith('https://') ||
+      clean.startsWith('data:image/') ||
+      clean.startsWith('blob:'));
 
-  // Detect if cleanAvatar is a valid web image URL or base64 data URI
-  const isImageUrl =
-    cleanAvatar &&
-    !imageError &&
-    (cleanAvatar.startsWith('http://') ||
-      cleanAvatar.startsWith('https://') ||
-      cleanAvatar.startsWith('data:image/') ||
-      cleanAvatar.startsWith('blob:'));
-
-  // Detect if cleanAvatar is an emoji (short, no slashes or dots)
-  const isEmoji =
-    cleanAvatar &&
-    cleanAvatar.length <= 4 &&
-    !cleanAvatar.includes('/') &&
-    !cleanAvatar.includes('.') &&
-    !cleanAvatar.includes('\\');
-
-  // Fallback initial letter or fallback emoji
-  const initial = displayName?.trim().charAt(0).toUpperCase() || fallbackIcon;
+  const initial = displayName.trim().charAt(0).toUpperCase() || 'P';
+  const effectiveBorder = borderColor || tokens.surfaceBorder;
 
   return (
     <div
-      className={`rounded-full overflow-hidden flex-shrink-0 flex items-center justify-center select-none ${sizeClassName} ${className}`}
+      style={{
+        width: `${size}px`,
+        height: `${size}px`,
+        borderWidth: `${borderWidth}px`,
+        borderColor: effectiveBorder,
+        backgroundColor: isDark ? '#222222' : '#7E22CE'
+      }}
+      className={`rounded-full flex-shrink-0 flex items-center justify-center overflow-hidden border select-none transition-transform ${className}`}
     >
-      {isImageUrl ? (
+      {isImage ? (
         <img
-          src={cleanAvatar!}
-          alt={displayName || 'Avatar'}
-          onError={() => setImageError(true)}
-          className="w-full h-full object-cover rounded-full pointer-events-none"
-          loading="lazy"
+          src={clean!}
+          alt={displayName}
+          onError={() => setImgError(true)}
+          className="w-full h-full object-cover rounded-full"
         />
-      ) : isEmoji ? (
-        <span className="leading-none select-none">{cleanAvatar}</span>
       ) : (
-        <span className="leading-none select-none font-bold text-slate-700">{initial}</span>
+        <span
+          style={{
+            fontSize: `${Math.round(size * 0.44)}px`,
+            color: '#FFFFFF'
+          }}
+          className="font-bold leading-none"
+        >
+          {initial}
+        </span>
       )}
     </div>
   );

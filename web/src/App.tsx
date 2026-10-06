@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Player } from './types/models';
+import { ThemeProvider } from './theme/theme';
 import { LoginScreen } from './screens/LoginScreen';
-import { MainMenuScreen } from './screens/MainMenuScreen';
+import { MainContainer } from './screens/MainContainer';
 import { OnlineMatchChoiceScreen } from './screens/OnlineMatchChoiceScreen';
-import { DashboardAndFriendsScreen } from './screens/DashboardAndFriendsScreen';
+import { JoinRoomScreen } from './screens/JoinRoomScreen';
 import { LobbyScreen } from './screens/LobbyScreen';
 import { GameScreen } from './screens/GameScreen';
 import { roomSync } from './network/mqttSync';
@@ -12,15 +13,22 @@ import { soundEffects } from './audio/sounds';
 
 export type ScreenState =
   | 'LOGIN'
-  | 'MAIN_MENU'
+  | 'MAIN_CONTAINER'
   | 'ONLINE_CHOICE'
-  | 'DASHBOARD'
+  | 'JOIN_ROOM'
   | 'LOBBY'
   | 'GAME';
 
-const STORAGE_KEY_PLAYER = 'bingo_web_player_v1';
+interface OngoingMatch {
+  roomCode: string;
+  isHost: boolean;
+  timestamp: number;
+}
 
-export const App: React.FC = () => {
+const STORAGE_KEY_PLAYER = 'bingo_web_player_v2';
+const STORAGE_KEY_ONGOING = 'bingo_web_ongoing_match_v2';
+
+export const AppContent: React.FC = () => {
   const [localPlayer, setLocalPlayer] = useState<Player | null>(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY_PLAYER);
@@ -33,26 +41,61 @@ export const App: React.FC = () => {
   });
 
   const [currentScreen, setCurrentScreen] = useState<ScreenState>(() => {
-    return localPlayer ? 'MAIN_MENU' : 'LOGIN';
+    return localPlayer ? 'MAIN_CONTAINER' : 'LOGIN';
+  });
+
+  const [ongoingMatch, setOngoingMatch] = useState<OngoingMatch | null>(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY_ONGOING);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        // Only keep if under 30 minutes old
+        if (Date.now() - parsed.timestamp < 30 * 60 * 1000) {
+          return parsed;
+        }
+      }
+    } catch {}
+    return null;
   });
 
   const [roomCode, setRoomCode] = useState<string>('');
+  const [playersInLobby, setPlayersInLobby] = useState<Player[]>([]);
   const [opponent, setOpponent] = useState<Player | null>(null);
   const [matchSeed, setMatchSeed] = useState<number>(0);
   const [firstTurnPlayerId, setFirstTurnPlayerId] = useState<string>('');
   const [isAiMode, setIsAiMode] = useState<boolean>(false);
-  const [pendingInvite, setPendingInvite] = useState<GameInvite | null>(null);
+  const [pingMs, setPingMs] = useState<number>(24);
 
-  // Initialize global presence and invite listener when player is logged in
+  // Initialize global presence and MQTT listeners
   useEffect(() => {
     if (localPlayer) {
       roomSync.initGlobalClient(localPlayer);
       CloudRegistry.publishPresence(localPlayer.username, 'ONLINE');
 
-      // Listen for incoming game invites from Android
+      roomSync.onPingChanged = (ms) => {
+        setPingMs(ms);
+      };
+
+      roomSync.onPlayersChanged = (newPlayers) => {
+        setPlayersInLobby(newPlayers);
+        const opp = newPlayers.find((p) => p.id !== localPlayer.id);
+        if (opp) setOpponent(opp);
+      };
+
+      roomSync.onPacketReceived = (packet) => {
+        if (packet.type === 'START_GAME') {
+          soundEffects.playTurnAlert();
+          setMatchSeed(packet.seed || Math.floor(Math.random() * 100000) + 1);
+          setFirstTurnPlayerId(packet.currentTurnPlayerId || localPlayer.id);
+          setCurrentScreen('GAME');
+        }
+      };
+
       roomSync.onInviteReceived = (invite: GameInvite) => {
         soundEffects.playTurnAlert();
-        setPendingInvite(invite);
+        if (confirm(`Game invite received from ${invite.fromDisplayName}! Join room ${invite.roomCode}?`)) {
+          handleJoinRoom(invite.roomCode);
+        }
       };
     }
   }, [localPlayer]);
@@ -62,19 +105,24 @@ export const App: React.FC = () => {
     try {
       const params = new URLSearchParams(window.location.search);
       const code = params.get('room');
-      if (code && code.trim().length === 6 && localPlayer) {
+      if (code && code.trim().length >= 4 && localPlayer) {
         handleJoinRoom(code.trim().toUpperCase());
       }
     } catch {}
   }, [localPlayer]);
 
+  // Save / Update player
+  const handleUpdatePlayer = (updated: Player) => {
+    setLocalPlayer(updated);
+    try {
+      localStorage.setItem(STORAGE_KEY_PLAYER, JSON.stringify(updated));
+    } catch {}
+  };
+
   // Login Success
   const handleLoginSuccess = (player: Player) => {
-    setLocalPlayer(player);
-    try {
-      localStorage.setItem(STORAGE_KEY_PLAYER, JSON.stringify(player));
-    } catch {}
-    setCurrentScreen('MAIN_MENU');
+    handleUpdatePlayer(player);
+    setCurrentScreen('MAIN_CONTAINER');
   };
 
   // Sign out
@@ -83,15 +131,17 @@ export const App: React.FC = () => {
       CloudRegistry.publishPresence(localPlayer.username, 'OFFLINE');
     }
     localStorage.removeItem(STORAGE_KEY_PLAYER);
+    localStorage.removeItem(STORAGE_KEY_ONGOING);
     setLocalPlayer(null);
+    setOngoingMatch(null);
     setCurrentScreen('LOGIN');
   };
 
-  // Host Online Room (6-digit code already created and registered in CloudRegistry)
-  const handleHostRoom = (code: string) => {
+  // Host Online Room
+  const handleHostRoom = () => {
     if (!localPlayer) return;
-    const clean = code.trim().toUpperCase();
-    setRoomCode(clean);
+    const generated = Math.floor(100000 + Math.random() * 900000).toString();
+    setRoomCode(generated);
     setIsAiMode(false);
 
     const hostPlayer: Player = {
@@ -99,191 +149,215 @@ export const App: React.FC = () => {
       isHost: true,
       lobbyReadyStatus: 'READY'
     };
-    setLocalPlayer(hostPlayer);
 
-    roomSync.connect(clean, hostPlayer);
+    setPlayersInLobby([hostPlayer]);
+    setOpponent(null);
+
+    // Save ongoing match record
+    const ongoing: OngoingMatch = {
+      roomCode: generated,
+      isHost: true,
+      timestamp: Date.now()
+    };
+    setOngoingMatch(ongoing);
+    try {
+      localStorage.setItem(STORAGE_KEY_ONGOING, JSON.stringify(ongoing));
+    } catch {}
+
+    // Register room in cloud registry
+    CloudRegistry.createRoom(generated, hostPlayer).catch(() => {});
+
+    // Join room over MQTT
+    roomSync.joinRoom(generated, hostPlayer);
     setCurrentScreen('LOBBY');
   };
 
-  // Join Online Room (validated with CloudRegistry)
+  // Join Online Room
   const handleJoinRoom = (code: string) => {
     if (!localPlayer) return;
     const clean = code.trim().toUpperCase();
     setRoomCode(clean);
     setIsAiMode(false);
 
-    const guestPlayer: Player = {
+    const joinerPlayer: Player = {
       ...localPlayer,
       isHost: false,
       lobbyReadyStatus: 'NOT_READY'
     };
-    setLocalPlayer(guestPlayer);
 
-    roomSync.connect(clean, guestPlayer);
+    setPlayersInLobby([joinerPlayer]);
+
+    const ongoing: OngoingMatch = {
+      roomCode: clean,
+      isHost: false,
+      timestamp: Date.now()
+    };
+    setOngoingMatch(ongoing);
+    try {
+      localStorage.setItem(STORAGE_KEY_ONGOING, JSON.stringify(ongoing));
+    } catch {}
+
+    roomSync.joinRoom(clean, joinerPlayer);
     setCurrentScreen('LOBBY');
   };
 
-  // Play AI mode
-  const handlePlayAi = (_difficulty: 'EASY' | 'MEDIUM' | 'HARD') => {
-    if (!localPlayer) return;
-    const aiRoomCode = 'SOLO_AI';
-    setRoomCode(aiRoomCode);
-    setIsAiMode(true);
+  // Dismiss ongoing match
+  const handleDismissOngoingMatch = () => {
+    setOngoingMatch(null);
+    try {
+      localStorage.removeItem(STORAGE_KEY_ONGOING);
+    } catch {}
+  };
 
-    const aiPlayer: Player = {
-      id: 'ai_opponent',
-      displayName: 'AI Bot 🤖',
+  // Rejoin ongoing match
+  const handleRejoinOngoingMatch = () => {
+    if (!ongoingMatch || !localPlayer) return;
+    handleJoinRoom(ongoingMatch.roomCode);
+  };
+
+  // Start AI Match
+  const handleStartAiGame = (difficulty: 'EASY' | 'HARD') => {
+    if (!localPlayer) return;
+    setIsAiMode(true);
+    setRoomCode('AI_SOLO');
+
+    const aiBot: Player = {
+      id: 'ai_bot',
+      displayName: difficulty === 'EASY' ? 'Easy Bot' : 'Master Bot',
       username: 'ai_bot',
       isHost: false,
-      avatarUrl: '🤖',
+      isAi: true,
+      avatarUrl: null,
       score: 0,
       completedLinesCount: 0,
       gamesPlayed: 10,
       gamesWon: 5,
-      currentStreak: 2,
-      level: 3,
+      currentStreak: 1,
+      level: difficulty === 'EASY' ? 1 : 5,
       lastSeenTimestamp: Date.now(),
       lobbyReadyStatus: 'READY',
       readyVersion: 0
     };
-    setOpponent(aiPlayer);
-    setMatchSeed(Date.now());
+
+    setOpponent(aiBot);
+    setMatchSeed(Math.floor(Math.random() * 100000) + 1);
     setFirstTurnPlayerId(localPlayer.id);
     setCurrentScreen('GAME');
   };
 
-  // Start match from Lobby
-  const handleStartGame = (seed: number, firstTurnId: string, opp: Player) => {
-    setMatchSeed(seed);
-    setFirstTurnPlayerId(firstTurnId);
-    setOpponent(opp);
+  // Host starts game from Lobby
+  const handleHostStartLobbyGame = () => {
+    if (!localPlayer) return;
+    const generatedSeed = Math.floor(Math.random() * 100000) + 1;
+    const starterId = localPlayer.id;
+
+    setMatchSeed(generatedSeed);
+    setFirstTurnPlayerId(starterId);
+
+    // Broadcast to room
+    roomSync.sendStartGame(generatedSeed, starterId);
     setCurrentScreen('GAME');
   };
 
-  // Leave Game or Lobby back to Main Menu
-  const handleLeaveToMenu = () => {
-    roomSync.disconnect();
-    setCurrentScreen('MAIN_MENU');
-    setOpponent(null);
-    setRoomCode('');
-    setIsAiMode(false);
+  // Toggle ready status
+  const handleToggleReady = (ready: boolean) => {
+    if (!localPlayer) return;
+    const status = ready ? 'READY' : 'NOT_READY';
+    setPlayersInLobby((prev) =>
+      prev.map((p) => (p.id === localPlayer.id ? { ...p, lobbyReadyStatus: status } : p))
+    );
+    roomSync.sendReadyStatus(status);
   };
 
-  // Invite player from friends screen
-  const handleInvitePlayer = async (targetUsername: string) => {
-    if (!localPlayer) return;
-    const cleanCode = Math.floor(100000 + Math.random() * 900000).toString();
-
-    // Create room in CloudRegistry
-    await CloudRegistry.createRoom(cleanCode, localPlayer, 5);
-
-    // Send invite
-    await CloudRegistry.sendInvite(targetUsername, {
-      fromUsername: localPlayer.username,
-      fromDisplayName: localPlayer.displayName,
-      fromAvatarUrl: null,
-      roomCode: cleanCode,
-      timestamp: Date.now()
-    });
-
-    handleHostRoom(cleanCode);
+  // Leave Game
+  const handleLeaveGame = () => {
+    if (!isAiMode) {
+      roomSync.leaveRoom();
+    }
+    handleDismissOngoingMatch();
+    setCurrentScreen('MAIN_CONTAINER');
   };
 
   return (
-    <div className="min-h-[100dvh] w-full max-w-full overflow-x-hidden bg-[#FAFAFC] text-slate-800 flex flex-col">
-      {/* Real-time Match Invitation Dialog */}
-      {pendingInvite && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-md animate-fade-in select-none">
-          <div className="w-full max-w-sm bg-white border border-slate-200/90 rounded-3xl p-6 shadow-2xl text-center">
-            <span className="text-3xl mb-2 block">⚔️</span>
-            <h3 className="text-lg font-bold text-slate-900">Game Challenge!</h3>
-            <p className="mt-2 text-xs text-slate-600">
-              <strong className="text-purple-600">@{pendingInvite.fromUsername}</strong> ({pendingInvite.fromDisplayName}) has invited you to play Bingo!
-            </p>
-            <div className="my-4 p-2.5 rounded-xl bg-purple-50 text-xs font-mono font-bold text-purple-700 border border-purple-200/60">
-              Room Code: {pendingInvite.roomCode}
-            </div>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => setPendingInvite(null)}
-                className="flex-1 py-2.5 rounded-xl bg-slate-100 text-slate-700 font-semibold hover:bg-slate-200 transition-all cursor-pointer"
-              >
-                Decline
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const code = pendingInvite.roomCode;
-                  setPendingInvite(null);
-                  handleJoinRoom(code);
-                }}
-                className="flex-1 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-bold shadow-lg shadow-purple-500/25 transition-all cursor-pointer"
-              >
-                Accept & Join
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+    <div className="w-full min-h-[100dvh] flex flex-col justify-center items-center bg-black">
+      {/* Centered responsive container: mobile full-width, desktop centered card */}
+      <div className="w-full max-w-md min-h-[100dvh] flex flex-col shadow-2xl relative overflow-hidden">
+        {currentScreen === 'LOGIN' && (
+          <LoginScreen onLoginSuccess={handleLoginSuccess} />
+        )}
 
-      {/* Screen 1: Login / Profile Setup */}
-      {currentScreen === 'LOGIN' && (
-        <LoginScreen onLoginSuccess={handleLoginSuccess} />
-      )}
+        {currentScreen === 'MAIN_CONTAINER' && localPlayer && (
+          <MainContainer
+            localPlayer={localPlayer}
+            pingMs={pingMs}
+            ongoingMatch={ongoingMatch}
+            onDismissOngoingMatch={handleDismissOngoingMatch}
+            onRejoinOngoingMatch={handleRejoinOngoingMatch}
+            onPlayAi={handleStartAiGame}
+            onPlayOnline={() => setCurrentScreen('ONLINE_CHOICE')}
+            onInvitePlayerToMatch={(friendUser) => {
+              handleHostRoom();
+            }}
+            onUpdatePlayer={handleUpdatePlayer}
+            onSignOut={handleSignOut}
+          />
+        )}
 
-      {/* Screen 2: Main Menu */}
-      {currentScreen === 'MAIN_MENU' && localPlayer && (
-        <MainMenuScreen
-          localPlayer={localPlayer}
-          onNavigateToDashboard={() => setCurrentScreen('DASHBOARD')}
-          onPlayOnline={() => setCurrentScreen('ONLINE_CHOICE')}
-          onPlayAi={handlePlayAi}
-          onSignOut={handleSignOut}
-        />
-      )}
+        {currentScreen === 'ONLINE_CHOICE' && (
+          <OnlineMatchChoiceScreen
+            onHostGame={handleHostRoom}
+            onJoinGame={() => setCurrentScreen('JOIN_ROOM')}
+            onBack={() => setCurrentScreen('MAIN_CONTAINER')}
+          />
+        )}
 
-      {/* Screen 3: Online Match Choice */}
-      {currentScreen === 'ONLINE_CHOICE' && localPlayer && (
-        <OnlineMatchChoiceScreen
-          localPlayer={localPlayer}
-          onHostRoom={handleHostRoom}
-          onJoinRoom={handleJoinRoom}
-          onBack={() => setCurrentScreen('MAIN_MENU')}
-        />
-      )}
+        {currentScreen === 'JOIN_ROOM' && (
+          <JoinRoomScreen
+            onJoinRoom={handleJoinRoom}
+            onBack={() => setCurrentScreen('ONLINE_CHOICE')}
+          />
+        )}
 
-      {/* Screen 4: Dashboard & Friends */}
-      {currentScreen === 'DASHBOARD' && localPlayer && (
-        <DashboardAndFriendsScreen
-          localPlayer={localPlayer}
-          onBack={() => setCurrentScreen('MAIN_MENU')}
-          onInvitePlayerToMatch={handleInvitePlayer}
-        />
-      )}
+        {currentScreen === 'LOBBY' && localPlayer && (
+          <LobbyScreen
+            roomCode={roomCode}
+            players={playersInLobby}
+            localPlayer={localPlayer}
+            isHost={playersInLobby.find((p) => p.id === localPlayer.id)?.isHost || false}
+            onToggleReady={handleToggleReady}
+            onStartGame={handleHostStartLobbyGame}
+            onRefresh={() => {
+              if (roomCode) {
+                CloudRegistry.getRoom(roomCode).catch(() => {});
+              }
+            }}
+            onBack={() => {
+              roomSync.leaveRoom();
+              setCurrentScreen('MAIN_CONTAINER');
+            }}
+          />
+        )}
 
-      {/* Screen 5: Lobby Screen */}
-      {currentScreen === 'LOBBY' && localPlayer && (
-        <LobbyScreen
-          roomCode={roomCode}
-          localPlayer={localPlayer}
-          onStartGame={handleStartGame}
-          onLeaveLobby={handleLeaveToMenu}
-        />
-      )}
-
-      {/* Screen 6: Game Screen */}
-      {currentScreen === 'GAME' && localPlayer && (
-        <GameScreen
-          roomCode={roomCode}
-          localPlayer={localPlayer}
-          opponent={opponent}
-          seed={matchSeed}
-          initialTurnPlayerId={firstTurnPlayerId}
-          isAiMode={isAiMode}
-          onLeaveGame={handleLeaveToMenu}
-        />
-      )}
+        {currentScreen === 'GAME' && localPlayer && (
+          <GameScreen
+            roomCode={roomCode}
+            localPlayer={localPlayer}
+            opponent={opponent}
+            seed={matchSeed}
+            initialTurnPlayerId={firstTurnPlayerId}
+            isAiMode={isAiMode}
+            onLeaveGame={handleLeaveGame}
+          />
+        )}
+      </div>
     </div>
+  );
+};
+
+export const App: React.FC = () => {
+  return (
+    <ThemeProvider>
+      <AppContent />
+    </ThemeProvider>
   );
 };

@@ -1,15 +1,23 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Flag, Volume2, VolumeX, Copy, Check } from 'lucide-react';
-import { Player, Board, FloatingEmoteItem, RoomMessagePacket, InGameChatMessage } from '../types/models';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Volume2, VolumeX, Flag, MessageSquare } from 'lucide-react';
+import {
+  Player,
+  Board,
+  FloatingEmoteItem,
+  RoomMessagePacket,
+  InGameChatMessage
+} from '../types/models';
 import { BingoEngine } from '../engine/bingoEngine';
 import { roomSync } from '../network/mqttSync';
 import { soundEffects } from '../audio/sounds';
-import { FloatingEmotes } from '../components/FloatingEmotes';
-import { EmojiReactionStrip } from '../components/EmojiReactionStrip';
-import { QuickChatDrawer } from '../components/QuickChatDrawer';
+import { useTheme } from '../theme/theme';
+import { BingoBoardView } from '../components/BingoBoardView';
+import { RecentPicksQueuePill } from '../components/RecentPicksQueuePill';
+import { HeadToHeadScorecard } from '../components/HeadToHeadScorecard';
 import { InGameChatSpace } from '../components/InGameChatSpace';
+import { QuickChatDrawer } from '../components/QuickChatDrawer';
+import { FloatingEmotes } from '../components/FloatingEmotes';
 import { WinningModal } from '../components/WinningModal';
-import { PlayerAvatar } from '../components/PlayerAvatar';
 
 interface Props {
   roomCode: string;
@@ -21,7 +29,7 @@ interface Props {
   onLeaveGame: () => void;
 }
 
-const BINGO_LETTERS = ['B', 'I', 'N', 'G', 'O'];
+const QUICK_EMOJIS = ['😂', '🔥', '😎', '👏', '😱', '⚡'];
 
 export const GameScreen: React.FC<Props> = ({
   roomCode,
@@ -32,14 +40,22 @@ export const GameScreen: React.FC<Props> = ({
   isAiMode = false,
   onLeaveGame
 }) => {
-  const mySeed = (localPlayer.isHost || isAiMode) ? seed : seed + 1;
-  const oppSeed = (localPlayer.isHost || isAiMode) ? seed + 1 : seed;
+  const { tokens, isDark } = useTheme();
 
-  const [board, setBoard] = useState<Board>(() => BingoEngine.generateBoard(5, mySeed));
-  const [opponentBoard, setOpponentBoard] = useState<Board>(() => BingoEngine.generateBoard(5, oppSeed));
-  const [currentTurnPlayerId, setCurrentTurnPlayerId] = useState<string>(initialTurnPlayerId);
+  const mySeed = localPlayer.isHost || isAiMode ? seed : seed + 1;
+  const oppSeed = localPlayer.isHost || isAiMode ? seed + 1 : seed;
+
+  const [board, setBoard] = useState<Board>(() =>
+    BingoEngine.generateBoard(5, mySeed)
+  );
+  const [opponentBoard, setOpponentBoard] = useState<Board>(() =>
+    BingoEngine.generateBoard(5, oppSeed)
+  );
+  const [currentTurnPlayerId, setCurrentTurnPlayerId] =
+    useState<string>(initialTurnPlayerId);
   const [turnNumber, setTurnNumber] = useState<number>(1);
   const [turnTimer, setTurnTimer] = useState<number>(30);
+  const [pickedNumbersHistory, setPickedNumbersHistory] = useState<number[]>([]);
   const [myLinesCount, setMyLinesCount] = useState<number>(0);
   const [opponentLinesCount, setOpponentLinesCount] = useState<number>(0);
   const [isGameOver, setIsGameOver] = useState<boolean>(false);
@@ -50,9 +66,7 @@ export const GameScreen: React.FC<Props> = ({
   const [activeEmotes, setActiveEmotes] = useState<FloatingEmoteItem[]>([]);
   const [chatMessages, setChatMessages] = useState<InGameChatMessage[]>([]);
   const [isQuickChatOpen, setIsQuickChatOpen] = useState<boolean>(false);
-  const [pingMs, setPingMs] = useState<number>(24);
   const [soundOn, setSoundOn] = useState<boolean>(true);
-  const [copiedCode, setCopiedCode] = useState<boolean>(false);
 
   const isMyTurn = currentTurnPlayerId === localPlayer.id;
 
@@ -63,203 +77,191 @@ export const GameScreen: React.FC<Props> = ({
     soundEffects.setSoundEnabled(next);
   };
 
-  // Copy room code
-  const handleCopyCode = () => {
-    navigator.clipboard?.writeText(roomCode);
-    setCopiedCode(true);
-    setTimeout(() => setCopiedCode(false), 2000);
-  };
-
   // Spawn visual floating emote
-  const spawnEmote = useCallback((emoji: string, isSelf: boolean, senderName?: string, scaleMultiplier: number = 1.0) => {
-    const randomX = (8 + Math.random() * 78) / 100;
-    const newItem: FloatingEmoteItem = {
-      id: `${Date.now()}_${Math.random()}`,
-      emoji,
-      startXRatio: randomX,
-      isSelf,
-      senderName,
-      scaleMultiplier,
-      createdAt: Date.now()
-    };
-    setActiveEmotes(prev => [...prev.slice(-15), newItem]);
-  }, []);
+  const spawnEmote = useCallback(
+    (emoji: string, isSelf: boolean, senderName?: string, scaleMultiplier: number = 1.0) => {
+      const randomX = (10 + Math.random() * 75) / 100;
+      const newItem: FloatingEmoteItem = {
+        id: `${Date.now()}_${Math.random()}`,
+        emoji,
+        startXRatio: randomX,
+        isSelf,
+        senderName,
+        scaleMultiplier,
+        createdAt: Date.now()
+      };
+      setActiveEmotes((prev) => [...prev.slice(-15), newItem]);
+    },
+    []
+  );
 
   const removeEmote = useCallback((id: string) => {
-    setActiveEmotes(prev => prev.filter(e => e.id !== id));
+    setActiveEmotes((prev) => prev.filter((e) => e.id !== id));
   }, []);
 
   // Handle cell pick
-  const handlePickNumber = useCallback((number: number) => {
-    if (!isMyTurn || isGameOver) return;
+  const handlePickNumber = useCallback(
+    (number: number) => {
+      if (!isMyTurn || isGameOver) return;
 
-    soundEffects.playPick();
+      soundEffects.playPick();
 
-    // 1. Mark on local board
-    const { board: newBoard, newLinesCompleted } = BingoEngine.markCell(
-      board,
-      number,
-      localPlayer.id,
-      true,
-      turnNumber
-    );
-    setBoard(newBoard);
-
-    // 2. Mark on opponent board
-    const { board: newOppBoard } = BingoEngine.markCell(
-      opponentBoard,
-      number,
-      localPlayer.id,
-      false,
-      turnNumber
-    );
-    setOpponentBoard(newOppBoard);
-
-    if (newLinesCompleted > 0) {
-      soundEffects.playLine();
-    }
-
-    const currentCompleted = newBoard.completedLines.length;
-    setMyLinesCount(currentCompleted);
-
-    const oppCompleted = newOppBoard.completedLines.length;
-    setOpponentLinesCount(oppCompleted);
-
-    // 3. Build picked history
-    const pickedHistory = newBoard.cells
-      .filter(c => c.markState.type === 'Marked')
-      .map(c => c.number);
-
-    // 4. ALWAYS broadcast PICK_NUMBER first so peer receives the winning move and history!
-    if (!isAiMode) {
-      roomSync.sendPacket({
-        type: 'PICK_NUMBER',
+      // 1. Mark on local board
+      const { board: newBoard, newLinesCompleted } = BingoEngine.markCell(
+        board,
         number,
-        playerId: localPlayer.id,
-        turnNumber,
-        currentTurnPlayerId: opponent?.id || '',
-        pickedHistory,
-        seed
-      });
-    }
+        localPlayer.id,
+        true,
+        turnNumber
+      );
+      setBoard(newBoard);
+      const newMyLines = newBoard.completedLines.length;
+      setMyLinesCount(newMyLines);
 
-    // 5. Check if local player won (5 lines)
-    if (currentCompleted >= 5) {
-      soundEffects.playBingoWin();
-      setIsGameOver(true);
-      setIsWinner(true);
-      setWinnerName(localPlayer.displayName);
+      // Record in recent picks history
+      setPickedNumbersHistory((prev) => [...prev, number]);
 
-      if (!isAiMode) {
-        const winPacket: RoomMessagePacket = {
-          type: 'BINGO_CLAIMED',
-          playerId: localPlayer.id,
-          displayName: localPlayer.displayName,
-          number,
-          turnNumber,
-          seed,
-          pickedHistory
-        };
-        roomSync.sendPacket(winPacket);
-        setTimeout(() => roomSync.sendPacket(winPacket), 120);
-        setTimeout(() => roomSync.sendPacket(winPacket), 250);
+      if (newLinesCompleted > 0) {
+        soundEffects.playLineComplete();
       }
-      return;
-    }
 
-    // 6. Check if this pick gave opponent 5 lines
-    if (oppCompleted >= 5) {
-      soundEffects.playGameOver();
-      setIsGameOver(true);
-      setIsWinner(false);
-      setWinnerName(opponent?.displayName || 'Opponent');
-      return;
-    }
-
-    // 7. Switch turn
-    const nextPlayerId = opponent?.id || (isAiMode ? 'ai_opponent' : '');
-    setCurrentTurnPlayerId(nextPlayerId);
-    setTurnNumber(prev => prev + 1);
-    setTurnTimer(30);
-
-    // 8. If AI Mode: Trigger AI Bot response after 1.2s delay
-    if (isAiMode) {
-      setTimeout(() => {
-        let aiNum = 0;
-        let aiCompleted = 0;
-
-        setBoard(currentBoard => {
-          const unmarkedCells = currentBoard.cells.filter(c => c.markState.type === 'Unmarked');
-          if (unmarkedCells.length === 0) return currentBoard;
-
-          const randomCell = unmarkedCells[Math.floor(Math.random() * unmarkedCells.length)];
-          aiNum = randomCell.number;
-
-          soundEffects.playPick();
-          const { board: aiUpdatedBoard, newLinesCompleted: aiLines } = BingoEngine.markCell(
-            currentBoard,
-            aiNum,
-            'ai_opponent',
-            false,
-            turnNumber + 1
-          );
-
-          if (aiLines > 0) soundEffects.playLine();
-
-          const myUpdated = aiUpdatedBoard.completedLines.length;
-          setMyLinesCount(myUpdated);
-
-          if (myUpdated >= 5) {
-            soundEffects.playBingoWin();
-            setIsGameOver(true);
-            setIsWinner(true);
-            setWinnerName(localPlayer.displayName);
-          }
-
-          return aiUpdatedBoard;
-        });
-
-        if (aiNum > 0) {
-          setOpponentBoard(prevOpp => {
-            const { board: oppUpdated } = BingoEngine.markCell(
-              prevOpp,
-              aiNum,
-              'ai_opponent',
-              true,
-              turnNumber + 1
-            );
-            aiCompleted = oppUpdated.completedLines.length;
-            setOpponentLinesCount(aiCompleted);
-
-            if (aiCompleted >= 5) {
-              soundEffects.playGameOver();
-              setIsGameOver(true);
-              setIsWinner(false);
-              setWinnerName('AI Bot 🤖');
-            } else {
-              setCurrentTurnPlayerId(localPlayer.id);
-              setTurnNumber(prev => prev + 1);
-              setTurnTimer(30);
-              soundEffects.playTurnAlert();
-            }
-
-            return oppUpdated;
+      // Check win condition
+      if (newMyLines >= 5) {
+        soundEffects.playBingoWin();
+        setIsGameOver(true);
+        setIsWinner(true);
+        setWinnerName(localPlayer.displayName);
+        if (!isAiMode) {
+          roomSync.sendPacket({
+            type: 'BINGO_CLAIMED',
+            playerId: localPlayer.id,
+            displayName: localPlayer.displayName,
+            number
           });
         }
-      }, 1200);
-    }
-  }, [board, opponentBoard, isMyTurn, isGameOver, turnNumber, localPlayer, opponent, isAiMode, seed]);
+        return;
+      }
 
-  // Turn timer interval
+      // Switch turn
+      const nextTurnId = isAiMode
+        ? 'ai_bot'
+        : opponent?.id || 'opponent';
+      setCurrentTurnPlayerId(nextTurnId);
+      setTurnNumber((prev) => prev + 1);
+      setTurnTimer(30);
+
+      // Transmit to opponent
+      if (!isAiMode) {
+        roomSync.sendPick(number, turnNumber, nextTurnId, [
+          ...pickedNumbersHistory,
+          number
+        ]);
+      }
+    },
+    [
+      board,
+      isAiMode,
+      isGameOver,
+      isMyTurn,
+      localPlayer,
+      opponent,
+      pickedNumbersHistory,
+      turnNumber
+    ]
+  );
+
+  // AI Turn simulation
+  useEffect(() => {
+    if (!isAiMode || isMyTurn || isGameOver) return;
+
+    const timer = setTimeout(() => {
+      const unmarkedCells = opponentBoard.cells.filter(
+        (c) => c.markState.type === 'Unmarked'
+      );
+      if (unmarkedCells.length === 0) return;
+
+      // Smart pick or random pick
+      const pick =
+        unmarkedCells[Math.floor(Math.random() * unmarkedCells.length)].number;
+
+      // 1. Mark on opponent board
+      const { board: newOppBoard } = BingoEngine.markCell(
+        opponentBoard,
+        pick,
+        'ai_bot',
+        true,
+        turnNumber
+      );
+      setOpponentBoard(newOppBoard);
+      const newOppLines = newOppBoard.completedLines.length;
+      setOpponentLinesCount(newOppLines);
+
+      // 2. Mark on local player's board
+      const { board: newMyBoard, newLinesCompleted } = BingoEngine.markCell(
+        board,
+        pick,
+        'ai_bot',
+        false,
+        turnNumber
+      );
+      setBoard(newMyBoard);
+      const newMyLines = newMyBoard.completedLines.length;
+      setMyLinesCount(newMyLines);
+
+      setPickedNumbersHistory((prev) => [...prev, pick]);
+
+      if (newLinesCompleted > 0) {
+        soundEffects.playLineComplete();
+      }
+
+      if (newOppLines >= 5) {
+        soundEffects.playGameOver();
+        setIsGameOver(true);
+        setIsWinner(false);
+        setWinnerName('Master Bot');
+        return;
+      } else if (newMyLines >= 5) {
+        soundEffects.playBingoWin();
+        setIsGameOver(true);
+        setIsWinner(true);
+        setWinnerName(localPlayer.displayName);
+        return;
+      }
+
+      setCurrentTurnPlayerId(localPlayer.id);
+      setTurnNumber((prev) => prev + 1);
+      setTurnTimer(30);
+      soundEffects.playTurnAlert();
+    }, 1200);
+
+    return () => clearTimeout(timer);
+  }, [
+    board,
+    currentTurnPlayerId,
+    isAiMode,
+    isGameOver,
+    isMyTurn,
+    localPlayer,
+    opponentBoard,
+    turnNumber
+  ]);
+
+  // Turn Countdown Timer
   useEffect(() => {
     if (isGameOver) return;
+
     const timer = setInterval(() => {
-      setTurnTimer(prev => {
+      setTurnTimer((prev) => {
         if (prev <= 1) {
           if (isMyTurn) {
-            const firstUnmarked = board.cells.find(c => c.markState.type === 'Unmarked');
-            if (firstUnmarked) {
-              handlePickNumber(firstUnmarked.number);
+            // Auto-pick a random unmarked cell on timeout
+            const unmarked = board.cells.filter(
+              (c) => c.markState.type === 'Unmarked'
+            );
+            if (unmarked.length > 0) {
+              const randPick =
+                unmarked[Math.floor(Math.random() * unmarked.length)].number;
+              handlePickNumber(randPick);
             }
           }
           return 30;
@@ -267,44 +269,49 @@ export const GameScreen: React.FC<Props> = ({
         return prev - 1;
       });
     }, 1000);
-    return () => clearInterval(timer);
-  }, [isGameOver, isMyTurn, board, handlePickNumber]);
 
-  // Listen to MQTT room packets
+    return () => clearInterval(timer);
+  }, [board, handlePickNumber, isGameOver, isMyTurn]);
+
+  // Listen for incoming opponent packets over MQTT
   useEffect(() => {
     if (isAiMode) return;
 
-    roomSync.onPingChanged = (ping) => setPingMs(ping);
-
     roomSync.onPacketReceived = (packet: RoomMessagePacket) => {
+      if (packet.playerId === localPlayer.id) return;
+
       switch (packet.type) {
         case 'PICK_NUMBER': {
-          if (packet.number && packet.number > 0) {
-            soundEffects.playPick();
+          if (packet.number) {
+            const pickNum = packet.number;
+            setPickedNumbersHistory((prev) => [...prev, pickNum]);
 
-            let newMyLines = myLinesCount;
-            let newOppLines = opponentLinesCount;
+            // 1. Mark on my board
+            let newMyLines = 0;
+            let newOppLines = 0;
 
-            // 1. Mark on local board
-            setBoard(prevBoard => {
-              const { board: updated, newLinesCompleted } = BingoEngine.markCell(
-                prevBoard,
-                packet.number!,
-                packet.playerId,
-                false,
-                packet.turnNumber || turnNumber
-              );
-              if (newLinesCompleted > 0) soundEffects.playLine();
-              newMyLines = updated.completedLines.length;
+            setBoard((prevMy) => {
+              const { board: updatedMy, newLinesCompleted } =
+                BingoEngine.markCell(
+                  prevMy,
+                  pickNum,
+                  packet.playerId,
+                  false,
+                  packet.turnNumber || turnNumber
+                );
+              newMyLines = updatedMy.completedLines.length;
               setMyLinesCount(newMyLines);
-              return updated;
+              if (newLinesCompleted > 0) {
+                soundEffects.playLineComplete();
+              }
+              return updatedMy;
             });
 
             // 2. Mark on opponent board
-            setOpponentBoard(prevOpp => {
+            setOpponentBoard((prevOpp) => {
               const { board: updatedOpp } = BingoEngine.markCell(
                 prevOpp,
-                packet.number!,
+                pickNum,
                 packet.playerId,
                 true,
                 packet.turnNumber || turnNumber
@@ -314,12 +321,14 @@ export const GameScreen: React.FC<Props> = ({
               return updatedOpp;
             });
 
-            // 3. Evaluate win conditions immediately!
+            // 3. Evaluate win conditions
             if (newOppLines >= 5) {
               soundEffects.playGameOver();
               setIsGameOver(true);
               setIsWinner(false);
-              setWinnerName(packet.displayName || opponent?.displayName || 'Opponent');
+              setWinnerName(
+                packet.displayName || opponent?.displayName || 'Opponent'
+              );
               return;
             } else if (newMyLines >= 5) {
               soundEffects.playBingoWin();
@@ -329,34 +338,38 @@ export const GameScreen: React.FC<Props> = ({
               return;
             }
 
-            // 4. Opponent finished turn -> switch to me
+            // 4. Switch turn to me
             setCurrentTurnPlayerId(localPlayer.id);
-            setTurnNumber(prev => (packet.turnNumber ? packet.turnNumber + 1 : prev + 1));
+            setTurnNumber((prev) =>
+              packet.turnNumber ? packet.turnNumber + 1 : prev + 1
+            );
             setTurnTimer(30);
             soundEffects.playTurnAlert();
           }
           break;
         }
 
-        case 'BINGO_CLAIMED':
-        case 'GAME_OVER': {
-          const isMe = packet.playerId === localPlayer.id;
+        case 'BINGO_CLAIMED': {
           setIsGameOver(true);
-          setIsWinner(isMe);
-          setWinnerName(isMe ? localPlayer.displayName : (packet.displayName || opponent?.displayName || 'Opponent'));
-          if (isMe) {
-            soundEffects.playBingoWin();
-          } else {
-            soundEffects.playGameOver();
-            setOpponentLinesCount(5);
-          }
+          setIsWinner(false);
+          setWinnerName(
+            packet.displayName || opponent?.displayName || 'Opponent'
+          );
+          soundEffects.playGameOver();
+          setOpponentLinesCount(5);
           break;
         }
 
         case 'EMOTE': {
           if (packet.displayName) {
-            const scale = packet.number && packet.number > 0 ? packet.number / 100 : 1.0;
-            spawnEmote(packet.displayName, false, opponent?.displayName || 'Opponent', scale);
+            const scale =
+              packet.number && packet.number > 0 ? packet.number / 100 : 1.0;
+            spawnEmote(
+              packet.displayName,
+              false,
+              opponent?.displayName || 'Opponent',
+              scale
+            );
           }
           break;
         }
@@ -365,7 +378,8 @@ export const GameScreen: React.FC<Props> = ({
         case 'CHAT_PHRASE': {
           const text = packet.displayName || packet.payload || '';
           if (text) {
-            const sender = packet.username || opponent?.displayName || 'Opponent';
+            const sender =
+              packet.username || opponent?.displayName || 'Opponent';
             const newMsg: InGameChatMessage = {
               id: packet.timestamp || Date.now(),
               text,
@@ -373,7 +387,7 @@ export const GameScreen: React.FC<Props> = ({
               senderName: sender,
               timestamp: packet.timestamp || Date.now()
             };
-            setChatMessages(prev => [...prev.slice(-30), newMsg]);
+            setChatMessages((prev) => [...prev.slice(-30), newMsg]);
             spawnEmote(text, false, sender, 1.0);
             soundEffects.playTurnAlert();
           }
@@ -394,6 +408,7 @@ export const GameScreen: React.FC<Props> = ({
             setOpponentLinesCount(0);
             setTurnNumber(1);
             setTurnTimer(30);
+            setPickedNumbersHistory([]);
             setWantsPlayAgainName(null);
             setCurrentTurnPlayerId(localPlayer.id);
           }
@@ -405,7 +420,7 @@ export const GameScreen: React.FC<Props> = ({
           setIsGameOver(true);
           setIsWinner(true);
           setWinnerName(localPlayer.displayName);
-          alert(`${opponent?.displayName || 'Opponent'} surrendered the game!`);
+          alert(`${opponent?.displayName || 'Opponent'} left the game!`);
           break;
         }
       }
@@ -414,10 +429,10 @@ export const GameScreen: React.FC<Props> = ({
     return () => {
       roomSync.onPacketReceived = null;
     };
-  }, [isAiMode, localPlayer, opponent, seed, turnNumber, spawnEmote]);
+  }, [isAiMode, localPlayer, opponent, seed, spawnEmote, turnNumber]);
 
-  // Send reaction emote
-  const handleSendEmote = (emoji: string, scale: number) => {
+  // Send Emote
+  const handleSendEmote = (emoji: string, scale: number = 1.0) => {
     spawnEmote(emoji, true, undefined, scale);
     if (!isAiMode) {
       roomSync.sendPacket({
@@ -429,7 +444,7 @@ export const GameScreen: React.FC<Props> = ({
     }
   };
 
-  // Send in-game chat message (custom or quick phrase)
+  // Send Chat Message
   const handleSendMessage = (text: string) => {
     const trimmed = text.trim().slice(0, 100);
     if (!trimmed) return;
@@ -441,7 +456,7 @@ export const GameScreen: React.FC<Props> = ({
       senderName: localPlayer.displayName,
       timestamp: Date.now()
     };
-    setChatMessages(prev => [...prev.slice(-30), newMsg]);
+    setChatMessages((prev) => [...prev.slice(-30), newMsg]);
     spawnEmote(trimmed, true, localPlayer.displayName, 1.0);
 
     if (!isAiMode) {
@@ -452,57 +467,14 @@ export const GameScreen: React.FC<Props> = ({
         username: localPlayer.displayName,
         timestamp: Date.now()
       });
-    } else {
-      // Friendly AI bot interactive response
-      setTimeout(() => {
-        const aiReplies = [
-          'Nice move! 🤖',
-          'Good game! 👍',
-          'Almost Bingo! ⚡',
-          'Let’s see who gets Bingo first! 🎯',
-          'Well played! 👏',
-          'GG! 🎲'
-        ];
-        const reply = aiReplies[Math.floor(Math.random() * aiReplies.length)];
-        const aiMsg: InGameChatMessage = {
-          id: Date.now(),
-          text: reply,
-          isSelf: false,
-          senderName: 'AI Bot 🤖',
-          timestamp: Date.now()
-        };
-        setChatMessages(prev => [...prev.slice(-30), aiMsg]);
-        spawnEmote(reply, false, 'AI Bot', 1.0);
-        soundEffects.playTurnAlert();
-      }, 1400);
     }
   };
 
-  // Play again handler
+  // Play Again
   const handlePlayAgain = () => {
-    if (isAiMode) {
-      setBoard(BingoEngine.generateBoard(5));
-      setOpponentBoard(BingoEngine.generateBoard(5));
-      setIsGameOver(false);
-      setIsWinner(false);
-      setMyLinesCount(0);
-      setOpponentLinesCount(0);
-      setTurnNumber(1);
-      setTurnTimer(30);
-      setCurrentTurnPlayerId(localPlayer.id);
-      return;
-    }
-
-    const newSeed = Date.now();
-    const myNewSeed = localPlayer.isHost ? newSeed : newSeed + 1;
-    const oppNewSeed = localPlayer.isHost ? newSeed + 1 : newSeed;
-
-    roomSync.sendPacket({
-      type: 'PLAY_AGAIN',
-      playerId: localPlayer.id,
-      displayName: localPlayer.displayName,
-      seed: newSeed
-    });
+    const newSeed = Math.floor(Math.random() * 100000) + 1;
+    const myNewSeed = localPlayer.isHost || isAiMode ? newSeed : newSeed + 1;
+    const oppNewSeed = localPlayer.isHost || isAiMode ? newSeed + 1 : newSeed;
 
     setBoard(BingoEngine.generateBoard(5, myNewSeed));
     setOpponentBoard(BingoEngine.generateBoard(5, oppNewSeed));
@@ -512,239 +484,216 @@ export const GameScreen: React.FC<Props> = ({
     setOpponentLinesCount(0);
     setTurnNumber(1);
     setTurnTimer(30);
+    setPickedNumbersHistory([]);
     setWantsPlayAgainName(null);
     setCurrentTurnPlayerId(localPlayer.id);
+
+    if (!isAiMode) {
+      roomSync.sendPacket({
+        type: 'PLAY_AGAIN',
+        playerId: localPlayer.id,
+        displayName: localPlayer.displayName,
+        seed: newSeed
+      });
+    }
   };
 
   return (
-    <div className="relative min-h-[100dvh] w-full max-w-md lg:max-w-4xl xl:max-w-5xl mx-auto flex flex-col justify-between p-2 sm:p-4 pb-2 sm:pb-3 select-none bg-[#FAFAFC] text-slate-800 box-border overflow-x-hidden">
-      {/* Floating Emotes Layer */}
-      <FloatingEmotes emotes={activeEmotes} onRemoveEmote={removeEmote} />
+    <div
+      style={{ backgroundColor: tokens.background }}
+      className="h-[100dvh] w-full max-w-md mx-auto flex flex-col justify-between p-3 sm:p-4 select-none overflow-hidden transition-colors duration-300 relative"
+    >
+      {/* ── Top Bar with Status & Sound ── */}
+      <header className="w-full flex items-center justify-between pb-1 flex-shrink-0">
+        <div className="flex items-center gap-2">
+          <span
+            style={{ color: tokens.cellNeutralText }}
+            className="text-lg font-black font-heading tracking-wider"
+          >
+            B I N G O
+          </span>
+          <span
+            style={{
+              backgroundColor: tokens.backgroundSecondary,
+              color: tokens.textMuted
+            }}
+            className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border border-inherit"
+          >
+            Room {roomCode}
+          </span>
+        </div>
 
-      {/* Top Header Bar */}
-      <header className="w-full flex items-center justify-between py-1 sm:py-2 px-1 gap-1">
-        <button
-          type="button"
-          onClick={() => {
-            soundEffects.playTap();
-            if (confirm('Are you sure you want to surrender and leave the game?')) {
-              onLeaveGame();
-            }
-          }}
-          className="flex-shrink-0 flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-full bg-white border border-slate-200 text-rose-600 hover:bg-rose-50 text-[11px] sm:text-xs font-bold transition-all cursor-pointer shadow-sm active:scale-95"
-        >
-          <Flag className="w-3.5 h-3.5" />
-          <span>Surrender</span>
-        </button>
-
-        {/* Room Code Badge */}
-        <button
-          type="button"
-          onClick={handleCopyCode}
-          title="Click to copy room code"
-          className="flex items-center gap-1 px-2.5 sm:px-3.5 py-1.5 rounded-full bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 text-[11px] sm:text-xs font-extrabold tracking-wider transition-all cursor-pointer shadow-sm active:scale-95 truncate max-w-[130px] sm:max-w-none"
-        >
-          <span className="truncate">ROOM: <strong className="text-[#7C3AED]">{roomCode}</strong></span>
-          {copiedCode ? <Check className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" /> : <Copy className="w-3 h-3 text-slate-400 flex-shrink-0" />}
-        </button>
-
-        <div className="flex-shrink-0 flex items-center gap-1 sm:gap-2">
-          {/* Ping indicator */}
-          {!isAiMode && (
-            <div className="flex items-center gap-1 text-[10px] sm:text-[11px] font-bold text-slate-600 bg-white px-2 sm:px-2.5 py-1 rounded-full border border-slate-200 shadow-sm">
-              <span className={`w-2 h-2 rounded-full ${pingMs < 80 ? 'bg-emerald-500' : pingMs < 180 ? 'bg-amber-500' : 'bg-rose-500'}`} />
-              <span>{pingMs}ms</span>
-            </div>
-          )}
-
-          {/* Sound toggle */}
+        <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={toggleSound}
-            className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50 flex items-center justify-center transition-all cursor-pointer shadow-sm active:scale-95"
+            style={{
+              backgroundColor: tokens.backgroundSecondary,
+              color: tokens.cellNeutralText
+            }}
+            className="w-8 h-8 rounded-full flex items-center justify-center cursor-pointer active:scale-95 shadow-xs"
           >
-            {soundOn ? <Volume2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> : <VolumeX className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400" />}
+            {soundOn ? (
+              <Volume2 className="w-4 h-4" />
+            ) : (
+              <VolumeX className="w-4 h-4 opacity-50" />
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (confirm('Leave match? This will count as surrender.')) {
+                onLeaveGame();
+              }
+            }}
+            style={{
+              backgroundColor: tokens.backgroundSecondary,
+              color: tokens.textMuted
+            }}
+            className="w-8 h-8 rounded-full flex items-center justify-center cursor-pointer active:scale-95 hover:text-rose-500"
+          >
+            <Flag className="w-4 h-4" />
           </button>
         </div>
       </header>
 
-      {/* Main Adaptive Game Area: Stacked on Mobile, 2 Columns on Laptop/Desktop */}
-      <div className="w-full flex-1 flex flex-col lg:flex-row lg:items-center lg:justify-between lg:gap-8 my-0.5 sm:my-1">
-        {/* Left Column on Desktop / Top Section on Mobile: B-I-N-G-O Letters & Player Cards */}
-        <div className="w-full lg:w-[360px] xl:w-[400px] flex flex-col justify-center space-y-1.5 sm:space-y-2.5 mx-auto">
-          {/* B-I-N-G-O Letters Banner */}
-          <div className="w-full max-w-[320px] xs:max-w-[350px] sm:max-w-[400px] lg:max-w-[440px] mx-auto flex justify-between items-center gap-1.5 sm:gap-2 py-1.5 sm:py-2 px-2.5 bg-white border border-slate-200 rounded-2xl shadow-sm box-border">
-            {BINGO_LETTERS.map((letter, idx) => {
-              const isLit = myLinesCount > idx;
-              return (
-                <div
-                  key={letter}
-                  className={`relative flex items-center justify-center flex-1 max-w-[48px] aspect-square rounded-xl font-heading font-black text-lg sm:text-2xl transition-all duration-300 ${
-                    isLit
-                      ? 'bg-gradient-to-tr from-amber-400 to-amber-500 text-white shadow-md scale-105'
-                      : 'bg-slate-50 text-slate-400 border border-slate-200'
-                  }`}
-                >
-                  {letter}
-                  {isLit && (
-                    <span className="absolute -top-1 -right-1 flex h-2 w-2 sm:h-2.5 sm:w-2.5">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-full w-full bg-amber-500"></span>
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Players Status & Turn Bar */}
-          <div className="w-full max-w-[320px] xs:max-w-[350px] sm:max-w-[400px] lg:max-w-[440px] mx-auto grid grid-cols-2 lg:grid-cols-1 gap-1.5 sm:gap-2 box-border">
-            {/* Local Player Card */}
-            <div
-              className={`flex items-center gap-1.5 sm:gap-2.5 p-1.5 sm:p-2.5 rounded-2xl border transition-all min-w-0 ${
-                isMyTurn
-                  ? 'bg-[#F5EEFF] border-2 border-[#7C3AED] shadow-sm'
-                  : 'bg-white border border-slate-200 shadow-sm'
+      {/* ── Top Turn Spotlight Bar ── */}
+      <div className="w-full flex-shrink-0 my-1">
+        <div
+          style={{
+            backgroundColor: isMyTurn
+              ? isDark
+                ? '#1C1917'
+                : '#F5EEFF'
+              : tokens.surface,
+            borderColor: isMyTurn ? tokens.accentBrand : tokens.surfaceBorder
+          }}
+          className={`w-full py-2 px-3 rounded-2xl border flex items-center justify-between shadow-xs transition-all ${
+            isMyTurn ? 'animate-pulse' : ''
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <span
+              className={`w-2 h-2 rounded-full ${
+                isMyTurn ? 'bg-emerald-500 animate-ping' : 'bg-amber-500'
               }`}
+            />
+            <span
+              style={{
+                color: isMyTurn
+                  ? tokens.accentBrand
+                  : tokens.cellNeutralText
+              }}
+              className="text-xs sm:text-sm font-bold tracking-wide"
             >
-              <PlayerAvatar
-                avatarUrl={localPlayer.avatarUrl}
-                displayName={localPlayer.displayName}
-                sizeClassName="w-8 h-8 sm:w-10 sm:h-10 text-base sm:text-lg flex-shrink-0"
-                fallbackIcon="🧑"
-                className="border border-purple-200 bg-[#F5EEFF] shadow-sm flex-shrink-0"
-              />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between gap-1">
-                  <span className="text-[11px] sm:text-xs font-bold text-slate-800 truncate">{localPlayer.displayName}</span>
-                  <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-purple-100 text-[#7C3AED] flex-shrink-0">
-                    {myLinesCount}/5
-                  </span>
-                </div>
-                <div className="flex items-center gap-1 mt-0.5">
-                  {isMyTurn ? (
-                    <span className="text-[10px] sm:text-[11px] font-extrabold text-[#7C3AED] flex items-center gap-1 truncate">
-                      <span className="w-1.5 h-1.5 rounded-full bg-[#7C3AED] animate-ping flex-shrink-0" />
-                      <span className="truncate">Your Turn ({turnTimer}s)</span>
-                    </span>
-                  ) : (
-                    <span className="text-[10px] sm:text-[11px] font-medium text-slate-400 truncate">Waiting...</span>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Opponent Card */}
-            <div
-              className={`flex items-center gap-1.5 sm:gap-2.5 p-1.5 sm:p-2.5 rounded-2xl border transition-all min-w-0 ${
-                !isMyTurn
-                  ? 'bg-sky-50 border-2 border-sky-400 shadow-sm'
-                  : 'bg-white border border-slate-200 shadow-sm'
-              }`}
-            >
-              <PlayerAvatar
-                avatarUrl={opponent?.avatarUrl}
-                displayName={opponent?.displayName}
-                sizeClassName="w-8 h-8 sm:w-10 sm:h-10 text-base sm:text-lg flex-shrink-0"
-                fallbackIcon={isAiMode ? '🤖' : '👤'}
-                className="border border-sky-200 bg-sky-50 shadow-sm flex-shrink-0"
-              />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between gap-1">
-                  <span className="text-[11px] sm:text-xs font-bold text-slate-800 truncate">
-                    {opponent?.displayName || (isAiMode ? 'AI Bot' : 'Opponent')}
-                  </span>
-                  <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 flex-shrink-0">
-                    {opponentLinesCount}/5
-                  </span>
-                </div>
-                <div className="flex items-center gap-1 mt-0.5">
-                  {!isMyTurn ? (
-                    <span className="text-[10px] sm:text-[11px] font-extrabold text-sky-600 flex items-center gap-1 truncate">
-                      <span className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-ping flex-shrink-0" />
-                      <span className="truncate">Picking... ({turnTimer}s)</span>
-                    </span>
-                  ) : (
-                    <span className="text-[10px] sm:text-[11px] font-medium text-slate-400 truncate">Waiting for you</span>
-                  )}
-                </div>
-              </div>
-            </div>
+              {isMyTurn
+                ? 'YOUR TURN • Pick any number'
+                : `Waiting for ${
+                    opponent?.displayName || (isAiMode ? 'AI Bot' : 'Opponent')
+                  }...`}
+            </span>
           </div>
 
-          {/* Desktop-only Match Guidance Panel */}
-          <div className="hidden lg:block p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs text-slate-600 space-y-1">
-            <p className="font-bold text-slate-700">🎯 Match Objective:</p>
-            <p className="text-[11px] text-slate-500 leading-relaxed">
-              Complete 5 lines across rows, columns, or diagonals. First to claim 5 lines wins the game!
-            </p>
-          </div>
+          {/* Countdown Pill */}
+          <span
+            style={{
+              color: turnTimer <= 5 ? '#DC2626' : tokens.textMuted
+            }}
+            className="text-xs font-mono font-bold"
+          >
+            {turnTimer}s
+          </span>
         </div>
-
-        {/* Right Column on Desktop / Center Section on Mobile: 5x5 Grid */}
-        <main className="w-full flex-1 flex flex-col items-center justify-center my-auto py-1 sm:py-1.5">
-          <div className="aspect-square w-full max-w-[320px] xs:max-w-[350px] sm:max-w-[400px] lg:max-w-[440px] grid grid-cols-5 gap-1 xs:gap-1.5 sm:gap-2 p-1.5 xs:p-2 sm:p-2.5 bg-white border border-slate-200 rounded-2xl sm:rounded-3xl shadow-sm mx-auto box-border">
-            {board.cells.map(cell => {
-              const isMarked = cell.markState.type === 'Marked';
-              const isOwnPick = isMarked && (cell.markState as any).isOwnPick;
-              const isLine = cell.isPartOfCompletedLine;
-
-              return (
-                <button
-                  key={cell.number}
-                  type="button"
-                  disabled={isMarked || !isMyTurn || isGameOver}
-                  onClick={() => handlePickNumber(cell.number)}
-                  className={`relative flex items-center justify-center rounded-xl sm:rounded-2xl font-black text-base sm:text-2xl lg:text-3xl transition-all duration-200 cursor-pointer ${
-                    isMarked
-                      ? isLine
-                        ? 'bg-gradient-to-tr from-amber-400 to-amber-500 text-white font-black shadow-md border-2 border-amber-300 scale-95'
-                        : isOwnPick
-                        ? 'bg-[#EADBFF] text-[#6B21A8] shadow-sm scale-95'
-                        : 'bg-[#D3EEFF] text-[#0369A1] shadow-sm scale-95'
-                      : isMyTurn
-                      ? 'bg-white text-slate-800 hover:border-[#7C3AED] hover:shadow-md border-2 border-slate-300 active:scale-90 hover:scale-105'
-                      : 'bg-slate-50 text-slate-400 border border-slate-200 cursor-not-allowed opacity-90'
-                  }`}
-                >
-                  <span>{cell.number}</span>
-
-                  {/* Pick mark badge */}
-                  {isMarked && (
-                    <span className="absolute bottom-1 right-1 text-[8px] sm:text-[9px] font-bold opacity-80">
-                      {isOwnPick ? '✓' : '•'}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </main>
       </div>
 
-      {/* In-Game WhatsApp style Chat Space between Board and Emoji Reactions */}
-      <InGameChatSpace
-        messages={chatMessages}
-        onOpenChatDrawer={() => setIsQuickChatOpen(true)}
-      />
-
-      {/* Bottom Emoji Reaction Strip & Quick Chat */}
-      <footer className="w-full max-w-[320px] xs:max-w-[350px] sm:max-w-[400px] lg:max-w-[440px] mx-auto mt-0.5 pb-1 sm:pb-2 box-border">
-        <EmojiReactionStrip
-          onSendEmote={handleSendEmote}
-          onToggleQuickChat={() => setIsQuickChatOpen(prev => !prev)}
-          isQuickChatOpen={isQuickChatOpen}
+      {/* ── 5x5 Bingo Board with B-I-N-G-O Letters ── */}
+      <div className="w-full flex-1 flex flex-col justify-center items-center py-1">
+        <BingoBoardView
+          board={board}
+          isInteractive={isMyTurn && !isGameOver}
+          onCellClick={handlePickNumber}
+          isWinningBoard={isGameOver && isWinner}
         />
+      </div>
+
+      {/* ── Recent Picks Queue Pill ── */}
+      <div className="w-full flex justify-center flex-shrink-0 my-1">
+        <RecentPicksQueuePill pickedNumbersHistory={pickedNumbersHistory} />
+      </div>
+
+      {/* ── Head-to-Head PvP Scorecard ── */}
+      <div className="w-full flex-shrink-0 my-1">
+        <HeadToHeadScorecard
+          playerName={localPlayer.displayName}
+          playerAvatarUrl={localPlayer.avatarUrl}
+          playerUsername={localPlayer.username}
+          playerLines={myLinesCount}
+          opponentName={
+            opponent?.displayName || (isAiMode ? 'Master Bot' : 'Opponent')
+          }
+          opponentAvatarUrl={opponent?.avatarUrl}
+          opponentUsername={opponent?.username}
+          opponentLines={opponentLinesCount}
+          targetLines={5}
+          isMyTurn={isMyTurn}
+        />
+      </div>
+
+      {/* ── In-Game WhatsApp Style Chat Space ── */}
+      <div className="w-full flex-shrink-0">
+        <InGameChatSpace
+          messages={chatMessages}
+          onOpenChatDrawer={() => setIsQuickChatOpen(true)}
+        />
+      </div>
+
+      {/* ── Bottom Emoji Reaction Strip & Chat Trigger ── */}
+      <footer className="w-full flex items-center justify-between gap-1.5 pt-1 pb-1 flex-shrink-0">
+        <button
+          type="button"
+          onClick={() => setIsQuickChatOpen(true)}
+          style={{
+            backgroundColor: tokens.backgroundSecondary,
+            borderColor: tokens.surfaceBorder,
+            color: tokens.cellNeutralText
+          }}
+          className="h-10 px-3 rounded-xl border flex items-center gap-1.5 text-xs font-bold cursor-pointer active:scale-95 shadow-xs"
+        >
+          <MessageSquare className="w-4 h-4 text-purple-500" />
+          <span>Chat</span>
+        </button>
+
+        {/* Quick Emoji Reaction Buttons */}
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+          {QUICK_EMOJIS.map((emoji) => (
+            <button
+              key={emoji}
+              type="button"
+              onClick={() => handleSendEmote(emoji, 1.2)}
+              style={{
+                backgroundColor: tokens.surface,
+                borderColor: tokens.surfaceBorder
+              }}
+              className="w-9 h-9 rounded-xl border flex items-center justify-center text-lg hover:scale-110 active:scale-95 transition-transform cursor-pointer shadow-xs"
+            >
+              {emoji}
+            </button>
+          ))}
+        </div>
       </footer>
 
-      {/* Quick Chat Drawer Panel with Custom Input + Phrases */}
+      {/* ── Floating Emotes Particle Overlay ── */}
+      <FloatingEmotes emotes={activeEmotes} onRemoveEmote={removeEmote} />
+
+      {/* ── Quick Chat Drawer ── */}
       <QuickChatDrawer
         isOpen={isQuickChatOpen}
         onClose={() => setIsQuickChatOpen(false)}
         onSendMessage={handleSendMessage}
       />
 
-      {/* Winning / Game Over Modal */}
+      {/* ── Victory / Defeat Modal with Confetti ── */}
       {isGameOver && (
         <WinningModal
           isWinner={isWinner}

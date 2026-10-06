@@ -1,213 +1,438 @@
-import React, { useState } from 'react';
-import { Cast, Wifi, Bot, Users, BarChart2, ArrowRight } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Wifi, Sun, Moon, Bot, Cast, ArrowRight, Download } from 'lucide-react';
 import { Player } from '../types/models';
+import { useTheme } from '../theme/theme';
 import { soundEffects } from '../audio/sounds';
 import { PlayerAvatar } from '../components/PlayerAvatar';
+import { DeveloperNoteModal } from '../components/DeveloperNoteModal';
+import { NearbyNetworkModal } from '../components/NearbyNetworkModal';
+
+interface OngoingMatch {
+  roomCode: string;
+  isHost: boolean;
+  timestamp: number;
+}
 
 interface Props {
   localPlayer: Player;
-  onNavigateToDashboard: () => void;
+  pingMs: number;
+  ongoingMatch?: OngoingMatch | null;
+  onDismissOngoingMatch?: () => void;
+  onRejoinOngoingMatch?: () => void;
+  onPlayAi: (difficulty: 'EASY' | 'HARD') => void;
   onPlayOnline: () => void;
-  onPlayAi: (difficulty: 'EASY' | 'MEDIUM' | 'HARD') => void;
-  onSignOut: () => void;
+  onNavigateToSettings: () => void;
 }
 
 export const MainMenuScreen: React.FC<Props> = ({
   localPlayer,
-  onNavigateToDashboard,
-  onPlayOnline,
+  pingMs,
+  ongoingMatch,
+  onDismissOngoingMatch,
+  onRejoinOngoingMatch,
   onPlayAi,
-  onSignOut
+  onPlayOnline,
+  onNavigateToSettings
 }) => {
-  const [selectedDifficulty, setSelectedDifficulty] = useState<'EASY' | 'MEDIUM' | 'HARD'>('EASY');
+  const { tokens, isDark, toggleTheme } = useTheme();
+
+  const [selectedDifficulty, setSelectedDifficulty] = useState<'EASY' | 'HARD'>('EASY');
+  const [showDeveloperNote, setShowDeveloperNote] = useState(false);
+  const [showNearbyModal, setShowNearbyModal] = useState(false);
+
+  // PWA install prompt handler
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [isInstalled, setIsInstalled] = useState(false);
+
+  useEffect(() => {
+    if (window.matchMedia('(display-mode: standalone)').matches) {
+      setIsInstalled(true);
+    }
+    const handler = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const handleInstall = async () => {
+    soundEffects.playTap();
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      if (outcome === 'accepted') {
+        setIsInstalled(true);
+      }
+      setDeferredPrompt(null);
+    } else {
+      alert(
+        'To install Bingo on your device, tap "Install App" in your browser menu (or Share -> Add to Home Screen on iOS Safari).'
+      );
+    }
+  };
+
+  // 1-second stabilized ping display matching Android
+  const [displayedPing, setDisplayedPing] = useState(pingMs > 0 ? pingMs : 28);
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setDisplayedPing(pingMs > 0 ? pingMs : 28);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [pingMs]);
+
+  const pingColor =
+    displayedPing <= 250
+      ? '#16A34A'
+      : displayedPing <= 500
+      ? '#EAB308'
+      : '#DC2626';
 
   return (
-    <div className="min-h-[100dvh] flex flex-col justify-between max-w-md md:max-w-2xl lg:max-w-3xl mx-auto p-4 sm:p-6 select-none bg-[#FAFAFC] text-slate-800">
-      {/* ── Minimal Compact Top Bar matching Android MainMenuScreen.kt ── */}
-      <header className="flex items-center justify-between py-2 sm:py-3">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-black font-heading tracking-widest text-slate-800 leading-none">
-            B I N G O
-          </h1>
-          <span className="text-[10px] sm:text-xs font-extrabold tracking-widest text-[#7C3AED] uppercase">
-            MULTIPLAYER
-          </span>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {/* Dashboard & Friends Button */}
-          <button
-            type="button"
-            onClick={() => {
-              soundEffects.playTap();
-              onNavigateToDashboard();
-            }}
-            className="flex items-center gap-1.5 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs sm:text-sm font-bold transition-all active:scale-95 cursor-pointer shadow-sm"
-          >
-            <BarChart2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#7C3AED]" />
-            <span>Dashboard</span>
-          </button>
-
-          {/* Compact Profile Avatar Button */}
-          <button
-            type="button"
-            onClick={() => {
-              soundEffects.playTap();
-              onNavigateToDashboard();
-            }}
-            title={`Logged in as @${localPlayer.username}`}
-            className="cursor-pointer transition-transform active:scale-95"
-          >
-            <PlayerAvatar
-              avatarUrl={localPlayer.avatarUrl}
-              displayName={localPlayer.displayName}
-              sizeClassName="w-8 h-8 sm:w-9 sm:h-9 text-sm"
-              fallbackIcon="🧑"
-              className="border-2 border-[#7C3AED] bg-white shadow-sm"
-            />
-          </button>
-        </div>
-      </header>
-
-      {/* ── Social & Friends Quick Hub Card matching Android ── */}
-      <section className="my-2">
-        <div
-          onClick={() => {
-            soundEffects.playTap();
-            onNavigateToDashboard();
-          }}
-          className="flex items-center justify-between p-3.5 sm:p-4 rounded-2xl bg-white border border-slate-200 hover:border-purple-300 hover:bg-purple-50/20 active:scale-[0.98] transition-all cursor-pointer shadow-sm"
-        >
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-[#F5EEFF] flex items-center justify-center text-[#7C3AED]">
-              <Users className="w-5 h-5" />
-            </div>
-            <div>
-              <h2 className="text-xs sm:text-sm font-bold text-slate-800">Friends & Social Hub</h2>
-              <p className="text-[11px] sm:text-xs text-slate-500">Online status, friends list & 1-tap invites</p>
-            </div>
+    <div
+      style={{ backgroundColor: tokens.background }}
+      className="w-full flex-1 flex flex-col justify-between p-4 sm:p-5 select-none transition-colors duration-300 pb-24"
+    >
+      <div>
+        {/* ── Top Bar ── */}
+        <div className="flex items-center justify-between py-1">
+          <div className="flex items-center">
+            <h1
+              style={{ color: tokens.cellNeutralText }}
+              className="text-2xl font-black font-heading tracking-widest leading-none"
+            >
+              B I N G O
+            </h1>
           </div>
-          <ArrowRight className="w-4 h-4 text-slate-400" />
-        </div>
-      </section>
 
-      {/* ── Section Header: SELECT MODE ── */}
-      <div className="flex items-center gap-2 mt-3 mb-1 px-1">
-        <span className="text-[11px] font-extrabold tracking-widest text-slate-400 uppercase">
-          SELECT MODE
-        </span>
-      </div>
-
-      {/* ── Game Modes List ── */}
-      <main className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4 my-auto py-1">
-        {/* 1. Play vs AI Card (Compact) matching Android */}
-        <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-[#F5EEFF] flex items-center justify-center text-[#7C3AED]">
-                <Bot className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-slate-800">Play vs AI Bot</h3>
-                <p className="text-[11px] text-slate-500">Sharpen your skills offline.</p>
-              </div>
+          <div className="flex items-center gap-2.5">
+            {/* 1-Second Stabilized Ping Indicator */}
+            <div className="flex items-center gap-1.5 px-2 py-1">
+              <Wifi
+                style={{ color: tokens.cellNeutralText }}
+                className="w-4 h-4 opacity-80"
+              />
+              <span
+                style={{ color: pingColor }}
+                className="text-xs font-bold font-mono"
+              >
+                {displayedPing > 999 ? '999+ms' : `${displayedPing}ms`}
+              </span>
             </div>
 
+            {/* PWA Install Button (shown when not already standalone) */}
+            {!isInstalled && (
+              <button
+                type="button"
+                onClick={handleInstall}
+                style={{
+                  backgroundColor: tokens.backgroundSecondary,
+                  borderColor: tokens.surfaceBorder,
+                  color: tokens.accentBrand
+                }}
+                title="Install Bingo App (PWA)"
+                className="w-9 h-9 rounded-full border flex items-center justify-center transition-all cursor-pointer active:scale-95 shadow-xs hover:opacity-90"
+              >
+                <Download className="w-4 h-4" />
+              </button>
+            )}
+
+            {/* Quick Theme Toggle */}
             <button
               type="button"
               onClick={() => {
                 soundEffects.playTap();
-                onPlayAi(selectedDifficulty);
+                toggleTheme();
               }}
-              className="py-1.5 px-4 rounded-xl bg-[#7C3AED] hover:bg-[#6D28D9] active:scale-95 text-white font-extrabold text-xs uppercase tracking-wider shadow transition-all cursor-pointer"
+              style={{
+                backgroundColor: tokens.backgroundSecondary,
+                borderColor: tokens.surfaceBorder
+              }}
+              title={isDark ? 'Switch to Light Theme' : 'Switch to Dark Theme'}
+              className="w-9 h-9 rounded-full border flex items-center justify-center transition-all cursor-pointer active:scale-95 shadow-xs"
             >
-              Play
+              {isDark ? (
+                <Sun className="w-4 h-4 text-amber-400" />
+              ) : (
+                <Moon className="w-4 h-4 text-purple-600" />
+              )}
             </button>
-          </div>
 
-          {/* Difficulty Chips */}
-          <div className="mt-3 pt-3 border-t border-slate-100 flex items-center gap-2">
-            <span className="text-[10px] font-bold text-slate-400 uppercase mr-1">Difficulty:</span>
-            {(['EASY', 'MEDIUM', 'HARD'] as const).map(diff => (
-              <button
-                key={diff}
-                type="button"
-                onClick={() => setSelectedDifficulty(diff)}
-                className={`py-1 px-2.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
-                  selectedDifficulty === diff
-                    ? 'bg-[#F5EEFF] text-[#7C3AED] border border-purple-300 font-extrabold'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                {diff}
-              </button>
-            ))}
+            {/* Profile Avatar Button -> Navigates to Settings */}
+            <button
+              type="button"
+              onClick={() => {
+                soundEffects.playTap();
+                onNavigateToSettings();
+              }}
+              title="Profile & Settings"
+              className="cursor-pointer active:scale-95 transition-transform"
+            >
+              <PlayerAvatar
+                avatarUrl={localPlayer.avatarUrl}
+                displayName={localPlayer.displayName}
+                username={localPlayer.username}
+                size={36}
+                borderWidth={1.5}
+                borderColor={tokens.accentBrand}
+              />
+            </button>
           </div>
         </div>
 
-        {/* 2. Online Match Card (Compact) matching Android */}
+        {/* ── Ongoing Match Card (Rejoin) ── */}
+        {ongoingMatch && (
+          <div
+            style={{
+              backgroundColor: isDark ? '#1E242B' : '#EFF6FF',
+              borderColor: isDark ? 'rgba(37, 99, 235, 0.6)' : '#93C5FD'
+            }}
+            className="w-full mt-4 p-3.5 rounded-2xl border shadow-sm flex flex-col gap-3 animate-fade-in"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-500">
+                  MATCH IN PROGRESS
+                </span>
+              </div>
+              <span
+                style={{ color: tokens.textPrimary }}
+                className="text-sm font-bold font-mono"
+              >
+                Room {ongoingMatch.roomCode}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2.5">
+              <button
+                type="button"
+                onClick={onDismissOngoingMatch}
+                style={{
+                  borderColor: tokens.surfaceBorder,
+                  color: tokens.textSecondary
+                }}
+                className="flex-1 h-9 rounded-xl border text-xs font-semibold hover:opacity-80 active:scale-98 transition-all cursor-pointer"
+              >
+                Dismiss
+              </button>
+              <button
+                type="button"
+                onClick={onRejoinOngoingMatch}
+                className="flex-1 h-9 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-sm active:scale-98 transition-all cursor-pointer"
+              >
+                Rejoin
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── Section Header ── */}
+        <div className="mt-5 mb-2.5">
+          <span
+            style={{ color: tokens.textMuted }}
+            className="text-[11px] font-bold tracking-wider uppercase opacity-80"
+          >
+            SELECT MODE
+          </span>
+        </div>
+
+        {/* ── 1. Play vs AI Card ── */}
+        <div
+          style={{
+            backgroundColor: tokens.surface,
+            borderColor: tokens.surfaceBorder
+          }}
+          className="w-full rounded-2xl p-4 border shadow-sm flex flex-col gap-3 mb-3 transition-colors duration-300"
+        >
+          <div className="flex items-center gap-3.5">
+            <Bot
+              style={{ color: isDark ? '#FFFFFF' : tokens.accentBrand }}
+              className="w-7 h-7 flex-shrink-0"
+            />
+            <div className="flex flex-col">
+              <span
+                style={{ color: tokens.cellNeutralText }}
+                className="text-sm sm:text-base font-bold"
+              >
+                Play vs AI
+              </span>
+              <span style={{ color: tokens.textMuted }} className="text-xs">
+                Solo practice match with bot
+              </span>
+            </div>
+          </div>
+
+          {/* Segmented Difficulty Toggle */}
+          <div
+            style={{ backgroundColor: tokens.backgroundSecondary }}
+            className="w-full p-1 rounded-xl flex items-center gap-1 border border-inherit"
+          >
+            <button
+              type="button"
+              onClick={() => {
+                soundEffects.playTap();
+                setSelectedDifficulty('EASY');
+              }}
+              style={{
+                backgroundColor:
+                  selectedDifficulty === 'EASY'
+                    ? isDark
+                      ? '#222222'
+                      : tokens.surface
+                    : 'transparent',
+                borderColor:
+                  selectedDifficulty === 'EASY'
+                    ? isDark
+                      ? '#FFFFFF'
+                      : tokens.accentBrand
+                    : 'transparent',
+                color:
+                  selectedDifficulty === 'EASY'
+                    ? tokens.cellNeutralText
+                    : tokens.textMuted
+              }}
+              className="flex-1 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer text-center"
+            >
+              Easy Bot
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                soundEffects.playTap();
+                setSelectedDifficulty('HARD');
+              }}
+              style={{
+                backgroundColor:
+                  selectedDifficulty === 'HARD'
+                    ? isDark
+                      ? '#222222'
+                      : tokens.surface
+                    : 'transparent',
+                borderColor:
+                  selectedDifficulty === 'HARD'
+                    ? isDark
+                      ? '#FFFFFF'
+                      : tokens.accentBrand
+                    : 'transparent',
+                color:
+                  selectedDifficulty === 'HARD'
+                    ? tokens.cellNeutralText
+                    : tokens.textMuted
+              }}
+              className="flex-1 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer text-center"
+            >
+              Master Bot
+            </button>
+          </div>
+
+          {/* Start AI Match Button */}
+          <button
+            type="button"
+            onClick={() => {
+              soundEffects.playTap();
+              onPlayAi(selectedDifficulty);
+            }}
+            style={{
+              backgroundColor: tokens.primaryButtonBg,
+              color: tokens.primaryButtonText
+            }}
+            className="w-full h-10 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center transition-all cursor-pointer active:scale-98 shadow-sm"
+          >
+            Start AI Game ({selectedDifficulty === 'EASY' ? 'Easy' : 'Master'})
+          </button>
+        </div>
+
+        {/* ── 2. Online Match Card ── */}
         <div
           onClick={() => {
             soundEffects.playTap();
             onPlayOnline();
           }}
-          className="flex items-center justify-between p-4 rounded-2xl bg-white border border-slate-200 hover:border-purple-300 hover:bg-purple-50/20 active:scale-[0.98] transition-all cursor-pointer shadow-sm group"
+          style={{
+            backgroundColor: tokens.surface,
+            borderColor: tokens.surfaceBorder
+          }}
+          className="w-full rounded-2xl p-4 border shadow-sm flex items-center gap-3.5 mb-3 cursor-pointer hover:border-purple-400 active:scale-98 transition-all"
         >
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600">
-              <Cast className="w-5 h-5" />
-            </div>
-            <div>
-              <h3 className="text-sm font-bold text-slate-800 group-hover:text-[#7C3AED] transition-colors">
-                Online Match
-              </h3>
-              <p className="text-[11px] text-slate-500">
-                Host or join multiplayer rooms with friends.
-              </p>
-            </div>
+          <Cast
+            style={{ color: isDark ? '#FFFFFF' : tokens.accentOpponent }}
+            className="w-7 h-7 flex-shrink-0"
+          />
+          <div className="flex flex-col flex-1">
+            <span
+              style={{ color: tokens.cellNeutralText }}
+              className="text-sm sm:text-base font-bold"
+            >
+              Online Match
+            </span>
+            <span style={{ color: tokens.textMuted }} className="text-xs">
+              Host or join multiplayer rooms with friends.
+            </span>
           </div>
-          <ArrowRight className="w-4 h-4 text-slate-400 group-hover:translate-x-1 group-hover:text-[#7C3AED] transition-all" />
         </div>
 
-        {/* 3. Nearby Network Card (Compact) matching Android */}
+        {/* ── 3. Nearby Network Card ── */}
         <div
           onClick={() => {
             soundEffects.playTap();
-            alert('Nearby Network (LAN Wi-Fi / Hotspot discovery) requires raw UDP multicast packets, which is native to the Android APK version. For browser play across PC and phones, please use Online Match!');
+            setShowNearbyModal(true);
           }}
-          className="flex items-center justify-between p-4 rounded-2xl bg-white border border-slate-200 hover:bg-slate-50 active:scale-[0.98] transition-all cursor-pointer shadow-sm opacity-90"
+          style={{
+            backgroundColor: tokens.surface,
+            borderColor: tokens.surfaceBorder
+          }}
+          className="w-full rounded-2xl p-4 border shadow-sm flex items-center gap-3.5 mb-4 cursor-pointer hover:border-orange-400 active:scale-98 transition-all"
         >
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center text-amber-600">
-              <Wifi className="w-5 h-5" />
-            </div>
-            <div>
-              <h3 className="text-sm font-bold text-slate-800">Nearby Network</h3>
-              <p className="text-[11px] text-slate-500">
-                Zero-latency Wi-Fi & Hotspot peer discovery.
-              </p>
-            </div>
+          <Wifi
+            style={{ color: isDark ? '#FFFFFF' : tokens.accentOrange }}
+            className="w-7 h-7 flex-shrink-0"
+          />
+          <div className="flex flex-col flex-1">
+            <span
+              style={{ color: tokens.cellNeutralText }}
+              className="text-sm sm:text-base font-bold"
+            >
+              Nearby Network
+            </span>
+            <span style={{ color: tokens.textMuted }} className="text-xs">
+              Zero-latency Wi-Fi & Hotspot peer discovery.
+            </span>
           </div>
-          <span className="text-[10px] font-bold text-slate-500 uppercase px-2 py-0.5 rounded bg-slate-100">
-            APK
-          </span>
         </div>
-      </main>
+      </div>
 
-      {/* ── Minimal Bottom Footer ── */}
-      <footer className="py-2 text-center flex items-center justify-between text-[11px] text-slate-500 border-t border-slate-200 mt-4">
-        <span>Logged in as <strong className="text-slate-700">@{localPlayer.username}</strong></span>
+      {/* ── Centered Developer Note Pill Button ── */}
+      <div className="flex justify-center my-4">
         <button
           type="button"
           onClick={() => {
             soundEffects.playTap();
-            if (confirm('Switch account or sign out?')) onSignOut();
+            setShowDeveloperNote(true);
           }}
-          className="text-slate-500 hover:text-rose-600 underline cursor-pointer"
+          style={{
+            backgroundColor: isDark ? '#18181B' : '#F1F5F9',
+            borderColor: tokens.surfaceBorder,
+            color: tokens.cellNeutralText
+          }}
+          className="px-5 py-2.5 rounded-full border text-xs sm:text-sm font-medium hover:opacity-85 active:scale-95 transition-all cursor-pointer shadow-xs"
         >
-          Sign Out
+          developer note ☕
         </button>
-      </footer>
+      </div>
+
+      {/* Modals */}
+      <DeveloperNoteModal
+        isOpen={showDeveloperNote}
+        onClose={() => setShowDeveloperNote(false)}
+        username={localPlayer.username}
+      />
+
+      <NearbyNetworkModal
+        isOpen={showNearbyModal}
+        onClose={() => setShowNearbyModal(false)}
+        onPlayOnline={onPlayOnline}
+      />
     </div>
   );
 };

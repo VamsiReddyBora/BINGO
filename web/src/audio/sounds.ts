@@ -94,6 +94,10 @@ class SoundController {
     } catch {}
   }
 
+  public playLineComplete() {
+    this.playLine();
+  }
+
   public playBingoWin() {
     if (!this.soundEnabled) return;
     this.initCtx();
