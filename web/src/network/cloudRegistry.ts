@@ -27,8 +27,11 @@ export interface PlayerRegistryEntry {
   gamesPlayed: number;
   gamesWon: number;
   currentStreak: number;
+  bestStreak?: number;
   level: number;
   lastSeenTimestamp: number;
+  appVersion?: string;
+  appVersionCode?: number;
 }
 
 export interface GameInvite {
@@ -373,37 +376,122 @@ export class CloudRegistry {
   }
 
   /**
-   * Claims and registers username in KeyValue and MQTT retained topic so Android users can search it!
+   * Claims and registers username in KeyValue, user_directory index, ExtendsClass, and MQTT retained topic
+   * so Android users, peer web clients, and the Admin dashboard can find, inspect, and track it in real-time!
    */
   public static async claimAndRegisterUser(player: Player): Promise<boolean> {
     const clean = player.username.trim().toLowerCase().replace(/^@/, '');
     if (!clean) return false;
 
+    const now = Date.now();
     const entry: PlayerRegistryEntry = {
       username: clean,
       uid: player.id,
       displayName: player.displayName || clean,
-      avatarUrl: player.avatarUrl || '🧑',
+      avatarUrl: player.avatarUrl || null,
       gamesPlayed: player.gamesPlayed || 0,
       gamesWon: player.gamesWon || 0,
       currentStreak: player.currentStreak || 0,
+      bestStreak: player.currentStreak || 0,
       level: player.level || 1,
-      lastSeenTimestamp: Date.now()
+      lastSeenTimestamp: now,
+      appVersion: '1.3.2',
+      appVersionCode: 38
     };
 
     const jsonStr = JSON.stringify(entry);
-    const b64 = await safeBase64EncodeAsync(jsonStr);
+    // Standard URL-safe Base64 matching Android AccountSessionManager verbatim
+    const b64 = safeBase64Encode(jsonStr);
 
-    // 1. Write to reg_{username} in KeyValue
-    await this.setKeyValue(`reg_${clean}`, b64);
+    try {
+      // 1. Write to reg_{username} in KeyValue
+      await this.setKeyValue(`reg_${clean}`, b64);
 
-    // 2. Publish to MQTT retained topic bingo/v3/registry/{username}
-    await roomSync.sendRetainedUserRegistry(clean, jsonStr);
+      // 2. Maintain authoritative user_directory index in KeyValue
+      try {
+        const rawDir = await this.getKeyValue('user_directory');
+        const dirUsers = new Set<string>();
+        if (rawDir) {
+          rawDir.split(',').forEach(u => {
+            const c = u.trim().toLowerCase().replace(/^@/, '');
+            if (c) dirUsers.add(c);
+          });
+        }
+        if (!dirUsers.has(clean)) {
+          dirUsers.add(clean);
+          const sorted = Array.from(dirUsers).sort().join(',');
+          await this.setKeyValue('user_directory', sorted);
+        }
+      } catch (dirErr) {
+        console.warn('Error updating user_directory in KeyValue:', dirErr);
+      }
 
-    // 3. Publish online presence
-    await this.publishPresence(clean, 'ONLINE');
+      // 3. Maintain ExtendsClass JSON Bin and link user_{clean} & gid_{gid}
+      try {
+        const targetGid = player.googleId || (player.id.startsWith('google_') ? player.id.replace(/^google_/, '') : null);
+        let binId = await this.getKeyValue(`user_${clean}`);
+        if (!binId && targetGid) {
+          binId = await this.getKeyValue(`gid_${targetGid}`);
+        }
 
-    return true;
+        const backupData: CloudUserDataBackup = {
+          profile: {
+            uid: player.id,
+            username: clean,
+            displayName: player.displayName || clean,
+            email: player.email || null,
+            avatarUrl: player.avatarUrl || null,
+            provider: player.authProvider || 'GOOGLE',
+            gamesPlayed: player.gamesPlayed || 0,
+            gamesWon: player.gamesWon || 0,
+            currentStreak: player.currentStreak || 0,
+            bestStreak: player.currentStreak || 0,
+            level: player.level || 1,
+            xp: 0
+          },
+          matchHistory: player.matchHistory || [],
+          lastBackupTimestamp: now
+        };
+        const backupJson = JSON.stringify(backupData);
+
+        if (!binId || binId.startsWith('{') || binId.length >= 50) {
+          const postRes = await fetch('https://extendsclass.com/api/json-storage/bin', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: backupJson
+          });
+          if (postRes.ok) {
+            const resJson = await postRes.json();
+            if (resJson && resJson.id) {
+              binId = resJson.id;
+            }
+          }
+        }
+
+        if (binId && !binId.startsWith('{')) {
+          await this.setKeyValue(`user_${clean}`, binId);
+          if (targetGid) {
+            await this.setKeyValue(`gid_${targetGid}`, binId);
+          }
+          if (player.email && player.email.includes('@')) {
+            await this.setKeyValue(`gid_${player.email.toLowerCase().trim()}`, binId);
+          }
+        }
+      } catch (binErr) {
+        console.warn('Error syncing ExtendsClass bin for user:', binErr);
+      }
+
+      // 4. Publish to MQTT retained topic bingo/v3/registry/{username}
+      await roomSync.sendRetainedUserRegistry(clean, jsonStr);
+
+      // 5. Publish online presence (KeyValue pres_{clean} + MQTT retained presence)
+      await this.publishPresence(clean, 'ONLINE');
+
+      return true;
+    } catch (e) {
+      console.warn('claimAndRegisterUser error:', e);
+      return false;
+    }
   }
 
   /**
@@ -442,11 +530,17 @@ export class CloudRegistry {
     if (!clean) return;
 
     const now = Date.now();
-    // 1. KeyValue presence: pres_{clean} = "ONLINE:{timestamp}"
-    this.setKeyValue(`pres_${clean}`, `${status}:${now}`).catch(() => {});
+    // 1. KeyValue presence: pres_{clean} = "ONLINE:{timestamp}:1.3.2:38" (matching Android so admin page shows version)
+    this.setKeyValue(`pres_${clean}`, `${status}:${now}:1.3.2:38`).catch(() => {});
 
     // 2. MQTT retained presence: bingo/v3/presence/{clean}
-    const payload = JSON.stringify({ username: clean, status, timestamp: now });
+    const payload = JSON.stringify({
+      username: clean,
+      status,
+      timestamp: now,
+      appVersion: '1.3.2',
+      appVersionCode: 38
+    });
     await roomSync.sendRetainedPresence(clean, payload);
   }
 
@@ -458,9 +552,10 @@ export class CloudRegistry {
       const raw = await this.getKeyValue(`pres_${clean}`);
       if (!raw || !raw.includes(':')) return null;
 
-      const [status, tsStr] = raw.split(':');
-      const timestamp = parseInt(tsStr, 10) || 0;
-      const isOnline = status.toUpperCase() === 'ONLINE' && Date.now() - timestamp < 15_000;
+      const parts = raw.split(':');
+      const status = parts[0] || 'OFFLINE';
+      const timestamp = parseInt(parts[1], 10) || 0;
+      const isOnline = status.toUpperCase() === 'ONLINE' && Date.now() - timestamp < 35_000;
       return { status, timestamp, isOnline };
     } catch {
       return null;
@@ -577,6 +672,9 @@ export class CloudRegistry {
       const jsonStr = JSON.stringify(backup);
 
       let binId = await this.getKeyValue(`gid_${gid}`);
+      if (!binId && cleanUser) {
+        binId = await this.getKeyValue(`user_${cleanUser}`);
+      }
       let success = false;
 
       if (binId && !binId.startsWith('{') && binId.length < 50) {
@@ -627,7 +725,8 @@ export class CloudRegistry {
         readyVersion: 0,
         isHost: false,
         email: backup.profile.email,
-        googleId: gid
+        googleId: gid,
+        matchHistory: backup.matchHistory || []
       };
       await this.claimAndRegisterUser(player);
 

@@ -295,6 +295,9 @@ export const LoginScreen: React.FC<Props> = ({
           lastLogin: Date.now()
         });
 
+        // Authoritatively claim and register user in cloud registry, user_directory, and ExtendsClass
+        await CloudRegistry.claimAndRegisterUser(player);
+
         setShowGoogleModal(false);
         setIsLoading(false);
         onLoginSuccess(player);
@@ -460,7 +463,8 @@ export const LoginScreen: React.FC<Props> = ({
       authProvider: 'GUEST'
     };
 
-    CloudRegistry.claimAndRegisterUser(guestPlayer).catch(() => {});
+    // Register guest player in cloud user directory and KeyValue
+    await CloudRegistry.claimAndRegisterUser(guestPlayer);
     setIsLoading(false);
     onLoginSuccess(guestPlayer);
   };
@@ -526,6 +530,9 @@ export const LoginScreen: React.FC<Props> = ({
           email: backup.profile.email,
           authProvider: 'GOOGLE'
         };
+
+        // Ensure claimed and registered in cloud user directory and KeyValue
+        await CloudRegistry.claimAndRegisterUser(restoredPlayer);
 
         setIsLoading(false);
         onLoginSuccess(restoredPlayer);

@@ -138,34 +138,54 @@ export const AppContent: React.FC = () => {
     return () => window.removeEventListener('popstate', handlePopState);
   }, [localPlayer, currentScreen, selectedTab]);
 
-  // Initialize global presence and MQTT listeners
+  // Initialize global presence, user registration sync, and MQTT listeners
   useEffect(() => {
-    if (localPlayer) {
-      roomSync.initGlobalClient(localPlayer);
-      CloudRegistry.publishPresence(localPlayer.username, 'ONLINE');
+    if (!localPlayer) return;
 
-      roomSync.onPlayersChanged = (newPlayers) => {
-        setPlayersInLobby(newPlayers);
-        const opp = newPlayers.find((p) => p.id !== localPlayer.id);
-        if (opp) setOpponent(opp);
-      };
+    roomSync.initGlobalClient(localPlayer);
+    // Guarantee user is registered in KeyValue, user_directory index, and ExtendsClass
+    CloudRegistry.claimAndRegisterUser(localPlayer).catch(() => {});
 
-      roomSync.onPacketReceived = (packet) => {
-        if (packet.type === 'START_GAME') {
-          soundEffects.playTurnAlert();
-          setMatchSeed(packet.seed || Math.floor(Math.random() * 100000) + 1);
-          setFirstTurnPlayerId(packet.currentTurnPlayerId || localPlayer.id);
-          navigateTo('GAME', 0);
-        }
-      };
+    // Periodic heartbeat to keep KeyValue pres_{username} warm for Admin dashboard
+    const presenceTimer = setInterval(() => {
+      if (localPlayer.username) {
+        CloudRegistry.publishPresence(localPlayer.username, 'ONLINE');
+      }
+    }, 8000);
 
-      roomSync.onInviteReceived = (invite: GameInvite) => {
+    const handleBeforeUnload = () => {
+      if (localPlayer.username) {
+        CloudRegistry.publishPresence(localPlayer.username, 'OFFLINE');
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    roomSync.onPlayersChanged = (newPlayers) => {
+      setPlayersInLobby(newPlayers);
+      const opp = newPlayers.find((p) => p.id !== localPlayer.id);
+      if (opp) setOpponent(opp);
+    };
+
+    roomSync.onPacketReceived = (packet) => {
+      if (packet.type === 'START_GAME') {
         soundEffects.playTurnAlert();
-        if (confirm(`Game invite received from ${invite.fromDisplayName}! Join room ${invite.roomCode}?`)) {
-          handleJoinRoom(invite.roomCode);
-        }
-      };
-    }
+        setMatchSeed(packet.seed || Math.floor(Math.random() * 100000) + 1);
+        setFirstTurnPlayerId(packet.currentTurnPlayerId || localPlayer.id);
+        navigateTo('GAME', 0);
+      }
+    };
+
+    roomSync.onInviteReceived = (invite: GameInvite) => {
+      soundEffects.playTurnAlert();
+      if (confirm(`Game invite received from ${invite.fromDisplayName}! Join room ${invite.roomCode}?`)) {
+        handleJoinRoom(invite.roomCode);
+      }
+    };
+
+    return () => {
+      clearInterval(presenceTimer);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
   }, [localPlayer]);
 
   // Check URL query parameters for ?room=123456

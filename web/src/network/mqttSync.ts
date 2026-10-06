@@ -440,7 +440,13 @@ export class MqttRoomManager {
     this.globalPresenceTimer = setInterval(() => {
       if (!this.client || !this.client.connected || !this.localPlayer?.username) return;
       const clean = this.localPlayer.username.trim().toLowerCase().replace(/^@/, '');
-      const payload = JSON.stringify({ username: clean, status: 'ONLINE', timestamp: Date.now() });
+      const payload = JSON.stringify({
+        username: clean,
+        status: 'ONLINE',
+        timestamp: Date.now(),
+        appVersion: '1.3.2',
+        appVersionCode: 38
+      });
       this.sendRetainedPresence(clean, payload);
     }, 6000);
   }

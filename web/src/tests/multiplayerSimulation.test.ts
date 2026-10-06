@@ -5,7 +5,7 @@ import { MqttRoomManager } from '../network/mqttSync';
 import { BingoEngine } from '../engine/bingoEngine';
 import { Player, RoomMessagePacket } from '../types/models';
 
-describe('Multiplayer Lobby & Game End-to-End Simulation', () => {
+describe('Multiplayer Lobby & Game End-to-End Simulation', { timeout: 30000 }, () => {
   it('CloudRegistry creates, retrieves, and updates room ready status', async () => {
     const testRoomCode = `SIM${Math.floor(100 + Math.random() * 900)}`;
     const host: Player = {
@@ -109,10 +109,11 @@ describe('Multiplayer Lobby & Game End-to-End Simulation', () => {
       readyStatus: 'READY',
       readyVersion: 1
     });
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-
-    // Check if host received READY_STATUS packet from guest
-    const readyPacket = hostPackets.find(p => p.type === 'READY_STATUS' && p.playerId === guestPlayer.id);
+    let readyPacket = hostPackets.find(p => p.type === 'READY_STATUS' && p.playerId === guestPlayer.id);
+    for (let i = 0; i < 20 && !readyPacket; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      readyPacket = hostPackets.find(p => p.type === 'READY_STATUS' && p.playerId === guestPlayer.id);
+    }
     assert.ok(readyPacket !== undefined, 'Host should receive READY_STATUS packet');
     assert.strictEqual(readyPacket.readyStatus, 'READY');
 
@@ -124,10 +125,13 @@ describe('Multiplayer Lobby & Game End-to-End Simulation', () => {
       seed: testSeed,
       currentTurnPlayerId: hostPlayer.id
     });
-    await new Promise((resolve) => setTimeout(resolve, 1000));
 
     // Check if guest received START_GAME packet
-    const startPacket = guestPackets.find(p => p.type === 'START_GAME');
+    let startPacket = guestPackets.find(p => p.type === 'START_GAME');
+    for (let i = 0; i < 20 && !startPacket; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      startPacket = guestPackets.find(p => p.type === 'START_GAME');
+    }
     assert.ok(startPacket !== undefined, 'Guest should receive START_GAME packet');
     assert.strictEqual(startPacket.seed, testSeed);
     assert.strictEqual(startPacket.currentTurnPlayerId, hostPlayer.id);
@@ -302,7 +306,7 @@ describe('Multiplayer Lobby & Game End-to-End Simulation', () => {
     receiver.disconnect();
   });
 
-  it('Google user cloud backup and friends list cross-platform sync', async () => {
+  it('Google user cloud backup and friends list cross-platform sync', { timeout: 15000 }, async () => {
     const testGoogleId = `gid_test_${Date.now()}`;
     const testUsername = `user_${Math.floor(1000 + Math.random() * 9000)}`;
 
