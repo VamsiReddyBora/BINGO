@@ -107,4 +107,14 @@ describe('Web Bingo Engine & FastPacketCodec Tests', () => {
     const decoded = Buffer.from(unpadded, 'base64').toString('utf8');
     assert.strictEqual(decoded, jsonStr);
   });
+
+  it('BingoEngine.resolvePlayerBoardSeed matches Android LobbyLifecycleEngine bit-for-bit', () => {
+    const baseSeed = 123456789;
+    const vampireSeed = BingoEngine.resolvePlayerBoardSeed(baseSeed, { username: 'vampire', id: 'google_123', isHost: true }, 0);
+    const bobSeed = BingoEngine.resolvePlayerBoardSeed(baseSeed, { username: 'bob', id: 'google_456', isHost: false }, 1);
+
+    assert.strictEqual(vampireSeed.toString(), '-5513532478955952321');
+    assert.strictEqual(bobSeed.toString(), '-3351804022793641929');
+    assert.notStrictEqual(vampireSeed, bobSeed);
+  });
 });

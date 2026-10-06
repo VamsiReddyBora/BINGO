@@ -268,4 +268,28 @@ export class BingoEngine {
 
     return bestCell.number;
   }
+
+  /**
+   * Deterministic & Collision-Free Player Board Seed Derivation matching Android LobbyLifecycleEngine.
+   */
+  public static resolvePlayerBoardSeed(
+    baseSeed: number | bigint,
+    player: { username?: string; id?: string; isHost?: boolean },
+    index: number
+  ): bigint {
+    const pUser = (player.username || '').trim().toLowerCase().replace(/^@/, '').replace(/^u_/, '');
+    const pId = (player.id || '').trim().toLowerCase().replace(/^u_/, '');
+    const clean = pUser || pId;
+    let h = 1125899906842597n;
+    for (let i = 0; i < clean.length; i++) {
+      h = BigInt.asIntN(64, 31n * h + BigInt(clean.charCodeAt(i)));
+    }
+    const roleMultiplier = player.isHost ? 100003n : BigInt(index + 1) * 200009n;
+    const baseBig = BigInt(baseSeed);
+    let mixed = BigInt.asIntN(64, baseBig ^ h ^ roleMultiplier);
+    if (mixed === 0n) {
+      mixed = BigInt.asIntN(64, baseBig + BigInt(index + 1) * 37n);
+    }
+    return mixed;
+  }
 }

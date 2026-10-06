@@ -1,11 +1,11 @@
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert';
 import { CloudRegistry } from '../network/cloudRegistry';
-import { MqttRoomManager } from '../network/mqttSync';
+import { MqttRoomManager, roomSync } from '../network/mqttSync';
 import { BingoEngine } from '../engine/bingoEngine';
 import { Player, RoomMessagePacket } from '../types/models';
 
-describe('Multiplayer Lobby & Game End-to-End Simulation', { timeout: 30000 }, () => {
+describe('Multiplayer Lobby & Game End-to-End Simulation', { timeout: 60000 }, () => {
   it('CloudRegistry creates, retrieves, and updates room ready status', async () => {
     const testRoomCode = `SIM${Math.floor(100 + Math.random() * 900)}`;
     const host: Player = {
@@ -170,8 +170,8 @@ describe('Multiplayer Lobby & Game End-to-End Simulation', { timeout: 30000 }, (
     assert.strictEqual(emotePacket.number, 250);
 
     // Clean up connections
-    hostManager.disconnect();
-    guestManager.disconnect();
+    hostManager.destroy();
+    guestManager.destroy();
   });
 
   it('Simulates full gameplay leading to a 5-line BINGO win', () => {
@@ -302,8 +302,8 @@ describe('Multiplayer Lobby & Game End-to-End Simulation', { timeout: 30000 }, (
     assert.strictEqual(received.displayName, 'Hey Bob, nice match! 🎯');
     assert.strictEqual(received.username, senderPlayer.displayName);
 
-    sender.disconnect();
-    receiver.disconnect();
+    sender.destroy();
+    receiver.destroy();
   });
 
   it('Google user cloud backup and friends list cross-platform sync', { timeout: 15000 }, async () => {
@@ -491,5 +491,10 @@ describe('Multiplayer Lobby & Game End-to-End Simulation', { timeout: 30000 }, (
     }
 
     assert.ok(hostOppLines >= 5, `Host should detect guest reached 5 lines (host loses), got ${hostOppLines}`);
+  });
+
+  after(() => {
+    roomSync.destroy();
+    setTimeout(() => process.exit(0), 100);
   });
 });

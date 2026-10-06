@@ -256,12 +256,12 @@ export const AppContent: React.FC = () => {
     CloudRegistry.createRoom(generated, hostPlayer).catch(() => {});
 
     // Join room over MQTT
-    roomSync.joinRoom(generated, hostPlayer);
+    roomSync.joinRoom(generated, hostPlayer, [hostPlayer]);
     navigateTo('LOBBY', 0);
   };
 
   // Join Online Room
-  const handleJoinRoom = (code: string) => {
+  const handleJoinRoom = async (code: string) => {
     if (!localPlayer) return;
     const clean = code.trim().toUpperCase();
     setRoomCode(clean);
@@ -273,8 +273,6 @@ export const AppContent: React.FC = () => {
       lobbyReadyStatus: 'NOT_READY'
     };
 
-    setPlayersInLobby([joinerPlayer]);
-
     const ongoing: OngoingMatch = {
       roomCode: clean,
       isHost: false,
@@ -285,7 +283,21 @@ export const AppContent: React.FC = () => {
       localStorage.setItem(STORAGE_KEY_ONGOING, JSON.stringify(ongoing));
     } catch {}
 
-    roomSync.joinRoom(clean, joinerPlayer);
+    // 1. Validate & join room via cloud registry & retained MQTT
+    let initialPlayers = [joinerPlayer];
+    try {
+      const joinRes = await CloudRegistry.validateAndJoinRoom(clean, joinerPlayer);
+      if (joinRes && joinRes.success && joinRes.session && joinRes.session.players) {
+        initialPlayers = joinRes.session.players;
+      }
+    } catch {}
+
+    setPlayersInLobby(initialPlayers);
+    const opp = initialPlayers.find((p) => p.id !== localPlayer.id) || null;
+    setOpponent(opp);
+
+    // 2. Join room over MQTT broker and connect to host
+    roomSync.joinRoom(clean, joinerPlayer, initialPlayers);
     navigateTo('LOBBY', 0);
   };
 

@@ -3,7 +3,9 @@ import { Player, RoomMessagePacket } from '../types/models';
 import { FastPacketCodec } from './codec';
 import { NetworkPingMonitor } from './pingMonitor';
 
-export const MQTT_WS_URL = 'wss://broker.emqx.io:8084/mqtt';
+export const MQTT_WS_URL = 'wss://p0812f88.ala.asia-southeast1.emqxsl.com:8084/mqtt';
+export const MQTT_USERNAME = 'Bora';
+export const MQTT_PASSWORD = 'bora7989';
 
 export class MqttRoomManager {
   private client: MqttClient | null = null;
@@ -37,6 +39,8 @@ export class MqttRoomManager {
     try {
       this.client = mqtt.connect(MQTT_WS_URL, {
         clientId,
+        username: MQTT_USERNAME,
+        password: MQTT_PASSWORD,
         clean: true,
         reconnectPeriod: 2500,
         connectTimeout: 8000,
@@ -89,13 +93,20 @@ export class MqttRoomManager {
     this.client.subscribe(`bingo/v3/invites/${clean}`, { qos: 1 });
   }
 
-  public connect(roomCode: string, player: Player) {
+  public connect(roomCode: string, player: Player, initialPlayers: Player[] = []) {
     const cleanCode = roomCode.trim().toUpperCase();
     this.currentRoomCode = cleanCode;
     this.localPlayer = { ...player };
 
     this.playerRegistry.clear();
     this.playerRegistry.set(player.id, { ...player, lastSeenTimestamp: Date.now() });
+    if (initialPlayers && initialPlayers.length > 0) {
+      initialPlayers.forEach(p => {
+        if (p && p.id && p.id !== player.id) {
+          this.playerRegistry.set(p.id, { ...p, lastSeenTimestamp: Date.now() });
+        }
+      });
+    }
     this.notifyPlayers();
 
     if (!this.client || !this.client.connected) {
@@ -118,12 +129,60 @@ export class MqttRoomManager {
     this.client.subscribe(topic, { qos: 1 });
   }
 
-  public joinRoom(roomCode: string, player: Player) {
-    this.connect(roomCode, player);
+  public joinRoom(roomCode: string, player: Player, initialPlayers: Player[] = []) {
+    this.connect(roomCode, player, initialPlayers);
   }
 
   public leaveRoom() {
     this.disconnect();
+  }
+
+  public async getRoomMetaMqtt(roomCode: string): Promise<any | null> {
+    const cleanCode = roomCode.trim().toUpperCase();
+    const client = await this.ensureConnected();
+    if (!client || !client.connected) return null;
+
+    return new Promise((resolve) => {
+      const topic = `bingo/v3/room_meta/${cleanCode}`;
+      let resolved = false;
+
+      const timer = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          try { client.unsubscribe(topic); } catch {}
+          resolve(null);
+        }
+      }, 2000);
+
+      const onMsg = (t: string, message: Buffer) => {
+        if (t === topic && !resolved) {
+          resolved = true;
+          clearTimeout(timer);
+          client.removeListener('message', onMsg);
+          try { client.unsubscribe(topic); } catch {}
+          try {
+            const raw = message.toString().trim();
+            if (raw && raw.startsWith('{')) {
+              const session = JSON.parse(raw);
+              if (session.status !== 'CLOSED') {
+                return resolve(session);
+              }
+            }
+          } catch {}
+          resolve(null);
+        }
+      };
+
+      client.on('message', onMsg);
+      client.subscribe(topic, { qos: 1 }, (err) => {
+        if (err && !resolved) {
+          resolved = true;
+          clearTimeout(timer);
+          client.removeListener('message', onMsg);
+          resolve(null);
+        }
+      });
+    });
   }
 
   public sendStartGame(seed: number, starterId: string) {
@@ -139,14 +198,15 @@ export class MqttRoomManager {
     this.updateLocalReadyStatus(status);
   }
 
-  public sendPick(number: number, turnNumber: number, nextTurnId: string, pickedHistory: number[]) {
+  public sendPick(number: number, turnNumber: number, nextTurnId: string, pickedHistory: number[], seed: number = 0) {
     this.sendPacket({
       type: 'PICK_NUMBER',
       playerId: this.localPlayer?.id || '',
       number,
       turnNumber,
       currentTurnPlayerId: nextTurnId,
-      pickedHistory
+      pickedHistory,
+      seed
     });
   }
 
@@ -269,26 +329,46 @@ export class MqttRoomManager {
       }
     }
 
+    if (packet.type === 'ROOM_STATE' && packet.players && packet.players.length > 0) {
+      this.mergePlayers(packet.players);
+    }
+
+    if (packet.type === 'JOIN' && this.localPlayer?.isHost) {
+      this.sendPacket({
+        type: 'ROOM_STATE',
+        playerId: this.localPlayer.id,
+        displayName: this.localPlayer.displayName,
+        username: this.localPlayer.username,
+        isHost: true,
+        avatarUrl: this.localPlayer.avatarUrl,
+        players: this.getPlayers(),
+        timestamp: Date.now()
+      });
+    }
+
     if (packet.playerId && (packet.type === 'HEARTBEAT' || packet.type === 'JOIN' || packet.type === 'READY_STATUS')) {
       const existing = this.playerRegistry.get(packet.playerId);
-      const updated: Player = {
-        id: packet.playerId,
-        displayName: packet.displayName || existing?.displayName || 'Player',
-        username: packet.username || existing?.username || '',
-        isHost: packet.isHost ?? existing?.isHost ?? false,
-        avatarUrl: packet.avatarUrl ?? existing?.avatarUrl,
-        score: existing?.score ?? 0,
-        completedLinesCount: existing?.completedLinesCount ?? 0,
-        gamesPlayed: packet.gamesPlayed ?? existing?.gamesPlayed ?? 0,
-        gamesWon: packet.gamesWon ?? existing?.gamesWon ?? 0,
-        currentStreak: packet.currentStreak ?? existing?.currentStreak ?? 0,
-        level: packet.level ?? existing?.level ?? 1,
-        lastSeenTimestamp: Date.now(),
-        lobbyReadyStatus: (packet.readyStatus as any) || existing?.lobbyReadyStatus || (packet.isHost ? 'READY' : 'NOT_READY'),
-        readyVersion: packet.readyVersion ?? existing?.readyVersion ?? 0
-      };
-      this.playerRegistry.set(packet.playerId, updated);
-      this.notifyPlayers();
+      const isLocal = this.localPlayer && (packet.playerId === this.localPlayer.id || (packet.username && this.localPlayer.username && packet.username.toLowerCase() === this.localPlayer.username.toLowerCase()));
+      if (!isLocal) {
+        const updated: Player = {
+          id: packet.playerId,
+          displayName: packet.displayName || existing?.displayName || 'Player',
+          username: packet.username || existing?.username || '',
+          isHost: packet.isHost ?? existing?.isHost ?? false,
+          avatarUrl: packet.avatarUrl ?? existing?.avatarUrl,
+          score: existing?.score ?? 0,
+          completedLinesCount: existing?.completedLinesCount ?? 0,
+          gamesPlayed: packet.gamesPlayed ?? existing?.gamesPlayed ?? 0,
+          gamesWon: packet.gamesWon ?? existing?.gamesWon ?? 0,
+          currentStreak: packet.currentStreak ?? existing?.currentStreak ?? 0,
+          level: packet.level ?? existing?.level ?? 1,
+          lastSeenTimestamp: Date.now(),
+          lobbyReadyStatus: (packet.readyStatus as any) || existing?.lobbyReadyStatus || (packet.isHost ? 'READY' : 'NOT_READY'),
+          readyVersion: packet.readyVersion ?? existing?.readyVersion ?? 0
+        };
+        this.playerRegistry.set(packet.playerId, updated);
+        this.notifyPlayers();
+      }
     }
 
     if (packet.type === 'PING') {
@@ -350,7 +430,7 @@ export class MqttRoomManager {
     const now = Date.now();
     players.forEach(p => {
       if (!p.id) return;
-      const isLocal = this.localPlayer && p.id === this.localPlayer.id;
+      const isLocal = this.localPlayer && (p.id === this.localPlayer.id || (p.username && this.localPlayer.username && p.username.toLowerCase() === this.localPlayer.username.toLowerCase()));
       const existing = this.playerRegistry.get(p.id);
       if (!existing) {
         this.playerRegistry.set(p.id, {
@@ -424,7 +504,7 @@ export class MqttRoomManager {
       let changed = false;
       for (const [id, player] of this.playerRegistry.entries()) {
         if (this.localPlayer && id === this.localPlayer.id) continue;
-        if (now - player.lastSeenTimestamp > 12000) {
+        if (now - player.lastSeenTimestamp > 30000) {
           this.playerRegistry.delete(id);
           changed = true;
         }
@@ -466,6 +546,15 @@ export class MqttRoomManager {
 
     this.currentRoomCode = null;
     this.playerRegistry.clear();
+  }
+
+  public destroy() {
+    this.disconnect();
+    if (this.globalPresenceTimer) clearInterval(this.globalPresenceTimer);
+    if (this.client) {
+      try { this.client.end(true); } catch {}
+      this.client = null;
+    }
   }
 }
 

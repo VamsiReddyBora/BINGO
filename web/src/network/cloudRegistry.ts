@@ -206,17 +206,23 @@ export class CloudRegistry {
     }
 
     try {
+      // 1. Check MQTT retained topic first (instant fallback)
       let session: OnlineRoomSession | null = null;
+      try {
+        session = await roomSync.getRoomMetaMqtt(cleanCode);
+      } catch {}
 
-      // 1. Check KeyValue
-      const raw = await this.getKeyValue(`room_${cleanCode}`);
-      if (raw) {
-        try {
-          const jsonStr = await safeBase64DecodeAsync(raw);
-          if (jsonStr.startsWith('{')) {
-            session = JSON.parse(jsonStr);
-          }
-        } catch {}
+      // 2. Check KeyValue store
+      if (!session) {
+        const raw = await this.getKeyValue(`room_${cleanCode}`);
+        if (raw) {
+          try {
+            const jsonStr = await safeBase64DecodeAsync(raw);
+            if (jsonStr.startsWith('{')) {
+              session = JSON.parse(jsonStr);
+            }
+          } catch {}
+        }
       }
 
       if (!session) {
@@ -278,12 +284,22 @@ export class CloudRegistry {
   }
 
   /**
-   * Fetches latest room session from KeyValue cloud registry.
+   * Fetches latest room session from KeyValue cloud registry & MQTT retained topic.
    */
   public static async getRoom(roomCode: string): Promise<OnlineRoomSession | null> {
     const cleanCode = roomCode.trim().toUpperCase();
     if (cleanCode.length !== 6) return null;
+
     try {
+      // 1. Try MQTT retained topic first (ultra-fast, < 100ms)
+      const mqttSession = await roomSync.getRoomMetaMqtt(cleanCode);
+      if (mqttSession && mqttSession.status !== 'CLOSED') {
+        return mqttSession;
+      }
+    } catch {}
+
+    try {
+      // 2. Try KeyValue store
       const raw = await this.getKeyValue(`room_${cleanCode}`);
       if (raw) {
         const jsonStr = await safeBase64DecodeAsync(raw);

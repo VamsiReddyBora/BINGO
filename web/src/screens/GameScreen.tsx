@@ -59,8 +59,12 @@ export const GameScreen: React.FC<Props> = ({
 }) => {
   const { tokens, isDark } = useTheme();
 
-  const mySeed = localPlayer.isHost || isAiMode ? seed : seed + 1;
-  const oppSeed = localPlayer.isHost || isAiMode ? seed + 1 : seed;
+  const mySeed = isAiMode
+    ? (localPlayer.isHost ? seed : seed + 1)
+    : BingoEngine.resolvePlayerBoardSeed(seed, localPlayer, localPlayer.isHost ? 0 : 1);
+  const oppSeed = isAiMode
+    ? (localPlayer.isHost ? seed + 1 : seed)
+    : (opponent ? BingoEngine.resolvePlayerBoardSeed(seed, opponent, opponent.isHost ? 0 : 1) : BigInt(seed + 99999));
 
   const [board, setBoard] = useState<Board>(() => BingoEngine.generateBoard(5, mySeed));
   const [opponentBoard, setOpponentBoard] = useState<Board>(() => BingoEngine.generateBoard(5, oppSeed));
@@ -275,7 +279,7 @@ export const GameScreen: React.FC<Props> = ({
 
       // Broadcast move to opponent
       if (!isAiMode) {
-        roomSync.sendPick(number, turnNumber, nextTurnId, [...pickedNumbersHistory, number]);
+        roomSync.sendPick(number, turnNumber, nextTurnId, [...pickedNumbersHistory, number], seed);
       }
     },
     [
