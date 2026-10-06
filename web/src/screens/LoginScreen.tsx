@@ -102,9 +102,15 @@ export const LoginScreen: React.FC<Props> = ({
   const [savedAccounts, setSavedAccounts] = useState<SavedGoogleAccount[]>([]);
   const [selectedAccountEmail, setSelectedAccountEmail] = useState<string | null>(null);
 
+  const DEFAULT_GOOGLE_CLIENT_ID = '957593338442-ol5p4icr1a8e15m8lb1ln5mab5n1r5lp.apps.googleusercontent.com';
+
   // Google OAuth 2.0 Client ID for Google Identity Services
   const [googleClientId, setGoogleClientId] = useState<string>(() => {
-    return (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || localStorage.getItem('bingo_google_client_id') || '';
+    return (
+      (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID ||
+      localStorage.getItem('bingo_google_client_id') ||
+      DEFAULT_GOOGLE_CLIENT_ID
+    );
   });
   const [clientIdInput, setClientIdInput] = useState('');
   const [copySuccess, setCopySuccess] = useState(false);
@@ -126,6 +132,33 @@ export const LoginScreen: React.FC<Props> = ({
       localStorage.removeItem('bingo_saved_google_accounts_v1');
     } catch {}
     setSavedAccounts(getSavedGoogleAccounts());
+
+    // Check if returning from Google OAuth redirect with #access_token=...
+    if (window.location.hash.includes('access_token')) {
+      const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+      const token = hashParams.get('access_token');
+      if (token) {
+        setIsLoading(true);
+        setLoadingMessage('Completing Google Sign-In...');
+        window.history.replaceState(null, '', window.location.pathname);
+        fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+          .then((res) => res.json())
+          .then((data) => {
+            if (data && data.email) {
+              const email = data.email.toLowerCase();
+              const name = data.name || email.split('@')[0];
+              const sub = data.sub || `google_${Date.now()}`;
+              const pic = data.picture;
+              executeGoogleSignInProcess(email, sub, name, pic);
+            }
+          })
+          .catch(() => {
+            setIsLoading(false);
+          });
+      }
+    }
   }, []);
 
   // ── Handle GIS Credential Response (Google Identity Services) ──
@@ -152,10 +185,11 @@ export const LoginScreen: React.FC<Props> = ({
   useEffect(() => {
     const initGis = () => {
       const g = (window as any).google;
-      if (g?.accounts?.id && googleClientId) {
+      const cid = googleClientId || DEFAULT_GOOGLE_CLIENT_ID;
+      if (g?.accounts?.id && cid) {
         try {
           g.accounts.id.initialize({
-            client_id: googleClientId,
+            client_id: cid,
             callback: handleGisCredentialResponse,
             auto_select: false,
             cancel_on_tap_outside: true,
@@ -185,6 +219,81 @@ export const LoginScreen: React.FC<Props> = ({
     return () => clearTimeout(timer);
   }, [googleClientId, isDark, showGoogleModal]);
 
+  // ── Universal Google Authentication Trigger ──
+  // Works across Chrome, Brave, Samsung Internet, Safari, etc.
+  const triggerGoogleAuth = () => {
+    soundEffects.playTap();
+    setErrorMessage(null);
+
+    const g = (window as any).google;
+    const cid = googleClientId || DEFAULT_GOOGLE_CLIENT_ID;
+
+    // Method 1: Google OAuth 2.0 Token Client (Opens Google account chooser popup in all browsers)
+    if (g?.accounts?.oauth2) {
+      try {
+        const tokenClient = g.accounts.oauth2.initTokenClient({
+          client_id: cid,
+          scope: 'email profile openid',
+          callback: async (tokenResponse: any) => {
+            if (tokenResponse?.error) {
+              console.warn('Google OAuth response error:', tokenResponse.error);
+              setIsLoading(false);
+              return;
+            }
+            if (tokenResponse?.access_token) {
+              try {
+                setIsLoading(true);
+                setLoadingMessage('Verifying Google account...');
+                const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                  headers: { Authorization: `Bearer ${tokenResponse.access_token}` }
+                });
+                if (res.ok) {
+                  const data = await res.json();
+                  const email = data.email.toLowerCase();
+                  const name = data.name || email.split('@')[0];
+                  const sub = data.sub || `google_${Date.now()}`;
+                  const pic = data.picture;
+                  await executeGoogleSignInProcess(email, sub, name, pic);
+                } else {
+                  throw new Error('Userinfo fetch failed');
+                }
+              } catch {
+                setIsLoading(false);
+                setErrorMessage('Failed to fetch Google profile. Please try again.');
+              }
+            }
+          }
+        });
+
+        tokenClient.requestAccessToken({ prompt: 'select_account' });
+        return;
+      } catch (err) {
+        console.warn('OAuth token client error:', err);
+      }
+    }
+
+    // Method 2: Google Identity Services One Tap prompt
+    if (g?.accounts?.id) {
+      try {
+        g.accounts.id.prompt((notification: any) => {
+          if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+            console.log('GIS prompt not displayed:', notification.getNotDisplayedReason?.());
+            setShowGoogleModal(true);
+          }
+        });
+        return;
+      } catch (e) {
+        console.warn('GIS prompt error:', e);
+      }
+    }
+
+    // Method 3: Direct OAuth Redirect to accounts.google.com
+    const origin = window.location.origin;
+    const redirectUri = origin + window.location.pathname;
+    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${cid}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=token&scope=openid%20email%20profile&prompt=select_account`;
+    window.location.href = authUrl;
+  };
+
   // ── Open Google Sign-In Sheet / Prompt native phone chooser ──
   const handleOpenGoogleSignIn = () => {
     soundEffects.playTap();
@@ -193,51 +302,20 @@ export const LoginScreen: React.FC<Props> = ({
     const accounts = getSavedGoogleAccounts();
     setSavedAccounts(accounts);
 
-    // If user has saved account(s) on this phone, open the 1-tap account chooser
+    // If user has saved authentic account(s) on this phone, show 1-tap chooser
     if (accounts.length > 0) {
       setShowGoogleModal(true);
       return;
     }
 
-    // If Google Client ID is configured, trigger Google Identity Services
-    if (googleClientId) {
-      setShowGoogleModal(true);
-      const g = (window as any).google;
-      if (g?.accounts?.id) {
-        try {
-          g.accounts.id.prompt((notification: any) => {
-            if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-              console.log('GIS prompt dismissed or not displayed:', notification.getNotDisplayedReason?.());
-            }
-          });
-        } catch (e) {
-          console.warn('GIS prompt error:', e);
-        }
-      }
-      return;
-    }
-
-    // If no client ID configured yet, show Google Cloud Console Web Setup dialog
-    // (exact 1:1 parity with Android v1.3.2's Release SHA-1 setup dialog)
-    setShowGoogleSetupModal(true);
+    // Launch Google's authentic account picker directly!
+    triggerGoogleAuth();
   };
 
   // ── Handle Triggering Google's Native Account Chooser on Phone ──
   const handleTriggerGooglePrompt = () => {
     soundEffects.playTap();
-    if (!googleClientId) {
-      setShowGoogleModal(false);
-      setShowGoogleSetupModal(true);
-      return;
-    }
-    const g = (window as any).google;
-    if (g?.accounts?.id) {
-      try {
-        g.accounts.id.prompt();
-      } catch (e) {
-        console.warn('GIS prompt error:', e);
-      }
-    }
+    triggerGoogleAuth();
   };
 
   // ── Save Developer / Admin Web Client ID ──
