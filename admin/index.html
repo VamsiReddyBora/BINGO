@@ -3258,37 +3258,23 @@
 
     // Authoritative ExtendsClass Bin mappings (fast, 100% accurate, no rate-limiting)
     const KNOWN_USER_BINS = {
+      'aish': 'acbabea',
       'ammu': 'bbdfeaa',
-      'bob': 'bfbafff',
+      'bob': 'efacaec',
       'bora': 'dbadeef',
       'chandankumar0393': 'bbddcdc',
       'charan': 'bdddadf',
       'dangersmiley': 'eabdbcd',
-      'dummymail': null,
-      'g_player': null,
-      'guest_sim_2': null,
       'hari': 'cddcadf',
-      'hjskakj': 'ddbeded',
+      'keerthana88977': 'bcefeef',
       'navii': 'ddbeded',
-      'player4': 'feaccfc',
       'realme': 'abbaabe',
+      'sam': 'ffccccb',
       'shivuu': 'cefdade',
-      'sim_host': null,
-      'test_vamsi_player': 'dfccfce',
-      'user_1566': 'aafadac',
-      'user_1989': 'aaededf',
-      'user_2814': 'bceafbd',
-      'user_2957': 'bbeabdd',
-      'user_7508': 'cfefeda',
-      'user_8136': 'bcbccdd',
-      'user_8171': 'faddadd',
-      'user_8407': 'bdcdaac',
-      'user_9716': null,
       'vampire': 'ddfdbbe',
       'vamsi': 'defffae',
       'vanabha': 'dafaaac',
-      'vani': 'fdedeba',
-      'webtest_676': 'dfcdfbc'
+      'vani': 'fdedeba'
     };
 
     // Concurrency guard to prevent overlapping polls
@@ -3335,10 +3321,29 @@
           usernames = usernames.filter(u => !globalState.deletedUsernamesSet.has(u));
         }
 
+        // Strictly exclude any temporary, guest, or test accounts
+        const isTempUser = (u) => {
+          if (!u) return true;
+          return u.startsWith('user_') || 
+                 u.startsWith('guest_') || 
+                 u === 'guest' ||
+                 u === 'dummymail' || 
+                 u === 'g_player' || 
+                 u === 'player' || 
+                 u === 'player4' || 
+                 u === 'sim_host' || 
+                 u === 'test_vamsi_player' || 
+                 u === 'hjskakj' ||
+                 u.startsWith('webtest_');
+        };
+        usernames = usernames.filter(u => !isTempUser(u));
+
         usernames = Array.from(new Set(usernames)).sort();
 
-        // If cloud user_directory was empty or missing registered users, auto-repair it immediately
-        if (!rawDir || usernames.length > rawDir.split(',').filter(x => x.trim().length > 0).length) {
+        // If cloud user_directory was empty, missing registered users, or contains temporary users, auto-repair it immediately
+        const rawDirClean = (rawDir || '').split(',').map(x => x.trim().toLowerCase()).filter(x => x.length > 0);
+        const hasTempInCloud = rawDirClean.some(x => isTempUser(x));
+        if (!rawDir || usernames.length > rawDirClean.length || hasTempInCloud) {
           setKeyValueDirect('user_directory', usernames.join(',')).catch(console.warn);
         }
 
