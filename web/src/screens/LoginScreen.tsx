@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { User, Info, AlertCircle, ArrowRight, ArrowLeft, X, Plus, ChevronRight, Check, Trash2, CheckCircle2 } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { User, Info, AlertCircle, ArrowRight, ArrowLeft, X, Plus, ChevronRight, Check, Trash2, CheckCircle2, Copy, ShieldCheck } from 'lucide-react';
 import { Player, CloudUserDataBackup } from '../types/models';
 import { CloudRegistry } from '../network/cloudRegistry';
 import { soundEffects } from '../audio/sounds';
@@ -38,17 +38,15 @@ function parseJwt(token: string) {
   }
 }
 
-// Retrieve ONLY accounts previously signed into on THIS specific browser/phone
+// Retrieve ONLY authentic accounts previously signed into on THIS specific browser/phone
 function getSavedGoogleAccounts(): SavedGoogleAccount[] {
   try {
-    // Clean up any legacy storage keys that had default test accounts
     localStorage.removeItem('bingo_saved_google_accounts_v1');
 
     const raw = localStorage.getItem(STORAGE_KEY_SAVED_GOOGLE_ACCOUNTS);
     if (raw) {
       const list = JSON.parse(raw);
       if (Array.isArray(list)) {
-        // Guard: explicitly filter out any hardcoded or foreign test accounts
         const clean = list.filter(
           (a) =>
             a &&
@@ -67,7 +65,7 @@ function getSavedGoogleAccounts(): SavedGoogleAccount[] {
 
 function saveGoogleAccountToStorage(acc: SavedGoogleAccount) {
   try {
-    if (acc.email.toLowerCase() === 'sherlock7528@gmail.com') return; // Do not save foreign test account
+    if (acc.email.toLowerCase() === 'sherlock7528@gmail.com') return;
     const existing = getSavedGoogleAccounts().filter(
       (a) => a.email.toLowerCase() !== acc.email.toLowerCase()
     );
@@ -100,18 +98,21 @@ export const LoginScreen: React.FC<Props> = ({
 
   // ── Authentic Google Sign-In Sheet / Modal State ──
   const [showGoogleModal, setShowGoogleModal] = useState(false);
-  const [googleModalView, setGoogleModalView] = useState<'CHOOSER' | 'MANUAL_SIGNIN'>('MANUAL_SIGNIN');
+  const [showGoogleSetupModal, setShowGoogleSetupModal] = useState(false);
   const [savedAccounts, setSavedAccounts] = useState<SavedGoogleAccount[]>([]);
   const [selectedAccountEmail, setSelectedAccountEmail] = useState<string | null>(null);
-  const [googleEmailInput, setGoogleEmailInput] = useState('');
 
-  // Live Cloud Account Search Status while typing
-  const [isSearchingCloud, setIsSearchingCloud] = useState(false);
-  const [foundCloudBackup, setFoundCloudBackup] = useState<CloudUserDataBackup | null>(null);
+  // Google OAuth 2.0 Client ID for Google Identity Services
+  const [googleClientId, setGoogleClientId] = useState<string>(() => {
+    return (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || localStorage.getItem('bingo_google_client_id') || '';
+  });
+  const [clientIdInput, setClientIdInput] = useState('');
+  const [copySuccess, setCopySuccess] = useState(false);
+  const googleBtnContainerRef = useRef<HTMLDivElement>(null);
 
   // ── First-time username prompt (matching Android LoginScreen) ──
   const [showFirstTimeNameDialog, setShowFirstTimeNameDialog] = useState(false);
-  const [pendingGoogleData, setPendingGoogleData] = useState<{ id: string; email: string; name: string } | null>(null);
+  const [pendingGoogleData, setPendingGoogleData] = useState<{ id: string; email: string; name: string; avatarUrl?: string | null } | null>(null);
   const [newPlayerIdInput, setNewPlayerIdInput] = useState('');
   const [usernameError, setUsernameError] = useState<string | null>(null);
   const [isCheckingUsername, setIsCheckingUsername] = useState(false);
@@ -121,7 +122,6 @@ export const LoginScreen: React.FC<Props> = ({
   const [manualIdInput, setManualIdInput] = useState('');
 
   useEffect(() => {
-    // Purge any old test accounts on mount
     try {
       localStorage.removeItem('bingo_saved_google_accounts_v1');
     } catch {}
@@ -148,78 +148,115 @@ export const LoginScreen: React.FC<Props> = ({
     }
   };
 
-  // ── Open Google Sign-In Sheet ──
+  // ── Initialize Google Identity Services (GIS) & Render Official Button ──
+  useEffect(() => {
+    const initGis = () => {
+      const g = (window as any).google;
+      if (g?.accounts?.id && googleClientId) {
+        try {
+          g.accounts.id.initialize({
+            client_id: googleClientId,
+            callback: handleGisCredentialResponse,
+            auto_select: false,
+            cancel_on_tap_outside: true,
+            context: 'signin'
+          });
+
+          if (googleBtnContainerRef.current) {
+            googleBtnContainerRef.current.innerHTML = '';
+            g.accounts.id.renderButton(googleBtnContainerRef.current, {
+              type: 'standard',
+              theme: isDark ? 'filled_black' : 'outline',
+              size: 'large',
+              shape: 'pill',
+              text: 'continue_with',
+              logo_alignment: 'left',
+              width: 280
+            });
+          }
+        } catch (e) {
+          console.warn('GIS init error:', e);
+        }
+      }
+    };
+
+    initGis();
+    const timer = setTimeout(initGis, 800);
+    return () => clearTimeout(timer);
+  }, [googleClientId, isDark, showGoogleModal]);
+
+  // ── Open Google Sign-In Sheet / Prompt native phone chooser ──
   const handleOpenGoogleSignIn = () => {
     soundEffects.playTap();
     setErrorMessage(null);
-    setFoundCloudBackup(null);
 
-    // If client ID is present, initialize GIS prompt
-    const clientId = (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || localStorage.getItem('bingo_google_client_id');
-    if (clientId && (window as any).google?.accounts?.id) {
+    const accounts = getSavedGoogleAccounts();
+    setSavedAccounts(accounts);
+
+    // If user has saved account(s) on this phone, open the 1-tap account chooser
+    if (accounts.length > 0) {
+      setShowGoogleModal(true);
+      return;
+    }
+
+    // If Google Client ID is configured, trigger Google Identity Services
+    if (googleClientId) {
+      setShowGoogleModal(true);
+      const g = (window as any).google;
+      if (g?.accounts?.id) {
+        try {
+          g.accounts.id.prompt((notification: any) => {
+            if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+              console.log('GIS prompt dismissed or not displayed:', notification.getNotDisplayedReason?.());
+            }
+          });
+        } catch (e) {
+          console.warn('GIS prompt error:', e);
+        }
+      }
+      return;
+    }
+
+    // If no client ID configured yet, show Google Cloud Console Web Setup dialog
+    // (exact 1:1 parity with Android v1.3.2's Release SHA-1 setup dialog)
+    setShowGoogleSetupModal(true);
+  };
+
+  // ── Handle Triggering Google's Native Account Chooser on Phone ──
+  const handleTriggerGooglePrompt = () => {
+    soundEffects.playTap();
+    if (!googleClientId) {
+      setShowGoogleModal(false);
+      setShowGoogleSetupModal(true);
+      return;
+    }
+    const g = (window as any).google;
+    if (g?.accounts?.id) {
       try {
-        (window as any).google.accounts.id.initialize({
-          client_id: clientId,
-          callback: handleGisCredentialResponse
-        });
-        (window as any).google.accounts.id.prompt();
+        g.accounts.id.prompt();
       } catch (e) {
         console.warn('GIS prompt error:', e);
       }
     }
-
-    const accounts = getSavedGoogleAccounts();
-    setSavedAccounts(accounts);
-    // If THIS user on THIS device previously signed into an account, show chooser.
-    // Otherwise, immediately show Google's sign-in prompt so they enter THEIR OWN account!
-    setGoogleModalView(accounts.length > 0 ? 'CHOOSER' : 'MANUAL_SIGNIN');
-    setShowGoogleModal(true);
   };
 
-  // ── Live Cloud Account Lookup while user types their email ──
-  useEffect(() => {
-    const clean = googleEmailInput.trim().toLowerCase();
-    if (!clean || clean.length < 3) {
-      setFoundCloudBackup(null);
-      setIsSearchingCloud(false);
-      return;
+  // ── Save Developer / Admin Web Client ID ──
+  const handleSaveCustomClientId = (e: React.FormEvent) => {
+    e.preventDefault();
+    const clean = clientIdInput.trim();
+    if (!clean) return;
+    try {
+      localStorage.setItem('bingo_google_client_id', clean);
+      setGoogleClientId(clean);
+      setShowGoogleSetupModal(false);
+      setErrorMessage(null);
+      setTimeout(() => {
+        handleOpenGoogleSignIn();
+      }, 150);
+    } catch (err) {
+      console.warn('Failed to save client ID:', err);
     }
-
-    const timer = setTimeout(async () => {
-      setIsSearchingCloud(true);
-      const cleanUser = clean.replace(/^@/, '').split('@')[0];
-      try {
-        let backup = await CloudRegistry.fetchUserDataBackup(clean);
-        if (!backup) backup = await CloudRegistry.fetchUserBackupByUsername(cleanUser);
-        if (!backup) {
-          const reg = await CloudRegistry.searchPlayerByUsername(cleanUser);
-          if (reg) {
-            backup = {
-              profile: {
-                uid: reg.uid,
-                username: reg.username,
-                displayName: reg.displayName,
-                avatarUrl: reg.avatarUrl,
-                gamesPlayed: reg.gamesPlayed,
-                gamesWon: reg.gamesWon,
-                currentStreak: reg.currentStreak,
-                level: reg.level,
-                xp: 0,
-                email: clean.includes('@') ? clean : `${clean}@gmail.com`
-              }
-            };
-          }
-        }
-        setFoundCloudBackup(backup);
-      } catch {
-        setFoundCloudBackup(null);
-      } finally {
-        setIsSearchingCloud(false);
-      }
-    }, 400);
-
-    return () => clearTimeout(timer);
-  }, [googleEmailInput]);
+  };
 
   // ── Universal Google Sign-In Execution ──
   const executeGoogleSignInProcess = async (
@@ -339,30 +376,8 @@ export const LoginScreen: React.FC<Props> = ({
     const updated = removeSavedGoogleAccountFromStorage(email);
     setSavedAccounts(updated);
     if (updated.length === 0) {
-      setGoogleModalView('MANUAL_SIGNIN');
+      setShowGoogleModal(false);
     }
-  };
-
-  // ── Handle Submitting Google Email in Google Sign-In View ──
-  const handleGoogleEmailSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const input = googleEmailInput.trim().toLowerCase();
-    if (!input || input.length < 3) {
-      setErrorMessage('Enter a valid Google email address.');
-      return;
-    }
-
-    const email = input.includes('@') ? input : `${input}@gmail.com`;
-    const cleanUser = input.replace(/^@/, '').split('@')[0];
-    const googleId = cleanUser.replace(/[^a-z0-9_]/g, '');
-
-    soundEffects.playTap();
-    await executeGoogleSignInProcess(
-      email,
-      googleId,
-      cleanUser.charAt(0).toUpperCase() + cleanUser.slice(1),
-      null
-    );
   };
 
   // ── Handle Confirm First-Time Nickname (Matches Android LoginScreen) ──
@@ -704,15 +719,29 @@ export const LoginScreen: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* ── Subtle Bottom Action: Developer Note ── */}
-      <div className="pt-4 pb-2">
+      {/* ── Subtle Bottom Action: Google Setup & Developer Note ── */}
+      <div className="pt-4 pb-2 flex items-center justify-center gap-3">
+        <button
+          type="button"
+          onClick={() => {
+            soundEffects.playTap();
+            setShowGoogleSetupModal(true);
+          }}
+          style={{ color: tokens.textMuted }}
+          className="flex items-center gap-1.5 text-xs font-medium opacity-70 hover:opacity-100 transition-opacity cursor-pointer"
+        >
+          <Info className="w-3.5 h-3.5" />
+          <span>Google Sign-In Web Setup</span>
+        </button>
+
+        <span style={{ color: tokens.textMuted }} className="opacity-30">•</span>
+
         <button
           type="button"
           onClick={onOpenDeveloperNote}
           style={{ color: tokens.textMuted }}
           className="flex items-center gap-1.5 text-xs font-medium opacity-70 hover:opacity-100 transition-opacity cursor-pointer"
         >
-          <Info className="w-3.5 h-3.5" />
           <span>developer note ☕</span>
         </button>
       </div>
@@ -730,48 +759,49 @@ export const LoginScreen: React.FC<Props> = ({
             {/* Top Drag Handle (Mobile bottom sheet feel) */}
             <div className="w-10 h-1 bg-slate-300 dark:bg-zinc-600 rounded-full mx-auto mt-2.5 sm:hidden" />
 
-            {/* ── VIEW A: GOOGLE ACCOUNT CHOOSER (Only shown if this device has saved accounts) ── */}
-            {googleModalView === 'CHOOSER' && savedAccounts.length > 0 ? (
-              <div className="p-5 sm:p-6">
-                {/* Google Brand Header */}
-                <div className="flex items-start justify-between mb-4">
-                  <div className="flex items-center gap-3">
-                    <svg className="w-6 h-6 flex-shrink-0" viewBox="0 0 512 512">
-                      <path
-                        fill="#4285F4"
-                        d="M482.6,261.4c0,-16.7 -1.5,-32.8 -4.3,-48.3H256v91.3h127c-5.5,29.5 -22.1,54.5 -47.1,71.2v59.2h76.3c44.6,-41.1 70.4,-101.6 70.4,-173.5z"
-                      />
-                      <path
-                        fill="#34A853"
-                        d="M256,492c63.7,0 117.1,-21.1 156.2,-57.2l-76.3,-59.2c-21.1,14.2 -48.2,22.5 -79.9,22.5 -61.5,0 -113.5,-41.5 -132.1,-97.3H45.1v61.2c38.8,77.1 118.6,130 210.9,130z"
-                      />
-                      <path
-                        fill="#FBBC05"
-                        d="M123.9,300.8c-4.7,-14.2 -7.4,-29.3 -7.4,-44.8s2.7,-30.7 7.4,-44.8V150H45.1C29.1,181.9 20,217.9 20,256c0,38.1 9.1,74.1 25.1,106l78.8,-61.2z"
-                      />
-                      <path
-                        fill="#EA4335"
-                        d="M256,113.9c34.7,0 65.8,11.9 90.2,35.3l67.7,-67.7C373,43.4 319.6,20 256,20c-92.3,0 -172.1,52.9 -210.9,130l78.8,61.2c18.6,-55.8 70.6,-97.3 132.1,-97.3z"
-                      />
-                    </svg>
-                    <div>
-                      <h2 className="text-base font-semibold leading-tight">Choose an account</h2>
-                      <p className="text-xs opacity-70">to continue to Bingo</p>
-                    </div>
+            <div className="p-5 sm:p-6">
+              {/* Google Brand Header */}
+              <div className="flex items-start justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <svg className="w-6 h-6 flex-shrink-0" viewBox="0 0 512 512">
+                    <path
+                      fill="#4285F4"
+                      d="M482.6,261.4c0,-16.7 -1.5,-32.8 -4.3,-48.3H256v91.3h127c-5.5,29.5 -22.1,54.5 -47.1,71.2v59.2h76.3c44.6,-41.1 70.4,-101.6 70.4,-173.5z"
+                    />
+                    <path
+                      fill="#34A853"
+                      d="M256,492c63.7,0 117.1,-21.1 156.2,-57.2l-76.3,-59.2c-21.1,14.2 -48.2,22.5 -79.9,22.5 -61.5,0 -113.5,-41.5 -132.1,-97.3H45.1v61.2c38.8,77.1 118.6,130 210.9,130z"
+                    />
+                    <path
+                      fill="#FBBC05"
+                      d="M123.9,300.8c-4.7,-14.2 -7.4,-29.3 -7.4,-44.8s2.7,-30.7 7.4,-44.8V150H45.1C29.1,181.9 20,217.9 20,256c0,38.1 9.1,74.1 25.1,106l78.8,-61.2z"
+                    />
+                    <path
+                      fill="#EA4335"
+                      d="M256,113.9c34.7,0 65.8,11.9 90.2,35.3l67.7,-67.7C373,43.4 319.6,20 256,20c-92.3,0 -172.1,52.9 -210.9,130l78.8,61.2c18.6,-55.8 70.6,-97.3 132.1,-97.3z"
+                    />
+                  </svg>
+                  <div>
+                    <h2 className="text-base font-semibold leading-tight">
+                      {savedAccounts.length > 0 ? 'Choose an account' : 'Sign in with Google'}
+                    </h2>
+                    <p className="text-xs opacity-70">to continue to Bingo</p>
                   </div>
-
-                  <button
-                    type="button"
-                    onClick={() => setShowGoogleModal(false)}
-                    className="p-1.5 rounded-full hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
-                  >
-                    <X className="w-4 h-4 opacity-70" />
-                  </button>
                 </div>
 
-                <div className="h-[1px] bg-slate-200 dark:bg-[#3c4043] my-3" />
+                <button
+                  type="button"
+                  onClick={() => setShowGoogleModal(false)}
+                  className="p-1.5 rounded-full hover:bg-black/10 dark:hover:bg-white/10 transition-colors cursor-pointer"
+                >
+                  <X className="w-4 h-4 opacity-70" />
+                </button>
+              </div>
 
-                {/* Account List */}
+              <div className="h-[1px] bg-slate-200 dark:bg-[#3c4043] my-3" />
+
+              {/* View 1: Previously Saved Authentic Accounts on THIS Device */}
+              {savedAccounts.length > 0 ? (
                 <div className="flex flex-col divide-y divide-slate-100 dark:divide-[#3c4043]/50">
                   {savedAccounts.map((account) => {
                     const isSigningInThis = selectedAccountEmail === account.email && isLoading;
@@ -784,7 +814,6 @@ export const LoginScreen: React.FC<Props> = ({
                         onClick={() => handleSelectGoogleAccount(account)}
                       >
                         <div className="flex items-center gap-3 min-w-0 flex-1">
-                          {/* Account Avatar */}
                           {account.avatarUrl && account.avatarUrl.startsWith('data:') ? (
                             <img
                               src={account.avatarUrl}
@@ -835,155 +864,169 @@ export const LoginScreen: React.FC<Props> = ({
                     );
                   })}
 
-                  {/* "+ Use another account" Row */}
+                  {/* "+ Use another account on your phone" Row */}
                   <button
                     type="button"
                     disabled={isLoading}
-                    onClick={() => {
-                      soundEffects.playTap();
-                      setGoogleEmailInput('');
-                      setFoundCloudBackup(null);
-                      setGoogleModalView('MANUAL_SIGNIN');
-                    }}
-                    className="w-full py-3.5 px-2 flex items-center gap-3 text-left hover:bg-slate-50 dark:hover:bg-white/5 active:bg-slate-100 dark:active:bg-white/10 rounded-2xl transition-all cursor-pointer disabled:opacity-50"
+                    onClick={handleTriggerGooglePrompt}
+                    className="w-full py-3 px-2 flex items-center gap-3 text-left hover:bg-slate-50 dark:hover:bg-white/5 active:bg-slate-100 dark:active:bg-white/10 rounded-2xl transition-all cursor-pointer disabled:opacity-50"
                   >
                     <div className="w-10 h-10 rounded-full border border-slate-300 dark:border-zinc-600 flex items-center justify-center opacity-70 flex-shrink-0">
                       <Plus className="w-5 h-5" />
                     </div>
-                    <span className="text-sm font-medium">Use another account</span>
+                    <span className="text-sm font-medium">Use another account on your phone</span>
                   </button>
                 </div>
+              ) : (
+                /* View 2: Prompt Authentic Google Identity Services */
+                <div className="py-2 text-center space-y-4">
+                  <p className="text-xs opacity-75 leading-relaxed">
+                    Choose one of the Google accounts logged into your phone or browser to continue:
+                  </p>
 
-                <div className="h-[1px] bg-slate-200 dark:bg-[#3c4043] mt-3 mb-3.5" />
-
-                {/* Google Disclaimer Footer */}
-                <p className="text-[11px] leading-relaxed opacity-60 text-center px-1">
-                  To continue, Google will share your name, email address, and profile picture with Bingo. Before using Bingo, review their Privacy Policy and Terms of Service.
-                </p>
-              </div>
-            ) : (
-              /* ── VIEW B: AUTHENTIC GOOGLE SIGN-IN PROMPT (Shown by default on any fresh device) ── */
-              <div className="p-5 sm:p-6">
-                <div className="flex items-center justify-between mb-4">
-                  {savedAccounts.length > 0 ? (
-                    <button
-                      type="button"
-                      onClick={() => setGoogleModalView('CHOOSER')}
-                      className="p-1.5 rounded-full hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
-                    >
-                      <ArrowLeft className="w-4 h-4 opacity-80" />
-                    </button>
-                  ) : (
-                    <div className="w-6" />
-                  )}
-
-                  <svg className="w-6 h-6 flex-shrink-0" viewBox="0 0 512 512">
-                    <path
-                      fill="#4285F4"
-                      d="M482.6,261.4c0,-16.7 -1.5,-32.8 -4.3,-48.3H256v91.3h127c-5.5,29.5 -22.1,54.5 -47.1,71.2v59.2h76.3c44.6,-41.1 70.4,-101.6 70.4,-173.5z"
-                    />
-                    <path
-                      fill="#34A853"
-                      d="M256,492c63.7,0 117.1,-21.1 156.2,-57.2l-76.3,-59.2c-21.1,14.2 -48.2,22.5 -79.9,22.5 -61.5,0 -113.5,-41.5 -132.1,-97.3H45.1v61.2c38.8,77.1 118.6,130 210.9,130z"
-                    />
-                    <path
-                      fill="#FBBC05"
-                      d="M123.9,300.8c-4.7,-14.2 -7.4,-29.3 -7.4,-44.8s2.7,-30.7 7.4,-44.8V150H45.1C29.1,181.9 20,217.9 20,256c0,38.1 9.1,74.1 25.1,106l78.8,-61.2z"
-                    />
-                    <path
-                      fill="#EA4335"
-                      d="M256,113.9c34.7,0 65.8,11.9 90.2,35.3l67.7,-67.7C373,43.4 319.6,20 256,20c-92.3,0 -172.1,52.9 -210.9,130l78.8,61.2c18.6,-55.8 70.6,-97.3 132.1,-97.3z"
-                    />
-                  </svg>
+                  {/* Container for Google's official rendered button */}
+                  <div ref={googleBtnContainerRef} className="flex justify-center min-h-[44px]" />
 
                   <button
                     type="button"
-                    onClick={() => setShowGoogleModal(false)}
-                    className="p-1.5 rounded-full hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
+                    onClick={handleTriggerGooglePrompt}
+                    className="w-full py-2.5 px-4 rounded-2xl border border-slate-200 dark:border-zinc-700 hover:bg-slate-50 dark:hover:bg-white/5 active:scale-[0.99] text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer"
                   >
-                    <X className="w-4 h-4 opacity-70" />
+                    <ShieldCheck className="w-4 h-4 text-[#1a73e8]" />
+                    <span>Open Phone Account Chooser</span>
                   </button>
                 </div>
+              )}
 
-                <div className="text-center mb-5">
-                  <h2 className="text-lg font-normal leading-tight">Sign in with Google</h2>
-                  <p className="text-xs opacity-70 mt-1">
-                    Enter your Google account from your phone to continue to Bingo
-                  </p>
-                </div>
+              <div className="h-[1px] bg-slate-200 dark:bg-[#3c4043] mt-3 mb-3" />
 
-                <form onSubmit={handleGoogleEmailSubmit} className="space-y-4">
-                  <div>
-                    <label className="text-xs font-medium block mb-1.5 opacity-80">
-                      Email or phone
-                    </label>
-                    <input
-                      type="text"
-                      value={googleEmailInput}
-                      onChange={(e) => setGoogleEmailInput(e.target.value)}
-                      placeholder="e.g. name@gmail.com"
-                      autoFocus
-                      className={`w-full px-3.5 py-2.5 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-[#1a73e8] ${
-                        isDark
-                          ? 'bg-[#171717] border-[#3c4043] text-white'
-                          : 'bg-white border-[#dadce0] text-[#202124]'
-                      }`}
-                    />
-                  </div>
+              <p className="text-[11px] leading-relaxed opacity-60 text-center px-1">
+                To continue, Google will share your verified name, email address, and profile picture with Bingo. Only genuine Google accounts are accepted.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
-                  {/* Real-time Cloud Account Detection Card */}
-                  {isSearchingCloud && (
-                    <div className="p-2.5 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center gap-2 text-xs text-purple-600 dark:text-purple-400">
-                      <div className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin flex-shrink-0" />
-                      <span>Checking Android records in cloud...</span>
-                    </div>
-                  )}
+      {/* ───────────────────────────────────────────────────────────── */}
+      {/* ── GOOGLE CLOUD CONSOLE WEB SETUP MODAL (Parity with Android SHA-1 Dialog) ── */}
+      {/* ───────────────────────────────────────────────────────────── */}
+      {showGoogleSetupModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in select-none">
+          <div
+            style={{
+              backgroundColor: tokens.surface,
+              borderColor: tokens.surfaceBorder
+            }}
+            className="w-full max-w-sm sm:max-w-md rounded-3xl border shadow-2xl p-5 sm:p-6 relative animate-slide-up"
+          >
+            <button
+              type="button"
+              onClick={() => setShowGoogleSetupModal(false)}
+              className="absolute top-4 right-4 w-8 h-8 rounded-full bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 flex items-center justify-center cursor-pointer transition-colors"
+            >
+              <X className="w-4 h-4 opacity-70" />
+            </button>
 
-                  {foundCloudBackup && (
-                    <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 animate-fade-in">
-                      <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 text-xs font-bold mb-1">
-                        <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
-                        <span>Android Account Found!</span>
-                      </div>
-                      <div className="text-[11px] opacity-80 space-y-0.5">
-                        <p className="font-semibold">
-                          @{foundCloudBackup.profile.username} ({foundCloudBackup.profile.displayName})
-                        </p>
-                        <p className="text-emerald-600 dark:text-emerald-400">
-                          Level {foundCloudBackup.profile.level} • {foundCloudBackup.profile.gamesWon} Wins / {foundCloudBackup.profile.gamesPlayed} Matches • All Friends Synced ✓
-                        </p>
-                      </div>
-                    </div>
-                  )}
-
-                  <p className="text-[11px] opacity-60 leading-relaxed">
-                    Enter the Google email you use on your phone. All your level, stats, wins, and friends from the Android app will be synced automatically.
-                  </p>
-
-                  <div className="flex items-center justify-between pt-2">
-                    {savedAccounts.length > 0 ? (
-                      <button
-                        type="button"
-                        onClick={() => setGoogleModalView('CHOOSER')}
-                        className="text-xs font-semibold text-[#1a73e8] hover:underline cursor-pointer"
-                      >
-                        Choose account
-                      </button>
-                    ) : (
-                      <div />
-                    )}
-
-                    <button
-                      type="submit"
-                      disabled={!googleEmailInput.trim()}
-                      className="px-6 py-2 rounded-full bg-[#1a73e8] hover:bg-[#1557b0] text-white text-xs font-medium shadow-sm transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
-                    >
-                      <span>{foundCloudBackup ? 'Restore & Play' : 'Next'}</span>
-                    </button>
-                  </div>
-                </form>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-2xl bg-purple-50 dark:bg-purple-950/40 flex items-center justify-center border border-purple-200 dark:border-purple-800 flex-shrink-0">
+                <svg className="w-5 h-5" viewBox="0 0 512 512">
+                  <path fill="#4285F4" d="M482.6,261.4c0,-16.7 -1.5,-32.8 -4.3,-48.3H256v91.3h127c-5.5,29.5 -22.1,54.5 -47.1,71.2v59.2h76.3c44.6,-41.1 70.4,-101.6 70.4,-173.5z"/>
+                  <path fill="#34A853" d="M256,492c63.7,0 117.1,-21.1 156.2,-57.2l-76.3,-59.2c-21.1,14.2 -48.2,22.5 -79.9,22.5 -61.5,0 -113.5,-41.5 -132.1,-97.3H45.1v61.2c38.8,77.1 118.6,130 210.9,130z"/>
+                  <path fill="#FBBC05" d="M123.9,300.8c-4.7,-14.2 -7.4,-29.3 -7.4,-44.8s2.7,-30.7 7.4,-44.8V150H45.1C29.1,181.9 20,217.9 20,256c0,38.1 9.1,74.1 25.1,106l78.8,-61.2z"/>
+                  <path fill="#EA4335" d="M256,113.9c34.7,0 65.8,11.9 90.2,35.3l67.7,-67.7C373,43.4 319.6,20 256,20c-92.3,0 -172.1,52.9 -210.9,130l78.8,61.2c18.6,-55.8 70.6,-97.3 132.1,-97.3z"/>
+                </svg>
               </div>
-            )}
+              <div>
+                <h3 style={{ color: tokens.cellNeutralText }} className="text-base font-bold leading-tight">
+                  Google Sign-In Web Setup
+                </h3>
+                <p style={{ color: tokens.textMuted }} className="text-xs">
+                  Authentic account chooser for phone & web
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-3.5 text-xs">
+              <p style={{ color: tokens.textSecondary }} className="leading-relaxed">
+                To fetch the real Google accounts stored on players&apos; phones on the web, Google requires an OAuth 2.0 Web Client ID registered in Google Cloud Console with this authorized origin:
+              </p>
+
+              {/* Authorized Origin Box */}
+              <div
+                style={{
+                  backgroundColor: tokens.backgroundSecondary,
+                  borderColor: tokens.surfaceBorder
+                }}
+                className="p-3 rounded-2xl border flex items-center justify-between gap-2"
+              >
+                <div className="min-w-0">
+                  <span className="text-[10px] uppercase font-bold text-purple-500 block mb-0.5 tracking-wider">
+                    Authorized JavaScript Origin
+                  </span>
+                  <code className="text-[11px] font-mono font-bold truncate block">
+                    https://vamsireddybora.github.io
+                  </code>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText('https://vamsireddybora.github.io');
+                    setCopySuccess(true);
+                    setTimeout(() => setCopySuccess(false), 2000);
+                  }}
+                  className="px-2.5 py-1.5 rounded-xl bg-purple-500/10 hover:bg-purple-500/20 text-purple-600 dark:text-purple-400 font-semibold text-[11px] flex items-center gap-1 cursor-pointer transition-colors flex-shrink-0"
+                >
+                  {copySuccess ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copySuccess ? 'Copied' : 'Copy'}</span>
+                </button>
+              </div>
+
+              {/* Paste Web Client ID */}
+              <form onSubmit={handleSaveCustomClientId} className="space-y-2 pt-1">
+                <label style={{ color: tokens.textMuted }} className="block text-[11px] font-semibold">
+                  Google OAuth 2.0 Web Client ID:
+                </label>
+                <input
+                  type="text"
+                  value={clientIdInput}
+                  onChange={(e) => setClientIdInput(e.target.value)}
+                  placeholder="e.g. 123456789-xyz.apps.googleusercontent.com"
+                  style={{
+                    backgroundColor: tokens.backgroundSecondary,
+                    borderColor: tokens.surfaceBorder,
+                    color: tokens.cellNeutralText
+                  }}
+                  className="w-full px-3.5 py-2.5 rounded-xl border text-xs font-mono focus:outline-none focus:ring-1 focus:ring-purple-500"
+                />
+
+                <button
+                  type="submit"
+                  disabled={!clientIdInput.trim()}
+                  style={{
+                    backgroundColor: tokens.primaryButtonBg,
+                    color: tokens.primaryButtonText
+                  }}
+                  className="w-full py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 transition-all active:scale-95 shadow-sm"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Save & Activate Google Sign-In</span>
+                </button>
+              </form>
+
+              <div className="pt-2 border-t border-inherit flex items-center justify-between text-[11px]">
+                <span style={{ color: tokens.textMuted }}>No account required?</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowGoogleSetupModal(false);
+                  }}
+                  className="font-bold text-purple-600 dark:text-purple-400 hover:underline cursor-pointer"
+                >
+                  Play as Guest below →
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
