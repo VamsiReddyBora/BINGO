@@ -701,10 +701,12 @@ class AccountSessionManager(
 
                 // 1b. Maintain cloud user directory index
                 try {
-                    val currentDir = getKeyValue("user_directory") ?: ""
-                    val users = currentDir.split(",").map { it.trim().lowercase() }.filter { it.isNotBlank() }.toMutableSet()
-                    if (users.add(clean)) {
-                        setKeyValue("user_directory", users.sorted().joinToString(","))
+                    val currentDir = getKeyValue("user_directory")
+                    if (!currentDir.isNullOrBlank() && currentDir != "null") {
+                        val users = currentDir.split(",").map { it.trim().lowercase() }.filter { it.isNotBlank() }.toMutableSet()
+                        if (users.add(clean)) {
+                            setKeyValue("user_directory", users.sorted().joinToString(","))
+                        }
                     }
                 } catch (_: Exception) {}
 

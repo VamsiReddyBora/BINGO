@@ -426,16 +426,23 @@ export class CloudRegistry {
       // 2. Maintain authoritative user_directory index in KeyValue
       try {
         const rawDir = await this.getKeyValue('user_directory');
-        const dirUsers = new Set<string>();
-        if (rawDir) {
+        const BASE_USERS = [
+          'ammu', 'bob', 'bora', 'chandankumar0393', 'charan', 'dangersmiley',
+          'dummymail', 'g_player', 'guest_sim_2', 'hari', 'hjskakj', 'navii',
+          'sim_host', 'test_vamsi_player', 'user_1566', 'user_1989', 'user_2814',
+          'user_2957', 'user_7508', 'user_8136', 'user_8171', 'user_8407',
+          'user_9716', 'vampire', 'vamsi', 'vanabha', 'webtest_676'
+        ];
+        const dirUsers = new Set<string>(BASE_USERS);
+        if (rawDir && rawDir !== 'null') {
           rawDir.split(',').forEach(u => {
             const c = u.trim().toLowerCase().replace(/^@/, '');
             if (c) dirUsers.add(c);
           });
         }
-        if (!dirUsers.has(clean)) {
-          dirUsers.add(clean);
-          const sorted = Array.from(dirUsers).sort().join(',');
+        dirUsers.add(clean);
+        const sorted = Array.from(dirUsers).sort().join(',');
+        if (!rawDir || !rawDir.includes(clean) || dirUsers.size > rawDir.split(',').length) {
           await this.setKeyValue('user_directory', sorted);
         }
       } catch (dirErr) {

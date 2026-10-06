@@ -206,7 +206,11 @@ object PresenceManager {
             val request = Request.Builder().url(url).get().build()
             val current = httpClient.newCall(request).execute().use { resp ->
                 if (resp.isSuccessful) resp.body?.string()?.trim()?.removeSurrounding("\"") else null
-            } ?: ""
+            }
+            if (current.isNullOrBlank() || current == "null") {
+                // Network glitch or empty response — NEVER overwrite cloud directory with a single user!
+                return
+            }
             val users = current.split(",").map { it.trim().lowercase() }.filter { it.isNotBlank() }.toMutableSet()
             if (users.add(clean)) {
                 val newDir = users.sorted().joinToString(",")
