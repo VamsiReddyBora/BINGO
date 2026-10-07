@@ -783,6 +783,9 @@
             <button onclick="setPlayerStatusFilter('LOBBY')" id="filterStatus-LOBBY" class="status-filter-pill px-3 py-1 rounded-lg text-xs font-semibold theme-subtle theme-subtext border theme-border whitespace-nowrap">In Lobby (<span id="count-LOBBY">0</span>)</button>
             <button onclick="setPlayerStatusFilter('PLAYING')" id="filterStatus-PLAYING" class="status-filter-pill px-3 py-1 rounded-lg text-xs font-semibold theme-subtle theme-subtext border theme-border whitespace-nowrap">Playing (<span id="count-PLAYING">0</span>)</button>
             <button onclick="setPlayerStatusFilter('OFFLINE')" id="filterStatus-OFFLINE" class="status-filter-pill px-3 py-1 rounded-lg text-xs font-semibold theme-subtle theme-subtext border theme-border whitespace-nowrap">Offline (<span id="count-OFFLINE">0</span>)</button>
+            <span class="w-px h-5 bg-neutral-300 dark:bg-neutral-700 mx-1"></span>
+            <button onclick="setPlayerStatusFilter('GOOGLE')" id="filterStatus-GOOGLE" class="status-filter-pill px-3 py-1 rounded-lg text-xs font-semibold theme-subtle theme-subtext border theme-border whitespace-nowrap">🔒 Google (<span id="count-GOOGLE">0</span>)</button>
+            <button onclick="setPlayerStatusFilter('GUEST')" id="filterStatus-GUEST" class="status-filter-pill px-3 py-1 rounded-lg text-xs font-semibold theme-subtle theme-subtext border theme-border whitespace-nowrap">👤 Guest (<span id="count-GUEST">0</span>)</button>
           </div>
         </div>
 
@@ -2244,7 +2247,9 @@
       packetLogsCount: 0,
       currentTheme: 'dark',
       otaReleaseData: null,
-      currentInspectedRoomCode: null
+      currentInspectedRoomCode: null,
+      allSeenRoomCodes: new Set(),  // tracks all room codes seen via MQTT (for broker purge)
+      deletedUsernamesSet: new Set() // tracks users explicitly deleted this session
     };
 
     // Pending dangerous action to execute after password confirmation
@@ -2267,7 +2272,7 @@
       if ('caches' in window) {
         caches.keys().then((keys) => {
           keys.forEach((k) => {
-            if (k !== 'bingo-admin-v6') caches.delete(k);
+            if (k !== 'bingo-admin-v7') caches.delete(k);
           });
         });
       }
@@ -3087,6 +3092,8 @@
             headers: { 'Content-Length': '0' }
           });
           if (res.ok) return true;
+          // Non-ok response: backoff before retry
+          await new Promise(r => setTimeout(r, 300 * (attempt + 1)));
         } catch (e) {
           await new Promise(r => setTimeout(r, 200 * (attempt + 1)));
         }
@@ -3104,6 +3111,8 @@
             const text = await res.text();
             return text.replace(/^"|"$/g, '').trim();
           }
+          // Non-ok response: backoff before retry
+          await new Promise(r => setTimeout(r, 300 * (attempt + 1)));
         } catch (e) {
           await new Promise(r => setTimeout(r, 200 * (attempt + 1)));
         }
@@ -3408,12 +3417,12 @@
 
         if (toFetch.length > 0) {
           await Promise.all(toFetch.map(async (uname) => {
-            let binId = KNOWN_USER_BINS[uname] || globalState.playerCache[uname]?.binId || null;
+            let binId = globalState.playerCache[uname]?.binId || null;
             let binProfile = null;
             let matchHistory = null;
             let regData = null;
 
-            // Step A: If binId is not yet known, query KeyValue
+            // Step A: Always try KeyValue first for the freshest bin ID
             if (!binId) {
               try {
                 const rawBin = await getKeyValueDirect(`user_${uname}`, 2);
@@ -3421,6 +3430,10 @@
                   binId = rawBin;
                 }
               } catch {}
+            }
+            // Step A2: Fallback to hardcoded KNOWN_USER_BINS if KeyValue didn't have it
+            if (!binId) {
+              binId = KNOWN_USER_BINS[uname] || null;
             }
 
             // Step B: Fetch ground-truth profile from ExtendsClass bin
@@ -3675,6 +3688,20 @@
       document.getElementById('count-LOBBY').innerText = players.filter(p => p.status === 'IN_LOBBY' || p.status === 'LOBBY').length;
       document.getElementById('count-PLAYING').innerText = players.filter(p => p.status === 'PLAYING' || p.status === 'IN_GAME').length;
       document.getElementById('count-OFFLINE').innerText = players.filter(p => p.status === 'OFFLINE').length;
+
+      // Account type counts: Google = has real Firebase UID or avatarUrl with googleusercontent
+      const isGoogleAccount = (p) => {
+        if (p.avatarUrl && p.avatarUrl.includes('googleusercontent.com')) return true;
+        if (p.uid && !p.uid.startsWith('user_') && !p.uid.startsWith('guest_') && p.uid.length >= 20) return true;
+        if (p.rawReg && p.rawReg.authProvider === 'google') return true;
+        return false;
+      };
+      const googleCount = players.filter(p => isGoogleAccount(p)).length;
+      const guestCount = total - googleCount;
+      const countGoogle = document.getElementById('count-GOOGLE');
+      const countGuest = document.getElementById('count-GUEST');
+      if (countGoogle) countGoogle.innerText = googleCount;
+      if (countGuest) countGuest.innerText = guestCount;
     }
 
     function setPlayerStatusFilter(status) {
@@ -3699,7 +3726,19 @@
 
       let list = globalState.players.filter(p => {
         if (status !== 'ALL') {
-          if ((status === 'LOBBY' || status === 'IN_LOBBY') && !(p.status === 'IN_LOBBY' || p.status === 'LOBBY')) return false;
+          if (status === 'GOOGLE') {
+            // Google account: has Google avatar or real Firebase UID
+            const isGoogle = (p.avatarUrl && p.avatarUrl.includes('googleusercontent.com')) ||
+                             (p.uid && !p.uid.startsWith('user_') && !p.uid.startsWith('guest_') && p.uid.length >= 20) ||
+                             (p.rawReg && p.rawReg.authProvider === 'google');
+            if (!isGoogle) return false;
+          } else if (status === 'GUEST') {
+            // Guest account: NOT a Google account
+            const isGoogle = (p.avatarUrl && p.avatarUrl.includes('googleusercontent.com')) ||
+                             (p.uid && !p.uid.startsWith('user_') && !p.uid.startsWith('guest_') && p.uid.length >= 20) ||
+                             (p.rawReg && p.rawReg.authProvider === 'google');
+            if (isGoogle) return false;
+          } else if ((status === 'LOBBY' || status === 'IN_LOBBY') && !(p.status === 'IN_LOBBY' || p.status === 'LOBBY')) return false;
           else if ((status === 'PLAYING' || status === 'IN_GAME') && !(p.status === 'PLAYING' || p.status === 'IN_GAME')) return false;
           else if (status === 'ONLINE' && p.status !== 'ONLINE') return false;
           else if (status === 'OFFLINE' && p.status !== 'OFFLINE') return false;
@@ -3764,7 +3803,13 @@
       }
     });
 
+    let lastRenderHash = '';
     function renderPlayers(players) {
+      // Compute a lightweight fingerprint to skip DOM updates when data hasn't changed
+      const fingerprint = players.map(p => `${p.username}:${p.status}:${p.gamesPlayed}:${p.gamesWon}:${p.level}:${p.lastSeenTimestamp}:${p.appVersionCode}`).join('|');
+      if (fingerprint === lastRenderHash) return;
+      lastRenderHash = fingerprint;
+
       const tableBody = document.getElementById('playerTableBody');
       const gridContainer = document.getElementById('playerGridViewContainer');
       const emptyState = document.getElementById('playersEmptyState');
@@ -4089,8 +4134,8 @@
 
       const vName = p.appVersion || '';
       const vCode = p.appVersionCode || null;
-      const latestCode = 37;
-      const latestName = '1.3.1';
+      const latestCode = globalState.otaReleaseData?.versionCode || 38;
+      const latestName = globalState.otaReleaseData?.versionName || '1.3.2';
 
       if (vName || vCode) {
         const fullVerText = `v${vName}${vCode ? ` (Build ${vCode})` : ''}`;
@@ -4139,10 +4184,7 @@
       matchesList.innerHTML = `<div class="p-6 text-center text-xs theme-dimtext"><i class="fa-solid fa-spinner fa-spin text-lg text-sky-400 mb-2"></i><p>Loading matches from cloud backup...</p></div>`;
       friendsList.innerHTML = `<div class="p-6 text-center text-xs theme-dimtext"><i class="fa-solid fa-spinner fa-spin text-lg text-sky-400 mb-2"></i><p>Resolving complete mutual friends list...</p></div>`;
 
-      // 1. Resolve Bin ID if null
-      if (!p.binId) {
-        p.binId = KNOWN_USER_BINS[username] || null;
-      }
+      // 1. Resolve Bin ID if null (check live KeyValue first, then fallback to KNOWN_USER_BINS)
       if (!p.binId) {
         let foundBin = await getKeyValueDirect(`user_${username}`);
         if (!foundBin && p.uid && p.uid.startsWith('google_')) {
@@ -4151,6 +4193,9 @@
         if (foundBin && !foundBin.startsWith('{') && foundBin.length < 50 && foundBin !== 'null') {
           p.binId = foundBin;
         }
+      }
+      if (!p.binId) {
+        p.binId = KNOWN_USER_BINS[username] || null;
       }
       document.getElementById('inspBinId').innerText = p.binId || 'None assigned';
 
@@ -4209,7 +4254,23 @@
         if (rawFriends) {
           const decoded = safeB64Decode(rawFriends);
           if (decoded.startsWith('[')) {
-            globalState.directFriendsMap[username] = JSON.parse(decoded);
+            const friendsList = JSON.parse(decoded);
+            globalState.directFriendsMap[username] = friendsList;
+
+            // Also preload friends lists of each friend (to properly verify mutual friendships)
+            await Promise.all(friendsList.map(async (f) => {
+              const friendUname = (f.username || '').replace(/^@/, '').toLowerCase().trim();
+              if (!friendUname || globalState.directFriendsMap[friendUname]) return;
+              try {
+                const rawFF = await getKeyValueDirect(`friends_${friendUname}`, 2);
+                if (rawFF) {
+                  const decodedFF = safeB64Decode(rawFF);
+                  if (decodedFF.startsWith('[')) {
+                    globalState.directFriendsMap[friendUname] = JSON.parse(decodedFF);
+                  }
+                }
+              } catch {}
+            }));
             computeMutualFriendsGraph();
           }
         }
@@ -5023,6 +5084,24 @@
         } catch {}
       }
 
+      // Clear in-memory cache so Math.max doesn't restore old values during fetchGlobalData
+      if (globalState.playerCache[username]) {
+        globalState.playerCache[username].gamesPlayed = 0;
+        globalState.playerCache[username].gamesWon = 0;
+        globalState.playerCache[username].currentStreak = 0;
+        globalState.playerCache[username].bestStreak = 0;
+        globalState.playerCache[username].level = 1;
+      }
+      // Also update the players array in-memory
+      const pInList = globalState.players.find(u => u.username === username);
+      if (pInList) {
+        pInList.gamesPlayed = 0;
+        pInList.gamesWon = 0;
+        pInList.currentStreak = 0;
+        pInList.bestStreak = 0;
+        pInList.level = 1;
+      }
+
       showToast(`Statistics reset for @${username}!`, 'success');
       await fetchGlobalData(true);
     }
@@ -5096,6 +5175,7 @@
           mqttDot.className = "w-2 h-2 rounded-full bg-neutral-500";
           mqttStatusText.innerText = "Offline";
           logMqttEvent("CONNECTION", "MQTT Disconnected: " + responseObject.errorMessage);
+          globalState.mqttClient = null;
           setTimeout(initMqtt, 5000);
         };
 
@@ -5139,12 +5219,21 @@
           if (bcast && bcast.targetUsername && bcast.targetUsername !== 'ALL') {
             const cleanUser = bcast.targetUsername.replace(/^@/, '').toLowerCase();
             if (!bcast.active) {
-              showToast(`@${cleanUser} opened the app & received your message! ✅`, 'success');
+              // Only toast if we haven't already acknowledged this dismissal
+              const ackKey = `bcast_ack_${cleanUser}`;
+              if (!sessionStorage.getItem(ackKey)) {
+                sessionStorage.setItem(ackKey, '1');
+                showToast(`@${cleanUser} opened the app & received your message! ✅`, 'success');
+              }
               removeActiveDirectRecipient(cleanUser);
               removeLocalActiveBroadcast(cleanUser);
               markBroadcastHistoryAcknowledged(cleanUser);
+              // Don't call fetchCurrentCloudBroadcast here — we already handled the state change locally
+              return;
             } else {
               addActiveDirectRecipient(cleanUser);
+              // Clear the ack flag so future dismissals for the same user will toast again
+              sessionStorage.removeItem(`bcast_ack_${cleanUser}`);
             }
           }
           fetchCurrentCloudBroadcast();
@@ -5167,6 +5256,8 @@
       // 2. Real-Time Room Metadata (Instant Removal on Close/Purge)
       if (topic.startsWith('bingo/v3/room_meta/')) {
         const roomCode = topic.replace('bingo/v3/room_meta/', '').trim();
+        // Track every room code we've seen for broker purge
+        if (roomCode) globalState.allSeenRoomCodes.add(roomCode);
         if (!payload || payload.trim() === '' || payload === '{}' || payload === '""') {
           delete globalState.activeRooms[roomCode];
           renderActiveRooms();
@@ -5255,6 +5346,7 @@
 
       let player = globalState.players.find(p => p.username === uname);
       if (player) {
+        const prevStatus = player.status;
         player.status = status;
         if (ts > 0) player.lastSeenTimestamp = Math.max(player.lastSeenTimestamp || 0, ts);
         if (appVersion) player.appVersion = appVersion;
@@ -5273,8 +5365,24 @@
           if (appVersionCode) globalState.selectedPlayer.appVersionCode = appVersionCode;
           renderInspectorHeader();
         }
+
+        // Instant match status reflection: if player finished a match (transitioned from PLAYING),
+        // immediately re-fetch their latest stats and reload inspector deep data
+        if (prevStatus === 'PLAYING' && status !== 'PLAYING') {
+          fetchSinglePlayerImmediate(uname, status, ts, appVersion, appVersionCode);
+          if (globalState.selectedPlayer && globalState.selectedPlayer.username === uname) {
+            loadPlayerDeepData(uname);
+          }
+        }
       } else {
-        // Discovered a new player via live presence! Fetch them immediately unless deleted
+        // Discovered a new player via live presence! Fetch them immediately unless deleted or temp
+        const isTempPresUser = (u) => {
+          if (!u) return true;
+          return u.startsWith('user_') || u.startsWith('guest_') || u === 'guest' ||
+                 u === 'dummymail' || u === 'g_player' || u === 'player' || u === 'player4' ||
+                 u === 'sim_host' || u === 'test_vamsi_player' || u === 'hjskakj' || u.startsWith('webtest_');
+        };
+        if (isTempPresUser(uname)) return;
         if (!globalState.deletedUsernamesSet || !globalState.deletedUsernamesSet.has(uname)) {
           if (globalState.validUsernamesSet) {
             globalState.validUsernamesSet.add(uname);
@@ -5287,6 +5395,14 @@
     function upsertPlayerFromRegistry(clean, entry) {
       if (!clean || !entry) return;
       if (globalState.deletedUsernamesSet && globalState.deletedUsernamesSet.has(clean)) return;
+      // Reject temp/ghost accounts from being resurrected via stale MQTT messages
+      const isTempUser = (u) => {
+        if (!u) return true;
+        return u.startsWith('user_') || u.startsWith('guest_') || u === 'guest' ||
+               u === 'dummymail' || u === 'g_player' || u === 'player' || u === 'player4' ||
+               u === 'sim_host' || u === 'test_vamsi_player' || u === 'hjskakj' || u.startsWith('webtest_');
+      };
+      if (isTempUser(clean)) return;
       if (globalState.validUsernamesSet) {
         globalState.validUsernamesSet.add(clean);
       }
@@ -5351,6 +5467,7 @@
       if (globalState.selectedPlayer && globalState.selectedPlayer.username === clean) {
         globalState.selectedPlayer = player;
         renderInspectorHeader();
+        loadPlayerDeepData(clean);
       }
     }
 
@@ -5362,17 +5479,22 @@
       globalState.fetchingPlayers.add(username);
 
       try {
-        let binId = KNOWN_USER_BINS[username] || null;
+        let binId = globalState.playerCache[username]?.binId || null;
         let binProfile = null;
         let matchHistory = null;
         let regData = null;
         let binLastSeen = 0;
 
         if (!binId) {
-          const rawBin = await getKeyValueDirect(`user_${username}`, 2);
-          if (rawBin && !rawBin.startsWith('{') && rawBin.length < 50 && rawBin !== 'null' && rawBin !== '""') {
-            binId = rawBin;
-          }
+          try {
+            const rawBin = await getKeyValueDirect(`user_${username}`, 2);
+            if (rawBin && !rawBin.startsWith('{') && rawBin.length < 50 && rawBin !== 'null' && rawBin !== '""') {
+              binId = rawBin;
+            }
+          } catch {}
+        }
+        if (!binId) {
+          binId = KNOWN_USER_BINS[username] || null;
         }
 
         if (binId) {
@@ -5575,7 +5697,13 @@
 
     function purgeExpiredRooms() {
       if (globalState.mqttClient && globalState.mqttClient.isConnected()) {
-        Object.keys(globalState.activeRooms).forEach(code => {
+        // Use allSeenRoomCodes which tracks ALL room codes ever received via MQTT
+        // (not just activeRooms, which gets pruned by renderActiveRooms)
+        const allCodes = new Set([
+          ...Object.keys(globalState.activeRooms),
+          ...globalState.allSeenRoomCodes
+        ]);
+        allCodes.forEach(code => {
           try {
             const clearMsg = new Paho.MQTT.Message("");
             clearMsg.destinationName = `bingo/v3/room_meta/${code}`;
@@ -5584,10 +5712,11 @@
             globalState.mqttClient.send(clearMsg);
           } catch {}
         });
+        showToast(`Purged ${allCodes.size} room references from broker`, 'info');
       }
       globalState.activeRooms = {};
+      globalState.allSeenRoomCodes.clear();
       renderActiveRooms();
-      showToast('Purged stale room references', 'info');
     }
 
     // --- BROADCAST & DIRECT MESSAGE ANNOUNCEMENT SERVICES ---
@@ -5777,7 +5906,7 @@
           }
         } catch (e) {}
 
-        // 2. Gather candidate direct message recipients to check
+        // 2. Gather candidate direct message recipients to check (ONLY tracked recipients, not all players)
         const candidateSet = new Set(await getActiveDirectRecipients());
 
         // Always check the recipient currently in the input box if not ALL
@@ -5785,21 +5914,6 @@
         const typedTarget = targetInput ? targetInput.value.trim().replace(/^@/, "").toLowerCase() : "";
         if (typedTarget && typedTarget !== "all") {
           candidateSet.add(typedTarget);
-        }
-
-        // Also check any registered users from validUsernamesSet or user_directory
-        if (globalState.validUsernamesSet && globalState.validUsernamesSet.size > 0) {
-          globalState.validUsernamesSet.forEach(u => candidateSet.add(u.toLowerCase()));
-        } else {
-          try {
-            const rawDir = await getKeyValueDirect("user_directory", 1);
-            if (rawDir) {
-              rawDir.replace(/"/g, "").split(",").forEach(u => {
-                const c = u.trim().toLowerCase().replace(/^@/, "");
-                if (c) candidateSet.add(c);
-              });
-            }
-          } catch {}
         }
 
         const candidates = Array.from(candidateSet).filter(Boolean);

@@ -1,5 +1,5 @@
-// Bingo Server Admin Service Worker (PWA) - v6
-const CACHE_NAME = 'bingo-admin-v6';
+// Bingo Server Admin Service Worker (PWA) - v7
+const CACHE_NAME = 'bingo-admin-v7';
 const ASSETS_TO_CACHE = [
   '/BINGO/admin/manifest.json',
   '/BINGO/admin/favicon.png',
@@ -40,7 +40,7 @@ self.addEventListener('fetch', (event) => {
   // Dynamic API calls & WebSocket connections: always network-only
   if (
     url.hostname.includes('keyvalue') ||
-    url.hostname.includes('emqx.io') ||
+    url.hostname.includes('emqx') ||
     url.hostname.includes('github') ||
     url.hostname.includes('extendsclass') ||
     event.request.method !== 'GET'
