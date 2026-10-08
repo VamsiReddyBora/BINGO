@@ -1551,51 +1551,53 @@ fun RootNavGraph(
                     }
 
                     // 3. Evaluate win conditions
-                    val outcome = if (packet.winnerPlayerId.isNotBlank() && !isPlayerDisconnected(packet.winnerPlayerId)) {
-                        val isLocalWinner = isPlayerMe(packet.winnerPlayerId) && !isPlayerDisconnected(myUid)
-                        val isLocalRunner = !isLocalWinner && !isPlayerDisconnected(myUid) && (packet.runnerPlayerIds.filter { !isPlayerDisconnected(it) }.any { isPlayerMe(it) } || (playerBoard.isBingo && !isPlayerDisconnected(myUid)))
-                        MatchOutcome(
-                            isGameOver = true,
-                            didPlayerWin = isLocalWinner,
-                            isDraw = false,
-                            isRunner = isLocalRunner,
-                            winnerPlayerId = packet.winnerPlayerId,
-                            winReason = packet.winReason
-                        )
-                    } else {
-                        evaluateMatchOutcome(packet.playerId)
-                    }
-                    if (outcome.isGameOver) {
-                        isGameOver = true
-                        isDrawMatch = outcome.isDraw
-                        didPlayerWin = outcome.didPlayerWin
-                        isRunnerMatch = outcome.isRunner
-                        winnerPlayerId = outcome.winnerPlayerId
-                        recordFinishedMatch(won = outcome.didPlayerWin, isDraw = outcome.isDraw)
-                        com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
-                    } else {
-                        if (packet.turnNumber > turnNumber || anyNewPick) {
-                            turnNumber = maxOf(packet.turnNumber, turnNumber + (if (anyNewPick && packet.turnNumber <= turnNumber) 1 else 0))
-                            turnTimer = 30
-                            val nextId = if (packet.currentTurnPlayerId.isNotBlank()) {
-                                packet.currentTurnPlayerId
-                            } else {
-                                calculateNextTurnPlayerId(packet.playerId)
-                            }
-                            currentTurnPlayerId = nextId
-                            isMyTurn = (currentTurnPlayerId == myUid)
-                            if ((currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) && roomCode.isNotBlank()) {
-                                com.bingo.multiplayer.domain.network.OngoingMatchStore.updateMatchGameState(
-                                    context = context,
-                                    playerBoard = playerBoard,
-                                    opponentBoard = opponentBoard,
-                                    allPlayerBoards = allPlayerBoards,
-                                    pickedNumbers = pickedNumbersHistory.toList(),
-                                    pickedByPlayers = pickedByPlayerHistory.toList(),
-                                    turnNumber = turnNumber,
-                                    currentTurnPlayerId = currentTurnPlayerId,
-                                    chatMessages = matchChatHistory
-                                )
+                    if (!isGameOver) {
+                        val outcome = if (packet.winnerPlayerId.isNotBlank() && !isPlayerDisconnected(packet.winnerPlayerId)) {
+                            val isLocalWinner = isPlayerMe(packet.winnerPlayerId) && !isPlayerDisconnected(myUid)
+                            val isLocalRunner = !isLocalWinner && !isPlayerDisconnected(myUid) && (packet.runnerPlayerIds.filter { !isPlayerDisconnected(it) }.any { isPlayerMe(it) } || (playerBoard.isBingo && !isPlayerDisconnected(myUid)))
+                            MatchOutcome(
+                                isGameOver = true,
+                                didPlayerWin = isLocalWinner,
+                                isDraw = false,
+                                isRunner = isLocalRunner,
+                                winnerPlayerId = packet.winnerPlayerId,
+                                winReason = packet.winReason
+                            )
+                        } else {
+                            evaluateMatchOutcome(packet.playerId)
+                        }
+                        if (outcome.isGameOver) {
+                            isGameOver = true
+                            isDrawMatch = outcome.isDraw
+                            didPlayerWin = outcome.didPlayerWin
+                            isRunnerMatch = outcome.isRunner
+                            winnerPlayerId = outcome.winnerPlayerId
+                            recordFinishedMatch(won = outcome.didPlayerWin, isDraw = outcome.isDraw)
+                            com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
+                        } else {
+                            if (packet.turnNumber > turnNumber || anyNewPick) {
+                                turnNumber = maxOf(packet.turnNumber, turnNumber + (if (anyNewPick && packet.turnNumber <= turnNumber) 1 else 0))
+                                turnTimer = 30
+                                val nextId = if (packet.currentTurnPlayerId.isNotBlank()) {
+                                    packet.currentTurnPlayerId
+                                } else {
+                                    calculateNextTurnPlayerId(packet.playerId)
+                                }
+                                currentTurnPlayerId = nextId
+                                isMyTurn = (currentTurnPlayerId == myUid)
+                                if ((currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) && roomCode.isNotBlank()) {
+                                    com.bingo.multiplayer.domain.network.OngoingMatchStore.updateMatchGameState(
+                                        context = context,
+                                        playerBoard = playerBoard,
+                                        opponentBoard = opponentBoard,
+                                        allPlayerBoards = allPlayerBoards,
+                                        pickedNumbers = pickedNumbersHistory.toList(),
+                                        pickedByPlayers = pickedByPlayerHistory.toList(),
+                                        turnNumber = turnNumber,
+                                        currentTurnPlayerId = currentTurnPlayerId,
+                                        chatMessages = matchChatHistory
+                                    )
+                                }
                             }
                         }
                     }
@@ -1794,36 +1796,41 @@ fun RootNavGraph(
                         }
                     }
 
-                    // 2. Evaluate win conditions
-                    val outcome = evaluateMatchOutcome(packet.playerId)
-                    if (outcome.isGameOver) {
-                        isGameOver = true
-                        isDrawMatch = outcome.isDraw
-                        didPlayerWin = outcome.didPlayerWin
-                        isRunnerMatch = outcome.isRunner
-                        winnerPlayerId = outcome.winnerPlayerId
-                        recordFinishedMatch(won = outcome.didPlayerWin, isDraw = outcome.isDraw)
-                        com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
-                    } else if (packet.turnNumber > turnNumber || (anyNewPick && packet.turnNumber >= turnNumber)) {
-                        // Strictly newer turn or reconciled missed turn! Reconcile turn authority
-                        turnNumber = maxOf(packet.turnNumber, turnNumber + (if (anyNewPick && packet.turnNumber == turnNumber) 1 else 0))
-                        turnTimer = 30
-                        if (packet.currentTurnPlayerId.isNotBlank()) {
-                            currentTurnPlayerId = packet.currentTurnPlayerId
-                            isMyTurn = (currentTurnPlayerId == myUid)
-                        }
-                        if ((currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) && roomCode.isNotBlank()) {
-                            com.bingo.multiplayer.domain.network.OngoingMatchStore.updateMatchGameState(
-                                context = context,
-                                playerBoard = playerBoard,
-                                opponentBoard = opponentBoard,
-                                allPlayerBoards = allPlayerBoards,
-                                pickedNumbers = pickedNumbersHistory.toList(),
-                                pickedByPlayers = pickedByPlayerHistory.toList(),
-                                turnNumber = turnNumber,
-                                currentTurnPlayerId = currentTurnPlayerId,
-                                chatMessages = matchChatHistory
-                            )
+                    // 2. Evaluate win conditions (only if game is not already concluded)
+                    if (!isGameOver) {
+                        val lastPicker = pickedByPlayerHistory.lastOrNull()?.takeIf { it.isNotBlank() }
+                            ?: packet.pickedByHistory.lastOrNull()?.takeIf { it.isNotBlank() }
+                            ?: currentTurnPlayerId
+                        val outcome = evaluateMatchOutcome(lastPicker)
+                        if (outcome.isGameOver) {
+                            isGameOver = true
+                            isDrawMatch = outcome.isDraw
+                            didPlayerWin = outcome.didPlayerWin
+                            isRunnerMatch = outcome.isRunner
+                            winnerPlayerId = outcome.winnerPlayerId
+                            recordFinishedMatch(won = outcome.didPlayerWin, isDraw = outcome.isDraw)
+                            com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
+                        } else if (packet.turnNumber > turnNumber || (anyNewPick && packet.turnNumber >= turnNumber)) {
+                            // Strictly newer turn or reconciled missed turn! Reconcile turn authority
+                            turnNumber = maxOf(packet.turnNumber, turnNumber + (if (anyNewPick && packet.turnNumber == turnNumber) 1 else 0))
+                            turnTimer = 30
+                            if (packet.currentTurnPlayerId.isNotBlank()) {
+                                currentTurnPlayerId = packet.currentTurnPlayerId
+                                isMyTurn = (currentTurnPlayerId == myUid)
+                            }
+                            if ((currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) && roomCode.isNotBlank()) {
+                                com.bingo.multiplayer.domain.network.OngoingMatchStore.updateMatchGameState(
+                                    context = context,
+                                    playerBoard = playerBoard,
+                                    opponentBoard = opponentBoard,
+                                    allPlayerBoards = allPlayerBoards,
+                                    pickedNumbers = pickedNumbersHistory.toList(),
+                                    pickedByPlayers = pickedByPlayerHistory.toList(),
+                                    turnNumber = turnNumber,
+                                    currentTurnPlayerId = currentTurnPlayerId,
+                                    chatMessages = matchChatHistory
+                                )
+                            }
                         }
                     }
                 }
@@ -1888,6 +1895,7 @@ fun RootNavGraph(
                             packet.playerId
                         } else ""
 
+                        val fallbackPicker = pickedByPlayerHistory.lastOrNull()?.takeIf { it.isNotBlank() } ?: packet.playerId
                         val outcome = if (effectiveWinner.isNotBlank()) {
                             val isLocalWinner = isPlayerMe(effectiveWinner) && !isPlayerDisconnected(myUid)
                             val isLocalRunner = !isLocalWinner && !isPlayerDisconnected(myUid) && (packet.runnerPlayerIds.filter { !isPlayerDisconnected(it) }.any { isPlayerMe(it) } || (playerBoard.isBingo && !isPlayerDisconnected(myUid)))
@@ -1900,7 +1908,7 @@ fun RootNavGraph(
                                 winReason = packet.winReason.ifBlank { "Bingo Claimed" }
                             )
                         } else {
-                            evaluateMatchOutcome(packet.playerId)
+                            evaluateMatchOutcome(fallbackPicker)
                         }
                         if (outcome.isGameOver) {
                             isGameOver = true
