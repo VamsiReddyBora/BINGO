@@ -1,8 +1,8 @@
 {
-  "versionCode": 39,
-  "versionName": "1.3.3",
-  "tag_name": "v1.3.3",
-  "downloadUrl": "https://github.com/VamsiReddyBora/BINGO/releases/download/v1.3.3/Bingo.apk",
-  "releaseNotes": "• Critical Bugfix: Fixed multiplayer winner announcement discrepancy where simultaneous BINGO completions could misattribute the win\n• Guaranteed turn-player priority when achieving 5 lines on own turn\n• State synchronization and background heartbeat reconciliation stability",
-  "apkSize": 5501927
+  "versionCode": 40,
+  "versionName": "1.4",
+  "tag_name": "v1.4",
+  "downloadUrl": "https://github.com/VamsiReddyBora/BINGO/releases/download/v1.4/Bingo.apk",
+  "releaseNotes": "• Major Update v1.4: Push Notifications & Nearby Network Revolution\n• High-reliability FCM background notifications for invites, turns, and game events\n• Enhanced Nearby Network with resilient UDP/TCP socket binding, genuine RTT ping, and cross-subnet hotspot discovery\n• Fixed winner announcement edge cases, player ID normalization, and reconnection playback\n• Visual contrast overhaul: amber-gold AMOLED recent picks, gold-bordered completed lines, and enhanced button accessibility",
+  "apkSize": 6150270
 }
