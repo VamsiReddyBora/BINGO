@@ -135,6 +135,8 @@ fun RootNavGraph(
     var isDrawMatch by remember { mutableStateOf(false) }
     var isRunnerMatch by remember { mutableStateOf(false) }
     var winnerPlayerId by remember { mutableStateOf("") }
+    var activeWinReason by remember { mutableStateOf("") }
+    var activeRunnerPlayerIds by remember { mutableStateOf<List<String>>(emptyList()) }
     var currentMatchSeed by remember { androidx.compose.runtime.mutableLongStateOf(0L) }
     var isLocalBoardReady by remember { mutableStateOf(false) }
     var isOpponentBoardReady by remember { mutableStateOf(false) }
@@ -811,8 +813,9 @@ fun RootNavGraph(
                 if (playerId.isBlank()) return false
                 if (isPlayerMe(playerId)) return !isPlayerDisconnected(myUid)
                 if (isPlayerDisconnected(playerId)) return false
+                val isWithinResumeGracePeriod = (now - lastForegroundResumeTimestamp) < 12_000L
                 val lastHb = if (isUsingP2p) lanP2pSync.getLastDirectHeartbeat(playerId) else onlineRoomSync.getLastDirectHeartbeat(playerId)
-                if (lastHb > 0L && (now - lastHb) >= 10_000L) {
+                if (!isWithinResumeGracePeriod && lastHb > 0L && (now - lastHb) >= 15_000L) {
                     markPlayerDisconnected(playerId)
                     return false
                 }
@@ -988,6 +991,8 @@ fun RootNavGraph(
         isDrawMatch = false
         isRunnerMatch = false
         winnerPlayerId = ""
+        activeWinReason = ""
+        activeRunnerPlayerIds = emptyList()
 
         val activePlayersList = matchParticipants.ifEmpty { realTimePlayers }
         val generatedOrder = com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.generateDeterministicTurnOrder(
@@ -1244,6 +1249,7 @@ fun RootNavGraph(
                 didPlayerWin = outcome.didPlayerWin
                 isRunnerMatch = outcome.isRunner
                 winnerPlayerId = outcome.winnerPlayerId
+                activeWinReason = outcome.winReason
                 recordFinishedMatch(won = outcome.didPlayerWin, isDraw = outcome.isDraw, isRunner = outcome.isRunner)
                 com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
             } else {
@@ -1282,6 +1288,7 @@ fun RootNavGraph(
                         } else emptyList()
                     }
                 } else emptyList()
+                activeRunnerPlayerIds = runnerIds
 
                 broadcastPacket(
                     RoomMessagePacket(
@@ -1617,12 +1624,26 @@ fun RootNavGraph(
                         }
                     }
 
+                    // Ensure strict chronological ordering when packet's history is authoritative
+                    if (packet.pickedHistory.size >= pickedNumbersHistory.size &&
+                        packet.pickedHistory.containsAll(pickedNumbersHistory) &&
+                        packet.pickedHistory != pickedNumbersHistory.toList()
+                    ) {
+                        pickedNumbersHistory.clear()
+                        pickedNumbersHistory.addAll(packet.pickedHistory)
+                        pickedByPlayerHistory.clear()
+                        packet.pickedHistory.indices.forEach { i ->
+                            val pId = packet.pickedByHistory.getOrNull(i)?.takeIf { it.isNotBlank() } ?: packet.playerId
+                            pickedByPlayerHistory.add(pId)
+                        }
+                    }
+
                     // 2. Direct single pick fallback
                     val isExpectedPicker = com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(packet.playerId, currentTurnPlayerId) ||
                             (packet.isHost && packet.number <= 0) ||
                             currentTurnPlayerId.isBlank()
-                    if (!isExpectedPicker && (packet.turnNumber < turnNumber)) {
-                        // Discard stale out-of-turn packets from previous turns
+                    if (!isExpectedPicker && packet.turnNumber <= turnNumber && packet.number > 0) {
+                        // Discard stale out-of-turn packets from previous turns or concurrent moves that arrived after turn already rotated
                         return
                     }
 
@@ -1680,6 +1701,13 @@ fun RootNavGraph(
                             didPlayerWin = outcome.didPlayerWin
                             isRunnerMatch = outcome.isRunner
                             winnerPlayerId = outcome.winnerPlayerId
+                            activeWinReason = outcome.winReason
+                            activeRunnerPlayerIds = packet.runnerPlayerIds.ifEmpty {
+                                if (isGroupMatch()) {
+                                    val eff = if (allPlayerBoards.containsKey(myUid)) allPlayerBoards else (allPlayerBoards + (myUid to playerBoard))
+                                    eff.filter { it.value.isBingo && !com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it.key, outcome.winnerPlayerId) && !isPlayerDisconnected(it.key) }.keys.toList()
+                                } else if (outcome.isRunner) listOf(myUid) else emptyList()
+                            }
                             recordFinishedMatch(won = outcome.didPlayerWin, isDraw = outcome.isDraw, isRunner = outcome.isRunner)
                             com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
                         } else {
@@ -1854,7 +1882,10 @@ fun RootNavGraph(
                                 currentTurnPlayerId = currentTurnPlayerId,
                                 boardHash = engine.computeBoardHash(playerBoard),
                                 seed = currentMatchSeed,
-                                playerId = myUid
+                                playerId = myUid,
+                                winnerPlayerId = if (isGameOver) winnerPlayerId else "",
+                                winReason = if (isGameOver) activeWinReason else "",
+                                runnerPlayerIds = if (isGameOver) activeRunnerPlayerIds else emptyList()
                             )
                         )
                     }
@@ -1905,18 +1936,52 @@ fun RootNavGraph(
                         }
                     }
 
+                    // Ensure strict chronological ordering when packet's history is authoritative
+                    if (packet.pickedHistory.size >= pickedNumbersHistory.size &&
+                        packet.pickedHistory.containsAll(pickedNumbersHistory) &&
+                        packet.pickedHistory != pickedNumbersHistory.toList()
+                    ) {
+                        pickedNumbersHistory.clear()
+                        pickedNumbersHistory.addAll(packet.pickedHistory)
+                        pickedByPlayerHistory.clear()
+                        packet.pickedHistory.indices.forEach { i ->
+                            val pId = packet.pickedByHistory.getOrNull(i)?.takeIf { it.isNotBlank() } ?: packet.playerId
+                            pickedByPlayerHistory.add(pId)
+                        }
+                    }
+
                     // 2. Evaluate win conditions (only if game is not already concluded)
                     if (!isGameOver) {
-                        val lastPicker = pickedByPlayerHistory.lastOrNull()?.takeIf { it.isNotBlank() }
-                            ?: packet.pickedByHistory.lastOrNull()?.takeIf { it.isNotBlank() }
-                            ?: currentTurnPlayerId
-                        val outcome = evaluateMatchOutcome(lastPicker)
+                        val outcome = if (packet.winnerPlayerId.isNotBlank() && !isPlayerDisconnected(packet.winnerPlayerId)) {
+                            val isLocalWinner = isPlayerMe(packet.winnerPlayerId) && !isPlayerDisconnected(myUid)
+                            val isLocalRunner = !isLocalWinner && !isPlayerDisconnected(myUid) && (packet.runnerPlayerIds.filter { !isPlayerDisconnected(it) }.any { isPlayerMe(it) } || (playerBoard.isBingo && !isPlayerDisconnected(myUid)))
+                            MatchOutcome(
+                                isGameOver = true,
+                                didPlayerWin = isLocalWinner,
+                                isDraw = false,
+                                isRunner = isLocalRunner,
+                                winnerPlayerId = packet.winnerPlayerId,
+                                winReason = packet.winReason
+                            )
+                        } else {
+                            val lastPicker = pickedByPlayerHistory.lastOrNull()?.takeIf { it.isNotBlank() }
+                                ?: packet.pickedByHistory.lastOrNull()?.takeIf { it.isNotBlank() }
+                                ?: currentTurnPlayerId
+                            evaluateMatchOutcome(lastPicker)
+                        }
                         if (outcome.isGameOver) {
                             isGameOver = true
                             isDrawMatch = outcome.isDraw
                             didPlayerWin = outcome.didPlayerWin
                             isRunnerMatch = outcome.isRunner
                             winnerPlayerId = outcome.winnerPlayerId
+                            activeWinReason = outcome.winReason
+                            activeRunnerPlayerIds = packet.runnerPlayerIds.ifEmpty {
+                                if (isGroupMatch()) {
+                                    val eff = if (allPlayerBoards.containsKey(myUid)) allPlayerBoards else (allPlayerBoards + (myUid to playerBoard))
+                                    eff.filter { it.value.isBingo && !com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it.key, outcome.winnerPlayerId) && !isPlayerDisconnected(it.key) }.keys.toList()
+                                } else if (outcome.isRunner) listOf(myUid) else emptyList()
+                            }
                             recordFinishedMatch(won = outcome.didPlayerWin, isDraw = outcome.isDraw, isRunner = outcome.isRunner)
                             com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
                         } else if (packet.turnNumber > turnNumber || (anyNewPick && packet.turnNumber >= turnNumber)) {
@@ -2504,6 +2569,8 @@ fun RootNavGraph(
                         isDrawMatch = false
                         isRunnerMatch = false
                         winnerPlayerId = ""
+                        activeWinReason = ""
+                        activeRunnerPlayerIds = emptyList()
                         disconnectedPlayerIds.clear()
                         consecutiveMissedTurns.clear()
                         lastForegroundResumeTimestamp = System.currentTimeMillis()
@@ -2884,6 +2951,8 @@ fun RootNavGraph(
                                     isDrawMatch = false
                                     isRunnerMatch = false
                                     winnerPlayerId = ""
+                                    activeWinReason = ""
+                                    activeRunnerPlayerIds = emptyList()
                                     disconnectedPlayerIds.clear()
                                     lastForegroundResumeTimestamp = System.currentTimeMillis()
                                     val participantIds = matchData.participants.map { it.id }.filter { it.isNotBlank() }
@@ -4139,6 +4208,8 @@ fun RootNavGraph(
                     isDrawMatch = false
                     isRunnerMatch = false
                     winnerPlayerId = ""
+                    activeWinReason = ""
+                    activeRunnerPlayerIds = emptyList()
                     currentMatchSeed = 0L
                     allPlayerBoards = emptyMap()
                     pickedNumbersHistory.clear()
@@ -4210,6 +4281,8 @@ fun RootNavGraph(
                         isDrawMatch = false
                         isRunnerMatch = false
                         winnerPlayerId = ""
+                        activeWinReason = ""
+                        activeRunnerPlayerIds = emptyList()
                         currentMatchSeed = 0L
                         pickedNumbersHistory.clear()
                         pickedByPlayerHistory.clear()
