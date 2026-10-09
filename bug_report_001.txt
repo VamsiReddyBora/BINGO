@@ -1,0 +1,325 @@
+================================================================================
+BINGO MULTIPLAYER - COMPREHENSIVE AUDIT & BUG REPORT #001
+================================================================================
+Report ID       : BUG-REPORT-001
+Date            : 2026-10-09
+Target Platform : Android (Kotlin/Compose), Web (TypeScript/React), Cloudflare Worker
+Status          : OPEN / REQUIRES REMEDIATION
+Audited By      : Antigravity Code Review & Security Audit System
+================================================================================
+
+1. EXECUTIVE SUMMARY & ISSUE MATRIX
+--------------------------------------------------------------------------------
+A full line-by-line security, network, architecture, and gameplay audit was 
+conducted on the Bingo Multiplayer codebase. Twelve (12) discrete defects were 
+identified, ranging from Critical (P0) security vulnerabilities to High (P1) 
+network leaks and protocol desynchronizations.
+
++---------+----------+----------------------------+------------------------------------------------------+
+| BUG ID  | SEVERITY | COMPONENT / MODULE         | BRIEF DESCRIPTION                                    |
++---------+----------+----------------------------+------------------------------------------------------+
+| BUG-001 | CRITICAL | BingoFcmManager.kt         | Hardcoded RSA-2048 private key in client binary      |
+| BUG-002 | HIGH     | HotspotAndWifiManager.kt   | NetworkCallback leak & permanent process net lock    |
+| BUG-003 | HIGH     | OnlineRoomSyncManager.kt   | Race condition in disconnect() drops LEAVE packet    |
+| BUG-004 | HIGH     | FastPacketCodec vs codec.ts| Deserialization token mismatch (11 tokens vs 8)      |
+| BUG-005 | HIGH     | bingoEngine.ts             | Target lines hardcoded to 5 on 6x6/7x7/8x8 boards   |
+| BUG-006 | HIGH     | NetworkConfig / ExtendsClass| Hardcoded MQTT password & unauthenticated JSON bins |
+| BUG-007 | MEDIUM   | LanP2pSession & QrCodeHelper| Dynamic port binding (8999..9004) missing from QR   |
+| BUG-008 | MEDIUM   | RootNavGraph.kt            | Simultaneous Draw match logic mathematically blocked |
+| BUG-009 | MEDIUM   | RootNavGraph.kt            | No ViewModel; rotation destroys entire match state   |
+| BUG-010 | MEDIUM   | AppUpdateManager.kt        | Unknown sources permission flow lacks resume hook    |
+| BUG-011 | LOW      | LanDiscoveryManager.kt     | 255.255.255.255 broadcast dropped on hotspot AP      |
+| BUG-012 | LOW      | BingoAiPlayer.kt           | Master AI top-left tie-breaking bias                 |
++---------+----------+----------------------------+------------------------------------------------------+
+
+
+================================================================================
+2. DETAILED DEFECT SPECIFICATIONS & CODE LOCATIONS
+================================================================================
+
+--------------------------------------------------------------------------------
+BUG-001 [CRITICAL - P0]: Hardcoded Google Cloud RSA Private Key in Client Binary
+--------------------------------------------------------------------------------
+File: app/src/main/java/com/bingo/multiplayer/domain/network/BingoFcmManager.kt
+Lines: 31-60
+
+Description:
+A complete PEM-formatted RSA-2048 private key and Google Cloud Service Account 
+email address (firebase-adminsdk-fbsvc@bingo-6bb09.iam.gserviceaccount.com) are 
+embedded directly into the client APK source code. The client uses this private 
+key to self-sign JWT assertions to request Google OAuth2 access tokens.
+
+Impact:
+Decompiling the APK (or inspecting strings) gives any attacker full administrative 
+rights over the Firebase/GCP project "bingo-6bb09". An attacker can spam pushes to 
+all registered device tokens, delete databases, or abuse cloud quotas.
+
+Note:
+The project already contains cloudflare_worker/worker.js built to proxy FCM pushes, 
+but BingoFcmManager.kt bypasses it and stores the secret locally.
+
+Remediation:
+1. Immediately revoke the service account key in the Google Cloud Console.
+2. Remove FCM_PRIVATE_KEY_PEM and client-side JWT generation from BingoFcmManager.kt.
+3. Route push notifications through the Cloudflare Worker relay endpoint.
+
+
+--------------------------------------------------------------------------------
+BUG-002 [HIGH - P1]: NetworkCallback Leak & Process Network Lock in Wi-Fi Manager
+--------------------------------------------------------------------------------
+File: app/src/main/java/com/bingo/multiplayer/domain/network/HotspotAndWifiManager.kt
+Lines: 327-361
+
+Description:
+When connecting to a local peer hotspot via WifiNetworkSpecifier:
+1. cm.requestNetwork() creates an anonymous ConnectivityManager.NetworkCallback 
+   without storing a reference. cm.unregisterNetworkCallback() is NEVER called 
+   anywhere in the codebase.
+2. Inside onAvailable(), cm.bindProcessToNetwork(network) binds all process sockets 
+   to the local Wi-Fi hotspot (which has no Internet connection). When leaving 
+   the LAN game, cm.bindProcessToNetwork(null) is never invoked.
+
+Impact:
+1. Repeated connections hit the Android OS network callback quota, throwing 
+   java.lang.SecurityException or TooManyRequestsException.
+2. Exiting a LAN game leaves the app completely disconnected from the Internet; 
+   MQTT online rooms, updates, and cloud sync will fail until the app is killed.
+
+Remediation:
+Store activeNetworkCallback: ConnectivityManager.NetworkCallback? in 
+HotspotAndWifiManager and implement a public cleanup function:
+```kotlin
+fun disconnectFromWifi(context: Context) {
+    val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+    try {
+        activeNetworkCallback?.let { cm.unregisterNetworkCallback(it) }
+    } catch (_: Exception) {}
+    activeNetworkCallback = null
+    try {
+        cm.bindProcessToNetwork(null)
+    } catch (_: Exception) {}
+}
+```
+
+
+--------------------------------------------------------------------------------
+BUG-003 [HIGH - P1]: Race Condition in disconnect() Dropping LEAVE Packets
+--------------------------------------------------------------------------------
+File: app/src/main/java/com/bingo/multiplayer/domain/network/OnlineRoomSyncManager.kt
+Lines: 1041-1076
+
+Description:
+In disconnect():
+1. broadcastPacket(RoomMessagePacket(type = "LEAVE", ...)) is dispatched 
+   asynchronously via scope.launch(Dispatchers.IO).
+2. Immediately afterwards on the calling thread, mqttClient is set to null, and 
+   client.disconnect() is launched.
+3. Inside broadcastPacket(), the retry loop checks `while (client == null ...)`: 
+   since mqttClient was already set to null, the coroutine loops for 3 seconds 
+   and exits without ever publishing the LEAVE message.
+
+Impact:
+When a user voluntarily leaves an online room, opponents are never notified in 
+real-time and must wait out the full 60-second cloud inactivity timeout.
+
+Remediation:
+Execute the LEAVE packet transmission synchronously before setting mqttClient = null:
+```kotlin
+val client = mqttClient
+if (client != null && client.isConnected && p != null && code != null) {
+    try {
+        val payload = FastPacketCodec.encode(RoomMessagePacket(type = "LEAVE", playerId = p.id, timestamp = System.currentTimeMillis()))
+        client.publish(getTopic(code), MqttMessage(payload.toByteArray(StandardCharsets.UTF_8)).apply { qos = 1 })
+    } catch (_: Exception) {}
+}
+mqttClient = null
+```
+
+
+--------------------------------------------------------------------------------
+BUG-004 [HIGH - P1]: Cross-Platform FastPacketCodec Token Count Desynchronization
+--------------------------------------------------------------------------------
+Files:
+- app/src/main/java/com/bingo/multiplayer/domain/network/FastPacketCodec.kt (Lines 26-34)
+- web/src/network/codec.ts (Lines 14-19, 76-96)
+
+Description:
+Android encodes up to 11 pipe-delimited tokens for PICK_NUMBER:
+`P|num|pid|turn|curr|hist|seed|inst|pickedBy|hash|size`
+Web TypeScript only encodes up to 8 tokens:
+`P|num|pid|turn|curr|hist|seed|inst`
+
+Impact:
+1. Android expecting 11 tokens from a Web client parses pickedByHistory, boardHash, 
+   and boardSize as missing/defaults.
+2. Web decoding Android packets discards pickedByHistory, boardHash, and boardSize.
+3. For TURN_TIMEOUT, Android encodes 8 tokens, while Web only encodes 6 tokens.
+4. Cross-platform matches between Android and Web will experience desynchronized 
+   board sizes and corrupted move histories.
+
+Remediation:
+Update web/src/network/codec.ts to serialize and deserialize all 11 tokens to match 
+FastPacketCodec.kt.
+
+
+--------------------------------------------------------------------------------
+BUG-005 [HIGH - P1]: Dynamic Board Target Lines Mismatch (Web vs Android)
+--------------------------------------------------------------------------------
+Files:
+- app/src/main/java/com/bingo/multiplayer/domain/engine/BingoEngine.kt (Line 40)
+- web/src/engine/bingoEngine.ts (Line 109)
+
+Description:
+In Android: `Board(size = size, cells = cells, targetLines = size)` -> Target lines 
+dynamically scale with board size (5 for 5x5, 6 for 6x6, 7 for 7x7, 8 for 8x8).
+In Web: `targetLines: 5` is hardcoded regardless of size.
+
+Impact:
+In a 6x6+ multiplayer match, the Web client declares BINGO and claims victory after 
+completing 5 lines, while Android expects 6 lines. The match state desynchronizes 
+and both clients dispute the outcome.
+
+Remediation:
+In web/src/engine/bingoEngine.ts (line 109), change `targetLines: 5` to `targetLines: size`.
+
+
+--------------------------------------------------------------------------------
+BUG-006 [HIGH - P1]: Hardcoded MQTT Broker Credentials & Open Cloud Storage Bins
+--------------------------------------------------------------------------------
+Files:
+- app/src/main/java/com/bingo/multiplayer/domain/network/NetworkConfig.kt (Lines 19-26)
+- app/src/main/java/com/bingo/multiplayer/domain/network/AccountSessionManager.kt (Lines 180-235)
+- bingo.py (Lines 32-35)
+
+Description:
+1. EMQX broker username ("Bora") and password ("bora7989") and KeyValue app key 
+   ("2464j24f") are hardcoded in plaintext.
+2. AccountSessionManager stores user profiles, match stats, and avatars in 
+   https://extendsclass.com/api/json-storage/bin without authentication.
+
+Impact:
+Anyone can subscribe to wildcard topics `bingo/rooms/#` on EMQX to snoop or inject 
+arbitrary moves. Anyone knowing or discovering a user's binId can execute an HTTP 
+PUT to wipe or corrupt their profile data.
+
+Remediation:
+Enforce MQTT broker ACLs and migrate profile storage to an authenticated backend 
+(e.g., Firebase Firestore with security rules).
+
+
+--------------------------------------------------------------------------------
+BUG-007 [MEDIUM - P2]: Dynamic Port Fallback in LAN Host Not Transmitted in QR
+--------------------------------------------------------------------------------
+Files:
+- app/src/main/java/com/bingo/multiplayer/domain/network/LanP2pSessionManager.kt (Lines 164-176)
+- app/src/main/java/com/bingo/multiplayer/domain/network/QrCodeHelper.kt (Lines 33-82)
+
+Description:
+If port 8999 is already in use (e.g. TIME_WAIT), the host server attempts candidate 
+ports 8999..9004. However, NearbyHostQrPayload and createQrContent() only encode 
+SSID, password, roomCode, and hostIp—the port is omitted.
+Clients scanning the QR code always attempt connection on default port 8999.
+
+Impact:
+If the host binds to 9000, clients fail to connect with java.net.ConnectException.
+
+Remediation:
+Add `val port: Int = 8999` to NearbyHostQrPayload and include `PORT:${payload.port};` 
+in createQrContent() and parseQrContent().
+
+
+--------------------------------------------------------------------------------
+BUG-008 [MEDIUM - P2]: Simultaneous Draw Match Logic Unreachable
+--------------------------------------------------------------------------------
+File: app/src/main/java/com/bingo/multiplayer/presentation/navigation/RootNavGraph.kt
+Lines: 780-865
+
+Description:
+In evaluateMatchOutcome():
+1. In 2-player matches, if pWon && oWon occurs on the same turn, whoever picked 
+   the number is given didPlayerWin = true, and the other player receives 
+   isRunner = true; isDraw is forced to false.
+2. In 3+ player matches, line 862 hardcodes `isDraw = false`.
+
+Impact:
+Even though MatchOutcome has an `isDraw` flag and the UI includes a Draw badge, 
+simultaneous tie outcomes can never occur in practice.
+
+Remediation:
+Evaluate if both players completed their winning line simultaneously on a neutral 
+move or share identical line completions, and set isDraw = true.
+
+
+--------------------------------------------------------------------------------
+BUG-009 [MEDIUM - P2]: Missing ViewModel Architecture in RootNavGraph
+--------------------------------------------------------------------------------
+File: app/src/main/java/com/bingo/multiplayer/presentation/navigation/RootNavGraph.kt
+Lines: 1-4541
+
+Description:
+RootNavGraph is a 4,541-line composable holding over 100 mutableStateOf variables. 
+No state is hoisted into a Jetpack ViewModel.
+
+Impact:
+A configuration change (e.g., screen rotation, system dark theme toggle, font 
+size adjustment) recreates the composable and destroys all active match state, 
+boards, scores, and active socket connections.
+
+Remediation:
+Refactor room and gameplay state into a GameViewModel surviving configuration changes.
+
+
+--------------------------------------------------------------------------------
+BUG-010 [MEDIUM - P2]: Incomplete App Update Unknown Sources Permission Resume
+--------------------------------------------------------------------------------
+File: app/src/main/java/com/bingo/multiplayer/domain/network/AppUpdateManager.kt
+Lines: 427-440
+
+Description:
+On Android 8.0+, if canRequestPackageInstalls() returns false, the app launches 
+Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES and returns. There is no lifecycle 
+observer or ActivityResultLauncher to automatically resume installApk() once the 
+user enables the toggle and returns to the app.
+
+Impact:
+The user is left in the settings screen; returning to the app displays an idle 
+state requiring manual re-initiation.
+
+Remediation:
+Cache pendingInstallApk and verify canRequestPackageInstalls() in onResume() to 
+automatically trigger the package installer.
+
+
+--------------------------------------------------------------------------------
+BUG-011 [LOW - P3]: Limited UDP Broadcast Dropped on Android Tethered Hotspot
+--------------------------------------------------------------------------------
+File: app/src/main/java/com/bingo/multiplayer/domain/network/LanDiscoveryManager.kt
+Lines: 45-80
+
+Description:
+LanDiscoveryManager broadcasts to 255.255.255.255:8998. On several Android versions 
+(API 30+), the Linux routing table on tethered hotspot interfaces (ap0/swlan0) 
+drops 255.255.255.255 packets.
+
+Remediation:
+Broadcast to both 255.255.255.255 and the subnet-directed broadcast address 
+(e.g. 192.168.43.255).
+
+
+--------------------------------------------------------------------------------
+BUG-012 [LOW - P3]: Top-Left Move Bias in Master AI Decision Engine
+--------------------------------------------------------------------------------
+File: app/src/main/java/com/bingo/multiplayer/domain/engine/BingoAiPlayer.kt
+Lines: 80-120
+
+Description:
+In Master difficulty, candidate cells are evaluated with synergy scores. When 
+multiple cells tie with the same maximum score, maxByOrNull() selects the first 
+encountered element in row-major order, creating a predictable top-left bias.
+
+Remediation:
+Collect all tied max-score cells and select one via .random().
+
+================================================================================
+END OF BUG REPORT #001
+================================================================================

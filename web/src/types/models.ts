@@ -90,6 +90,11 @@ export interface RoomMessagePacket {
   isManualBoard?: boolean;
   senderInstanceId?: string;
   payload?: string;
+  pickedByHistory?: string[];
+  boardHash?: number;
+  winnerPlayerId?: string;
+  winReason?: string;
+  runnerPlayerIds?: string[];
 }
 
 export type CellMarkState =

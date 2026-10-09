@@ -42,6 +42,7 @@ data class LanDiscoveredGame(
     val boardSize: Int = 5,
     val roomCode: String, // Internal room session identifier, completely invisible to the user
     val hostIp: String = "",
+    val port: Int = 8999,
     val ssid: String = "",
     val isInLobby: Boolean = false,
     val broadcastTimestamp: Long = System.currentTimeMillis(),

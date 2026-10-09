@@ -18,7 +18,8 @@ data class NearbyHostQrPayload(
     val roomCode: String,
     val hostIp: String,
     val hostName: String,
-    val boardSize: Int = 5
+    val boardSize: Int = 5,
+    val port: Int = 8999
 )
 
 object QrCodeHelper {
@@ -28,11 +29,11 @@ object QrCodeHelper {
 
     /**
      * Serializes host details into universal standard Wi-Fi QR code format
-     * with embedded game metadata (WIFI:T:WPA;S:ssid;P:password;ROOM:...;IP:...;NAME:...;;).
+     * with embedded game metadata (WIFI:T:WPA;S:ssid;P:password;ROOM:...;IP:...;PORT:...;NAME:...;;).
      */
     fun createQrContent(payload: NearbyHostQrPayload): String {
         val sec = if (payload.password.isBlank()) "nopass" else "WPA"
-        return "WIFI:T:$sec;S:${payload.ssid};P:${payload.password};ROOM:${payload.roomCode};IP:${payload.hostIp};NAME:${payload.hostName};;"
+        return "WIFI:T:$sec;S:${payload.ssid};P:${payload.password};ROOM:${payload.roomCode};IP:${payload.hostIp};PORT:${payload.port};NAME:${payload.hostName};;"
     }
 
     /**
@@ -58,6 +59,7 @@ object QrCodeHelper {
                 var room = "LAN_${(1000..9999).random()}"
                 var ip = ""
                 var name = "Nearby Host"
+                var port = 8999
 
                 val tokens = trimmed.removePrefix("WIFI:").split(";")
                 for (token in tokens) {
@@ -67,6 +69,7 @@ object QrCodeHelper {
                         part.startsWith("P:", ignoreCase = true) -> pass = part.substring(2)
                         part.startsWith("ROOM:", ignoreCase = true) -> room = part.substring(5)
                         part.startsWith("IP:", ignoreCase = true) -> ip = part.substring(3)
+                        part.startsWith("PORT:", ignoreCase = true) -> port = part.substring(5).toIntOrNull() ?: 8999
                         part.startsWith("NAME:", ignoreCase = true) -> name = part.substring(5)
                     }
                 }
@@ -77,7 +80,8 @@ object QrCodeHelper {
                         password = pass,
                         roomCode = room,
                         hostIp = ip,
-                        hostName = displayName
+                        hostName = displayName,
+                        port = port
                     )
                 } else null
             } catch (_: Exception) {

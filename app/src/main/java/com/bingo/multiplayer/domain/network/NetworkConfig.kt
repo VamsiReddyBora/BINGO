@@ -26,6 +26,12 @@ object NetworkConfig {
     const val KEYVALUE_APP_KEY = "2464j24f"
 
     /**
+     * Cloudflare Worker relay endpoint for secure background push notifications via FCM HTTP v1.
+     * Keeps service account private key off the client binary.
+     */
+    const val FCM_RELAY_URL = "https://bingo-fcm-relay.vamsireddy2534.workers.dev/send"
+
+    /**
      * Current client application version metadata.
      */
     const val APP_VERSION_NAME = "1.4"

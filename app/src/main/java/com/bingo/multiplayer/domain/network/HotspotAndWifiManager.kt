@@ -25,6 +25,23 @@ object HotspotAndWifiManager {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
+    private var activeNetworkCallback: ConnectivityManager.NetworkCallback? = null
+
+    /**
+     * Safely unregisters any active NetworkCallback and unbinds process network socket routing.
+     * Prevents NetworkCallback exhaustion leaks and restores standard cellular/Wi-Fi routing for the app.
+     */
+    fun disconnectFromWifi(context: Context) {
+        val cm = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+        try {
+            activeNetworkCallback?.let { cm.unregisterNetworkCallback(it) }
+        } catch (_: Exception) {}
+        activeNetworkCallback = null
+        try {
+            cm.bindProcessToNetwork(null)
+        } catch (_: Exception) {}
+    }
+
     // ── Wi-Fi State & Control ──
 
     fun isWifiEnabled(context: Context): Boolean {
@@ -324,7 +341,9 @@ object HotspotAndWifiManager {
                     .setNetworkSpecifier(specifier)
                     .build()
 
-                cm.requestNetwork(request, object : ConnectivityManager.NetworkCallback() {
+                disconnectFromWifi(context)
+
+                val callback = object : ConnectivityManager.NetworkCallback() {
                     override fun onAvailable(network: Network) {
                         super.onAvailable(network)
                         try {
@@ -354,11 +373,14 @@ object HotspotAndWifiManager {
 
                     override fun onUnavailable() {
                         super.onUnavailable()
+                        disconnectFromWifi(context)
                         scope.launch(Dispatchers.Main) {
                             onError("Connection request cancelled or timed out")
                         }
                     }
-                })
+                }
+                activeNetworkCallback = callback
+                cm.requestNetwork(request, callback)
             } catch (e: Exception) {
                 Log.w("HotspotWifi", "WifiNetworkSpecifier failed: ${e.message}")
                 onError(e.message ?: "Could not connect to network")

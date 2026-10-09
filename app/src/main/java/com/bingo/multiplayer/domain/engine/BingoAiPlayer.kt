@@ -65,7 +65,9 @@ class BingoAiPlayer(
             number to score
         }.sortedByDescending { it.second }
 
-        return scoredMoves.first().first
+        val maxScore = scoredMoves.first().second
+        val topTiedMoves = scoredMoves.filter { it.second == maxScore }
+        return topTiedMoves.random().first
     }
 
     /**

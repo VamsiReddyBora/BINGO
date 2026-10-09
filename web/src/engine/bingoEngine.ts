@@ -106,7 +106,7 @@ export class BingoEngine {
       size,
       cells,
       completedLines: [],
-      targetLines: 5
+      targetLines: size
     };
   }
 

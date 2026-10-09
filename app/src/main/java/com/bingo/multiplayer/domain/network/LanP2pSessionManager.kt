@@ -64,6 +64,9 @@ class LanP2pSessionManager {
     private val _measuredPingMs = MutableStateFlow<Long>(4L)
     val measuredPingMs: StateFlow<Long> = _measuredPingMs.asStateFlow()
 
+    val boundPort: Int
+        get() = serverSocket?.localPort?.takeIf { it > 0 } ?: 8999
+
     private val _incomingPackets = MutableSharedFlow<RoomMessagePacket>(replay = 1, extraBufferCapacity = 64)
     val incomingPackets: SharedFlow<RoomMessagePacket> = _incomingPackets.asSharedFlow()
 
@@ -161,14 +164,12 @@ class LanP2pSessionManager {
 
         serverJob = scope.launch(Dispatchers.IO) {
             try {
-                var boundPort = port
                 for (candidatePort in port..(port + 5)) {
                     try {
                         serverSocket = ServerSocket().apply {
                             reuseAddress = true
                             bind(java.net.InetSocketAddress(candidatePort))
                         }
-                        boundPort = candidatePort
                         break
                     } catch (e: java.net.BindException) {
                         if (candidatePort == port + 5) throw e

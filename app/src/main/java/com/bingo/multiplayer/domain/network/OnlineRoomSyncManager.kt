@@ -1041,14 +1041,23 @@ class OnlineRoomSyncManager(
     fun disconnect() {
         val p = localPlayer
         val code = currentRoomCode
-        if (p != null && code != null) {
-            broadcastPacket(
-                RoomMessagePacket(
+        val client = mqttClient
+
+        if (client != null && client.isConnected && p != null && code != null) {
+            try {
+                val leavePacket = RoomMessagePacket(
                     type = "LEAVE",
                     playerId = p.id,
+                    senderInstanceId = instanceId,
                     timestamp = System.currentTimeMillis()
                 )
-            )
+                val payload = FastPacketCodec.encode(leavePacket)
+                val msg = MqttMessage(payload.toByteArray(StandardCharsets.UTF_8)).apply {
+                    qos = 1
+                }
+                client.publish(getTopic(code), msg).waitForCompletion(500L)
+            } catch (_: Exception) {}
+
             if (p.isHost) {
                 scope.launch(Dispatchers.IO) {
                     OnlineRoomRegistry.closeRoom(code)
@@ -1064,7 +1073,6 @@ class OnlineRoomSyncManager(
         pingJob = null
         _pingMs.value = 0L
 
-        val client = mqttClient
         mqttClient = null
         scope.launch(Dispatchers.IO) {
             try {

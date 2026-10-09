@@ -29,6 +29,7 @@ import com.bingo.multiplayer.domain.model.Player
 import com.bingo.multiplayer.domain.network.HotspotAndWifiManager
 import com.bingo.multiplayer.domain.network.NearbyHostQrPayload
 import com.bingo.multiplayer.domain.network.LanDiscoveredGame
+import com.bingo.multiplayer.domain.network.LanP2pSessionManager
 import com.bingo.multiplayer.presentation.common.PlayerAvatar
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -627,7 +628,8 @@ fun NearbyLobbyScreen(
                     roomCode = currentRoomCode.ifBlank { "LAN_GAME" },
                     hostIp = HotspotAndWifiManager.getLocalIpAddress(),
                     hostName = hostDisplayName,
-                    boardSize = dynamicBoardSize
+                    boardSize = dynamicBoardSize,
+                    port = LanP2pSessionManager.activeInstance?.boundPort ?: 8999
                 ),
                 onDismiss = { showHostQrDialog = false }
             )
@@ -646,6 +648,7 @@ fun NearbyLobbyScreen(
                         boardSize = payload.boardSize,
                         roomCode = payload.roomCode,
                         hostIp = payload.hostIp.ifBlank { HotspotAndWifiManager.getGatewayIp(context) },
+                        port = payload.port,
                         ssid = payload.ssid,
                         isInLobby = false,
                         broadcastTimestamp = System.currentTimeMillis()

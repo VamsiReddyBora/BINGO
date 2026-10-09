@@ -8,11 +8,22 @@ export const FastPacketCodec = {
   encode(packet: RoomMessagePacket): string {
     switch (packet.type) {
       case 'PICK_NUMBER': {
+        if (packet.winnerPlayerId && packet.winnerPlayerId.trim() !== '') {
+          return JSON.stringify(packet);
+        }
         const historyStr = (packet.pickedHistory || []).join(',');
-        if (packet.senderInstanceId) {
-          return `P|${packet.number ?? 0}|${packet.playerId}|${packet.turnNumber ?? 0}|${packet.currentTurnPlayerId ?? ''}|${historyStr}|${packet.seed ?? 0}|${packet.senderInstanceId}`;
-        } else if (packet.seed && packet.seed !== 0) {
-          return `P|${packet.number ?? 0}|${packet.playerId}|${packet.turnNumber ?? 0}|${packet.currentTurnPlayerId ?? ''}|${historyStr}|${packet.seed}`;
+        const pickedByStr = (packet.pickedByHistory || []).join(',');
+        const boardSize = packet.boardSize ?? 5;
+        const boardHash = packet.boardHash ?? 0;
+        const senderInstanceId = packet.senderInstanceId ?? '';
+        const seed = packet.seed ?? 0;
+
+        if (boardSize !== 5) {
+          return `P|${packet.number ?? 0}|${packet.playerId}|${packet.turnNumber ?? 0}|${packet.currentTurnPlayerId ?? ''}|${historyStr}|${seed}|${senderInstanceId}|${pickedByStr}|${boardHash}|${boardSize}`;
+        } else if (senderInstanceId || (packet.pickedByHistory && packet.pickedByHistory.length > 0) || boardHash !== 0) {
+          return `P|${packet.number ?? 0}|${packet.playerId}|${packet.turnNumber ?? 0}|${packet.currentTurnPlayerId ?? ''}|${historyStr}|${seed}|${senderInstanceId}|${pickedByStr}|${boardHash}`;
+        } else if (seed !== 0) {
+          return `P|${packet.number ?? 0}|${packet.playerId}|${packet.turnNumber ?? 0}|${packet.currentTurnPlayerId ?? ''}|${historyStr}|${seed}`;
         } else {
           return `P|${packet.number ?? 0}|${packet.playerId}|${packet.turnNumber ?? 0}|${packet.currentTurnPlayerId ?? ''}|${historyStr}`;
         }
@@ -20,10 +31,14 @@ export const FastPacketCodec = {
 
       case 'TURN_TIMEOUT': {
         const historyStr = (packet.pickedHistory || []).join(',');
-        if (packet.senderInstanceId) {
-          return `T|${packet.playerId}|${packet.turnNumber ?? 0}|${packet.currentTurnPlayerId ?? ''}|${historyStr}|${packet.seed ?? 0}|${packet.senderInstanceId}`;
-        } else if (packet.seed && packet.seed !== 0) {
-          return `T|${packet.playerId}|${packet.turnNumber ?? 0}|${packet.currentTurnPlayerId ?? ''}|${historyStr}|${packet.seed}`;
+        const pickedByStr = (packet.pickedByHistory || []).join(',');
+        const senderInstanceId = packet.senderInstanceId ?? '';
+        const seed = packet.seed ?? 0;
+
+        if (senderInstanceId || (packet.pickedByHistory && packet.pickedByHistory.length > 0)) {
+          return `T|${packet.playerId}|${packet.turnNumber ?? 0}|${packet.currentTurnPlayerId ?? ''}|${historyStr}|${seed}|${senderInstanceId}|${pickedByStr}`;
+        } else if (seed !== 0) {
+          return `T|${packet.playerId}|${packet.turnNumber ?? 0}|${packet.currentTurnPlayerId ?? ''}|${historyStr}|${seed}`;
         } else {
           return `T|${packet.playerId}|${packet.turnNumber ?? 0}|${packet.currentTurnPlayerId ?? ''}|${historyStr}`;
         }
@@ -82,7 +97,11 @@ export const FastPacketCodec = {
         const historyRaw = parts[5] || '';
         const seed = parseInt(parts[6] || '0', 10);
         const senderInstanceId = parts[7] || '';
+        const pickedByRaw = parts[8] || '';
+        const boardHash = parseInt(parts[9] || '0', 10);
+        const boardSize = parseInt(parts[10] || '5', 10);
         const history = historyRaw ? historyRaw.split(',').map(n => parseInt(n, 10)).filter(n => !isNaN(n)) : [];
+        const pickedByHistory = pickedByRaw ? pickedByRaw.split(',') : [];
 
         return {
           type: 'PICK_NUMBER',
@@ -92,7 +111,10 @@ export const FastPacketCodec = {
           currentTurnPlayerId: currentTurnId,
           pickedHistory: history,
           seed,
-          senderInstanceId
+          senderInstanceId,
+          pickedByHistory,
+          boardHash,
+          boardSize
         };
       }
 
@@ -104,7 +126,9 @@ export const FastPacketCodec = {
         const historyRaw = parts[4] || '';
         const seed = parseInt(parts[5] || '0', 10);
         const senderInstanceId = parts[6] || '';
+        const pickedByRaw = parts[7] || '';
         const history = historyRaw ? historyRaw.split(',').map(n => parseInt(n, 10)).filter(n => !isNaN(n)) : [];
+        const pickedByHistory = pickedByRaw ? pickedByRaw.split(',') : [];
 
         return {
           type: 'TURN_TIMEOUT',
@@ -114,7 +138,8 @@ export const FastPacketCodec = {
           currentTurnPlayerId: currentTurnId,
           pickedHistory: history,
           seed,
-          senderInstanceId
+          senderInstanceId,
+          pickedByHistory
         };
       }
 

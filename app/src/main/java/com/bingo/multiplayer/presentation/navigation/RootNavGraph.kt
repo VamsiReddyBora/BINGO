@@ -95,7 +95,12 @@ fun RootNavGraph(
     var isHostLeftGame by remember { mutableStateOf(false) }
     val broadcastPacket: (RoomMessagePacket) -> Unit = { packet -> if (isUsingP2p) lanP2pSync.broadcastPacket(packet) else onlineRoomSync.broadcastPacket(packet) }
     val disconnectRoom: () -> Unit = { 
-        if (isUsingP2p) lanP2pSync.disconnect() else onlineRoomSync.disconnect()
+        if (isUsingP2p) {
+            lanP2pSync.disconnect()
+            com.bingo.multiplayer.domain.network.HotspotAndWifiManager.disconnectFromWifi(context)
+        } else {
+            onlineRoomSync.disconnect()
+        }
         isManualBoard = false
         isDynamicBoard = false
         selectedDynamicGridSize = 5
@@ -3445,6 +3450,7 @@ fun RootNavGraph(
                     lanP2pSync.connectAsClient(
                         hostIp = effectiveHostIp,
                         clientPlayer = localJoiner,
+                        port = game.port,
                         fallbackIp = HotspotAndWifiManager.getGatewayIp(context)
                     )
                     if (game.isInLobby) {

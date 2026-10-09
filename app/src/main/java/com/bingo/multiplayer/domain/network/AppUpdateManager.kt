@@ -66,6 +66,8 @@ object AppUpdateManager {
 
     private val scope = CoroutineScope(Dispatchers.IO)
     private var hasDismissedInSession = false
+    @Volatile
+    private var pendingInstallApk: File? = null
 
     /**
      * Compares semantic version strings (e.g. "1.3" vs "1.2", "1.2.1" vs "1.2.0").
@@ -428,6 +430,7 @@ object AppUpdateManager {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 if (!context.packageManager.canRequestPackageInstalls()) {
                     Log.i(TAG, "Requesting UNKNOWN_APP_SOURCES permission")
+                    pendingInstallApk = apkFile
                     val permissionIntent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
                         data = Uri.parse("package:${context.packageName}")
                         if (context !is Activity) {
@@ -438,6 +441,7 @@ object AppUpdateManager {
                     return
                 }
             }
+            pendingInstallApk = null
 
             val apkUri: Uri = FileProvider.getUriForFile(
                 context,
@@ -464,6 +468,24 @@ object AppUpdateManager {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to launch package installer: ${e.message}", e)
             _updateState.value = UpdateState.Error("Installer error: ${e.message}")
+        }
+    }
+
+    /**
+     * Checks if a pending APK installation was paused waiting for UNKNOWN_APP_SOURCES permission.
+     * If the permission is now granted, automatically triggers the installer upon returning to the app.
+     */
+    fun resumePendingInstall(context: Context) {
+        val pending = pendingInstallApk ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (context.packageManager.canRequestPackageInstalls()) {
+                Log.i(TAG, "UNKNOWN_APP_SOURCES granted, resuming pending install for ${pending.name}")
+                pendingInstallApk = null
+                installApk(context, pending)
+            }
+        } else {
+            pendingInstallApk = null
+            installApk(context, pending)
         }
     }
 

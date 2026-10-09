@@ -120,6 +120,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         AppLifecycleObserver.onForegroundImmediate()
         BingoNotificationManager.onAppForeground(applicationContext)
+        AppUpdateManager.resumePendingInstall(this)
     }
 
     override fun onNewIntent(intent: Intent) {
