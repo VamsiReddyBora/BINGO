@@ -1,0 +1,509 @@
+================================================================================
+BINGO MULTIPLAYER - ANDROID APPLICATION AUDIT & BUG REPORT #005
+================================================================================
+Report ID       : BUG-REPORT-005 (Online Multiplayer Match Play Advanced Edge Cases & Group Match Audit)
+Date            : 2026-10-09
+Target Platform : Android Native (Kotlin, Jetpack Compose, Coroutines)
+Scope           : Exclusively Android Application Codebase (app/)
+Status          : 7 ONLINE MULTIPLAYER MATCH DEFECTS IDENTIFIED & VERIFIED
+Audited By      : Antigravity Code Review & Security Audit System
+================================================================================
+
+1. EXECUTIVE SUMMARY & VERIFICATION OVERVIEW
+--------------------------------------------------------------------------------
+Following the successful verification and merge of commit `3985e36` (which resolved
+BUG-013 through BUG-016 from Report #004), a rigorous secondary audit and multi-node
+simulation was conducted, focusing exclusively on ONLINE MULTIPLAYER MATCH PLAY.
+
+The audit examined packet handling, circular turn mechanics, group match routing
+(3 to 8 players), host migration, network reconciliation, surrender flows, and UI
+turn synchronization in:
+  • `RootNavGraph.kt`
+  • `GameScreen.kt`
+  • `GameBottomBarComponents.kt`
+  • `OnlineRoomSyncManager.kt`
+  • `LobbyLifecycleEngine.kt`
+
+Full Test Suite Baseline Verification:
+  • 254 unit and simulation tests executed across 24 test classes.
+  • 100% PASS RATE (`./gradlew testDebugUnitTest` BUILD SUCCESSFUL in 4s).
+
+While commit `3985e36` solidly stabilized FIFO queue chronological sorting and
+grace-period heartbeats, this audit uncovered 7 latent defects in multi-player
+online matches, ranging from unconditional match abortion on surrender to UI turn
+spotlight order corruption and rematch lockouts.
+
+
++-------------------------------------------------------------------------------+
+| SUMMARY OF DETECTED DEFECTS & SYNCHRONIZATION ANOMALIES                       |
++-------------+----------+----------------------------+-------------------------+
+| DEFECT ID   | SEVERITY | COMPONENT / LOCATION       | CATEGORY                |
++-------------+----------+----------------------------+-------------------------+
+| BUG-017     | HIGH     | RootNavGraph.kt (2100-2108)| Group Match Abort       |
+|             |          | packet.type == "SURRENDER" | Premature Win Forfeit   |
+| BUG-018     | MEDIUM   | RootNavGraph.kt (2256-2303)| Lone Survivor Check     |
+|             |          | packet.type == "LEAVE"     | Stranded Host Match     |
+| BUG-019     | MEDIUM   | RootNavGraph.kt (4037-4056)| OngoingMatchStore Sync  |
+|             |          | onSurrender GameScreen     | Zombie Match Rejoin     |
+| BUG-020     | MEDIUM   | RootNavGraph.kt (2347-2362)| SYNC_REQUEST Flood      |
+|             |          | packet.type == SYNC_REQUEST| Missing GameOver Payload|
+| BUG-021     | MEDIUM   | RootNavGraph.kt (2087-2095)| GameOver Serialization  |
+|             |          | packet.type == BINGO_CLAIM | Missing Win Reason/IDs  |
+| BUG-022     | LOW      | GameBottomBarComponents.kt | UI Turn Spotlight Bar   |
+|             |          | activePlayers (225-230)    | Overridden Turn Order   |
+| BUG-023     | MEDIUM   | RootNavGraph.kt (2228,4079)| Host Departure Rematch  |
+|             |          | onPlayAgain Acting Host    | Rematch Deadlock        |
++-------------+----------+----------------------------+-------------------------+
+
+
+===============================================================================
+2. DETAILED DEFECT REPORTS & TECHNICAL FINDINGS
+===============================================================================
+
+--------------------------------------------------------------------------------
+DEFECT ID: BUG-017
+SEVERITY : HIGH
+MODULE   : In-Game Lifecycle & Network Forfeit Routing
+FILES    : RootNavGraph.kt (lines 2100-2108)
+--------------------------------------------------------------------------------
+DESCRIPTION:
+In a 3- to 8-player online room match, if any individual participant surrenders
+or leaves via back navigation, the entire match instantly halts for all remaining
+active participants, and everyone is declared a winner by forfeit.
+
+ROOT CAUSE:
+In `RootNavGraph.kt` (lines 2100-2108):
+```kotlin
+"SURRENDER" -> {
+    if ((currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) && !isGameOver) {
+        isGameOver = true
+        didPlayerWin = true
+        val opponent = packet.displayName.ifBlank { "Opponent" }
+        recordFinishedMatch(true)
+        opponentSurrenderMessage = "$opponent surrendered the match! You win!"
+    }
+}
+```
+In a 4-player game (Players A, B, C, D):
+  1. Player D surrenders on Turn 2.
+  2. Players A, B, and C all receive the `"SURRENDER"` packet.
+  3. Every single node unconditionally executes `isGameOver = true`, `didPlayerWin = true`,
+     and records a win for themselves.
+  4. The game aborts immediately for all 3 remaining active players.
+  5. Furthermore, `markPlayerDisconnected(packet.playerId)` is never called, so
+     Player D remains in the active turn sequence on clients that ignore stale packets.
+
+USER-FACING IMPACT:
+During group games, 1 player backing out ruins the entire game for up to 7 other
+players, prematurely cutting the match short and awarding false wins to all peers.
+
+REMEDIATION:
+Check the number of remaining active participants before declaring game over:
+```kotlin
+"SURRENDER" -> {
+    if ((currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) && !isGameOver) {
+        val surrenderId = packet.playerId
+        val surrenderName = packet.displayName.ifBlank { "Opponent" }
+        markPlayerDisconnected(surrenderId)
+
+        val participants = matchParticipants.ifEmpty { realTimePlayers }
+        val activeRemaining = participants.filter { it.id.isNotBlank() && !isPlayerDisconnected(it.id) }
+
+        if (activeRemaining.size <= 1) {
+            isGameOver = true
+            val won = activeRemaining.any { isPlayerMe(it.id) } || participants.size <= 2
+            didPlayerWin = won
+            isDrawMatch = false
+            isRunnerMatch = false
+            winnerPlayerId = if (won) getLocalUid() else ""
+            activeWinReason = "Opponent Surrendered"
+            recordFinishedMatch(won)
+            com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
+            opponentSurrenderMessage = "$surrenderName surrendered the match! You win!"
+        } else {
+            // Group match continues among remaining active participants!
+            broadcastSystemChatMessage("🏳️ $surrenderName surrendered the match")
+            if (currentTurnPlayerId == surrenderId) {
+                val nextId = calculateNextTurnPlayerId(surrenderId)
+                currentTurnPlayerId = nextId
+                turnNumber += 1
+                turnTimer = 30
+                isMyTurn = (currentTurnPlayerId == getLocalUid())
+                val hostUid = participants.find { it.isHost }?.id ?: ""
+                val isHostGone = isHostLeftGame || isPlayerDisconnected(hostUid)
+                val isActingHost = isHostGone && activeRemaining.firstOrNull()?.id == getLocalUid()
+                if (isHosting || isActingHost || activeRemaining.size <= 2) {
+                    broadcastPacket(
+                        RoomMessagePacket(
+                            type = "TURN_TIMEOUT",
+                            playerId = surrenderId,
+                            turnNumber = turnNumber,
+                            currentTurnPlayerId = nextId,
+                            seed = currentMatchSeed,
+                            pickedHistory = pickedNumbersHistory.toList(),
+                            pickedByHistory = pickedByPlayerHistory.toList()
+                        )
+                    )
+                }
+            }
+        }
+    }
+}
+```
+
+
+--------------------------------------------------------------------------------
+DEFECT ID: BUG-018
+SEVERITY : MEDIUM
+MODULE   : Multiplayer Disconnection & Forfeit Resolution
+FILES    : RootNavGraph.kt (lines 2256-2303)
+--------------------------------------------------------------------------------
+DESCRIPTION:
+When a non-host player leaves an active match by broadcasting `"LEAVE"`, the
+remaining host or lone surviving player is never awarded a win by forfeit. The lone
+player remains stranded in an active game state alone.
+
+ROOT CAUSE:
+In `RootNavGraph.kt`:
+When the Host leaves (lines 2206-2218), `activeRemaining.size <= 1` is checked:
+```kotlin
+if (activeRemaining.size <= 1 || isUsingP2p) {
+    isGameOver = true
+    val wonByForfeit = if (isUsingP2p) false else (activeRemaining.any { it.id == myUid } || participants.size <= 2)
+    didPlayerWin = wonByForfeit
+    ...
+}
+```
+However, in lines 2256-2303 (when a non-host leaves):
+```kotlin
+if (inGame && !isGameOver && packet.playerId.isNotBlank() && packet.playerId != myUid) {
+    val participants = matchParticipants.ifEmpty { realTimePlayers }
+    markPlayerDisconnected(packet.playerId)
+    val activeRemaining = participants.filter {
+        it.id.isNotBlank() && !isPlayerDisconnected(it.id)
+    }
+    // MISSING: if (activeRemaining.size <= 1) check!
+    ...
+    if (currentTurnPlayerId == packet.playerId) {
+        val nextId = calculateNextTurnPlayerId(packet.playerId)
+        ...
+```
+`activeRemaining.size <= 1` is NEVER checked.
+In a 2-player match:
+  1. Guest player taps "Leave Match" (sends `"LEAVE"`).
+  2. Host receives `"LEAVE"` and marks Guest disconnected.
+  3. `activeRemaining.size` is now 1 (only Host remains).
+  4. The code only rotates turns to the next player. The game never ends!
+  5. Host is stranded playing alone against a disconnected ghost opponent until 3
+     missed turns elapse in the disconnect timer loop.
+
+USER-FACING IMPACT:
+When an opponent leaves, the player is not informed of victory and must wait
+over 90 seconds of dead time or play alone to complete the match.
+
+REMEDIATION:
+Add the lone survivor check in the non-host `"LEAVE"` block:
+```kotlin
+if (activeRemaining.size <= 1) {
+    isGameOver = true
+    val wonByForfeit = activeRemaining.any { it.id == myUid } || participants.size <= 2
+    didPlayerWin = wonByForfeit
+    isDrawMatch = false
+    isRunnerMatch = false
+    winnerPlayerId = if (wonByForfeit) myUid else ""
+    activeWinReason = "Opponent Left"
+    recordFinishedMatch(wonByForfeit)
+    com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
+    opponentDisconnectMessage = "Opponent left the match. You win by forfeit!"
+}
+```
+
+
+--------------------------------------------------------------------------------
+DEFECT ID: BUG-019
+SEVERITY : MEDIUM
+MODULE   : Local Persistence & Ongoing Match Lifecycle
+FILES    : RootNavGraph.kt (lines 4037-4056)
+--------------------------------------------------------------------------------
+DESCRIPTION:
+When a user surrenders directly from `GameScreen`, `OngoingMatchStore.clearOngoingMatch`
+is not invoked. This leaves stale match state cached on disk, triggering false
+"Resume Match" dialogs or zombie rejoins on the Main Menu.
+
+ROOT CAUSE:
+In `RootNavGraph.kt` (lines 4037-4056):
+```kotlin
+onSurrender = {
+    if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
+        broadcastPacket(
+            RoomMessagePacket(
+                type = "SURRENDER",
+                playerId = getLocalUid(),
+                displayName = getPlayerDisplayName()
+            )
+        )
+    }
+    isGameOver = false
+    didPlayerWin = false
+    latestIncomingEmote = null
+    latestIncomingEmoteTimestamp = 0L
+    recordFinishedMatch(false)
+    disconnectRoom()
+    // MISSING: com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
+    navController.navigate(Screen.MainMenu.route) {
+        popUpTo(Screen.MainMenu.route) { inclusive = true }
+    }
+}
+```
+Contrast this with line 4585 (back-press dialog exit), which explicitly calls
+`OngoingMatchStore.clearOngoingMatch(context)`.
+
+USER-FACING IMPACT:
+After tapping Surrender, the user returns to the Main Menu and sees an active
+"Ongoing Match Detected" banner. Tapping it rejoins the abandoned match room,
+causing connection confusion and MQTT topic collision.
+
+REMEDIATION:
+Add `com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)`
+to `onSurrender` before navigating to `MainMenu`.
+
+
+--------------------------------------------------------------------------------
+DEFECT ID: BUG-020
+SEVERITY : MEDIUM
+MODULE   : Network Synchronization & State Recovery
+FILES    : RootNavGraph.kt (lines 2347-2362)
+--------------------------------------------------------------------------------
+DESCRIPTION:
+When any peer sends a `"SYNC_REQUEST"` (such as tapping "Sync Game" or reconnecting),
+every other client in the room broadcasts a `"GAME_SYNC"` packet at the exact same
+millisecond, causing an N-peer broadcast storm. Furthermore, if the match has
+already ended, peers reject `"SYNC_REQUEST"` and omit winner metadata.
+
+ROOT CAUSE:
+In `RootNavGraph.kt` (lines 2347-2362):
+```kotlin
+"SYNC_REQUEST" -> {
+    if ((currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) && !isGameOver) {
+        broadcastPacket(
+            RoomMessagePacket(
+                type = "GAME_SYNC",
+                turnNumber = turnNumber,
+                pickedHistory = pickedNumbersHistory.toList(),
+                pickedByHistory = pickedByPlayerHistory.toList(),
+                boardHash = engine.computeBoardHash(playerBoard),
+                seed = currentMatchSeed,
+                currentTurnPlayerId = currentTurnPlayerId,
+                playerId = myUid
+                // MISSING: winnerPlayerId, winReason, runnerPlayerIds
+            )
+        )
+    }
+}
+```
+Defects:
+  1. No coordinator guard: In an 8-player room, 7 clients simultaneously transmit
+     identical `GAME_SYNC` packets over MQTT QoS 1, causing network congestion.
+  2. Guarded with `&& !isGameOver`: If a client requests synchronization right as
+     the match ends, no peer replies.
+  3. Omitted outcome payload: The packet lacks `winnerPlayerId`, `winReason`, and
+     `runnerPlayerIds` (which were added to `REJOIN_GAME` in commit `3985e36`).
+
+USER-FACING IMPACT:
+Reconnecting clients after temporary cellular dropouts can fail to receive game-over
+state or experience high packet latency and dropped frames from MQTT broadcast floods.
+
+REMEDIATION:
+Restrict response to the coordinator (Host / Acting Host / Senior Active Peer) and
+include authoritative game-over fields:
+```kotlin
+"SYNC_REQUEST" -> {
+    if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
+        val hostUid = matchParticipants.find { it.isHost }?.id ?: realTimePlayers.find { it.isHost }?.id ?: onlineRoomSync.currentHostId ?: ""
+        val isHostGone = isHostLeftGame || (hostUid.isNotBlank() && disconnectedPlayerIds.contains(hostUid))
+        val activeRemaining = (matchParticipants.ifEmpty { realTimePlayers }).filter { it.id.isNotBlank() && it.id !in disconnectedPlayerIds }
+        val isActingHost = isHostGone && activeRemaining.firstOrNull()?.id == myUid
+        val isSeniorActivePeer = activeRemaining.firstOrNull { !com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it.id, packet.playerId) }?.id == myUid
+        if (isHosting || currentTurnPlayerId == myUid || isActingHost || isSeniorActivePeer) {
+            broadcastPacket(
+                RoomMessagePacket(
+                    type = "GAME_SYNC",
+                    turnNumber = turnNumber,
+                    pickedHistory = pickedNumbersHistory.toList(),
+                    pickedByHistory = pickedByPlayerHistory.toList(),
+                    boardHash = engine.computeBoardHash(playerBoard),
+                    seed = currentMatchSeed,
+                    currentTurnPlayerId = currentTurnPlayerId,
+                    playerId = myUid,
+                    winnerPlayerId = if (isGameOver) winnerPlayerId else "",
+                    winReason = if (isGameOver) activeWinReason else "",
+                    runnerPlayerIds = if (isGameOver) activeRunnerPlayerIds else emptyList()
+                )
+            )
+        }
+    }
+}
+```
+
+
+--------------------------------------------------------------------------------
+DEFECT ID: BUG-021
+SEVERITY : MEDIUM
+MODULE   : State Reconciliation & GameOver Serialization
+FILES    : RootNavGraph.kt (lines 2087-2095)
+--------------------------------------------------------------------------------
+DESCRIPTION:
+When a match concludes via a received `"BINGO_CLAIMED"` or `"GAME_OVER"` packet,
+`RootNavGraph.kt` fails to populate `activeWinReason` and `activeRunnerPlayerIds`.
+Subsequent `GAME_SYNC` packets sent to reconnecting peers propagate blank outcome data.
+
+ROOT CAUSE:
+In commit `3985e36`, `activeWinReason` and `activeRunnerPlayerIds` were introduced
+to ensure authoritative synchronization across rejoin events.
+They were updated in `PICK_NUMBER` (lines 1704-1710) and `GAME_SYNC` (lines 1978-1984),
+but omitted from `"BINGO_CLAIMED"` / `"GAME_OVER"` (lines 2087-2095):
+```kotlin
+if (outcome.isGameOver) {
+    isGameOver = true
+    didPlayerWin = outcome.didPlayerWin
+    isDrawMatch = outcome.isDraw
+    isRunnerMatch = outcome.isRunner
+    winnerPlayerId = outcome.winnerPlayerId
+    // MISSING:
+    // activeWinReason = outcome.winReason
+    // activeRunnerPlayerIds = packet.runnerPlayerIds.ifEmpty { ... }
+    recordFinishedMatch(...)
+}
+```
+
+USER-FACING IMPACT:
+If an opponent claims Bingo via `BINGO_CLAIMED` (the primary fast-path win packet),
+the receiving peer's `activeWinReason` remains `""` and `activeRunnerPlayerIds` remains
+empty. Any client reconnecting during the victory screen receives empty outcome fields.
+
+REMEDIATION:
+Assign `activeWinReason` and `activeRunnerPlayerIds` in the `BINGO_CLAIMED` handler:
+```kotlin
+activeWinReason = outcome.winReason
+activeRunnerPlayerIds = packet.runnerPlayerIds.ifEmpty {
+    if (isGroupMatch()) {
+        val eff = if (allPlayerBoards.containsKey(myUid)) allPlayerBoards else (allPlayerBoards + (myUid to playerBoard))
+        eff.filter { it.value.isBingo && !com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it.key, outcome.winnerPlayerId) && !isPlayerDisconnected(it.key) }.keys.toList()
+    } else if (outcome.isRunner) listOf(myUid) else emptyList()
+}
+```
+
+
+--------------------------------------------------------------------------------
+DEFECT ID: BUG-022
+SEVERITY : LOW
+MODULE   : Game Bottom Bar UI & Turn Spotlight Animation
+FILES    : GameBottomBarComponents.kt (lines 225-230)
+--------------------------------------------------------------------------------
+DESCRIPTION:
+In 3+ player games, the "Next Player" avatar displayed on the right of the bottom
+bar's circular spotlight does not match the player who actually takes the next turn.
+
+ROOT CAUSE:
+In `RootNavGraph.kt` (lines 3921-3924), `gamePlayers` is correctly mapped according
+to the authoritative `randomizedTurnOrder` derived from `currentMatchSeed`.
+However, inside `MultiplayerTurnSpotlightBar` (`GameBottomBarComponents.kt` line 228):
+```kotlin
+val activePlayers = remember(players) {
+    players.filter { it.id.isNotBlank() }
+        .distinctBy { it.id }
+        .sortedWith(compareByDescending<Player> { it.isHost }.thenBy { it.id })
+}
+```
+The component re-sorts `players` by host status and alphabetical ID!
+Because of this re-sorting:
+```kotlin
+val prevIdx = (currIdx - 1 + activePlayers.size) % activePlayers.size
+val nextIdx = (currIdx + 1) % activePlayers.size
+```
+The spotlight indices calculate based on alphabetical order, completely disregarding
+the actual game engine turn sequence.
+
+USER-FACING IMPACT:
+The user sees an avatar for Player X under "Next", but when the current turn ends,
+the turn rotates to Player Y. This causes visual dissonance and confusion during
+fast-paced multiplayer play.
+
+REMEDIATION:
+Do not override the incoming list order in `MultiplayerTurnSpotlightBar`:
+```kotlin
+val activePlayers = remember(players) {
+    players.filter { it.id.isNotBlank() }.distinctBy { it.id }
+}
+```
+
+
+--------------------------------------------------------------------------------
+DEFECT ID: BUG-023
+SEVERITY : MEDIUM
+MODULE   : Host Migration & Rematch Routing
+FILES    : RootNavGraph.kt (lines 2228, 4079-4112)
+--------------------------------------------------------------------------------
+DESCRIPTION:
+When the original room host leaves an in-game match with 2+ players remaining,
+the surviving players finish the game successfully; however, upon reaching the
+GameOver celebration screen, they are permanently locked out of rematching.
+Tapping "Play Again" has no effect.
+
+ROOT CAUSE:
+In `RootNavGraph.kt`:
+When the host departs, line 2228 computes `val isActingHost = activeRemaining.firstOrNull()?.id == myUid`
+as a local variable for turn timeout coordination. However, `isHosting` is never
+promoted to `true`.
+Later, when the game ends, the acting host taps "Play Again" (line 4079):
+```kotlin
+onPlayAgain = {
+    if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
+        if (isHosting) {
+            // generates new seed and broadcasts PLAY_AGAIN
+        } else {
+            broadcastPacket(
+                RoomMessagePacket(
+                    type = "PLAY_AGAIN_REQUEST",
+                    playerId = getLocalUid(),
+                    displayName = getPlayerDisplayName()
+                )
+            )
+            Toast.makeText(context, "Play again request sent to Host!", Toast.LENGTH_SHORT).show()
+        }
+    }
+}
+```
+Because `isHosting` is false, the acting host broadcasts a `PLAY_AGAIN_REQUEST` to
+the original host, who has already disconnected!
+Nobody in the room possesses `isHosting == true`, so nobody can initiate the rematch.
+
+USER-FACING IMPACT:
+Players who successfully finish an exciting match after the host leaves cannot
+rematch together. They must exit the room completely, re-create a lobby, and
+re-invite each other.
+
+REMEDIATION:
+When host departure occurs and a senior active player assumes coordinator duties,
+promote `isHosting = true` for the acting host so they can initiate `onPlayAgain`.
+
+
+===============================================================================
+3. REGRESSION & TEST VERIFICATION EVIDENCE
+===============================================================================
+Baseline Test Suite Execution:
+  • Command: `./gradlew testDebugUnitTest`
+  • Status: BUILD SUCCESSFUL in 4s
+  • Results: 254 unit and simulation tests across 24 test classes passed with 0 failures.
+
+Test Classes Verified:
+  1. `OnlineMatchComprehensiveSimulationTest` (10 scenarios: 2, 3, 4, 6, 8 players)
+  2. `MultiplayerWinnerAnnouncementFiftyGamesSimulationTest` (50 games)
+  3. `AtomicEightPlayerSimulationTest` (8-player full lifecycle)
+  4. `TwoPlayerMatchSimulationTest` (1v1 lifecycle & reconnects)
+  5. `TurnRotationAndCodecTest` (deterministic turn rotation)
+  6. `LobbyLifecycleEngineTest` (seeding, turn order, distance calculation)
+
+===============================================================================
+END OF AUDIT REPORT #005
+===============================================================================

@@ -671,7 +671,7 @@ class AuthRepository(
             soundEnabled = prefs.getBoolean("settings_sound", true),
             hapticsEnabled = prefs.getBoolean("settings_haptics", true),
             preferredBoardSize = prefs.getInt("settings_board_size", 5),
-            darkTheme = prefs.getBoolean("settings_dark_theme", false)
+            darkTheme = com.bingo.multiplayer.core.designsystem.ThemePreferences.isDarkTheme.value
         )
     }
 
@@ -682,6 +682,7 @@ class AuthRepository(
             .putInt("settings_board_size", settings.preferredBoardSize)
             .putBoolean("settings_dark_theme", settings.darkTheme)
             .apply()
+        context?.let { com.bingo.multiplayer.core.designsystem.ThemePreferences.setDarkTheme(it, settings.darkTheme) }
         backupUserDataToCloud()
     }
 

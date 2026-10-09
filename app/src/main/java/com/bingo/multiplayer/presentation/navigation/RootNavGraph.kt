@@ -2090,6 +2090,13 @@ fun RootNavGraph(
                             isDrawMatch = outcome.isDraw
                             isRunnerMatch = outcome.isRunner
                             winnerPlayerId = outcome.winnerPlayerId
+                            activeWinReason = outcome.winReason
+                            activeRunnerPlayerIds = packet.runnerPlayerIds.ifEmpty {
+                                if (isGroupMatch()) {
+                                    val eff = if (allPlayerBoards.containsKey(myUid)) allPlayerBoards else (allPlayerBoards + (myUid to playerBoard))
+                                    eff.filter { it.value.isBingo && !com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it.key, outcome.winnerPlayerId) && !isPlayerDisconnected(it.key) }.keys.toList()
+                                } else if (outcome.isRunner) listOf(myUid) else emptyList()
+                            }
                             recordFinishedMatch(won = outcome.didPlayerWin, isDraw = outcome.isDraw, isRunner = outcome.isRunner)
                             com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
                         }
@@ -2099,11 +2106,53 @@ fun RootNavGraph(
 
             "SURRENDER" -> {
                 if ((currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) && !isGameOver) {
-                    isGameOver = true
-                    didPlayerWin = true
-                    val opponent = packet.displayName.ifBlank { "Opponent" }
-                    recordFinishedMatch(true)
-                    opponentSurrenderMessage = "$opponent surrendered the match! You win!"
+                    val surrenderId = packet.playerId
+                    val surrenderName = packet.displayName.ifBlank { packet.username.ifBlank { "Opponent" } }
+                    if (surrenderId.isNotBlank()) {
+                        markPlayerDisconnected(surrenderId)
+                    }
+
+                    val participants = matchParticipants.ifEmpty { realTimePlayers }
+                    val activeRemaining = participants.filter { it.id.isNotBlank() && !isPlayerDisconnected(it.id) }
+
+                    if (activeRemaining.size <= 1) {
+                        isGameOver = true
+                        val won = activeRemaining.any { isPlayerMe(it.id) } || participants.size <= 2
+                        didPlayerWin = won
+                        isDrawMatch = false
+                        isRunnerMatch = false
+                        winnerPlayerId = if (won) myUid else ""
+                        activeWinReason = "Opponent Surrendered"
+                        recordFinishedMatch(won)
+                        com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
+                        opponentSurrenderMessage = "$surrenderName surrendered the match! You win!"
+                    } else {
+                        // Group match continues among remaining active participants!
+                        broadcastSystemChatMessage("🏳️ $surrenderName surrendered the match")
+                        if (currentTurnPlayerId == surrenderId) {
+                            val nextId = calculateNextTurnPlayerId(surrenderId)
+                            currentTurnPlayerId = nextId
+                            turnNumber += 1
+                            turnTimer = 30
+                            isMyTurn = (currentTurnPlayerId == myUid)
+                            val hostUid = participants.find { it.isHost }?.id ?: ""
+                            val isHostGone = isHostLeftGame || isPlayerDisconnected(hostUid)
+                            val isActingHost = isHostGone && activeRemaining.firstOrNull()?.id == myUid
+                            if (isHosting || isActingHost || activeRemaining.size <= 2) {
+                                broadcastPacket(
+                                    RoomMessagePacket(
+                                        type = "TURN_TIMEOUT",
+                                        playerId = surrenderId,
+                                        turnNumber = turnNumber,
+                                        currentTurnPlayerId = nextId,
+                                        seed = currentMatchSeed,
+                                        pickedHistory = pickedNumbersHistory.toList(),
+                                        pickedByHistory = pickedByPlayerHistory.toList()
+                                    )
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
@@ -2219,13 +2268,16 @@ fun RootNavGraph(
                             // Host left, but 2+ players remain! Match continues!
                             val hostMsg = "👑 $hostName (Host) left the game"
                             broadcastSystemChatMessage(hostMsg)
+                            val isActingHost = activeRemaining.firstOrNull()?.id == myUid
+                            if (isActingHost) {
+                                isHosting = true
+                            }
                             if (currentTurnPlayerId == hostId) {
                                 val nextId = calculateNextTurnPlayerId(hostId)
                                 currentTurnPlayerId = nextId
                                 turnNumber += 1
                                 turnTimer = 30
                                 isMyTurn = (currentTurnPlayerId == myUid)
-                                val isActingHost = activeRemaining.firstOrNull()?.id == myUid
                                 if (isActingHost) {
                                     broadcastPacket(
                                         RoomMessagePacket(
@@ -2260,45 +2312,62 @@ fun RootNavGraph(
                         it.id.isNotBlank() && !isPlayerDisconnected(it.id)
                     }
 
-                    val leftName = packet.displayName.ifBlank { packet.username.ifBlank { "A player" } }
-                    val leftMsg = "$leftName disconnected (reconnecting...)"
-                    val alreadyHasMsg = matchChatHistory.any { it.text == leftMsg && (System.currentTimeMillis() - it.timestamp) < 5000L }
-                    if (!alreadyHasMsg) {
-                        val sysMsg = InGameChatMessage(
-                            id = System.currentTimeMillis() + (0..1000).random(),
-                            text = leftMsg,
-                            isSelf = false,
-                            senderName = null,
-                            timestamp = System.currentTimeMillis(),
-                            isSystemMessage = true
-                        )
-                        matchChatHistory = matchChatHistory + sysMsg
-                        latestIncomingChatMessage = sysMsg
-                    }
-
-                    // If it was the departed player's turn, advance turn so the game continues smoothly
-                    if (currentTurnPlayerId == packet.playerId) {
-                        val nextId = calculateNextTurnPlayerId(packet.playerId)
-                        currentTurnPlayerId = nextId
-                        turnNumber += 1
-                        turnTimer = 30
-                        isMyTurn = (currentTurnPlayerId == myUid)
+                    if (activeRemaining.size <= 1) {
+                        isGameOver = true
+                        val wonByForfeit = activeRemaining.any { it.id == myUid } || participants.size <= 2
+                        didPlayerWin = wonByForfeit
+                        isDrawMatch = false
+                        isRunnerMatch = false
+                        winnerPlayerId = if (wonByForfeit) myUid else ""
+                        activeWinReason = "Opponent Left"
+                        recordFinishedMatch(wonByForfeit)
+                        com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
+                        opponentDisconnectMessage = "Opponent left the match. You win by forfeit!"
+                    } else {
                         val hostUid = participants.find { it.isHost }?.id ?: ""
                         val isHostGone = isHostLeftGame || isPlayerDisconnected(hostUid)
                         val isActingHost = isHostGone && activeRemaining.firstOrNull()?.id == myUid
-                        val isCoordinator = isHosting || isActingHost || activeRemaining.size <= 2
-                        if (isCoordinator) {
-                            broadcastPacket(
-                                RoomMessagePacket(
-                                    type = "TURN_TIMEOUT",
-                                    playerId = packet.playerId,
-                                    turnNumber = turnNumber,
-                                    currentTurnPlayerId = nextId,
-                                    seed = currentMatchSeed,
-                                    pickedHistory = pickedNumbersHistory.toList(),
-                                    pickedByHistory = pickedByPlayerHistory.toList()
-                                )
+                        if (isActingHost) {
+                            isHosting = true
+                        }
+
+                        val leftName = packet.displayName.ifBlank { packet.username.ifBlank { "A player" } }
+                        val leftMsg = "$leftName disconnected (reconnecting...)"
+                        val alreadyHasMsg = matchChatHistory.any { it.text == leftMsg && (System.currentTimeMillis() - it.timestamp) < 5000L }
+                        if (!alreadyHasMsg) {
+                            val sysMsg = InGameChatMessage(
+                                id = System.currentTimeMillis() + (0..1000).random(),
+                                text = leftMsg,
+                                isSelf = false,
+                                senderName = null,
+                                timestamp = System.currentTimeMillis(),
+                                isSystemMessage = true
                             )
+                            matchChatHistory = matchChatHistory + sysMsg
+                            latestIncomingChatMessage = sysMsg
+                        }
+
+                        // If it was the departed player's turn, advance turn so the game continues smoothly
+                        if (currentTurnPlayerId == packet.playerId) {
+                            val nextId = calculateNextTurnPlayerId(packet.playerId)
+                            currentTurnPlayerId = nextId
+                            turnNumber += 1
+                            turnTimer = 30
+                            isMyTurn = (currentTurnPlayerId == myUid)
+                            val isCoordinator = isHosting || isActingHost || activeRemaining.size <= 2
+                            if (isCoordinator) {
+                                broadcastPacket(
+                                    RoomMessagePacket(
+                                        type = "TURN_TIMEOUT",
+                                        playerId = packet.playerId,
+                                        turnNumber = turnNumber,
+                                        currentTurnPlayerId = nextId,
+                                        seed = currentMatchSeed,
+                                        pickedHistory = pickedNumbersHistory.toList(),
+                                        pickedByHistory = pickedByPlayerHistory.toList()
+                                    )
+                                )
+                            }
                         }
                     }
                 } else if (!inGame) {
@@ -2345,19 +2414,29 @@ fun RootNavGraph(
             }
 
             "SYNC_REQUEST" -> {
-                if ((currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) && !isGameOver) {
-                    broadcastPacket(
-                        RoomMessagePacket(
-                            type = "GAME_SYNC",
-                            turnNumber = turnNumber,
-                            pickedHistory = pickedNumbersHistory.toList(),
-                            pickedByHistory = pickedByPlayerHistory.toList(),
-                            boardHash = engine.computeBoardHash(playerBoard),
-                            seed = currentMatchSeed,
-                            currentTurnPlayerId = currentTurnPlayerId,
-                            playerId = myUid
+                if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
+                    val hostUid = matchParticipants.find { it.isHost }?.id ?: realTimePlayers.find { it.isHost }?.id ?: onlineRoomSync.currentHostId ?: ""
+                    val isHostGone = isHostLeftGame || (hostUid.isNotBlank() && isPlayerDisconnected(hostUid))
+                    val activeRemaining = (matchParticipants.ifEmpty { realTimePlayers }).filter { it.id.isNotBlank() && !isPlayerDisconnected(it.id) }
+                    val isActingHost = isHostGone && activeRemaining.firstOrNull()?.id == myUid
+                    val isSeniorActivePeer = activeRemaining.firstOrNull { !com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it.id, packet.playerId) }?.id == myUid
+                    if (isHosting || currentTurnPlayerId == myUid || isActingHost || isSeniorActivePeer) {
+                        broadcastPacket(
+                            RoomMessagePacket(
+                                type = "GAME_SYNC",
+                                turnNumber = turnNumber,
+                                pickedHistory = pickedNumbersHistory.toList(),
+                                pickedByHistory = pickedByPlayerHistory.toList(),
+                                boardHash = engine.computeBoardHash(playerBoard),
+                                seed = currentMatchSeed,
+                                currentTurnPlayerId = currentTurnPlayerId,
+                                playerId = myUid,
+                                winnerPlayerId = if (isGameOver) winnerPlayerId else "",
+                                winReason = if (isGameOver) activeWinReason else "",
+                                runnerPlayerIds = if (isGameOver) activeRunnerPlayerIds else emptyList()
+                            )
                         )
-                    )
+                    }
                 }
             }
 
@@ -4050,6 +4129,7 @@ fun RootNavGraph(
                     latestIncomingEmoteTimestamp = 0L
                     recordFinishedMatch(false)
                     disconnectRoom()
+                    com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
                     navController.navigate(Screen.MainMenu.route) {
                         popUpTo(Screen.MainMenu.route) { inclusive = true }
                     }
@@ -4076,6 +4156,13 @@ fun RootNavGraph(
                 },
                 onPlayAgain = {
                     if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
+                        val hostUid = matchParticipants.find { it.isHost }?.id ?: realTimePlayers.find { it.isHost }?.id ?: onlineRoomSync.currentHostId ?: ""
+                        val isHostGone = isHostLeftGame || (hostUid.isNotBlank() && isPlayerDisconnected(hostUid))
+                        val activeRemaining = (matchParticipants.ifEmpty { realTimePlayers }).filter { it.id.isNotBlank() && !isPlayerDisconnected(it.id) }
+                        val isActingHost = isHostGone && activeRemaining.firstOrNull()?.id == getLocalUid()
+                        if (isActingHost) {
+                            isHosting = true
+                        }
                         if (isHosting) {
                             val seed = Random.nextLong().let { if (it == 0L) 1L else it }
                             val activeList = realTimePlayers.filter { it.id.isNotBlank() }

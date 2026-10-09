@@ -39,6 +39,9 @@ class MainActivity : ComponentActivity() {
         requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         WindowCompat.setDecorFitsSystemWindows(window, true)
 
+        // Initialize Theme Preferences from persistent storage immediately before composing UI
+        ThemePreferences.init(applicationContext)
+
         // Initialize Notification Channels and background WorkManager checks
         BingoNotificationManager.init(applicationContext)
         BingoFcmManager.init(applicationContext)

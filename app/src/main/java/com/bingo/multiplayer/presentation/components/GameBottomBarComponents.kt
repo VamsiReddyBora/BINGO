@@ -225,7 +225,6 @@ fun MultiplayerTurnSpotlightBar(
     val activePlayers = remember(players) {
         players.filter { it.id.isNotBlank() }
             .distinctBy { it.id }
-            .sortedWith(compareByDescending<Player> { it.isHost }.thenBy { it.id })
     }
 
     if (activePlayers.size <= 2) {

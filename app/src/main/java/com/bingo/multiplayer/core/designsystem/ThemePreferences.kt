@@ -1,6 +1,7 @@
 package com.bingo.multiplayer.core.designsystem
 
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.Color
@@ -228,9 +229,13 @@ object ThemePreferences {
     // Liquid Metal Edition (Exclusive Theme)
     val isLiquidMetalTheme: MutableState<Boolean> = mutableStateOf(false)
 
-    fun init(context: Context) {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        isDarkTheme.value = prefs.getBoolean(KEY_IS_DARK, false)
+    fun initWithPrefs(prefs: SharedPreferences, authPrefs: SharedPreferences? = null) {
+        val savedDark = if (prefs.contains(KEY_IS_DARK)) {
+            prefs.getBoolean(KEY_IS_DARK, false)
+        } else {
+            authPrefs?.getBoolean("settings_dark_theme", false) ?: false
+        }
+        isDarkTheme.value = savedDark
         val defaultAccent = "matte_slate"
         val savedAccent = prefs.getString(KEY_ACCENT_ID, defaultAccent) ?: defaultAccent
         // If saved accent was the old default "royal_violet" and user hadn't explicitly chosen it, default to "matte_slate"
@@ -250,6 +255,12 @@ object ThemePreferences {
         isLiquidMetalTheme.value = prefs.getBoolean(KEY_LIQUID_METAL_ENABLED, false)
     }
 
+    fun init(context: Context) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val authPrefs = context.getSharedPreferences("bingo_user_profile", Context.MODE_PRIVATE)
+        initWithPrefs(prefs, authPrefs)
+    }
+
     fun setLiquidMetalTheme(context: Context, enabled: Boolean) {
         isLiquidMetalTheme.value = enabled
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
@@ -257,7 +268,7 @@ object ThemePreferences {
             .apply()
     }
 
-    fun setDarkTheme(context: Context, isDark: Boolean) {
+    fun setDarkTheme(prefs: SharedPreferences, authPrefs: SharedPreferences?, isDark: Boolean) {
         isDarkTheme.value = isDark
         // Automatically sync recent pick preset when switching themes if not manually overridden
         val isRecentPickDefault = customRecentPickHex.value == null ||
@@ -267,14 +278,16 @@ object ThemePreferences {
                 customRecentPickHex.value.equals("#FFFFFF", ignoreCase = true)
         if (isRecentPickDefault) {
             customRecentPickHex.value = null
-            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
-                .remove(KEY_CUSTOM_RECENT_PICK)
-                .apply()
+            prefs.edit().remove(KEY_CUSTOM_RECENT_PICK).apply()
         }
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putBoolean(KEY_IS_DARK, isDark)
-            .apply()
+        prefs.edit().putBoolean(KEY_IS_DARK, isDark).apply()
+        authPrefs?.edit()?.putBoolean("settings_dark_theme", isDark)?.apply()
+    }
+
+    fun setDarkTheme(context: Context, isDark: Boolean) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val authPrefs = context.getSharedPreferences("bingo_user_profile", Context.MODE_PRIVATE)
+        setDarkTheme(prefs, authPrefs, isDark)
     }
 
     fun setAccentColor(context: Context, id: String) {
