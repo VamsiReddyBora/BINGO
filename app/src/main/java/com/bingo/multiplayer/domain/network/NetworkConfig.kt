@@ -87,6 +87,46 @@ object NetworkConfig {
             )
         )
 
+        private fun resolveViaDoh(hostname: String): List<InetAddress>? {
+            val dohUrls = listOf(
+                "https://1.1.1.1/dns-query?name=$hostname&type=A",
+                "https://8.8.8.8/resolve?name=$hostname&type=A"
+            )
+            for (urlStr in dohUrls) {
+                try {
+                    val conn = (java.net.URL(urlStr).openConnection() as java.net.HttpURLConnection).apply {
+                        connectTimeout = 2000
+                        readTimeout = 2000
+                        setRequestProperty("Accept", "application/dns-json")
+                    }
+                    if (conn.responseCode == 200) {
+                        val body = conn.inputStream.bufferedReader().use { it.readText() }
+                        val json = org.json.JSONObject(body)
+                        val answers = json.optJSONArray("Answer")
+                        if (answers != null && answers.length() > 0) {
+                            val ips = mutableListOf<InetAddress>()
+                            for (i in 0 until answers.length()) {
+                                val item = answers.getJSONObject(i)
+                                val data = item.optString("data")
+                                if (data.isNotBlank()) {
+                                    try {
+                                        ips.add(InetAddress.getByName(data))
+                                    } catch (_: Exception) {}
+                                }
+                            }
+                            if (ips.isNotEmpty()) {
+                                Log.i(TAG, "Resolved $hostname via DoH (${ips.size} IPs)")
+                                return ips
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.d(TAG, "DoH lookup attempt failed for $urlStr: ${e.message}")
+                }
+            }
+            return null
+        }
+
         override fun lookup(hostname: String): List<InetAddress> {
             try {
                 val addresses = Dns.SYSTEM.lookup(hostname)
@@ -94,12 +134,15 @@ object NetworkConfig {
                     return addresses
                 }
             } catch (e: UnknownHostException) {
-                Log.w(TAG, "System DNS lookup failed for $hostname: ${e.message}. Using resilient fallback DNS.")
+                Log.w(TAG, "System DNS lookup failed for $hostname: ${e.message}. Attempting DoH / fallback.")
             } catch (e: Exception) {
                 Log.w(TAG, "System DNS exception for $hostname: ${e.message}")
             }
 
-            // Fallback: Use official anycast IP list for this hostname
+            // 1. Try DNS-over-HTTPS (Cloudflare 1.1.1.1 / Google 8.8.8.8)
+            resolveViaDoh(hostname)?.let { return it }
+
+            // 2. Fallback: Use official anycast IP list for this hostname
             val hostLower = hostname.lowercase()
             val ipList = fallbackDnsMap[hostLower]
             if (!ipList.isNullOrEmpty()) {
@@ -116,7 +159,7 @@ object NetworkConfig {
                 }
             }
 
-            throw UnknownHostException("Unable to resolve host $hostname via system DNS or fallback tables")
+            throw UnknownHostException("Unable to resolve host $hostname via system DNS, DoH, or fallback tables")
         }
     }
 

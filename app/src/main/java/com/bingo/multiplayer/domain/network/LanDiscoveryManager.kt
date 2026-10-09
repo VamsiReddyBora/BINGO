@@ -109,6 +109,7 @@ class LanDiscoveryManager(
         localPlayerId = host.id
         currentBroadcastingRoomCode = internalRoomCode
 
+        val boundPort = LanP2pSessionManager.activeInstance?.boundPort ?: 8999
         val gameInfo = LanDiscoveredGame(
             hostId = host.id,
             hostDisplayName = host.displayName,
@@ -117,6 +118,7 @@ class LanDiscoveryManager(
             boardSize = boardSize,
             roomCode = internalRoomCode,
             hostIp = getLocalIpAddress(),
+            port = boundPort,
             ssid = ssid,
             isInLobby = false,
             broadcastTimestamp = System.currentTimeMillis()
@@ -133,10 +135,12 @@ class LanDiscoveryManager(
 
             var mqttCycleCounter = 0
             while (isActive && isBroadcasting) {
+                val activeBoundPort = LanP2pSessionManager.activeInstance?.boundPort ?: boundPort
                 val currentInfo = currentBroadcastGameInfo?.copy(
                     hostIp = getLocalIpAddress(),
+                    port = activeBoundPort,
                     broadcastTimestamp = System.currentTimeMillis()
-                ) ?: gameInfo
+                ) ?: gameInfo.copy(port = activeBoundPort)
                 val payload = json.encodeToString(currentInfo)
                 val bytes = payload.toByteArray(StandardCharsets.UTF_8)
 

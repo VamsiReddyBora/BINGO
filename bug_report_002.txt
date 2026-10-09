@@ -1,0 +1,250 @@
+================================================================================
+BINGO MULTIPLAYER - ANDROID APPLICATION AUDIT & BUG REPORT #002
+================================================================================
+Report ID       : BUG-REPORT-002 (Post-Fix Re-Audit v1.4)
+Date            : 2026-10-09
+Target Platform : Android Native (Kotlin, Jetpack Compose, Coroutines)
+Scope           : Exclusively Android Application Codebase (app/)
+Status          : RE-AUDIT COMPLETED / ACTION ITEMS IDENTIFIED
+Audited By      : Antigravity Code Review & Security Audit System
+================================================================================
+
+1. EXECUTIVE SUMMARY & MODULAR SCORECARD
+--------------------------------------------------------------------------------
+Following the implementation of patch commit f4584a5 ("fix: resolve audit report
+#001 defects in v1.4 release"), an exhaustive re-audit was performed exclusively
+on the native Android application files.
+
+The audit was partitioned into six core functional modules:
+  - Module 1: UI & UX Architecture (Compose, gestures, back navigation, states)
+  - Module 2: Network Handling & Cloud Connectivity (MQTT, FastPacketCodec, KeyValue)
+  - Module 3: Core Gameplay & Engine Logic (BingoEngine, LobbyLifecycle, Win rules)
+  - Module 4: Nearby Offline & Local P2P Networking (Hotspot, Wi-Fi Specifier, Sockets)
+  - Module 5: Security, Auth & Data Persistence (Credentials, ExtendsClass, Auth)
+  - Module 6: App Lifecycle, Background Tasks & Updates (Lifecycle, Notifications, OTA)
+
++-------------------------------------+--------------+------------------------------------------------------+
+| MODULE                              | HEALTH       | KEY OBSERVATION / RE-AUDIT STATUS                    |
++-------------------------------------+--------------+------------------------------------------------------+
+| 1. UI & UX Architecture             | ⚠️ ATTENTION  | Hardware back swipe bypasses lobby network cleanup   |
+| 2. Network Handling & Cloud Sync    | ✅ VERIFIED   | Synchronous LEAVE packet prevents disconnect race    |
+| 3. Core Gameplay & Engine Logic     | ✅ VERIFIED   | Winner/Runner hierarchy confirmed by design intent   |
+| 4. Nearby Offline & Local P2P       | ⚠️ ATTENTION  | UDP broadcast sends default port 8999 on dynamic host|
+| 5. Security & Cloud Persistence     | ⚠️ ATTITICAL  | RSA key removed; MQTT password & JSON bins remaining |
+| 6. App Lifecycle & Updates          | ✅ VERIFIED   | UNKNOWN_SOURCES resume hook in onResume is verified  |
++-------------------------------------+--------------+------------------------------------------------------+
+
+
+================================================================================
+2. VERIFICATION MATRIX OF v1.4 COMMITTED FIXES
+================================================================================
+
++---------+----------+----------------------------+-----------------------+----------------------------------+
+| BUG ID  | SEVERITY | COMPONENT                  | ORIGINAL ISSUE        | RE-AUDIT VERDICT / STATUS        |
++---------+----------+----------------------------+-----------------------+----------------------------------+
+| BUG-001 | CRITICAL | BingoFcmManager.kt         | RSA-2048 private key  | ✅ VERIFIED RESOLVED             |
+|         |          |                            | embedded in APK       | Private key removed. Dispatches  |
+|         |          |                            | binary                | via Cloudflare Worker relay.     |
++---------+----------+----------------------------+-----------------------+----------------------------------+
+| BUG-002 | HIGH     | HotspotAndWifiManager.kt   | NetworkCallback leak  | ⚠️ PARTIALLY RESOLVED            |
+|         |          |                            | and permanent process | Callback stored & unbind added;  |
+|         |          |                            | network binding       | back gesture still bypasses.     |
++---------+----------+----------------------------+-----------------------+----------------------------------+
+| BUG-003 | HIGH     | OnlineRoomSyncManager.kt   | disconnect() drops    | ✅ VERIFIED RESOLVED             |
+|         |          |                            | LEAVE packet due to   | Synchronous QoS 1 publish with   |
+|         |          |                            | async race condition  | 500ms timeout prior to nulling.  |
++---------+----------+----------------------------+-----------------------+----------------------------------+
+| BUG-007 | MEDIUM   | LanP2pSession & QrCode     | Dynamic host port     | ⚠️ PARTIALLY RESOLVED            |
+|         |          |                            | (8999..9004) missing  | Solved for QR codes; UDP         |
+|         |          |                            | from handshake        | discovery still broadcasts 8999. |
++---------+----------+----------------------------+-----------------------+----------------------------------+
+| BUG-008 | MEDIUM   | RootNavGraph.kt            | Simultaneous Draw     | ✅ RESOLVED (DESIGN INTENT)      |
+|         |          |                            | outcome mathematically| User confirmed Draw stamp is     |
+|         |          |                            | unreachable           | intentionally removed. Winner /  |
+|         |          |                            |                       | Runner hierarchy is active.      |
++---------+----------+----------------------------+-----------------------+----------------------------------+
+| BUG-010 | MEDIUM   | AppUpdateManager.kt        | Unknown sources perm  | ✅ VERIFIED RESOLVED             |
+|         |          |                            | flow lacks resume     | Cached in pendingInstallApk and  |
+|         |          |                            | hook after settings   | resumed in MainActivity.onResume |
++---------+----------+----------------------------+-----------------------+----------------------------------+
+| BUG-012 | LOW      | BingoAiPlayer.kt           | Master AI top-left    | ✅ VERIFIED RESOLVED             |
+|         |          |                            | grid move bias        | Tied max-score candidate moves   |
+|         |          |                            |                       | are now randomized via .random() |
++---------+----------+----------------------------+-----------------------+----------------------------------+
+
+
+================================================================================
+3. DETAILED ACTIONABLE DEFECTS IDENTIFIED IN RE-AUDIT
+================================================================================
+
+--------------------------------------------------------------------------------
+DEFECT-201 [HIGH - P1]: Hardware Back Swipe / Gesture Bypasses Lobby Cleanup
+--------------------------------------------------------------------------------
+Module : UI & UX Architecture
+Files  : 
+  - app/src/main/java/com/bingo/multiplayer/presentation/nearby/NearbyLobbyScreen.kt
+  - app/src/main/java/com/bingo/multiplayer/presentation/lobby/LobbyScreen.kt
+  - app/src/main/java/com/bingo/multiplayer/presentation/navigation/RootNavGraph.kt
+
+Description:
+Both NearbyLobbyScreen and LobbyScreen render in-app top-bar back buttons wired 
+to comprehensive cleanup lambdas (onBack), which:
+  1. Call disconnectRoom() (disconnecting MQTT or closing server/client TCP sockets)
+  2. Call HotspotAndWifiManager.disconnectFromWifi(context) (unbinding process network)
+  3. Close or heartbeat-expire the room on the cloud registry
+  4. Stop LAN UDP broadcasting and discovery
+
+However, NEITHER composable declares an `androidx.activity.compose.BackHandler`.
+
+Impact:
+When a user on Android 10+ uses the edge swipe-to-back gesture or presses the system 
+back button:
+  1. Android's NavController immediately pops the composable off the stack.
+  2. The cleanup callbacks in onBack are completely bypassed.
+  3. In Nearby mode, the device remains bound to the local offline hotspot network, 
+     leaving the entire app without internet access for online games or updates.
+  4. In Online mode, MQTT background heartbeat loops keep running in the background.
+
+Remediation:
+Add a root BackHandler inside NearbyLobbyScreen.kt and LobbyScreen.kt:
+```kotlin
+BackHandler {
+    onBack()
+}
+```
+
+
+--------------------------------------------------------------------------------
+DEFECT-202 [HIGH - P1]: Hardcoded MQTT Broker Credentials & Open Cloud Storage Bins
+--------------------------------------------------------------------------------
+Module : Security, Auth & Data Persistence
+Files  :
+  - app/src/main/java/com/bingo/multiplayer/domain/network/NetworkConfig.kt (Lines 19-26)
+  - app/src/main/java/com/bingo/multiplayer/domain/network/AccountSessionManager.kt (Lines 180-235)
+
+Description:
+1. EMQX broker username ("Bora") and password ("bora7989") and KeyValue app key 
+   ("2464j24f") remain hardcoded in plaintext in NetworkConfig.kt.
+2. AccountSessionManager persists user profiles, usernames, and stats using 
+   https://extendsclass.com/api/json-storage/bin without authentication headers.
+
+Impact:
+Anyone who extracts strings from the APK can connect to the EMQX broker, listen to 
+wildcard topics `bingo/rooms/#`, or inject fake game packets. Anyone knowing a user's 
+binId can execute an unauthenticated HTTP PUT to overwrite or corrupt player data.
+
+Remediation:
+Implement short-lived token auth or topic ACLs on the broker, and migrate profile 
+persistence to Cloud Firestore with authenticated Security Rules.
+
+
+--------------------------------------------------------------------------------
+DEFECT-203 [MEDIUM - P2]: UDP Local Discovery Misses Dynamic Host Port
+--------------------------------------------------------------------------------
+Module : Nearby Offline & Local P2P Networking
+Files  :
+  - app/src/main/java/com/bingo/multiplayer/domain/network/LanDiscoveryManager.kt (Lines 112-140)
+  - app/src/main/java/com/bingo/multiplayer/domain/network/LanP2pSessionManager.kt (Lines 67-70)
+
+Description:
+When hosting a LAN game, if port 8999 is already bound, LanP2pSessionManager 
+binds a candidate port in 8999..9004 and records it in `boundPort`.
+While NearbyHostQrPayload was updated in v1.4 to serialize `PORT:${payload.port};`, 
+LanDiscoveryManager.startBroadcasting was missed:
+It constructs LanDiscoveredGame without specifying `port`, defaulting to `8999`.
+
+Impact:
+1. Clients joining via QR code connect to the dynamic port (e.g., 9000) successfully.
+2. Clients joining via automatic local Wi-Fi UDP discovery receive port 8999 and fail 
+   to connect with java.net.ConnectException.
+
+Remediation:
+In LanDiscoveryManager.kt (lines 112-140), pass the active bound port:
+```kotlin
+val boundPort = LanP2pSessionManager.activeInstance?.boundPort ?: 8999
+val gameInfo = LanDiscoveredGame(
+    hostId = host.id,
+    hostDisplayName = host.displayName,
+    hostUsername = host.username.ifBlank { host.displayName },
+    avatarUrl = host.avatarUrl,
+    boardSize = boardSize,
+    roomCode = internalRoomCode,
+    hostIp = getLocalIpAddress(),
+    port = boundPort, // <-- Populate dynamic port
+    ssid = ssid,
+    isInLobby = false,
+    broadcastTimestamp = System.currentTimeMillis()
+)
+```
+
+
+--------------------------------------------------------------------------------
+DEFECT-204 [MEDIUM - P2]: Missing Jetpack ViewModel for Non-Orientation Config Changes
+--------------------------------------------------------------------------------
+Module : UI & UX Architecture
+File   : app/src/main/java/com/bingo/multiplayer/presentation/navigation/RootNavGraph.kt
+
+Description:
+RootNavGraph maintains over 100 `remember { mutableStateOf(...) }` variables. 
+While AndroidManifest.xml handles orientation and screenSize in configChanges, 
+the activity is recreated on:
+  - System dark theme / light theme toggle (uiMode)
+  - System locale change (locale)
+  - Font scale adjustment (fontScale)
+  - OS background process memory reclamation
+
+Impact:
+Toggling system theme or experiencing process death destroys all active match 
+boards, scores, sockets, and game navigation state.
+
+Remediation:
+Encapsulate lobby and active match states in a dedicated GameViewModel extending 
+androidx.lifecycle.ViewModel with SavedStateHandle.
+
+
+--------------------------------------------------------------------------------
+DEFECT-205 [LOW - P3]: Missing onLost Handler in Wi-Fi NetworkCallback
+--------------------------------------------------------------------------------
+Module : Nearby Offline & Local P2P Networking
+File   : app/src/main/java/com/bingo/multiplayer/domain/network/HotspotAndWifiManager.kt (Lines 345-385)
+
+Description:
+The ConnectivityManager.NetworkCallback overrides onAvailable and onUnavailable, 
+but does not override onLost(network: Network).
+
+Impact:
+If the host device disables their mobile hotspot or walks out of range mid-game, 
+the client device remains bound to the disconnected network interface, preventing 
+cellular data recovery until manual disconnection.
+
+Remediation:
+Override onLost in the callback:
+```kotlin
+override fun onLost(network: Network) {
+    super.onLost(network)
+    disconnectFromWifi(context)
+}
+```
+
+
+--------------------------------------------------------------------------------
+DEFECT-206 [LOW - P3]: Hardcoded Anycast IPs in ResilientDns
+--------------------------------------------------------------------------------
+Module : Network Handling & Cloud Connectivity
+File   : app/src/main/java/com/bingo/multiplayer/domain/network/NetworkConfig.kt (Lines 54-82)
+
+Description:
+ResilientDns maps api.github.com and keyvalue.immanuel.co to hardcoded IPv4 
+literals (e.g. 20.207.73.85, 104.21.32.181).
+
+Impact:
+If GitHub or Cloudflare Anycast routing shifts or decommissions these IP nodes, 
+TLS SNI handshakes will fail and API requests will time out.
+
+Remediation:
+Utilize DNS-over-HTTPS (DoH) via Cloudflare (1.1.1.1) or Google (8.8.8.8) instead 
+of static IPv4 constants.
+
+================================================================================
+END OF BUG REPORT #002
+================================================================================

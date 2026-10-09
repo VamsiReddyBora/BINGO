@@ -1,6 +1,7 @@
 package com.bingo.multiplayer.presentation.nearby
 
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -49,6 +50,10 @@ fun NearbyLobbyScreen(
     onGoToLobby: () -> Unit,
     onBack: () -> Unit
 ) {
+    BackHandler {
+        onBack()
+    }
+
     val context = LocalContext.current
     val tokens = BingoTheme.colors
 

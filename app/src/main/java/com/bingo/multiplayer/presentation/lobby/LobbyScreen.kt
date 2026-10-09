@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -87,6 +88,10 @@ fun LobbyScreen(
     onStartGame: () -> Unit,
     onBack: () -> Unit
 ) {
+    BackHandler {
+        onBack()
+    }
+
     val context = LocalContext.current
     val tokens = BingoTheme.colors
     val haptic = LocalHapticFeedback.current

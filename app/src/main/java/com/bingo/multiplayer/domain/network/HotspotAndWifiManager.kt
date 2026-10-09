@@ -371,6 +371,11 @@ object HotspotAndWifiManager {
                         }
                     }
 
+                    override fun onLost(network: Network) {
+                        super.onLost(network)
+                        disconnectFromWifi(context)
+                    }
+
                     override fun onUnavailable() {
                         super.onUnavailable()
                         disconnectFromWifi(context)
