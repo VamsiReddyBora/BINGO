@@ -22,3 +22,11 @@ web/dist/
 
 # Archive backups
 *.zip
+
+# Secrets & Credentials
+cloudflare_worker/service-account.json
+*.json.key
+
+# Python
+__pycache__/
+*.pyc

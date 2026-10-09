@@ -244,6 +244,47 @@ object AppUpdateManager {
         }
     }
 
+    /**
+     * Silently queries update endpoints without mutating in-app dialog state.
+     * Used by background WorkManager to check for updates and post system notifications.
+     */
+    suspend fun queryUpdateSilently(context: Context): AppUpdateInfo? = withContext(Dispatchers.IO) {
+        val currentVersion = getInstalledVersionName(context)
+        for (endpointUrl in UPDATE_ENDPOINTS) {
+            try {
+                val request = Request.Builder()
+                    .url(endpointUrl)
+                    .header("Accept", "application/json, text/plain, */*")
+                    .header("User-Agent", "BingoMultiplayer-App/$currentVersion")
+                    .get()
+                    .build()
+
+                val response = NetworkConfig.httpClient.newCall(request).execute()
+                if (response.isSuccessful) {
+                    val body = response.body?.string().orEmpty().trim()
+                    response.close()
+
+                    var cleanBody = body
+                    if (cleanBody.startsWith("\"") && cleanBody.endsWith("\"") && cleanBody.length >= 2) {
+                        cleanBody = cleanBody.substring(1, cleanBody.length - 1)
+                            .replace("\\\"", "\"")
+                            .replace("\\\\", "\\")
+                    }
+
+                    if (cleanBody.isNotBlank() && cleanBody != "null" && cleanBody != "\"\"") {
+                        val info = parseUpdatePayload(cleanBody, currentVersion)
+                        if (info != null) {
+                            return@withContext info
+                        }
+                    }
+                } else {
+                    response.close()
+                }
+            } catch (_: Exception) {}
+        }
+        null
+    }
+
     private fun getUpdateDir(context: Context): File {
         val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.cacheDir, "updates")
         if (!dir.exists()) {
@@ -430,8 +471,11 @@ object AppUpdateManager {
      * Dismisses the update dialog or resets state back to Idle.
      * Records dismissal for this session so the user is not prompted again until restart.
      */
-    fun dismiss() {
+    fun dismiss(context: Context? = null) {
         hasDismissedInSession = true
+        if (context != null) {
+            BingoNotificationManager.cancelUpdateNotification(context)
+        }
         _updateState.value = UpdateState.Idle
     }
 

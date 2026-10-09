@@ -69,6 +69,9 @@ object FriendRequestManager {
             // 2. Real-time MQTT notification dispatch
             publishMqttPacket(target, FriendRequestPacket(type = "FRIEND_REQUEST", request = request))
 
+            // 3. High-Priority FCM Push dispatch to wake target device if app is killed or backgrounded
+            BingoFcmManager.sendFriendRequestPush(target, request)
+
             Log.i(TAG, "Sent friend request from @${request.fromUsername} to @$target: success=$success")
             success
         } catch (e: Exception) {
@@ -176,6 +179,9 @@ object FriendRequestManager {
                 acceptorFriend = acceptFriend
             )
             publishMqttPacket(sender, acceptPacket)
+
+            // 4. High-Priority FCM Push dispatch to notify requester even if their app is killed
+            BingoFcmManager.sendFriendAcceptedPush(sender, myProfile.username, myProfile.displayName)
 
             Log.i(TAG, "Accepted friend request from @$sender for @$target")
             true

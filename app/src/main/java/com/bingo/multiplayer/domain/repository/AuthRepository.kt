@@ -99,10 +99,16 @@ class AuthRepository(
         customPrefs ?: context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         ?: throw IllegalStateException("Either context or customPrefs must be provided")
 
-    private val _authState = MutableStateFlow<AuthState>(AuthState.Loading)
+    private val _authState = MutableStateFlow<AuthState>(
+        getPersistedUserSync()?.let { AuthState.Authenticated(it) } ?: AuthState.Loading
+    )
     val authState: StateFlow<AuthState> = _authState.asStateFlow()
 
     private val scope = CoroutineScope(Dispatchers.IO)
+
+    init {
+        activeInstance = this
+    }
 
     val sessionManager = AccountSessionManager()
 
@@ -153,43 +159,66 @@ class AuthRepository(
         }
     }
 
+    /**
+     * Reads the persisted user profile directly and synchronously from SharedPreferences.
+     * Prevents race conditions during cold start when AuthState is temporarily Loading.
+     */
+    fun getPersistedUserSync(): UserProfile? {
+        val uid = prefs.getString(KEY_UID, null) ?: return null
+        val displayName = prefs.getString(KEY_NAME, "Player") ?: "Player"
+        val username = prefs.getString(KEY_USERNAME, null) ?: displayName.filter { it.isLetterOrDigit() }.lowercase().ifEmpty { uid.take(8) }
+        val email = prefs.getString(KEY_EMAIL, null)
+        val avatarUrl = prefs.getString(KEY_AVATAR, null)
+        val avatarBase64 = prefs.getString(KEY_AVATAR_BASE64, null)
+        val providerStr = prefs.getString(KEY_PROVIDER, AuthProvider.GOOGLE.name)
+        val provider = runCatching { AuthProvider.valueOf(providerStr!!) }
+            .getOrDefault(AuthProvider.GOOGLE)
+        val gamesPlayed = prefs.getInt(KEY_GAMES_PLAYED, 0)
+        val gamesWon = prefs.getInt(KEY_GAMES_WON, 0)
+        val streak = prefs.getInt(KEY_STREAK, 0)
+        val bestStreak = maxOf(prefs.getInt(KEY_BEST_STREAK, streak), streak)
+        val level = prefs.getInt(KEY_LEVEL, 1)
+        val xp = prefs.getInt(KEY_XP, 0)
+
+        return UserProfile(
+            uid = uid,
+            username = username,
+            displayName = displayName,
+            email = email,
+            avatarUrl = avatarUrl,
+            avatarBase64 = avatarBase64,
+            provider = provider,
+            gamesPlayed = gamesPlayed,
+            gamesWon = gamesWon,
+            currentStreak = streak,
+            bestStreak = bestStreak,
+            level = level,
+            xp = xp
+        )
+    }
+
+    /**
+     * Awaits authenticated user profile resolution, or falls back to synchronous cache.
+     */
+    suspend fun awaitAuthenticatedUser(timeoutMs: Long = 3000L): UserProfile? {
+        val current = (_authState.value as? AuthState.Authenticated)?.user
+        if (current != null) return current
+
+        if (_authState.value !is AuthState.Loading) {
+            return getPersistedUserSync()
+        }
+
+        val start = System.currentTimeMillis()
+        while (_authState.value is AuthState.Loading && (System.currentTimeMillis() - start) < timeoutMs) {
+            delay(50L)
+        }
+
+        return (_authState.value as? AuthState.Authenticated)?.user ?: getPersistedUserSync()
+    }
+
     suspend fun verifyPersistedSession(): AuthState = withContext(Dispatchers.IO) {
-        _authState.value = AuthState.Loading
-        delay(150)
-
-        val uid = prefs.getString(KEY_UID, null)
-
-        val state = if (uid != null) {
-            val displayName = prefs.getString(KEY_NAME, "Player") ?: "Player"
-            val username = prefs.getString(KEY_USERNAME, null) ?: displayName.filter { it.isLetterOrDigit() }.lowercase().ifEmpty { uid.take(8) }
-            val email = prefs.getString(KEY_EMAIL, null)
-            val avatarUrl = prefs.getString(KEY_AVATAR, null)
-            val avatarBase64 = prefs.getString(KEY_AVATAR_BASE64, null)
-            val providerStr = prefs.getString(KEY_PROVIDER, AuthProvider.GOOGLE.name)
-            val provider = runCatching { AuthProvider.valueOf(providerStr!!) }
-                .getOrDefault(AuthProvider.GOOGLE)
-            val gamesPlayed = prefs.getInt(KEY_GAMES_PLAYED, 0)
-            val gamesWon = prefs.getInt(KEY_GAMES_WON, 0)
-            val streak = prefs.getInt(KEY_STREAK, 0)
-            val bestStreak = maxOf(prefs.getInt(KEY_BEST_STREAK, streak), streak)
-            val level = prefs.getInt(KEY_LEVEL, 1)
-            val xp = prefs.getInt(KEY_XP, 0)
-
-            val profile = UserProfile(
-                uid = uid,
-                username = username,
-                displayName = displayName,
-                email = email,
-                avatarUrl = avatarUrl,
-                avatarBase64 = avatarBase64,
-                provider = provider,
-                gamesPlayed = gamesPlayed,
-                gamesWon = gamesWon,
-                currentStreak = streak,
-                bestStreak = bestStreak,
-                level = level,
-                xp = xp
-            )
+        val profile = getPersistedUserSync()
+        val state = if (profile != null) {
             AuthState.Authenticated(profile)
         } else {
             AuthState.Unauthenticated
@@ -854,9 +883,14 @@ class AuthRepository(
             editor.putString(KEY_AUTH_TOKEN, token)
         }
         editor.apply()
+
+        if (context != null && profile.username.isNotBlank()) {
+            com.bingo.multiplayer.domain.network.BingoFcmManager.syncCurrentUserToken(context, profile.username)
+        }
     }
 
     companion object {
+        @Volatile var activeInstance: AuthRepository? = null
         private const val PREFS_NAME = "bingo_auth_prefs"
         private const val KEY_UID = "uid"
         private const val KEY_USERNAME = "username"

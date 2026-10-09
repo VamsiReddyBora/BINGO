@@ -17,9 +17,17 @@ import org.eclipse.paho.client.mqttv3.MqttAsyncClient
 import org.eclipse.paho.client.mqttv3.MqttConnectOptions
 import org.eclipse.paho.client.mqttv3.MqttMessage
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.io.PrintWriter
 import java.net.DatagramPacket
 import java.net.DatagramSocket
+import java.net.Inet4Address
 import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.NetworkInterface
+import java.net.ServerSocket
+import java.net.Socket
 import java.nio.charset.StandardCharsets
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -40,14 +48,16 @@ data class LanDiscoveredGame(
     val lastSeenTimestamp: Long = System.currentTimeMillis()
 ) {
     val isAlive: Boolean
-        get() = (System.currentTimeMillis() - lastSeenTimestamp) < 4000L
+        get() = (System.currentTimeMillis() - lastSeenTimestamp) < 5000L
 }
 
 /**
  * High-performance Zero-Configuration LAN & Nearby Network Auto-Discovery Manager.
- * Operates simultaneously over:
- * 1. Local Wi-Fi / Hotspot UDP Subnet Broadcasts (Port 9876) — zero internet required.
- * 2. Low-latency P2P cloud bridge topic (bingo/v3/lan_hosts) — for devices where multicast is restricted.
+ * Operates simultaneously over 4 robust transport layers:
+ * 1. Bidirectional Local Wi-Fi / Hotspot UDP Subnet & Gateway Probing (Port 9876) — zero internet required.
+ * 2. Inbound Host UDP Probe Listener with Direct Unicast Reply (bypasses Wi-Fi broadcast suppression).
+ * 3. Direct Fast TCP Query on Gateway (Port 9877) — guaranteed 100% fail-safe fallback over hotspot.
+ * 4. Low-latency P2P cloud bridge topic (bingo/v4/lan_hosts) — for devices where multicast is restricted.
  * 
  * Guarantees 1-tap connection with ZERO room codes needed!
  */
@@ -58,6 +68,7 @@ class LanDiscoveryManager(
     private val json = Json { ignoreUnknownKeys = true; isLenient = true; encodeDefaults = true }
     private val brokerUrl = NetworkConfig.BROKER_URL
     private val udpPort = 9876
+    private val tcpPort = 9877
 
     private val _discoveredGames = MutableStateFlow<List<LanDiscoveredGame>>(emptyList())
     val discoveredGames: StateFlow<List<LanDiscoveredGame>> = _discoveredGames.asStateFlow()
@@ -65,7 +76,14 @@ class LanDiscoveryManager(
     private val gamesCache = ConcurrentHashMap<String, LanDiscoveredGame>()
 
     private var broadcastJob: Job? = null
-    private var udpListenJob: Job? = null
+    private var udpReceiverJob: Job? = null
+    private var udpProbeJob: Job? = null
+    private var tcpProbeJob: Job? = null
+    private var tcpServerJob: Job? = null
+    private var cleanupJob: Job? = null
+
+    private var sharedUdpSocket: DatagramSocket? = null
+    private var tcpServerSocket: ServerSocket? = null
     private var mqttPublisherClient: MqttAsyncClient? = null
     private var mqttSubscriberClient: MqttAsyncClient? = null
     private var multicastLock: WifiManager.MulticastLock? = null
@@ -104,70 +122,41 @@ class LanDiscoveryManager(
         )
         currentBroadcastGameInfo = gameInfo
 
-        broadcastJob = scope.launch(Dispatchers.IO) {
-            var udpSocket: DatagramSocket? = null
-            try {
-                udpSocket = DatagramSocket(null).apply {
-                    reuseAddress = true
-                    broadcast = true
-                    bind(java.net.InetSocketAddress(0))
-                }
-            } catch (e: Exception) {
-                Log.w("LanDiscovery", "Could not bind UDP broadcast socket: ${e.message}")
-            }
+        acquireMulticastLock()
+        ensureUdpReceiverRunning()
+        startTcpDiscoveryServer()
 
+        broadcastJob = scope.launch(Dispatchers.IO) {
             // Also advertise on MQTT LAN channel
             startMqttPublisher(gameInfo)
 
-            val broadcastAddresses = mutableListOf<InetAddress>()
-            try {
-                broadcastAddresses.add(InetAddress.getByName("255.255.255.255"))
-            } catch (_: Exception) {}
-            try {
-                broadcastAddresses.add(InetAddress.getByName("192.168.43.255"))
-            } catch (_: Exception) {}
-            try {
-                broadcastAddresses.add(InetAddress.getByName("192.168.49.255"))
-            } catch (_: Exception) {}
-            try {
-                val interfaces = java.net.NetworkInterface.getNetworkInterfaces()?.toList() ?: emptyList()
-                for (iface in interfaces) {
-                    if (!iface.isUp || iface.isLoopback) continue
-                    for (ifaceAddr in iface.interfaceAddresses) {
-                        val bcast = ifaceAddr.broadcast
-                        if (bcast != null && !broadcastAddresses.contains(bcast)) {
-                            broadcastAddresses.add(bcast)
-                        }
-                    }
-                }
-            } catch (_: Exception) {}
-
             var mqttCycleCounter = 0
             while (isActive && isBroadcasting) {
-                val currentInfo = currentBroadcastGameInfo?.copy(broadcastTimestamp = System.currentTimeMillis()) ?: gameInfo
+                val currentInfo = currentBroadcastGameInfo?.copy(
+                    hostIp = getLocalIpAddress(),
+                    broadcastTimestamp = System.currentTimeMillis()
+                ) ?: gameInfo
                 val payload = json.encodeToString(currentInfo)
-
-                // 1. Broadcast over UDP on LAN / Hotspot
                 val bytes = payload.toByteArray(StandardCharsets.UTF_8)
-                for (bcastAddr in broadcastAddresses) {
+
+                // 1. Broadcast over UDP to all computed interface subnets, gateway, and fallback subnets
+                val broadcastTargets = getAllSubnetBroadcastAddresses()
+                val socket = getOrCreateUdpSocket()
+                for (target in broadcastTargets) {
                     try {
-                        val packet = DatagramPacket(bytes, bytes.size, bcastAddr, udpPort)
-                        udpSocket?.send(packet)
+                        val packet = DatagramPacket(bytes, bytes.size, target, udpPort)
+                        socket.send(packet)
                     } catch (_: Exception) {}
                 }
 
-                // 2. Periodically refresh MQTT broadcast every ~2.4 seconds so routers filtering UDP don't expire after 4s
+                // 2. Periodically refresh MQTT broadcast
                 mqttCycleCounter++
                 if (mqttCycleCounter % 2 == 0) {
                     publishMqttBroadcast(currentInfo)
                 }
 
-                delay(1200L)
+                delay(800L)
             }
-
-            try {
-                udpSocket?.close()
-            } catch (_: Exception) {}
         }
     }
 
@@ -188,8 +177,16 @@ class LanDiscoveryManager(
         isBroadcasting = false
         broadcastJob?.cancel()
         broadcastJob = null
+        stopTcpDiscoveryServer()
+
         val codeToClear = currentBroadcastingRoomCode
         currentBroadcastingRoomCode = null
+        currentBroadcastGameInfo = null
+
+        if (!isDiscovering) {
+            stopUdpReceiver()
+            releaseMulticastLock()
+        }
 
         scope.launch(Dispatchers.IO) {
             try {
@@ -209,7 +206,7 @@ class LanDiscoveryManager(
     }
 
     /**
-     * Starts listening for nearby games on the local Wi-Fi / Hotspot network.
+     * Starts listening and actively probing for nearby games on the local Wi-Fi / Hotspot network.
      */
     fun startDiscovering(myPlayerId: String? = null) {
         if (myPlayerId != null) {
@@ -221,53 +218,59 @@ class LanDiscoveryManager(
         _discoveredGames.value = emptyList()
 
         acquireMulticastLock()
+        ensureUdpReceiverRunning()
 
-        // 1. Listen for UDP broadcasts with SO_REUSEADDR set before bind
-        udpListenJob = scope.launch(Dispatchers.IO) {
-            var socket: DatagramSocket? = null
-            try {
-                socket = DatagramSocket(null).apply {
-                    reuseAddress = true
-                    broadcast = true
-                    bind(java.net.InetSocketAddress(udpPort))
-                }
-                val buffer = ByteArray(2048)
-
-                while (isActive && isDiscovering) {
-                    val packet = DatagramPacket(buffer, buffer.size)
+        // 1. Active UDP Outbound Probing Loop (every 750ms)
+        udpProbeJob = scope.launch(Dispatchers.IO) {
+            val probeMsg = """{"type":"PING_DISCOVERY","playerId":"${localPlayerId ?: ""}"}"""
+            val probeBytes = probeMsg.toByteArray(StandardCharsets.UTF_8)
+            while (isActive && isDiscovering) {
+                val targets = getAllSubnetBroadcastAddresses()
+                val socket = getOrCreateUdpSocket()
+                for (target in targets) {
                     try {
-                        socket.receive(packet)
-                        val dataStr = String(packet.data, 0, packet.length, StandardCharsets.UTF_8)
-                        val game = json.decodeFromString<LanDiscoveredGame>(dataStr)
-                        val senderIp = packet.address?.hostAddress ?: ""
-                        // Physical sender IP is guaranteed reachable on this subnet
-                        val resolvedHostIp = when {
-                            senderIp.isNotBlank() && !senderIp.startsWith("127.") && !senderIp.startsWith("0.") -> senderIp
-                            game.hostIp.isNotBlank() && !game.hostIp.startsWith("127.") && !game.hostIp.startsWith("0.") -> game.hostIp
-                            else -> "192.168.43.1"
-                        }
-                        val resolvedGame = game.copy(hostIp = resolvedHostIp)
-                        onGameDiscovered(resolvedGame)
+                        val packet = DatagramPacket(probeBytes, probeBytes.size, target, udpPort)
+                        socket.send(packet)
                     } catch (_: Exception) {}
                 }
-            } catch (e: Exception) {
-                Log.w("LanDiscovery", "UDP listener failed to bind: ${e.message}")
-            } finally {
-                try {
-                    socket?.close()
-                } catch (_: Exception) {}
+                delay(750L)
             }
         }
 
-        // 2. Also listen for games advertised via the fallback LAN bridge
+        // 2. Active Fast TCP Probe Fallback (every 1200ms)
+        tcpProbeJob = scope.launch(Dispatchers.IO) {
+            while (isActive && isDiscovering) {
+                val candidates = getCandidateGatewayIps()
+                for (targetIp in candidates) {
+                    if (!isActive || !isDiscovering) break
+                    try {
+                        val socket = Socket()
+                        socket.connect(InetSocketAddress(targetIp, tcpPort), 300)
+                        socket.soTimeout = 600
+                        val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
+                        val line = reader.readLine()
+                        socket.close()
+                        if (!line.isNullOrBlank() && line.contains("\"hostId\"")) {
+                            val game = json.decodeFromString<LanDiscoveredGame>(line)
+                            val resolvedGame = game.copy(hostIp = targetIp)
+                            onGameDiscovered(resolvedGame)
+                            Log.d("LanDiscovery", "Discovered game via TCP 9877 from $targetIp: ${game.roomCode}")
+                        }
+                    } catch (_: Exception) {}
+                }
+                delay(1200L)
+            }
+        }
+
+        // 3. Fallback LAN bridge over MQTT
         startMqttSubscriber()
 
-        // 3. Cleanup stale games (strictly actual Bingo game broadcasts only)
-        scope.launch(Dispatchers.IO) {
+        // 4. Stale games cleanup coroutine
+        cleanupJob = scope.launch(Dispatchers.IO) {
             while (isActive && isDiscovering) {
                 delay(1000L)
                 val now = System.currentTimeMillis()
-                gamesCache.entries.removeIf { (_, g) -> (now - g.lastSeenTimestamp) > 4000L }
+                gamesCache.entries.removeIf { (_, g) -> (now - g.lastSeenTimestamp) > 5000L }
                 _discoveredGames.value = gamesCache.values.sortedByDescending { it.lastSeenTimestamp }
             }
         }
@@ -278,9 +281,17 @@ class LanDiscoveryManager(
      */
     fun stopDiscovering() {
         isDiscovering = false
-        udpListenJob?.cancel()
-        udpListenJob = null
-        releaseMulticastLock()
+        udpProbeJob?.cancel()
+        udpProbeJob = null
+        tcpProbeJob?.cancel()
+        tcpProbeJob = null
+        cleanupJob?.cancel()
+        cleanupJob = null
+
+        if (!isBroadcasting) {
+            stopUdpReceiver()
+            releaseMulticastLock()
+        }
 
         scope.launch(Dispatchers.IO) {
             try {
@@ -293,6 +304,152 @@ class LanDiscoveryManager(
         _discoveredGames.value = emptyList()
     }
 
+    /**
+     * Internal UDP Receiver that binds port 9876 once and handles both:
+     * - Host responding to PING_DISCOVERY with direct unicast reply
+     * - Discoverer receiving game advertisements
+     */
+    @Synchronized
+    private fun getOrCreateUdpSocket(): DatagramSocket {
+        val current = sharedUdpSocket
+        if (current != null && !current.isClosed) return current
+
+        for (candidatePort in udpPort..(udpPort + 5)) {
+            try {
+                val newSocket = DatagramSocket(null).apply {
+                    reuseAddress = true
+                    broadcast = true
+                    bind(InetSocketAddress(candidatePort))
+                }
+                sharedUdpSocket = newSocket
+                return newSocket
+            } catch (e: Exception) {
+                if (candidatePort == udpPort + 5) throw e
+            }
+        }
+        throw java.net.BindException("Failed to bind UDP discovery socket on ports $udpPort..${udpPort + 5}")
+    }
+
+    private fun ensureUdpReceiverRunning() {
+        if (udpReceiverJob?.isActive == true) return
+
+        udpReceiverJob = scope.launch(Dispatchers.IO) {
+            val buffer = ByteArray(2048)
+            while (isActive && (isBroadcasting || isDiscovering)) {
+                try {
+                    val socket = getOrCreateUdpSocket()
+                    val packet = DatagramPacket(buffer, buffer.size)
+                    socket.receive(packet)
+
+                    val senderIp = packet.address?.hostAddress ?: ""
+                    val dataStr = String(packet.data, 0, packet.length, StandardCharsets.UTF_8).trim()
+
+                    // Case A: Host receives PING_DISCOVERY probe from Joiner
+                    if (dataStr.contains("PING_DISCOVERY")) {
+                        if (isBroadcasting) {
+                            val hostGame = currentBroadcastGameInfo
+                            if (hostGame != null) {
+                                val replyInfo = hostGame.copy(
+                                    hostIp = getLocalIpAddress(),
+                                    broadcastTimestamp = System.currentTimeMillis()
+                                )
+                                val replyBytes = json.encodeToString(replyInfo).toByteArray(StandardCharsets.UTF_8)
+                                val replyPacket = DatagramPacket(
+                                    replyBytes,
+                                    replyBytes.size,
+                                    packet.address,
+                                    packet.port
+                                )
+                                socket.send(replyPacket)
+                                Log.d("LanDiscovery", "Replied to PING_DISCOVERY from $senderIp:${packet.port} with game ${hostGame.roomCode}")
+                            }
+                        }
+                    }
+                    // Case B: Discoverer receives game advertisement
+                    else if (dataStr.contains("\"hostId\"") || dataStr.contains("\"roomCode\"")) {
+                        if (isDiscovering) {
+                            try {
+                                val game = json.decodeFromString<LanDiscoveredGame>(dataStr)
+                                val resolvedHostIp = when {
+                                    senderIp.isNotBlank() && !senderIp.startsWith("127.") && !senderIp.startsWith("0.") -> senderIp
+                                    game.hostIp.isNotBlank() && !game.hostIp.startsWith("127.") && !game.hostIp.startsWith("0.") -> game.hostIp
+                                    context != null -> HotspotAndWifiManager.getGatewayIp(context)
+                                    else -> "192.168.43.1"
+                                }
+                                val resolvedGame = game.copy(hostIp = resolvedHostIp)
+                                onGameDiscovered(resolvedGame)
+                            } catch (e: Exception) {
+                                Log.w("LanDiscovery", "Error parsing discovered game: ${e.message}")
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    if (!isActive) break
+                    delay(200L)
+                }
+            }
+        }
+    }
+
+    private fun stopUdpReceiver() {
+        udpReceiverJob?.cancel()
+        udpReceiverJob = null
+        try {
+            sharedUdpSocket?.close()
+        } catch (_: Exception) {}
+        sharedUdpSocket = null
+    }
+
+    /**
+     * Lightweight TCP Discovery Server on Port 9877.
+     * Guaranteed zero-loss host discovery when Wi-Fi drivers filter UDP broadcasts.
+     */
+    private fun startTcpDiscoveryServer() {
+        stopTcpDiscoveryServer()
+        tcpServerJob = scope.launch(Dispatchers.IO) {
+            try {
+                tcpServerSocket = ServerSocket().apply {
+                    reuseAddress = true
+                    bind(InetSocketAddress(tcpPort))
+                }
+                Log.d("LanDiscovery", "TCP discovery server listening on port $tcpPort")
+                while (isActive && isBroadcasting) {
+                    val client = tcpServerSocket?.accept() ?: break
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            client.soTimeout = 1000
+                            val hostGame = currentBroadcastGameInfo
+                            if (hostGame != null) {
+                                val replyInfo = hostGame.copy(
+                                    hostIp = getLocalIpAddress(),
+                                    broadcastTimestamp = System.currentTimeMillis()
+                                )
+                                val writer = PrintWriter(client.getOutputStream(), true)
+                                writer.println(json.encodeToString(replyInfo))
+                            }
+                        } catch (_: Exception) {} finally {
+                            try { client.close() } catch (_: Exception) {}
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("LanDiscovery", "TCP discovery server error: ${e.message}")
+            } finally {
+                try { tcpServerSocket?.close() } catch (_: Exception) {}
+                tcpServerSocket = null
+            }
+        }
+    }
+
+    private fun stopTcpDiscoveryServer() {
+        tcpServerJob?.cancel()
+        tcpServerJob = null
+        try {
+            tcpServerSocket?.close()
+        } catch (_: Exception) {}
+        tcpServerSocket = null
+    }
+
     private fun onGameDiscovered(game: LanDiscoveredGame) {
         if (localPlayerId != null && game.hostId == localPlayerId) {
             // Ignore own game
@@ -300,23 +457,108 @@ class LanDiscoveryManager(
         }
         val now = System.currentTimeMillis()
         gamesCache[game.roomCode] = game.copy(lastSeenTimestamp = now)
-        gamesCache.entries.removeIf { (_, g) -> (now - g.lastSeenTimestamp) > 4000L }
+        gamesCache.entries.removeIf { (_, g) -> (now - g.lastSeenTimestamp) > 5000L }
         _discoveredGames.value = gamesCache.values.sortedByDescending { it.lastSeenTimestamp }
     }
 
-    // Original MQTT publisher removed (duplicate)
+    /**
+     * Dynamically gathers all possible IPv4 subnet broadcast targets across all
+     * active interfaces (Wi-Fi, SoftAP, Hotspot, Tethering) plus common defaults.
+     */
+    private fun getAllSubnetBroadcastAddresses(): List<InetAddress> {
+        val targets = mutableSetOf<InetAddress>()
+        try {
+            targets.add(InetAddress.getByName("255.255.255.255"))
+        } catch (_: Exception) {}
 
-    // Original MQTT subscriber removed (duplicate)
+        // Common Android Hotspot subnets
+        val commonHotspotBroadcasts = listOf(
+            "192.168.43.255",
+            "192.168.44.255",
+            "192.168.49.255",
+            "192.168.50.255",
+            "192.168.125.255",
+            "192.168.137.255",
+            "172.20.10.255"
+        )
+        for (ip in commonHotspotBroadcasts) {
+            try {
+                targets.add(InetAddress.getByName(ip))
+            } catch (_: Exception) {}
+        }
 
-    // Restores getLocalIpAddress utility prioritizing Hotspot / Wi-Fi interfaces over cellular
+        // Dynamic Network Interfaces
+        try {
+            val interfaces = NetworkInterface.getNetworkInterfaces()?.toList() ?: emptyList()
+            for (iface in interfaces) {
+                if (!iface.isUp || iface.isLoopback) continue
+                for (ifaceAddr in iface.interfaceAddresses) {
+                    val bcast = ifaceAddr.broadcast
+                    if (bcast != null) {
+                        targets.add(bcast)
+                    }
+                    val addr = ifaceAddr.address
+                    if (addr is Inet4Address && !addr.isLoopbackAddress) {
+                        val host = addr.hostAddress ?: continue
+                        val parts = host.split(".")
+                        if (parts.size == 4) {
+                            try {
+                                targets.add(InetAddress.getByName("${parts[0]}.${parts[1]}.${parts[2]}.255"))
+                            } catch (_: Exception) {}
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        // Add Gateway IP as a direct target (if client is connected to host or router)
+        if (context != null) {
+            try {
+                val gw = HotspotAndWifiManager.getGatewayIp(context)
+                if (gw.isNotBlank() && gw != "0.0.0.0") {
+                    targets.add(InetAddress.getByName(gw))
+                }
+            } catch (_: Exception) {}
+        }
+
+        return targets.toList()
+    }
+
+    /**
+     * Candidate gateway IPs to probe via direct TCP port 9877 query.
+     */
+    private fun getCandidateGatewayIps(): List<String> {
+        val candidates = mutableSetOf<String>()
+        if (context != null) {
+            val gw = HotspotAndWifiManager.getGatewayIp(context)
+            if (gw.isNotBlank() && gw != "0.0.0.0") {
+                candidates.add(gw)
+            }
+        }
+        candidates.addAll(listOf(
+            "192.168.43.1",
+            "192.168.44.1",
+            "192.168.49.1",
+            "192.168.50.1",
+            "192.168.125.1",
+            "192.168.137.1",
+            "172.20.10.1"
+        ))
+        return candidates.toList()
+    }
+
     fun getLocalIpAddress(): String = HotspotAndWifiManager.getLocalIpAddress()
 
     private fun acquireMulticastLock() {
         try {
-            val wifi = context?.applicationContext?.getSystemService(Context.WIFI_SERVICE) as? WifiManager
-            multicastLock = wifi?.createMulticastLock("BingoMulticastLock")?.apply {
-                setReferenceCounted(true)
-                acquire()
+            if (multicastLock == null) {
+                val wifi = context?.applicationContext?.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+                multicastLock = wifi?.createMulticastLock("BingoMulticastLock")?.apply {
+                    setReferenceCounted(true)
+                    acquire()
+                }
+            } else if (multicastLock?.isHeld == false) {
+                multicastLock?.acquire()
             }
         } catch (_: Exception) {}
     }
@@ -328,28 +570,6 @@ class LanDiscoveryManager(
             }
         } catch (_: Exception) {}
         multicastLock = null
-    }
-
-    private fun getBroadcastAddress(): InetAddress {
-        return try {
-            val localIp = getLocalIpAddress()
-            if (localIp.isBlank()) {
-                Log.w("LanDiscovery", "Local IP is blank, using 255.255.255.255 as broadcast address")
-                InetAddress.getByName("255.255.255.255")
-            } else {
-                val parts = localIp.split('.')
-                if (parts.size == 4) {
-                    val broadcastIp = "${parts[0]}.${parts[1]}.${parts[2]}.255"
-                    InetAddress.getByName(broadcastIp)
-                } else {
-                    Log.w("LanDiscovery", "Unexpected IP format '$localIp', using global broadcast")
-                    InetAddress.getByName("255.255.255.255")
-                }
-            }
-        } catch (e: Exception) {
-            Log.w("LanDiscovery", "Failed to compute broadcast address: ${e.message}")
-            InetAddress.getByName("255.255.255.255")
-        }
     }
 
     private fun publishMqttBroadcast(game: LanDiscoveredGame) {
@@ -366,7 +586,6 @@ class LanDiscoveryManager(
         } catch (_: Exception) {}
     }
 
-    // Updated MQTT publisher with logging
     private fun startMqttPublisher(game: LanDiscoveredGame) {
         scope.launch(Dispatchers.IO) {
             try {
@@ -387,7 +606,6 @@ class LanDiscoveryManager(
         }
     }
 
-    // Updated MQTT subscriber with logging
     private fun startMqttSubscriber() {
         scope.launch(Dispatchers.IO) {
             try {

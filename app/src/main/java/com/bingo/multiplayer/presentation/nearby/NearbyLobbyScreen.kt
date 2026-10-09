@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.sp
 import com.bingo.multiplayer.core.designsystem.BingoTheme
 import com.bingo.multiplayer.domain.model.Player
 import com.bingo.multiplayer.domain.network.HotspotAndWifiManager
+import com.bingo.multiplayer.domain.network.NearbyHostQrPayload
 import com.bingo.multiplayer.domain.network.LanDiscoveredGame
 import com.bingo.multiplayer.presentation.common.PlayerAvatar
 import kotlinx.coroutines.delay
@@ -39,6 +40,7 @@ fun NearbyLobbyScreen(
     isHosting: Boolean,
     isHostMode: Boolean,
     joinedGame: LanDiscoveredGame? = null,
+    currentRoomCode: String = "",
     onStartBroadcasting: (boardSize: Int) -> Unit,
     onStopBroadcasting: () -> Unit,
     onJoinDiscoveredGame: (LanDiscoveredGame) -> Unit,
@@ -49,13 +51,12 @@ fun NearbyLobbyScreen(
     val context = LocalContext.current
     val tokens = BingoTheme.colors
 
+    var showHostQrDialog by remember { mutableStateOf(false) }
+    var showScannerDialog by remember { mutableStateOf(false) }
+
     // Dynamic board sizing is calculated silently in the background
-    val dynamicBoardSize = when {
-        connectedPeers.size <= 2 -> 5
-        connectedPeers.size <= 4 -> 6
-        connectedPeers.size <= 6 -> 7
-        else -> 8
-    }
+    val dynamicBoardSize = com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine
+        .resolveBoardSize(isDynamicBoard = true, playerCount = connectedPeers.size.coerceAtLeast(1))
 
     // Hotspot & Wi-Fi reactive status checks
     var isHotspotActive by remember { mutableStateOf(HotspotAndWifiManager.isHotspotEnabled(context)) }
@@ -243,6 +244,28 @@ fun NearbyLobbyScreen(
                                         fontWeight = FontWeight.SemiBold,
                                         color = Color(0xFF16A34A)
                                     )
+                                    Spacer(modifier = Modifier.weight(1f))
+                                    OutlinedButton(
+                                        onClick = { showHostQrDialog = true },
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                        modifier = Modifier.height(28.dp),
+                                        border = BorderStroke(1.dp, tokens.surfaceBorder)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.QrCode,
+                                            contentDescription = "QR Code",
+                                            modifier = Modifier.size(14.dp),
+                                            tint = tokens.accentBrand
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = "Show QR",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = tokens.cellNeutralText
+                                        )
+                                    }
                                 }
                             }
 
@@ -494,6 +517,28 @@ fun NearbyLobbyScreen(
                             letterSpacing = 1.sp,
                             color = tokens.cellNeutralText.copy(alpha = 0.5f)
                         )
+                        Spacer(modifier = Modifier.weight(1f))
+                        OutlinedButton(
+                            onClick = { showScannerDialog = true },
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            modifier = Modifier.height(28.dp),
+                            border = BorderStroke(1.dp, tokens.surfaceBorder)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.QrCodeScanner,
+                                contentDescription = "Scan QR",
+                                modifier = Modifier.size(14.dp),
+                                tint = tokens.accentBrand
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Scan QR",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = tokens.cellNeutralText
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(10.dp))
@@ -530,6 +575,26 @@ fun NearbyLobbyScreen(
                                     textAlign = TextAlign.Center,
                                     color = tokens.cellNeutralText.copy(alpha = 0.5f)
                                 )
+                                Spacer(modifier = Modifier.height(14.dp))
+                                OutlinedButton(
+                                    onClick = { showScannerDialog = true },
+                                    shape = RoundedCornerShape(10.dp),
+                                    border = BorderStroke(1.dp, tokens.surfaceBorder)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.QrCodeScanner,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp),
+                                        tint = tokens.accentBrand
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Scan Host QR Code",
+                                        fontSize = 12.sp,
+                                        color = tokens.cellNeutralText,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
                             }
                         }
                     } else {
@@ -550,6 +615,44 @@ fun NearbyLobbyScreen(
                     }
                 }
             }
+        }
+
+        if (showHostQrDialog) {
+            val hostPeer = connectedPeers.firstOrNull { it.isHost }
+            val hostDisplayName = hostPeer?.displayName ?: "Host"
+            NearbyHostQrDisplayDialog(
+                payload = NearbyHostQrPayload(
+                    ssid = HotspotAndWifiManager.getHotspotName(context),
+                    password = HotspotAndWifiManager.getSavedHotspotPassword(context),
+                    roomCode = currentRoomCode.ifBlank { "LAN_GAME" },
+                    hostIp = HotspotAndWifiManager.getLocalIpAddress(),
+                    hostName = hostDisplayName,
+                    boardSize = dynamicBoardSize
+                ),
+                onDismiss = { showHostQrDialog = false }
+            )
+        }
+
+        if (showScannerDialog) {
+            NearbyQrScannerDialog(
+                onDismiss = { showScannerDialog = false },
+                onQrScanned = { payload ->
+                    showScannerDialog = false
+                    val scannedGame = LanDiscoveredGame(
+                        hostId = "qr_${payload.hostName}",
+                        hostDisplayName = payload.hostName,
+                        hostUsername = payload.hostName,
+                        avatarUrl = null,
+                        boardSize = payload.boardSize,
+                        roomCode = payload.roomCode,
+                        hostIp = payload.hostIp.ifBlank { HotspotAndWifiManager.getGatewayIp(context) },
+                        ssid = payload.ssid,
+                        isInLobby = false,
+                        broadcastTimestamp = System.currentTimeMillis()
+                    )
+                    onJoinDiscoveredGame(scannedGame)
+                }
+            )
         }
     }
 }

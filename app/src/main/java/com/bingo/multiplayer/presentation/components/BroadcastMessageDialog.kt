@@ -50,6 +50,7 @@ import java.util.Locale
 
 @Composable
 fun BroadcastMessageDialog() {
+    val context = androidx.compose.ui.platform.LocalContext.current
     val activeBroadcast by BroadcastMessageManager.activeBroadcast.collectAsState()
     val updateState by AppUpdateManager.updateState.collectAsState()
     val tokens = BingoTheme.colors
@@ -66,11 +67,29 @@ fun BroadcastMessageDialog() {
     val broadcast = activeBroadcast ?: return
 
     val isDirect = broadcast.isDirectMessage
+    val isMaintenance = broadcast.type.uppercase(Locale.US) == "MAINTENANCE"
+    val isAlert = broadcast.type.uppercase(Locale.US) == "ALERT"
+
+    // Theme-driven badge & accent colors (no hardcoded purple)
     val (badgeText, badgeColor, iconVector) = when {
-        isDirect -> Triple("PERSONAL MESSAGE", Color(0xFF8B5CF6), Icons.Default.Campaign)
-        broadcast.type.uppercase(Locale.US) == "MAINTENANCE" -> Triple("MAINTENANCE", Color(0xFFF59E0B), Icons.Default.Build)
-        broadcast.type.uppercase(Locale.US) == "ALERT" -> Triple("IMPORTANT NOTICE", Color(0xFFEF4444), Icons.Default.Warning)
+        isDirect -> Triple("PERSONAL MESSAGE", tokens.accentBrand, Icons.Default.Campaign)
+        isMaintenance -> Triple("MAINTENANCE", Color(0xFFF59E0B), Icons.Default.Build)
+        isAlert -> Triple("IMPORTANT NOTICE", Color(0xFFEF4444), Icons.Default.Warning)
         else -> Triple("ANNOUNCEMENT", tokens.accentBrand, Icons.Default.Campaign)
+    }
+
+    // Dynamic button colors matching active theme palette
+    val buttonBg = when {
+        isMaintenance -> Color(0xFFF59E0B)
+        isAlert -> Color(0xFFEF4444)
+        tokens.isDark -> Color(0xFFFFFFFF)
+        else -> tokens.accentBrand
+    }
+    val buttonTextColor = when {
+        isMaintenance -> Color(0xFF000000)
+        isAlert -> Color(0xFFFFFFFF)
+        tokens.isDark -> Color(0xFF000000)
+        else -> Color(0xFFFFFFFF)
     }
 
     // 3 Distinct popup sizes
@@ -127,7 +146,7 @@ fun BroadcastMessageDialog() {
     }
 
     Dialog(
-        onDismissRequest = { BroadcastMessageManager.dismiss() },
+        onDismissRequest = { BroadcastMessageManager.dismiss(context) },
         properties = DialogProperties(dismissOnBackPress = true, dismissOnClickOutside = true)
     ) {
         Surface(
@@ -138,7 +157,7 @@ fun BroadcastMessageDialog() {
                 .widthIn(max = cardMaxWidth)
                 .fillMaxWidth()
                 .padding(horizontal = 6.dp)
-                .border(1.dp, tokens.cellNeutralBorder.copy(alpha = 0.3f), RoundedCornerShape(24.dp))
+                .border(1.dp, tokens.surfaceBorder, RoundedCornerShape(24.dp))
         ) {
             Column(
                 modifier = Modifier
@@ -151,7 +170,8 @@ fun BroadcastMessageDialog() {
                     modifier = Modifier
                         .size(iconBoxSize)
                         .clip(CircleShape)
-                        .background(badgeColor.copy(alpha = 0.15f)),
+                        .background(badgeColor.copy(alpha = if (tokens.isDark) 0.18f else 0.12f))
+                        .border(1.dp, badgeColor.copy(alpha = 0.35f), CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
@@ -167,7 +187,8 @@ fun BroadcastMessageDialog() {
                 // Badge
                 Surface(
                     shape = RoundedCornerShape(8.dp),
-                    color = badgeColor.copy(alpha = 0.18f)
+                    color = badgeColor.copy(alpha = if (tokens.isDark) 0.16f else 0.10f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, badgeColor.copy(alpha = 0.35f))
                 ) {
                     Text(
                         text = badgeText,
@@ -186,7 +207,7 @@ fun BroadcastMessageDialog() {
                     text = broadcast.title.ifBlank { if (isDirect) "Personal Message" else "Announcement" },
                     fontSize = titleSize,
                     fontWeight = FontWeight.Bold,
-                    color = tokens.cellNeutralText
+                    color = tokens.textPrimary
                 )
 
                 // Subtitle / Author Info
@@ -226,7 +247,8 @@ fun BroadcastMessageDialog() {
                 // Message Body Container
                 Surface(
                     shape = RoundedCornerShape(14.dp),
-                    color = tokens.badgeSurface,
+                    color = tokens.backgroundSecondary,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, tokens.surfaceBorder),
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = bodyMinHeight, max = bodyMaxHeight)
@@ -240,7 +262,7 @@ fun BroadcastMessageDialog() {
                             text = broadcast.message,
                             fontSize = bodyFontSize,
                             lineHeight = bodyLineHeight,
-                            color = tokens.cellNeutralText
+                            color = tokens.textPrimary
                         )
                     }
                 }
@@ -249,16 +271,16 @@ fun BroadcastMessageDialog() {
 
                 // Action Button (Got it / Dismiss)
                 Button(
-                    onClick = { BroadcastMessageManager.dismiss() },
+                    onClick = { BroadcastMessageManager.dismiss(context) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(buttonHeight),
                     shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = badgeColor)
+                    colors = ButtonDefaults.buttonColors(containerColor = buttonBg)
                 ) {
                     Text(
                         text = "Got it",
-                        color = Color.White,
+                        color = buttonTextColor,
                         fontSize = if (dialogSize == "COMPACT") 13.sp else 14.sp,
                         fontWeight = FontWeight.Bold
                     )

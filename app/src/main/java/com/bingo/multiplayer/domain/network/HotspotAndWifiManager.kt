@@ -112,7 +112,10 @@ object HotspotAndWifiManager {
                 while (addrs.hasMoreElements()) {
                     val addr = addrs.nextElement()
                     val host = addr.hostAddress ?: ""
-                    if (host.startsWith("192.168.43.") || host.startsWith("192.168.44.") || host.startsWith("192.168.49.") || host.startsWith("192.168.50.")) {
+                    if (host.startsWith("192.168.43.") || host.startsWith("192.168.44.") ||
+                        host.startsWith("192.168.49.") || host.startsWith("192.168.50.") ||
+                        host.startsWith("192.168.125.") || host.startsWith("192.168.137.") ||
+                        host.startsWith("172.20.10.")) {
                         return true
                     }
                 }
@@ -208,6 +211,20 @@ object HotspotAndWifiManager {
                 val g = dhcp.gateway
                 val ip = "${g and 0xFF}.${(g shr 8) and 0xFF}.${(g shr 16) and 0xFF}.${(g shr 24) and 0xFF}"
                 if (ip != "0.0.0.0") return ip
+            }
+        } catch (_: Exception) {}
+
+        try {
+            val interfaces = java.net.NetworkInterface.getNetworkInterfaces()?.toList() ?: emptyList()
+            for (iface in interfaces) {
+                if (!iface.isUp || iface.isLoopback) continue
+                for (addr in iface.inetAddresses) {
+                    if (addr is java.net.Inet4Address && !addr.isLoopbackAddress) {
+                        val host = addr.hostAddress ?: continue
+                        val prefix = host.substringBeforeLast(".")
+                        return "$prefix.1"
+                    }
+                }
             }
         } catch (_: Exception) {}
 
@@ -400,8 +417,11 @@ object HotspotAndWifiManager {
 
             // 1. Hotspot interfaces
             ipv4List.firstOrNull { (name, ip) ->
-                name.contains("ap") || name.contains("swlan") || name.contains("softap") ||
-                        ip.startsWith("192.168.43.") || ip.startsWith("192.168.49.")
+                name.contains("ap") || name.contains("swlan") || name.contains("softap") || name.contains("tether") ||
+                        ip.startsWith("192.168.43.") || ip.startsWith("192.168.44.") ||
+                        ip.startsWith("192.168.49.") || ip.startsWith("192.168.50.") ||
+                        ip.startsWith("192.168.125.") || ip.startsWith("192.168.137.") ||
+                        ip.startsWith("172.20.10.")
             }?.second
             // 2. Wi-Fi / Ethernet interfaces
             ?: ipv4List.firstOrNull { (name, _) ->

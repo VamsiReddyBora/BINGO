@@ -1,0 +1,6 @@
+name = "bingo-fcm-relay"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+[placement]
+mode = "smart"

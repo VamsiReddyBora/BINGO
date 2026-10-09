@@ -99,6 +99,12 @@ object BroadcastMessageManager {
     private var lastApplicationContext: Context? = null
     private val scope = CoroutineScope(Dispatchers.IO)
 
+    fun deliverForegroundBroadcast(msg: BroadcastMessage) {
+        if (!hasDismissedInSession && msg.active && msg.message.isNotBlank()) {
+            _activeBroadcast.value = msg
+        }
+    }
+
     /**
      * Checks if this message has already been viewed and dismissed in ONCE mode.
      */
@@ -222,6 +228,10 @@ object BroadcastMessageManager {
                 if (!hasDismissedInSession) {
                     _activeBroadcast.value = msg
                     Log.i(TAG, "Live broadcast received: ${msg.title} (target=${msg.targetUsername}, mode=${msg.deliveryMode})")
+                    val effectiveCtx = context ?: lastApplicationContext
+                    if (effectiveCtx != null && !AppLifecycleObserver.isAppInForeground.value) {
+                        BingoNotificationManager.showBroadcastNotification(effectiveCtx, msg)
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -236,9 +246,12 @@ object BroadcastMessageManager {
      */
     fun dismiss(context: Context? = null) {
         hasDismissedInSession = true
+        val ctx = context ?: lastApplicationContext
+        if (ctx != null) {
+            BingoNotificationManager.cancelBroadcastNotification(ctx)
+        }
         val current = _activeBroadcast.value
         if (current != null) {
-            val ctx = context ?: lastApplicationContext
             if (current.isOnlyOnce || current.isDirectMessage) {
                 markMessageAsSeen(ctx, current.id)
                 // If this was a direct targeted message, automatically deactivate it in the cloud!

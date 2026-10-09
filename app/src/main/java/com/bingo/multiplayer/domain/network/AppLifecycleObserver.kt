@@ -20,7 +20,7 @@ import kotlinx.coroutines.flow.asStateFlow
 object AppLifecycleObserver : DefaultLifecycleObserver {
     private const val TAG = "AppLifecycleObserver"
 
-    private val _isAppInForeground = MutableStateFlow(true)
+    private val _isAppInForeground = MutableStateFlow(false)
     val isAppInForeground: StateFlow<Boolean> = _isAppInForeground.asStateFlow()
 
     private val _lastBackgroundTimestamp = MutableStateFlow(0L)

@@ -238,7 +238,10 @@ fun JoinRoomScreen(
                             .height(46.dp),
                         shape = RoundedCornerShape(12.dp),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = tokens.accentOpponent
+                            containerColor = tokens.accentOpponent,
+                            contentColor = Color.White,
+                            disabledContainerColor = if (tokens.isDark) Color(0xFF27272A) else Color(0xFFE2E8F0),
+                            disabledContentColor = tokens.textMuted
                         )
                     ) {
                         if (isValidating) {
@@ -248,20 +251,12 @@ fun JoinRoomScreen(
                                 strokeWidth = 2.dp
                             )
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "Validating Room…",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp,
-                                color = Color.White
-                            )
-                        } else {
-                            Text(
-                                text = "Join Room",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp,
-                                color = Color.White
-                            )
                         }
+                        Text(
+                            text = if (isValidating) "Validating Room…" else "Join Room",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
                     }
                 }
             }

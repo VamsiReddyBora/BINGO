@@ -61,3 +61,15 @@
 -keep class com.google.android.gms.auth.api.** { *; }
 -keep class com.google.android.gms.common.** { *; }
 -dontwarn com.google.android.gms.**
+
+# ── Firebase Cloud Messaging & Google Services ──
+-keep class com.google.firebase.** { *; }
+-dontwarn com.google.firebase.**
+-keep class com.bingo.multiplayer.domain.network.BingoFirebaseMessagingService { *; }
+
+# ── Android WorkManager ──
+-keep class androidx.work.** { *; }
+-keep class * extends androidx.work.Worker { *; }
+-keep class * extends androidx.work.CoroutineWorker { *; }
+-keep class * extends androidx.work.ListenableWorker { *; }
+-keep class com.bingo.multiplayer.domain.network.UpdateCheckWorker { *; }

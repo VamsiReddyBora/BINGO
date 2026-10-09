@@ -45,6 +45,14 @@ export class MqttRoomManager {
     this.localPlayer = { ...player };
     const clientId = `bingo_web_${player.id.substring(0, 8)}_${Math.random().toString(36).substring(2, 6)}`;
 
+    const cleanUname = player.username ? player.username.trim().toLowerCase().replace(/^@/, '') : '';
+    const willPayload = JSON.stringify({
+      status: 'OFFLINE',
+      timestamp: Date.now(),
+      appVersion: '1.3.3',
+      appVersionCode: 39
+    });
+
     try {
       this.client = mqtt.connect(MQTT_WS_URL, {
         clientId,
@@ -53,7 +61,13 @@ export class MqttRoomManager {
         clean: true,
         reconnectPeriod: 2500,
         connectTimeout: 8000,
-        keepalive: 30
+        keepalive: 30,
+        will: cleanUname ? {
+          topic: `bingo/v3/presence/${cleanUname}`,
+          payload: willPayload,
+          qos: 1,
+          retain: true
+        } : undefined
       });
 
       this.client.on('connect', () => {
@@ -555,8 +569,8 @@ export class MqttRoomManager {
         username: clean,
         status: 'ONLINE',
         timestamp: Date.now(),
-        appVersion: '1.3.2',
-        appVersionCode: 38
+        appVersion: '1.3.3',
+        appVersionCode: 39
       });
       this.sendRetainedPresence(clean, payload);
     }, 6000);

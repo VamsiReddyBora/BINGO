@@ -411,8 +411,8 @@ export class CloudRegistry {
       bestStreak: player.currentStreak || 0,
       level: player.level || 1,
       lastSeenTimestamp: now,
-      appVersion: '1.3.2',
-      appVersionCode: 38
+      appVersion: '1.3.3',
+      appVersionCode: 39
     };
 
     const jsonStr = JSON.stringify(entry);
@@ -553,16 +553,16 @@ export class CloudRegistry {
     if (!clean) return;
 
     const now = Date.now();
-    // 1. KeyValue presence: pres_{clean} = "ONLINE:{timestamp}:1.3.2:38" (matching Android so admin page shows version)
-    this.setKeyValue(`pres_${clean}`, `${status}:${now}:1.3.2:38`).catch(() => {});
+    // 1. KeyValue presence: pres_{clean} = "ONLINE:{timestamp}:1.3.3:39" (matching Android so admin page shows version)
+    this.setKeyValue(`pres_${clean}`, `${status}:${now}:1.3.3:39`).catch(() => {});
 
     // 2. MQTT retained presence: bingo/v3/presence/{clean}
     const payload = JSON.stringify({
       username: clean,
       status,
       timestamp: now,
-      appVersion: '1.3.2',
-      appVersionCode: 38
+      appVersion: '1.3.3',
+      appVersionCode: 39
     });
     await roomSync.sendRetainedPresence(clean, payload);
   }

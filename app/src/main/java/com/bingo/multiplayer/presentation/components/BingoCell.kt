@@ -254,8 +254,8 @@ private fun resolveMinimalCellStyling(cell: Cell): MinimalCellVisualTokens {
                 backgroundColor = tokens.completedLineBg,
                 textColor = tokens.completedLineText,
                 bevelColor = tokens.completedLineBg.copy(alpha = 0.8f),
-                borderColor = if (ThemePreferences.cellBorderEnabled.value) tokens.cellNeutralBorder else Color.Transparent,
-                borderWidth = if (ThemePreferences.cellBorderEnabled.value) 1.dp else 0.dp
+                borderColor = tokens.bingoGold,
+                borderWidth = 1.5.dp
             )
         }
 

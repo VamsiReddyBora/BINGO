@@ -43,18 +43,18 @@ class ThemePresetAndNavigationTest {
     fun testDarkModePresets() {
         // Dark theme presets:
         // my pick: #7E22CE
-        // last pick: #FFFFFF
+        // last pick: #F59E0B
         // opponent pick: #C2410C
         // line completion: #64748B
         assertEquals("#7E22CE", ThemePreferences.DEFAULT_MY_PICK_HEX)
-        assertEquals("#FFFFFF", ThemePreferences.DEFAULT_RECENT_PICK_DARK_HEX)
+        assertEquals("#F59E0B", ThemePreferences.DEFAULT_RECENT_PICK_DARK_HEX)
         assertEquals("#C2410C", ThemePreferences.DEFAULT_OPPONENT_PICK_HEX)
         assertEquals("#64748B", ThemePreferences.DEFAULT_COMPLETED_LINE_HEX)
 
-        assertEquals("#FFFFFF", ThemePreferences.getDefaultRecentPickHex(isDark = true))
+        assertEquals("#F59E0B", ThemePreferences.getDefaultRecentPickHex(isDark = true))
 
         assertEquals(Color(0xFF7E22CE), AmoledDarkColors.cellPlayerPickBg)
-        assertEquals(Color(0xFFFFFFFF), AmoledDarkColors.recentPickBg)
+        assertEquals(Color(0xFFF59E0B), AmoledDarkColors.recentPickBg)
         assertEquals(Color(0xFFC2410C), AmoledDarkColors.cellOpponentPickBg)
         assertEquals(Color(0xFF64748B), AmoledDarkColors.completedLineBg)
     }

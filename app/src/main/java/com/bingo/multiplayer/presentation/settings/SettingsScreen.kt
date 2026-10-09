@@ -66,6 +66,12 @@ import com.bingo.multiplayer.domain.network.EmojiPreferences
 import com.bingo.multiplayer.presentation.components.AnimatedEmoji
 import com.bingo.multiplayer.domain.network.AppUpdateManager
 import com.bingo.multiplayer.domain.network.UpdateState
+import com.bingo.multiplayer.domain.network.BingoNotificationManager
+import com.bingo.multiplayer.domain.network.BingoFcmManager
+import com.google.firebase.messaging.FirebaseMessaging
+import android.content.Intent
+import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.core.app.NotificationManagerCompat
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -93,9 +99,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -1358,6 +1367,178 @@ fun SettingsScreen(
                                 }
                             }
 
+                            Spacer(modifier = Modifier.height(14.dp))
+
+                            // ── Exclusive Theme: Liquid Metal Design (Experimental) ──
+                            val isLiquidMetal = ThemePreferences.isLiquidMetalTheme.value
+                            Surface(
+                                onClick = {
+                                    ThemePreferences.setLiquidMetalTheme(context, !isLiquidMetal)
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .shadow(
+                                        elevation = if (isLiquidMetal) 14.dp else 2.dp,
+                                        shape = RoundedCornerShape(18.dp),
+                                        spotColor = if (isLiquidMetal) Color(0x60000000) else Color.Transparent
+                                    ),
+                                shape = RoundedCornerShape(18.dp),
+                                color = if (isLiquidMetal) Color.Transparent else tokens.surface,
+                                border = BorderStroke(
+                                    width = if (isLiquidMetal) 1.6.dp else 1.dp,
+                                    brush = if (isLiquidMetal) {
+                                        Brush.linearGradient(
+                                            listOf(
+                                                Color(0xFFFFFFFF),
+                                                Color(0xFFCBD5E1),
+                                                Color(0xFF94A3B8),
+                                                Color(0xFF1E242F),
+                                                Color(0xFF090B0F),
+                                                Color(0xFF475569),
+                                                Color(0xFFE2E8F0)
+                                            )
+                                        )
+                                    } else {
+                                        SolidColor(tokens.surfaceBorder)
+                                    }
+                                )
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(18.dp))
+                                        .then(
+                                            if (isLiquidMetal) {
+                                                Modifier.background(
+                                                    Brush.verticalGradient(
+                                                        listOf(
+                                                            Color(0xFFFFFFFF),
+                                                            Color(0xFFF4F7FB),
+                                                            Color(0xFFE2E8F0),
+                                                            Color(0xFFCAD2DF),
+                                                            Color(0xFFB5BFCE)
+                                                        )
+                                                    )
+                                                )
+                                            } else Modifier
+                                        )
+                                ) {
+                                    if (isLiquidMetal) {
+                                        // Crescent top-left specular highlight
+                                        Box(
+                                            modifier = Modifier
+                                                .matchParentSize()
+                                                .background(
+                                                    Brush.radialGradient(
+                                                        colors = listOf(
+                                                            Color(0xB0FFFFFF),
+                                                            Color(0x35FFFFFF),
+                                                            Color(0x00FFFFFF)
+                                                        ),
+                                                        center = Offset(120f, 10f),
+                                                        radius = 220f
+                                                    )
+                                                )
+                                        )
+                                    }
+
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 14.dp, vertical = 13.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            // Metallic Icon Badge
+                                            Surface(
+                                                shape = CircleShape,
+                                                color = if (isLiquidMetal) Color(0xFFF1F5F9) else tokens.backgroundSecondary,
+                                                border = if (isLiquidMetal) {
+                                                    BorderStroke(
+                                                        1.2.dp,
+                                                        Brush.verticalGradient(
+                                                            listOf(
+                                                                Color(0xFFFFFFFF),
+                                                                Color(0xFF94A3B8),
+                                                                Color(0xFF1E242F)
+                                                            )
+                                                        )
+                                                    )
+                                                } else null,
+                                                shadowElevation = if (isLiquidMetal) 4.dp else 0.dp,
+                                                modifier = Modifier.size(38.dp)
+                                            ) {
+                                                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                                    Text(
+                                                        text = "✦",
+                                                        fontSize = 18.sp,
+                                                        color = if (isLiquidMetal) Color(0xFF090C11) else tokens.accentBrand
+                                                    )
+                                                }
+                                            }
+                                            Spacer(modifier = Modifier.width(12.dp))
+                                            Column {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Text(
+                                                        text = "Liquid Metal Design",
+                                                        fontSize = 13.5.sp,
+                                                        fontWeight = FontWeight.ExtraBold,
+                                                        color = if (isLiquidMetal) Color(0xFF090C11) else tokens.textPrimary
+                                                    )
+                                                    Spacer(modifier = Modifier.width(6.dp))
+                                                    Surface(
+                                                        shape = RoundedCornerShape(6.dp),
+                                                        color = if (isLiquidMetal) Color(0xFF1E242F) else tokens.accentBrand.copy(alpha = 0.12f),
+                                                        border = BorderStroke(
+                                                            0.8.dp,
+                                                            if (isLiquidMetal) Color(0xFFCBD5E1) else tokens.accentBrand.copy(alpha = 0.3f)
+                                                        )
+                                                    ) {
+                                                        Text(
+                                                            text = "EXCLUSIVE",
+                                                            fontSize = 9.sp,
+                                                            fontWeight = FontWeight.ExtraBold,
+                                                            letterSpacing = 0.6.sp,
+                                                            color = if (isLiquidMetal) Color(0xFFFFFFFF) else tokens.accentBrand,
+                                                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                                        )
+                                                    }
+                                                }
+                                                Spacer(modifier = Modifier.height(2.dp))
+                                                Text(
+                                                    text = "Fluid mercury chrome aesthetic with dynamic specular highlights",
+                                                    fontSize = 10.5.sp,
+                                                    fontWeight = if (isLiquidMetal) FontWeight.Medium else FontWeight.Normal,
+                                                    color = if (isLiquidMetal) Color(0xFF2B3342) else tokens.textMuted
+                                                )
+                                            }
+                                        }
+
+                                        Spacer(modifier = Modifier.width(8.dp))
+
+                                        // Switch toggle
+                                        androidx.compose.material3.Switch(
+                                            checked = isLiquidMetal,
+                                            onCheckedChange = { checked ->
+                                                ThemePreferences.setLiquidMetalTheme(context, checked)
+                                            },
+                                            colors = androidx.compose.material3.SwitchDefaults.colors(
+                                                checkedThumbColor = Color(0xFFFFFFFF),
+                                                checkedTrackColor = Color(0xFF090C11),
+                                                checkedBorderColor = Color(0xFFFFFFFF),
+                                                uncheckedThumbColor = tokens.textMuted,
+                                                uncheckedTrackColor = tokens.backgroundSecondary,
+                                                uncheckedBorderColor = tokens.surfaceBorder
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+
                             Spacer(modifier = Modifier.height(18.dp))
 
                             // Curated Color Palette Section
@@ -2139,17 +2320,15 @@ fun SettingsScreen(
                 }
 
                 Spacer(modifier = Modifier.height(6.dp))
-
-
-
             }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // ── Notification Diagnostics & Testing ──
+            NotificationDiagnosticsCard(context = context)
 
             Spacer(modifier = Modifier.height(84.dp))
         }
-
-
-
-
 
         val profileToDisplay = selectedProfilePlayer
         if (profileToDisplay != null) {
@@ -2158,6 +2337,215 @@ fun SettingsScreen(
                 currentUser = user,
                 friendsRepository = friendsRepository,
                 onDismiss = { selectedProfilePlayer = null }
+            )
+        }
+    }
+}
+
+@Composable
+private fun NotificationDiagnosticsCard(
+    context: Context
+) {
+    val tokens = BingoTheme.colors
+    var areNotificationsEnabled by remember {
+        mutableStateOf(NotificationManagerCompat.from(context).areNotificationsEnabled())
+    }
+    var fcmToken by remember {
+        mutableStateOf(BingoFcmManager.getSavedToken(context))
+    }
+    var testStatusMessage by remember { mutableStateOf<String?>(null) }
+    var isSendingFcm by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        if (fcmToken.isNullOrBlank()) {
+            FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+                if (task.isSuccessful && !task.result.isNullOrBlank()) {
+                    val tok = task.result
+                    fcmToken = tok
+                    BingoFcmManager.saveToken(context, tok)
+                }
+            }
+        }
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = tokens.surface.copy(alpha = 0.5f),
+        border = BorderStroke(1.dp, tokens.cellNeutralBorder.copy(alpha = 0.35f))
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.NotificationsActive,
+                    contentDescription = null,
+                    tint = tokens.accentBrand,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Notification Diagnostics",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = tokens.cellNeutralText
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Verify heads-up alerts, action buttons, and background FCM pushes directly on your device.",
+                fontSize = 12.sp,
+                color = tokens.textMuted,
+                lineHeight = 16.sp
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Permission Status
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        val intent = Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                            putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                        }
+                        try {
+                            context.startActivity(intent)
+                        } catch (_: Exception) {}
+                    }
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (areNotificationsEnabled) "✓ System Notifications: Enabled" else "⚠️ System Notifications: Blocked (Tap to Enable)",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (areNotificationsEnabled) Color(0xFF10B981) else Color(0xFFEF4444)
+                )
+            }
+
+            // FCM Token Status
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val hasToken = !fcmToken.isNullOrBlank()
+                Text(
+                    text = if (hasToken) "✓ FCM Cloud Messaging: Active" else "⏳ FCM Cloud Messaging: Registering...",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = if (hasToken) Color(0xFF10B981) else Color(0xFFF59E0B)
+                )
+            }
+
+            if (testStatusMessage != null) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = testStatusMessage.orEmpty(),
+                    fontSize = 11.sp,
+                    color = tokens.accentBrand,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+            Text(
+                text = "1-Tap Verification Triggers:",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = tokens.cellNeutralText
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Row 1: Invite & Friend Online
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        testStatusMessage = "Heads-up invite sent with [Accept] & [Decline] buttons"
+                        BingoNotificationManager.testInviteNotification(context)
+                    },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, tokens.cellNeutralBorder.copy(alpha = 0.4f)),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                ) {
+                    Text("🎮 Test Invite Alert", fontSize = 11.sp, color = tokens.cellNeutralText, maxLines = 1)
+                }
+
+                OutlinedButton(
+                    onClick = {
+                        testStatusMessage = "Friend online alert sent with [Invite to Game] button"
+                        BingoNotificationManager.testFriendOnlineNotification(context)
+                    },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, tokens.cellNeutralBorder.copy(alpha = 0.4f)),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                ) {
+                    Text("🟢 Test Friend Online", fontSize = 11.sp, color = tokens.cellNeutralText, maxLines = 1)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Row 2: Announcement & FCM Push
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        testStatusMessage = "Announcement notification posted"
+                        BingoNotificationManager.testBroadcastNotification(context)
+                    },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, tokens.cellNeutralBorder.copy(alpha = 0.4f)),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                ) {
+                    Text("📢 Test Announcement", fontSize = 11.sp, color = tokens.cellNeutralText, maxLines = 1)
+                }
+
+                Button(
+                    onClick = {
+                        if (!isSendingFcm) {
+                            isSendingFcm = true
+                            testStatusMessage = "Sending FCM push... Minimize or lock phone to see it wake device!"
+                            Toast.makeText(context, "Minimize or lock your phone now! Push will arrive in ~2-4s", Toast.LENGTH_LONG).show()
+                            BingoFcmManager.sendSelfTestPush(context) { success, msg ->
+                                isSendingFcm = false
+                                testStatusMessage = if (success) "✓ FCM push sent successfully to Google servers!" else "❌ FCM failed: $msg"
+                            }
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = tokens.accentBrand),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                ) {
+                    if (isSendingFcm) {
+                        CircularProgressIndicator(modifier = Modifier.size(12.dp), color = Color.White, strokeWidth = 2.dp)
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
+                    Text("☁️ Test FCM Push", fontSize = 11.sp, color = Color.White, maxLines = 1, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                text = "Rule Guide: Live friend alerts require >1h absence. Invites show in-app modal when open, heads-up notification with Accept/Decline when minimized. Auto-dismisses on app open.",
+                fontSize = 10.sp,
+                color = tokens.textMuted.copy(alpha = 0.8f),
+                lineHeight = 14.sp
             )
         }
     }

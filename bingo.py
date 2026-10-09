@@ -28,8 +28,10 @@ except ImportError:
 # ─────────────────────────────────────────────────────────────
 # CONFIGURATION
 # ─────────────────────────────────────────────────────────────
-MQTT_BROKER = "broker.emqx.io"
-MQTT_PORT = 1883
+MQTT_BROKER = "p0812f88.ala.asia-southeast1.emqxsl.com"
+MQTT_PORT = 8883
+MQTT_USER = "Bora"
+MQTT_PASS = "bora7989"
 KEYVALUE_API_URL = "https://keyvalue.immanuel.co/api/KeyVal"
 KEYVALUE_APP_KEY = "2464j24f"
 
@@ -40,6 +42,14 @@ ADMIN_PIN = os.environ.get("BINGO_ADMIN_PIN", "bingo2026")
 players = {}
 presences = {}
 rooms = {}
+
+def get_mqtt_client(client_id):
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
+    if MQTT_USER and MQTT_PASS:
+        client.username_pw_set(MQTT_USER, MQTT_PASS)
+    if MQTT_PORT == 8883:
+        client.tls_set()
+    return client
 
 # ANSI Color Helpers
 C_RESET = "\033[0m"
@@ -291,7 +301,7 @@ def fetch_live_data(timeout=2.5):
                 pass
 
     # 1. Start MQTT background listener
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"admin_cli_{int(time.time())}")
+    client = get_mqtt_client(f"admin_cli_{int(time.time())}")
     client.on_connect = on_connect
     client.on_message = on_message
 
@@ -516,7 +526,7 @@ def delete_room(room_code):
     if not clean_code:
         return
     try:
-        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"room_killer_{int(time.time())}")
+        client = get_mqtt_client(f"room_killer_{int(time.time())}")
         client.connect(MQTT_BROKER, MQTT_PORT, 60)
         client.publish(f"bingo/v3/room_meta/{clean_code}", b"", qos=1, retain=True)
         cancel_pkt = json.dumps({"type": "ROOM_CANCELLED", "roomCode": clean_code})
@@ -548,7 +558,7 @@ def purge_expired_rooms():
 
     print(f"\n{C_YELLOW}Purging {len(stale_codes)} expired ghost rooms from servers...{C_RESET}")
     try:
-        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"purger_{int(time.time())}")
+        client = get_mqtt_client(f"purger_{int(time.time())}")
         client.connect(MQTT_BROKER, MQTT_PORT, 60)
         for code in stale_codes:
             client.publish(f"bingo/v3/room_meta/{code}", b"", qos=1, retain=True)
@@ -862,7 +872,7 @@ def remove_player(target_username=None):
 
     # 1. MQTT WIPE & KICK
     try:
-        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"admin_killer_{int(time.time())}")
+        client = get_mqtt_client(f"admin_killer_{int(time.time())}")
         client.connect(MQTT_BROKER, MQTT_PORT, 60)
 
         # Clear retained registry by publishing empty payload with retain=True

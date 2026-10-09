@@ -34,6 +34,31 @@ object GameInviteManager {
     private val API_KEY = NetworkConfig.KEYVALUE_APP_KEY
     private val BROKER_URL = NetworkConfig.BROKER_URL
 
+    @Volatile
+    var stagedInvite: GameInvite? = null
+
+    val foregroundInviteFlow = kotlinx.coroutines.flow.MutableSharedFlow<GameInvite>(
+        replay = 1,
+        extraBufferCapacity = 5,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST
+    )
+
+    fun deliverForegroundInvite(invite: GameInvite) {
+        stagedInvite = invite
+        foregroundInviteFlow.tryEmit(invite)
+    }
+
+    fun consumeStagedInvite(): GameInvite? {
+        val inv = stagedInvite
+        stagedInvite = null
+        return inv
+    }
+
+    fun clearForegroundInvite() {
+        stagedInvite = null
+        foregroundInviteFlow.resetReplayCache()
+    }
+
     private fun encodeBase64Url(raw: String): String {
         return Base64.encodeToString(raw.toByteArray(StandardCharsets.UTF_8), Base64.URL_SAFE or Base64.NO_WRAP).trim()
     }
@@ -69,6 +94,9 @@ object GameInviteManager {
 
             // 1. INSTANT real-time dispatch via retained MQTT (delivers in < 100ms)
             publishMqttInvite(clean, sanitizedInvite)
+
+            // 2. High-priority FCM Cloud Push to wake the target device if the app was killed
+            BingoFcmManager.sendInvitePush(clean, sanitizedInvite)
 
             // 2. Cloud KeyValue persistence backup (purge invites older than 2 minutes)
             val now = System.currentTimeMillis()

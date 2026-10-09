@@ -84,8 +84,10 @@ object PresenceManager {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private var prefs: SharedPreferences? = null
+    private var appContext: Context? = null
     private var presenceClient: MqttAsyncClient? = null
     private var heartbeatJob: Job? = null
+    private var watcherStartTime: Long = 0L
     var currentActiveUsername: String? = null
         private set
 
@@ -119,6 +121,7 @@ object PresenceManager {
      * Initializes PresenceManager with Android Context for persistent active user tracking.
      */
     fun init(context: Context) {
+        appContext = context.applicationContext
         val p = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs = p
         var saved = p.getString(KEY_ACTIVE_USER, null)
@@ -285,10 +288,14 @@ object PresenceManager {
         presenceMap[clean] = PlayerPresence(clean, currentStatus, now)
         _presenceFlow.value = HashMap(presenceMap)
 
-        // Write initial status to cloud immediately
+        // Write initial status to cloud immediately, sync FCM token, and alert friends
         scope.launch {
             setCloudPresence(clean, currentStatus, now)
             ensureInCloudDirectory(clean)
+            appContext?.let { ctx ->
+                BingoFcmManager.syncCurrentUserToken(ctx, clean)
+            }
+            notifyFriendsOnlineViaFcm(clean)
         }
 
         scope.launch {
@@ -350,6 +357,38 @@ object PresenceManager {
 
         // Also ensure presence watcher is running
         startPresenceWatcher()
+    }
+
+    private fun notifyFriendsOnlineViaFcm(cleanUsername: String) {
+        val ctx = appContext ?: return
+        scope.launch {
+            try {
+                val friends = com.bingo.multiplayer.domain.repository.FriendsRepository.activeInstance?.friends?.value
+                    ?: FriendRequestManager.fetchCloudFriends(cleanUsername)
+                    ?: emptyList()
+
+                if (friends.isEmpty()) return@launch
+
+                val authPrefs = ctx.getSharedPreferences("bingo_auth_prefs", Context.MODE_PRIVATE)
+                val myDisplayName = authPrefs.getString("display_name", null)?.takeIf { it.isNotBlank() } ?: cleanUsername
+
+                val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                val now = System.currentTimeMillis()
+
+                friends.forEach { friend ->
+                    val fClean = friend.username.trim().lowercase().removePrefix("@")
+                    if (fClean.isNotBlank() && fClean != cleanUsername) {
+                        val lastNotified = prefs.getLong("fcm_notified_online_$fClean", 0L)
+                        if ((now - lastNotified) >= 120_000L) {
+                            prefs.edit().putLong("fcm_notified_online_$fClean", now).apply()
+                            BingoFcmManager.sendFriendOnlinePush(fClean, cleanUsername, myDisplayName)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to dispatch online FCM to friends: ${e.message}")
+            }
+        }
     }
 
     private fun startHeartbeat(cleanUsername: String) {
@@ -500,6 +539,7 @@ object PresenceManager {
 
                 client.setCallback(object : MqttCallbackExtended {
                     override fun connectComplete(reconnect: Boolean, serverURI: String?) {
+                        watcherStartTime = System.currentTimeMillis()
                         try {
                             client.subscribe("bingo/v3/presence/+", 1) { topic, message ->
                                 try {
@@ -525,7 +565,7 @@ object PresenceManager {
                             client.subscribe(BroadcastMessageManager.MQTT_BROADCAST_TOPIC, 1) { topic, message ->
                                 try {
                                     val payload = String(message.payload, StandardCharsets.UTF_8)
-                                    BroadcastMessageManager.onBroadcastReceived(payload)
+                                    BroadcastMessageManager.onBroadcastReceived(payload, appContext)
                                 } catch (e: Exception) {
                                     Log.w(TAG, "Error handling broadcast message: ${e.message}")
                                 }
@@ -550,6 +590,7 @@ object PresenceManager {
     fun onPresenceReceived(presence: PlayerPresence) {
         val cleanUser = presence.username.trim().lowercase().removePrefix("@")
         if (cleanUser.isNotBlank()) {
+            val previous = presenceMap[cleanUser]
             val effectiveTimestamp = if (presence.status.equals("OFFLINE", ignoreCase = true) && presence.timestamp <= 0L) {
                 System.currentTimeMillis()
             } else {
@@ -557,6 +598,28 @@ object PresenceManager {
             }
             presenceMap[cleanUser] = presence.copy(username = cleanUser, timestamp = effectiveTimestamp)
             _presenceFlow.value = HashMap(presenceMap)
+
+            // RULE 1: Friend Online Status Notification
+            val isNowOnline = presence.status.equals("ONLINE", ignoreCase = true) ||
+                              presence.status.equals("IN_LOBBY", ignoreCase = true) ||
+                              presence.status.equals("PLAYING", ignoreCase = true)
+            val wasOnline = previous != null && (
+                previous.status.equals("ONLINE", ignoreCase = true) ||
+                previous.status.equals("IN_LOBBY", ignoreCase = true) ||
+                previous.status.equals("PLAYING", ignoreCase = true)
+            )
+
+            val myUser = currentActiveUsername
+            val isSettled = (System.currentTimeMillis() - watcherStartTime) > 4000L
+
+            if (isSettled && isNowOnline && !wasOnline && cleanUser != myUser) {
+                val ctx = appContext
+                if (ctx != null && BingoNotificationManager.isFriend(ctx, cleanUser)) {
+                    val displayName = BingoNotificationManager.getFriendDisplayName(ctx, cleanUser)
+                    val lastSeen = previous?.timestamp ?: BingoNotificationManager.getFriendLastSeen(ctx, cleanUser)
+                    BingoNotificationManager.notifyFriendOnline(ctx, cleanUser, displayName, lastSeen)
+                }
+            }
         }
     }
 

@@ -160,22 +160,25 @@ fun RootNavGraph(
     val onlinePingMs by onlineRoomSync.pingMs.collectAsState()
     var lobbyInactivityResetToken by remember { mutableIntStateOf(0) }
 
-    fun getLocalUid(): String {
+    fun getEffectiveUser(): com.bingo.multiplayer.domain.model.UserProfile? {
         val state = authRepository.authState.value
-        val user = (state as? AuthState.Authenticated)?.user
+        return (state as? AuthState.Authenticated)?.user ?: authRepository.getPersistedUserSync()
+    }
+
+    fun getLocalUid(): String {
+        val user = getEffectiveUser()
         return user?.uid?.takeIf { it.isNotBlank() && it != "local_player" }
             ?: user?.username?.takeIf { it.isNotBlank() }?.let { "u_$it" }
             ?: authRepository.deviceId
     }
 
     fun getPlayerDisplayName(): String {
-        val state = authRepository.authState.value
-        return (state as? AuthState.Authenticated)?.user?.displayName ?: "Player"
+        val user = getEffectiveUser()
+        return user?.displayName?.takeIf { it.isNotBlank() } ?: "Player"
     }
 
     fun getPlayerAvatarUrl(): String? {
-        val state = authRepository.authState.value
-        val user = (state as? AuthState.Authenticated)?.user
+        val user = getEffectiveUser()
         return user?.avatarBase64?.takeIf { it.isNotBlank() } ?: user?.avatarUrl
     }
 
@@ -351,6 +354,11 @@ fun RootNavGraph(
                     val isActivelyPlaying = (currentDest == Screen.Game.route || currentDest == Screen.ManualBoardDesign.route) && !isGameOver
                     if (!isActivelyPlaying) {
                         incomingInvite = invite
+                        if (com.bingo.multiplayer.domain.network.AppLifecycleObserver.isAppInForeground.value) {
+                            com.bingo.multiplayer.domain.network.BingoNotificationManager.cancelInviteNotification(context)
+                        } else {
+                            com.bingo.multiplayer.domain.network.BingoNotificationManager.showInviteNotification(context, invite)
+                        }
                     }
                 }
             }
@@ -361,11 +369,22 @@ fun RootNavGraph(
                     coroutineScope.launch(kotlinx.coroutines.Dispatchers.Main) {
                         Toast.makeText(context, "👥 @${req.fromUsername} sent you a friend request!", Toast.LENGTH_LONG).show()
                     }
+                    com.bingo.multiplayer.domain.network.BingoNotificationManager.showFriendRequestNotification(
+                        context = context,
+                        fromUsername = req.fromUsername,
+                        fromDisplayName = req.fromDisplayName,
+                        forceShow = false
+                    )
                 },
                 onFriendAccepted = { f ->
                     coroutineScope.launch(kotlinx.coroutines.Dispatchers.Main) {
                         Toast.makeText(context, "🎉 @${f.username} accepted your friend request! You are now friends.", Toast.LENGTH_LONG).show()
                     }
+                    com.bingo.multiplayer.domain.network.BingoNotificationManager.showFriendAcceptedNotification(
+                        context = context,
+                        friendUsername = f.username,
+                        friendDisplayName = f.displayName
+                    )
                 }
             )
             // Start presence and presence watcher for real-time friend status
@@ -448,7 +467,6 @@ fun RootNavGraph(
         if (!u.isNullOrBlank()) {
             friendsRepository.syncFriendsAndRequests(u)
             while (isActive) {
-                delay(2000L)
                 try {
                     val pendingInvites = com.bingo.multiplayer.domain.network.GameInviteManager.fetchInvitesForUser(u)
                     val now = System.currentTimeMillis()
@@ -466,6 +484,7 @@ fun RootNavGraph(
                     }
                     friendsRepository.syncFriendsAndRequests(u)
                 } catch (_: Exception) {}
+                delay(2000L)
             }
         }
     }
@@ -474,25 +493,37 @@ fun RootNavGraph(
         if (isJoiningRoom) return
         val cleanCode = targetRoomCode.trim().uppercase()
         isJoiningRoom = true
+        incomingInvite = null
+        com.bingo.multiplayer.domain.network.GameInviteManager.clearForegroundInvite()
+        com.bingo.multiplayer.domain.network.BingoNotificationManager.cancelInviteNotification(context)
         handledInviteRoomCodes[cleanCode] = System.currentTimeMillis()
         Toast.makeText(context, "Joining room #$cleanCode...", Toast.LENGTH_SHORT).show()
-        val user = (authRepository.authState.value as? AuthState.Authenticated)?.user
-        val joinerVersion = System.currentTimeMillis()
-        val localJoiner = Player(
-            id = getLocalUid(),
-            displayName = getPlayerDisplayName(),
-            username = user?.username ?: "",
-            isHost = false,
-            avatarUrl = getPlayerAvatarUrl(),
-            gamesPlayed = user?.gamesPlayed ?: 0,
-            gamesWon = user?.gamesWon ?: 0,
-            currentStreak = user?.currentStreak ?: 0,
-            level = user?.level ?: 1,
-            lastSeenTimestamp = joinerVersion,
-            readyVersion = joinerVersion
-        )
+
         coroutineScope.launch {
             try {
+                // Ensure auth has settled to prevent guest fallback
+                val user = authRepository.awaitAuthenticatedUser(2500L) ?: getEffectiveUser()
+                val uid = user?.uid?.takeIf { it.isNotBlank() && it != "local_player" }
+                    ?: user?.username?.takeIf { it.isNotBlank() }?.let { "u_$it" }
+                    ?: getLocalUid()
+                val displayName = user?.displayName?.takeIf { it.isNotBlank() } ?: getPlayerDisplayName()
+                val avatar = user?.avatarBase64?.takeIf { it.isNotBlank() } ?: user?.avatarUrl ?: getPlayerAvatarUrl()
+
+                val joinerVersion = System.currentTimeMillis()
+                val localJoiner = Player(
+                    id = uid,
+                    displayName = displayName,
+                    username = user?.username ?: "",
+                    isHost = false,
+                    avatarUrl = avatar,
+                    gamesPlayed = user?.gamesPlayed ?: 0,
+                    gamesWon = user?.gamesWon ?: 0,
+                    currentStreak = user?.currentStreak ?: 0,
+                    level = user?.level ?: 1,
+                    lastSeenTimestamp = joinerVersion,
+                    readyVersion = joinerVersion
+                )
+
                 var result = com.bingo.multiplayer.domain.network.OnlineRoomRegistry.validateAndJoinRoom(cleanCode, localJoiner)
                 if (result is com.bingo.multiplayer.domain.network.RoomJoinResult.NotFound) {
                     kotlinx.coroutines.delay(500L)
@@ -542,11 +573,72 @@ fun RootNavGraph(
         }
     }
 
+    // Listen to notification actions (e.g. Accept invite clicked from status bar, or Invite Friend clicked)
+    val pendingJoinCode by com.bingo.multiplayer.domain.network.BingoNotificationManager.pendingJoinRoomCode.collectAsState()
+    LaunchedEffect(pendingJoinCode) {
+        val code = pendingJoinCode
+        if (!code.isNullOrBlank()) {
+            com.bingo.multiplayer.domain.network.BingoNotificationManager.pendingJoinRoomCode.value = null
+            com.bingo.multiplayer.domain.network.BingoNotificationManager.cancelInviteNotification(context)
+            acceptAndJoinRoom(code)
+        }
+    }
+
+    val pendingInviteFriend by com.bingo.multiplayer.domain.network.BingoNotificationManager.pendingInviteFriendUsername.collectAsState()
+    LaunchedEffect(pendingInviteFriend) {
+        val friend = pendingInviteFriend
+        if (!friend.isNullOrBlank()) {
+            com.bingo.multiplayer.domain.network.BingoNotificationManager.pendingInviteFriendUsername.value = null
+            navController.navigate(Screen.Dashboard.route) {
+                launchSingleTop = true
+            }
+        }
+    }
+
+    val pendingNavigateFriends by com.bingo.multiplayer.domain.network.BingoNotificationManager.pendingNavigateToFriends.collectAsState()
+    LaunchedEffect(pendingNavigateFriends) {
+        if (pendingNavigateFriends) {
+            com.bingo.multiplayer.domain.network.BingoNotificationManager.pendingNavigateToFriends.value = false
+            navController.navigate(Screen.Dashboard.route) {
+                launchSingleTop = true
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        val staged = com.bingo.multiplayer.domain.network.GameInviteManager.consumeStagedInvite()
+        if (staged != null) {
+            val now = System.currentTimeMillis()
+            val lastHandled = handledInviteRoomCodes[staged.roomCode] ?: 0L
+            val isRecentlyHandled = (now - lastHandled) < 60_000L
+            if (!isJoiningRoom && !isRecentlyHandled && roomCode != staged.roomCode && (now - staged.timestamp) < 120_000L) {
+                val currentDest = navController.currentDestination?.route
+                val isActivelyPlaying = (currentDest == Screen.Game.route || currentDest == Screen.ManualBoardDesign.route) && !isGameOver
+                if (!isActivelyPlaying) {
+                    incomingInvite = staged
+                }
+            }
+        }
+
+        com.bingo.multiplayer.domain.network.GameInviteManager.foregroundInviteFlow.collect { invite ->
+            val now = System.currentTimeMillis()
+            val lastHandled = handledInviteRoomCodes[invite.roomCode] ?: 0L
+            val isRecentlyHandled = (now - lastHandled) < 60_000L
+            if (!isJoiningRoom && !isRecentlyHandled && roomCode != invite.roomCode && (now - invite.timestamp) < 120_000L) {
+                val currentDest = navController.currentDestination?.route
+                val isActivelyPlaying = (currentDest == Screen.Game.route || currentDest == Screen.ManualBoardDesign.route) && !isGameOver
+                if (!isActivelyPlaying) {
+                    incomingInvite = invite
+                }
+            }
+        }
+    }
+
     fun togglePause() {
         val newPaused = !isGamePaused
         isGamePaused = newPaused
         pausedByPlayerName = if (newPaused) getPlayerDisplayName() else ""
-        if (currentGameMode == GameMode.ONLINE_ROOM) {
+        if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
             broadcastPacket(
                 RoomMessagePacket(
                     type = if (newPaused) "GAME_PAUSED" else "GAME_RESUMED",
@@ -567,7 +659,7 @@ fun RootNavGraph(
         openNearbyChoice()
     }
 
-    fun recordFinishedMatch(won: Boolean, isDraw: Boolean = false) {
+    fun recordFinishedMatch(won: Boolean, isDraw: Boolean = false, isRunner: Boolean = false) {
         val myName = currentAuthUser?.username?.ifBlank { currentAuthUser.displayName } ?: getPlayerDisplayName()
         val isGroup = realTimePlayers.size > 2
 
@@ -575,6 +667,7 @@ fun RootNavGraph(
             when {
                 isDraw -> "Group play draw 🤝"
                 won -> "Group play won 🏆"
+                isRunner -> "Group play runner 🥈"
                 else -> "Group play lost 😑"
             }
         } else {
@@ -593,6 +686,7 @@ fun RootNavGraph(
             when {
                 isDraw -> "$myName vs $opponent Draw 🤝"
                 won -> "$myName vs $opponent Won 🏆"
+                isRunner -> "$myName vs $opponent Runner 🥈"
                 else -> "$myName vs $opponent Lost 😑"
             }
         }
@@ -1145,7 +1239,7 @@ fun RootNavGraph(
                 didPlayerWin = outcome.didPlayerWin
                 isRunnerMatch = outcome.isRunner
                 winnerPlayerId = outcome.winnerPlayerId
-                recordFinishedMatch(won = outcome.didPlayerWin, isDraw = outcome.isDraw)
+                recordFinishedMatch(won = outcome.didPlayerWin, isDraw = outcome.isDraw, isRunner = outcome.isRunner)
                 com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
             } else {
                 isMyTurn = (nextPlayerId == getLocalUid())
@@ -1485,44 +1579,53 @@ fun RootNavGraph(
                     packet.pickedHistory.forEachIndexed { idx, num ->
                         if (num > 0 && num !in pickedNumbersHistory) {
                             val origPickerId = packet.pickedByHistory.getOrNull(idx)?.takeIf { it.isNotBlank() } ?: packet.playerId
+                            val historicalTurnNumber = idx + 1
                             pickedNumbersHistory.add(num)
                             pickedByPlayerHistory.add(origPickerId)
-                            val isMine = (origPickerId == myUid)
-                            val isOpponentMine = (origPickerId != myUid)
+                            val isMine = isPlayerMe(origPickerId)
+                            val isOpponentMine = !isMine
                             playerBoard = engine.markCell(
                                 board = playerBoard,
                                 number = num,
                                 pickedByPlayerId = origPickerId,
                                 isOwnPick = isMine,
-                                turnNumber = turnNumber
+                                turnNumber = historicalTurnNumber
                             )
                             opponentBoard = engine.markCell(
                                 board = opponentBoard,
                                 number = num,
                                 pickedByPlayerId = origPickerId,
                                 isOwnPick = isOpponentMine,
-                                turnNumber = turnNumber
+                                turnNumber = historicalTurnNumber
                             )
                             allPlayerBoards = allPlayerBoards.mapValues { entry ->
                                 engine.markCell(
                                     board = entry.value,
                                     number = num,
                                     pickedByPlayerId = origPickerId,
-                                    isOwnPick = (origPickerId == entry.key),
-                                    turnNumber = turnNumber
+                                    isOwnPick = com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(origPickerId, entry.key),
+                                    turnNumber = historicalTurnNumber
                                 )
                             }
-                            recentPick = RecentPick(num, origPickerId, turnNumber)
+                            recentPick = RecentPick(num, origPickerId, historicalTurnNumber)
                             anyNewPick = true
                         }
                     }
 
                     // 2. Direct single pick fallback
+                    val isExpectedPicker = com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(packet.playerId, currentTurnPlayerId) ||
+                            (packet.isHost && packet.number <= 0) ||
+                            currentTurnPlayerId.isBlank()
+                    if (!isExpectedPicker && (packet.turnNumber < turnNumber)) {
+                        // Discard stale out-of-turn packets from previous turns
+                        return
+                    }
+
                     if (packet.number > 0 && packet.number !in pickedNumbersHistory) {
                         pickedNumbersHistory.add(packet.number)
                         pickedByPlayerHistory.add(packet.playerId)
-                        val isMine = (packet.playerId == myUid)
-                        val isOpponentMine = (packet.playerId != myUid)
+                        val isMine = isPlayerMe(packet.playerId)
+                        val isOpponentMine = !isMine
                         playerBoard = engine.markCell(
                             board = playerBoard,
                             number = packet.number,
@@ -1542,7 +1645,7 @@ fun RootNavGraph(
                                 board = entry.value,
                                 number = packet.number,
                                 pickedByPlayerId = packet.playerId,
-                                isOwnPick = (packet.playerId == entry.key),
+                                isOwnPick = com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(packet.playerId, entry.key),
                                 turnNumber = turnNumber
                             )
                         }
@@ -1572,7 +1675,7 @@ fun RootNavGraph(
                             didPlayerWin = outcome.didPlayerWin
                             isRunnerMatch = outcome.isRunner
                             winnerPlayerId = outcome.winnerPlayerId
-                            recordFinishedMatch(won = outcome.didPlayerWin, isDraw = outcome.isDraw)
+                            recordFinishedMatch(won = outcome.didPlayerWin, isDraw = outcome.isDraw, isRunner = outcome.isRunner)
                             com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
                         } else {
                             if (packet.turnNumber > turnNumber || anyNewPick) {
@@ -1764,34 +1867,35 @@ fun RootNavGraph(
                     packet.pickedHistory.forEachIndexed { idx, num ->
                         if (num > 0 && num !in pickedNumbersHistory) {
                             val origPickerId = packet.pickedByHistory.getOrNull(idx)?.takeIf { it.isNotBlank() } ?: packet.playerId
+                            val historicalTurnNumber = idx + 1
                             pickedNumbersHistory.add(num)
                             pickedByPlayerHistory.add(origPickerId)
-                            val isMine = (origPickerId == myUid)
-                            val isOpponentMine = (origPickerId != myUid)
+                            val isMine = isPlayerMe(origPickerId)
+                            val isOpponentMine = !isMine
                             playerBoard = engine.markCell(
                                 board = playerBoard,
                                 number = num,
                                 pickedByPlayerId = origPickerId,
                                 isOwnPick = isMine,
-                                turnNumber = turnNumber
+                                turnNumber = historicalTurnNumber
                             )
                             opponentBoard = engine.markCell(
                                 board = opponentBoard,
                                 number = num,
                                 pickedByPlayerId = origPickerId,
                                 isOwnPick = isOpponentMine,
-                                turnNumber = turnNumber
+                                turnNumber = historicalTurnNumber
                             )
                             allPlayerBoards = allPlayerBoards.mapValues { entry ->
                                 engine.markCell(
                                     board = entry.value,
                                     number = num,
                                     pickedByPlayerId = origPickerId,
-                                    isOwnPick = (origPickerId == entry.key),
-                                    turnNumber = turnNumber
+                                    isOwnPick = com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(origPickerId, entry.key),
+                                    turnNumber = historicalTurnNumber
                                 )
                             }
-                            recentPick = RecentPick(num, origPickerId, turnNumber)
+                            recentPick = RecentPick(num, origPickerId, historicalTurnNumber)
                             anyNewPick = true
                         }
                     }
@@ -1808,7 +1912,7 @@ fun RootNavGraph(
                             didPlayerWin = outcome.didPlayerWin
                             isRunnerMatch = outcome.isRunner
                             winnerPlayerId = outcome.winnerPlayerId
-                            recordFinishedMatch(won = outcome.didPlayerWin, isDraw = outcome.isDraw)
+                            recordFinishedMatch(won = outcome.didPlayerWin, isDraw = outcome.isDraw, isRunner = outcome.isRunner)
                             com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
                         } else if (packet.turnNumber > turnNumber || (anyNewPick && packet.turnNumber >= turnNumber)) {
                             // Strictly newer turn or reconciled missed turn! Reconcile turn authority
@@ -1916,7 +2020,7 @@ fun RootNavGraph(
                             isDrawMatch = outcome.isDraw
                             isRunnerMatch = outcome.isRunner
                             winnerPlayerId = outcome.winnerPlayerId
-                            recordFinishedMatch(won = outcome.didPlayerWin, isDraw = outcome.isDraw)
+                            recordFinishedMatch(won = outcome.didPlayerWin, isDraw = outcome.isDraw, isRunner = outcome.isRunner)
                             com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
                         }
                     }
@@ -2032,15 +2136,15 @@ fun RootNavGraph(
                         val activeRemaining = participants.filter {
                             it.id.isNotBlank() && !isPlayerDisconnected(it.id)
                         }
-                        if (activeRemaining.size <= 1) {
+                        if (activeRemaining.size <= 1 || isUsingP2p) {
                             isGameOver = true
-                            val wonByForfeit = activeRemaining.any { it.id == myUid } || participants.size <= 2
+                            val wonByForfeit = if (isUsingP2p) false else (activeRemaining.any { it.id == myUid } || participants.size <= 2)
                             didPlayerWin = wonByForfeit
                             isDrawMatch = false
                             isRunnerMatch = false
                             recordFinishedMatch(wonByForfeit)
                             com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
-                            opponentDisconnectMessage = "All opponents left the game."
+                            opponentDisconnectMessage = if (isUsingP2p) "Host disconnected. LAN match ended." else "All opponents left the game."
                         } else {
                             // Host left, but 2+ players remain! Match continues!
                             val hostMsg = "👑 $hostName (Host) left the game"
@@ -2230,13 +2334,17 @@ fun RootNavGraph(
             AuthGateScreen(
                 authRepository = authRepository,
                 onNavigateToLogin = {
-                    navController.navigate(Screen.Login.route) {
-                        popUpTo(Screen.AuthGate.route) { inclusive = true }
+                    if (navController.currentDestination?.route == Screen.AuthGate.route) {
+                        navController.navigate(Screen.Login.route) {
+                            popUpTo(Screen.AuthGate.route) { inclusive = true }
+                        }
                     }
                 },
                 onNavigateToMenu = {
-                    navController.navigate(Screen.MainMenu.route) {
-                        popUpTo(Screen.AuthGate.route) { inclusive = true }
+                    if (navController.currentDestination?.route == Screen.AuthGate.route) {
+                        navController.navigate(Screen.MainMenu.route) {
+                            popUpTo(Screen.AuthGate.route) { inclusive = true }
+                        }
                     }
                 }
             )
@@ -2296,26 +2404,29 @@ fun RootNavGraph(
                     }
                 },
                 onInviteFriendToMatch = { friend ->
-                    val user = (authRepository.authState.value as? AuthState.Authenticated)?.user
-                        ?: UserProfile(uid = "guest", displayName = "Player")
+                    val user = getEffectiveUser()
+                    val myUid = getLocalUid()
+                    val myName = getPlayerDisplayName()
+                    val myUser = user?.username?.ifBlank { myUid } ?: myUid
+                    val myAvatar = getPlayerAvatarUrl()
                     roomCode = generateRoomCode()
                     currentGameMode = GameMode.ONLINE_ROOM
                     isUsingP2p = false
                     isHosting = true
                     val localHost = Player(
-                        id = getLocalUid(),
-                        displayName = getPlayerDisplayName(),
-                        username = user.username,
+                        id = myUid,
+                        displayName = myName,
+                        username = user?.username ?: "",
                         isHost = true,
-                        avatarUrl = getPlayerAvatarUrl(),
-                        gamesPlayed = user.gamesPlayed,
-                        gamesWon = user.gamesWon,
-                        currentStreak = user.currentStreak,
-                        level = user.level,
+                        avatarUrl = myAvatar,
+                        gamesPlayed = user?.gamesPlayed ?: 0,
+                        gamesWon = user?.gamesWon ?: 0,
+                        currentStreak = user?.currentStreak ?: 0,
+                        level = user?.level ?: 1,
                         lastSeenTimestamp = System.currentTimeMillis()
                     )
-                    val fromUser = user.username.ifBlank { getLocalUid() }
-                    val fromName = user.displayName.ifBlank { getPlayerDisplayName() }
+                    val fromUser = myUser
+                    val fromName = myName
                     coroutineScope.launch {
                         com.bingo.multiplayer.domain.network.OnlineRoomRegistry.createRoom(roomCode, localHost, 5)
                         val success = com.bingo.multiplayer.domain.network.GameInviteManager.sendInvite(
@@ -2323,7 +2434,7 @@ fun RootNavGraph(
                             invite = com.bingo.multiplayer.domain.network.GameInvite(
                                 fromUsername = fromUser,
                                 fromDisplayName = fromName,
-                                fromAvatarUrl = null,
+                                fromAvatarUrl = myAvatar,
                                 roomCode = roomCode
                             )
                         )
@@ -2499,26 +2610,29 @@ fun RootNavGraph(
                     }
                 },
                 onInviteFriendToMatch = { friend ->
-                    val user = (authRepository.authState.value as? AuthState.Authenticated)?.user
-                        ?: UserProfile(uid = "guest", displayName = "Player")
+                    val user = getEffectiveUser()
+                    val myUid = getLocalUid()
+                    val myName = getPlayerDisplayName()
+                    val myUser = user?.username?.ifBlank { myUid } ?: myUid
+                    val myAvatar = getPlayerAvatarUrl()
                     roomCode = generateRoomCode()
                     currentGameMode = GameMode.ONLINE_ROOM
                     isUsingP2p = false
                     isHosting = true
                     val localHost = Player(
-                        id = getLocalUid(),
-                        displayName = getPlayerDisplayName(),
-                        username = user.username,
+                        id = myUid,
+                        displayName = myName,
+                        username = user?.username ?: "",
                         isHost = true,
-                        avatarUrl = getPlayerAvatarUrl(),
-                        gamesPlayed = user.gamesPlayed,
-                        gamesWon = user.gamesWon,
-                        currentStreak = user.currentStreak,
-                        level = user.level,
+                        avatarUrl = myAvatar,
+                        gamesPlayed = user?.gamesPlayed ?: 0,
+                        gamesWon = user?.gamesWon ?: 0,
+                        currentStreak = user?.currentStreak ?: 0,
+                        level = user?.level ?: 1,
                         lastSeenTimestamp = System.currentTimeMillis()
                     )
-                    val fromUser = user.username.ifBlank { getLocalUid() }
-                    val fromName = user.displayName.ifBlank { getPlayerDisplayName() }
+                    val fromUser = myUser
+                    val fromName = myName
                     coroutineScope.launch {
                         com.bingo.multiplayer.domain.network.OnlineRoomRegistry.createRoom(roomCode, localHost, 5)
                         val success = com.bingo.multiplayer.domain.network.GameInviteManager.sendInvite(
@@ -2526,7 +2640,7 @@ fun RootNavGraph(
                             invite = com.bingo.multiplayer.domain.network.GameInvite(
                                 fromUsername = fromUser,
                                 fromDisplayName = fromName,
-                                fromAvatarUrl = null,
+                                fromAvatarUrl = myAvatar,
                                 roomCode = roomCode
                             )
                         )
@@ -2582,26 +2696,29 @@ fun RootNavGraph(
                     }
                 },
                 onInviteFriendToMatch = { friend ->
-                    val user = (authRepository.authState.value as? AuthState.Authenticated)?.user
-                        ?: UserProfile(uid = "guest", displayName = "Player")
+                    val user = getEffectiveUser()
+                    val myUid = getLocalUid()
+                    val myName = getPlayerDisplayName()
+                    val myUser = user?.username?.ifBlank { myUid } ?: myUid
+                    val myAvatar = getPlayerAvatarUrl()
                     roomCode = generateRoomCode()
                     currentGameMode = GameMode.ONLINE_ROOM
                     isUsingP2p = false
                     isHosting = true
                     val localHost = Player(
-                        id = getLocalUid(),
-                        displayName = getPlayerDisplayName(),
-                        username = user.username,
+                        id = myUid,
+                        displayName = myName,
+                        username = user?.username ?: "",
                         isHost = true,
-                        avatarUrl = getPlayerAvatarUrl(),
-                        gamesPlayed = user.gamesPlayed,
-                        gamesWon = user.gamesWon,
-                        currentStreak = user.currentStreak,
-                        level = user.level,
+                        avatarUrl = myAvatar,
+                        gamesPlayed = user?.gamesPlayed ?: 0,
+                        gamesWon = user?.gamesWon ?: 0,
+                        currentStreak = user?.currentStreak ?: 0,
+                        level = user?.level ?: 1,
                         lastSeenTimestamp = System.currentTimeMillis()
                     )
-                    val fromUser = user.username.ifBlank { getLocalUid() }
-                    val fromName = user.displayName.ifBlank { getPlayerDisplayName() }
+                    val fromUser = myUser
+                    val fromName = myName
                     coroutineScope.launch {
                         com.bingo.multiplayer.domain.network.OnlineRoomRegistry.createRoom(roomCode, localHost, 5)
                         val success = com.bingo.multiplayer.domain.network.GameInviteManager.sendInvite(
@@ -2609,7 +2726,7 @@ fun RootNavGraph(
                             invite = com.bingo.multiplayer.domain.network.GameInvite(
                                 fromUsername = fromUser,
                                 fromDisplayName = fromName,
-                                fromAvatarUrl = null,
+                                fromAvatarUrl = myAvatar,
                                 roomCode = roomCode
                             )
                         )
@@ -2648,23 +2765,26 @@ fun RootNavGraph(
                     launchSingleTop = true
                 }
             }
-            val user = (authRepository.authState.collectAsState().value as? AuthState.Authenticated)?.user
             OnlineMatchChoiceScreen(
                 onHostGame = {
                     roomCode = generateRoomCode()
                     currentGameMode = GameMode.ONLINE_ROOM
                     isUsingP2p = false
                     isHosting = true
+                    val effUser = getEffectiveUser()
+                    val myUid = getLocalUid()
+                    val myName = getPlayerDisplayName()
+                    val myAvatar = getPlayerAvatarUrl()
                     val localHost = Player(
-                        id = getLocalUid(),
-                        displayName = getPlayerDisplayName(),
-                        username = user?.username ?: "",
+                        id = myUid,
+                        displayName = myName,
+                        username = effUser?.username ?: "",
                         isHost = true,
-                        avatarUrl = getPlayerAvatarUrl(),
-                        gamesPlayed = user?.gamesPlayed ?: 0,
-                        gamesWon = user?.gamesWon ?: 0,
-                        currentStreak = user?.currentStreak ?: 0,
-                        level = user?.level ?: 1,
+                        avatarUrl = myAvatar,
+                        gamesPlayed = effUser?.gamesPlayed ?: 0,
+                        gamesWon = effUser?.gamesWon ?: 0,
+                        currentStreak = effUser?.currentStreak ?: 0,
+                        level = effUser?.level ?: 1,
                         lastSeenTimestamp = System.currentTimeMillis()
                     )
                     coroutineScope.launch {
@@ -2697,21 +2817,25 @@ fun RootNavGraph(
                     launchSingleTop = true
                 }
             }
-            val user = (authRepository.authState.collectAsState().value as? AuthState.Authenticated)?.user
+            val user = getEffectiveUser()
             JoinRoomScreen(
                 onJoinRoom = { code ->
                     val cleanCode = code.trim().uppercase()
                     val joinerVersion = System.currentTimeMillis()
+                    val effUser = getEffectiveUser()
+                    val myUid = getLocalUid()
+                    val myName = getPlayerDisplayName()
+                    val myAvatar = getPlayerAvatarUrl()
                     val localJoiner = Player(
-                        id = getLocalUid(),
-                        displayName = getPlayerDisplayName(),
-                        username = user?.username ?: "",
+                        id = myUid,
+                        displayName = myName,
+                        username = effUser?.username ?: "",
                         isHost = false,
-                        avatarUrl = getPlayerAvatarUrl(),
-                        gamesPlayed = user?.gamesPlayed ?: 0,
-                        gamesWon = user?.gamesWon ?: 0,
-                        currentStreak = user?.currentStreak ?: 0,
-                        level = user?.level ?: 1,
+                        avatarUrl = myAvatar,
+                        gamesPlayed = effUser?.gamesPlayed ?: 0,
+                        gamesWon = effUser?.gamesWon ?: 0,
+                        currentStreak = effUser?.currentStreak ?: 0,
+                        level = effUser?.level ?: 1,
                         lastSeenTimestamp = joinerVersion,
                         readyVersion = joinerVersion
                     )
@@ -2865,7 +2989,7 @@ fun RootNavGraph(
                     launchSingleTop = true
                 }
             }
-            val user = (authRepository.authState.collectAsState().value as? AuthState.Authenticated)?.user
+            val user = (authRepository.authState.collectAsState().value as? AuthState.Authenticated)?.user ?: getEffectiveUser()
             val ongoingMatchData = com.bingo.multiplayer.domain.network.OngoingMatchStore.getOngoingMatch(context)
             val hasActiveOngoing = (ongoingMatchData != null && !isGameOver && (roomCode.isBlank() || ongoingMatchData.roomCode == roomCode))
             val isKnownHost = isHosting ||
@@ -3261,6 +3385,7 @@ fun RootNavGraph(
                 isHosting = isHosting,
                 isHostMode = isNearbyHostMode,
                 joinedGame = joinedLanGame,
+                currentRoomCode = roomCode,
                 onStartBroadcasting = { selectedSize ->
                     isHosting = true
                     isUsingP2p = true
@@ -3702,9 +3827,10 @@ fun RootNavGraph(
             val isCurrentHost = (currentGameMode != GameMode.ONLINE_ROOM) || isHosting
             val realtimeNetworkPing by com.bingo.multiplayer.domain.network.NetworkPingMonitor.pingMs.collectAsState()
             val realtimeOnlinePing by onlineRoomSync.pingMs.collectAsState()
+            val realtimeLanPing by lanP2pSync.measuredPingMs.collectAsState()
             val currentPing = when {
                 currentGameMode == GameMode.NEARBY_NETWORK -> {
-                    if (realtimeNetworkPing in 1..40) realtimeNetworkPing.coerceAtMost(8L) else 4L
+                    if (realtimeLanPing > 0L) realtimeLanPing else 4L
                 }
                 currentGameMode == GameMode.ONLINE_ROOM && realtimeOnlinePing > 0L -> realtimeOnlinePing
                 realtimeNetworkPing > 0L -> realtimeNetworkPing
@@ -3822,7 +3948,7 @@ fun RootNavGraph(
                     }
                 },
                 onRequestPlayAgain = {
-                    if (currentGameMode == GameMode.ONLINE_ROOM) {
+                    if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
                         broadcastPacket(
                             RoomMessagePacket(
                                 type = "PLAY_AGAIN_REQUEST",
@@ -3834,7 +3960,7 @@ fun RootNavGraph(
                     }
                 },
                 onSurrender = {
-                    if (currentGameMode == GameMode.ONLINE_ROOM) {
+                    if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
                         broadcastPacket(
                             RoomMessagePacket(
                                 type = "SURRENDER",
@@ -4138,6 +4264,26 @@ fun RootNavGraph(
                                         )
                                     } else {
                                         lanP2pSync.updateLocalReadyStatus("READY")
+                                        lanP2pSync.isHostInLobby = true
+                                        broadcastPacket(
+                                            RoomMessagePacket(
+                                                type = "GO_TO_LOBBY",
+                                                playerId = getLocalUid()
+                                            )
+                                        )
+                                        lanDiscovery.startBroadcasting(
+                                            host = Player(
+                                                id = getLocalUid(),
+                                                displayName = getPlayerDisplayName(),
+                                                username = currentAuthUser?.username ?: "",
+                                                isHost = true,
+                                                avatarUrl = getPlayerAvatarUrl(),
+                                                lobbyReadyStatus = "READY"
+                                            ),
+                                            boardSize = boardSize,
+                                            internalRoomCode = roomCode,
+                                            ssid = HotspotAndWifiManager.getHotspotName(context)
+                                        )
                                     }
                                 } else {
                                     if (currentGameMode == GameMode.ONLINE_ROOM) {
@@ -4182,6 +4328,8 @@ fun RootNavGraph(
         AlertDialog(
             onDismissRequest = {
                 currentInvite.let { handledInviteRoomCodes[it.roomCode] = System.currentTimeMillis() }
+                com.bingo.multiplayer.domain.network.GameInviteManager.clearForegroundInvite()
+                com.bingo.multiplayer.domain.network.BingoNotificationManager.cancelInviteNotification(context)
                 incomingInvite = null
             },
             title = {
@@ -4202,6 +4350,8 @@ fun RootNavGraph(
                     onClick = {
                         val inviteToJoin = currentInvite
                         incomingInvite = null
+                        com.bingo.multiplayer.domain.network.GameInviteManager.clearForegroundInvite()
+                        com.bingo.multiplayer.domain.network.BingoNotificationManager.cancelInviteNotification(context)
                         handledInviteRoomCodes[inviteToJoin.roomCode] = System.currentTimeMillis()
                         coroutineScope.launch {
                             currentAuthUser?.let { u ->
@@ -4223,6 +4373,8 @@ fun RootNavGraph(
                     onClick = {
                         val inviteToDecline = currentInvite
                         incomingInvite = null
+                        com.bingo.multiplayer.domain.network.GameInviteManager.clearForegroundInvite()
+                        com.bingo.multiplayer.domain.network.BingoNotificationManager.cancelInviteNotification(context)
                         handledInviteRoomCodes[inviteToDecline.roomCode] = System.currentTimeMillis()
                         coroutineScope.launch {
                             currentAuthUser?.let { u ->

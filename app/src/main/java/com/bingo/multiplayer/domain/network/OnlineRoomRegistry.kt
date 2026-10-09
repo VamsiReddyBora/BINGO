@@ -131,6 +131,11 @@ object OnlineRoomRegistry {
      * Publishes room metadata as a retained MQTT message for instant fallback discovery.
      */
     private fun publishRoomMetaMqtt(session: OnlineRoomSession) {
+        val activeSync = OnlineRoomSyncManager.activeInstance
+        if (activeSync != null && activeSync.isConnected) {
+            activeSync.publishRetainedRoomMeta(session)
+            return
+        }
         try {
             val client = MqttAsyncClient(NetworkConfig.BROKER_URL, "reg_meta_${UUID.randomUUID().toString().take(8)}", MemoryPersistence())
             val options = MqttConnectOptions().apply {
@@ -156,6 +161,11 @@ object OnlineRoomRegistry {
      * Clears retained MQTT room metadata when room is closed.
      */
     private fun clearRoomMetaMqtt(roomCode: String) {
+        val activeSync = OnlineRoomSyncManager.activeInstance
+        if (activeSync != null && activeSync.isConnected) {
+            activeSync.clearRetainedRoomMeta(roomCode)
+            return
+        }
         try {
             val client = MqttAsyncClient(NetworkConfig.BROKER_URL, "close_meta_${UUID.randomUUID().toString().take(8)}", MemoryPersistence())
             val options = MqttConnectOptions().apply {

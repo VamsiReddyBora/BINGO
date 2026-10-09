@@ -61,6 +61,9 @@ class LanP2pSessionManager {
     private val _players = MutableStateFlow<List<Player>>(emptyList())
     val players: StateFlow<List<Player>> = _players.asStateFlow()
 
+    private val _measuredPingMs = MutableStateFlow<Long>(4L)
+    val measuredPingMs: StateFlow<Long> = _measuredPingMs.asStateFlow()
+
     private val _incomingPackets = MutableSharedFlow<RoomMessagePacket>(replay = 1, extraBufferCapacity = 64)
     val incomingPackets: SharedFlow<RoomMessagePacket> = _incomingPackets.asSharedFlow()
 
@@ -158,9 +161,18 @@ class LanP2pSessionManager {
 
         serverJob = scope.launch(Dispatchers.IO) {
             try {
-                serverSocket = ServerSocket().apply {
-                    reuseAddress = true
-                    bind(java.net.InetSocketAddress(port))
+                var boundPort = port
+                for (candidatePort in port..(port + 5)) {
+                    try {
+                        serverSocket = ServerSocket().apply {
+                            reuseAddress = true
+                            bind(java.net.InetSocketAddress(candidatePort))
+                        }
+                        boundPort = candidatePort
+                        break
+                    } catch (e: java.net.BindException) {
+                        if (candidatePort == port + 5) throw e
+                    }
                 }
                 while (isActive) {
                     val socket = serverSocket?.accept() ?: break
@@ -169,6 +181,45 @@ class LanP2pSessionManager {
                     clientSockets.add(socket)
                     val writer = PrintWriter(socket.getOutputStream(), true)
                     clientWriters.add(writer)
+
+                    // Transmit host info and existing players immediately to the newly connected client
+                    try {
+                        val hostHeartbeat = RoomMessagePacket(
+                            type = "HEARTBEAT",
+                            playerId = hostPlayer.id,
+                            displayName = hostPlayer.displayName,
+                            username = hostPlayer.username,
+                            isHost = true,
+                            avatarUrl = hostPlayer.avatarUrl,
+                            gamesPlayed = hostPlayer.gamesPlayed,
+                            gamesWon = hostPlayer.gamesWon,
+                            currentStreak = hostPlayer.currentStreak,
+                            level = hostPlayer.level,
+                            readyStatus = hostPlayer.lobbyReadyStatus,
+                            timestamp = System.currentTimeMillis()
+                        )
+                        writer.println(json.encodeToString(hostHeartbeat))
+
+                        for (peer in playerRegistry.values) {
+                            if (peer.id != hostPlayer.id) {
+                                val peerPacket = RoomMessagePacket(
+                                    type = "HEARTBEAT",
+                                    playerId = peer.id,
+                                    displayName = peer.displayName,
+                                    username = peer.username,
+                                    isHost = peer.isHost,
+                                    avatarUrl = peer.avatarUrl,
+                                    gamesPlayed = peer.gamesPlayed,
+                                    gamesWon = peer.gamesWon,
+                                    currentStreak = peer.currentStreak,
+                                    level = peer.level,
+                                    readyStatus = peer.lobbyReadyStatus,
+                                    timestamp = System.currentTimeMillis()
+                                )
+                                writer.println(json.encodeToString(peerPacket))
+                            }
+                        }
+                    } catch (_: Exception) {}
 
                     if (isHostInLobby) {
                         try {
@@ -241,7 +292,19 @@ class LanP2pSessionManager {
             val candidateIps = mutableListOf<String>()
             if (hostIp.isNotBlank()) candidateIps.add(hostIp)
             if (fallbackIp.isNotBlank() && !candidateIps.contains(fallbackIp)) candidateIps.add(fallbackIp)
-            listOf("192.168.43.1", "192.168.49.1").forEach { ip ->
+
+            // Dynamically resolve active network gateway
+            val dynamicGateway = HotspotAndWifiManager.getLocalIpAddress()
+            if (dynamicGateway.isNotBlank() && dynamicGateway.contains(".")) {
+                val subnetPrefix = dynamicGateway.substringBeforeLast(".")
+                val dynamicHost = "$subnetPrefix.1"
+                if (!candidateIps.contains(dynamicHost)) candidateIps.add(dynamicHost)
+            }
+
+            listOf(
+                "192.168.43.1", "192.168.44.1", "192.168.49.1", "192.168.50.1",
+                "192.168.125.1", "192.168.137.1", "172.20.10.1"
+            ).forEach { ip ->
                 if (!candidateIps.contains(ip)) candidateIps.add(ip)
             }
 
@@ -338,6 +401,15 @@ class LanP2pSessionManager {
                             timestamp = System.currentTimeMillis()
                         )
                     )
+                    if (!p.isHost) {
+                        broadcastPacket(
+                            RoomMessagePacket(
+                                type = "PING",
+                                playerId = p.id,
+                                pingTimestamp = System.currentTimeMillis()
+                            )
+                        )
+                    }
                     playerRegistry[p.id] = p.copy(lastSeenTimestamp = System.currentTimeMillis())
                 }
             }
@@ -549,10 +621,31 @@ class LanP2pSessionManager {
                     }
                 }
             }
+
+            "PING" -> {
+                if (localPlayer?.isHost == true && packet.playerId != localPlayer?.id) {
+                    broadcastPacket(
+                        RoomMessagePacket(
+                            type = "PONG",
+                            playerId = packet.playerId,
+                            pingTimestamp = packet.pingTimestamp
+                        )
+                    )
+                }
+            }
+
+            "PONG" -> {
+                if (packet.playerId == localPlayer?.id && packet.pingTimestamp > 0L) {
+                    val rtt = (System.currentTimeMillis() - packet.pingTimestamp).coerceAtLeast(1L)
+                    val cur = _measuredPingMs.value
+                    val smoothed = if (cur <= 0L) rtt else ((cur * 0.60) + (rtt * 0.40)).toLong().coerceAtLeast(1L)
+                    _measuredPingMs.value = smoothed
+                }
+            }
         }
 
         // Only deliver gameplay and room lifecycle packets to listeners (ignore self packets as logic handles it already or we don't want duplicates)
-        if (packet.type != "HEARTBEAT" && packet.type != "JOIN" && packet.type != "READY_STATUS") {
+        if (packet.type != "HEARTBEAT" && packet.type != "JOIN" && packet.type != "READY_STATUS" && packet.type != "PING" && packet.type != "PONG") {
             _incomingPackets.tryEmit(packet)
         }
     }

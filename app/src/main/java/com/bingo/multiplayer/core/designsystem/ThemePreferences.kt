@@ -34,6 +34,7 @@ object ThemePreferences {
     private const val KEY_IS_DARK = "is_dark_theme"
     private const val KEY_ACCENT_ID = "accent_color_id"
     private const val KEY_CUSTOM_COLOR = "custom_accent_hex"
+    private const val KEY_LIQUID_METAL_ENABLED = "is_liquid_metal_theme_enabled"
 
     // 12 curated, elegant matte palettes
     val PALETTES: List<AppAccentPalette> = listOf(
@@ -206,7 +207,7 @@ object ThemePreferences {
     const val DEFAULT_MY_PICK_HEX = "#7E22CE"
     const val DEFAULT_OPPONENT_PICK_HEX = "#C2410C"
     const val DEFAULT_RECENT_PICK_LIGHT_HEX = "#D9B13D"
-    const val DEFAULT_RECENT_PICK_DARK_HEX = "#FFFFFF"
+    const val DEFAULT_RECENT_PICK_DARK_HEX = "#F59E0B"
     const val DEFAULT_COMPLETED_LINE_HEX = "#64748B"
 
     fun getDefaultRecentPickHex(isDark: Boolean): String =
@@ -223,6 +224,9 @@ object ThemePreferences {
     val customCompletedLineHex: MutableState<String?> = mutableStateOf(null)
     val cellBorderEnabled: MutableState<Boolean> = mutableStateOf(false)
     val cellBorderColorHex: MutableState<String> = mutableStateOf("#FFFFFF")
+
+    // Liquid Metal Edition (Exclusive Theme)
+    val isLiquidMetalTheme: MutableState<Boolean> = mutableStateOf(false)
 
     fun init(context: Context) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -243,6 +247,14 @@ object ThemePreferences {
         customCompletedLineHex.value = prefs.getString(KEY_CUSTOM_COMPLETED_LINE, null)
         cellBorderEnabled.value = prefs.getBoolean(KEY_CELL_BORDER_ENABLED, false)
         cellBorderColorHex.value = prefs.getString(KEY_CELL_BORDER_COLOR, "#FFFFFF") ?: "#FFFFFF"
+        isLiquidMetalTheme.value = prefs.getBoolean(KEY_LIQUID_METAL_ENABLED, false)
+    }
+
+    fun setLiquidMetalTheme(context: Context, enabled: Boolean) {
+        isLiquidMetalTheme.value = enabled
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putBoolean(KEY_LIQUID_METAL_ENABLED, enabled)
+            .apply()
     }
 
     fun setDarkTheme(context: Context, isDark: Boolean) {
@@ -251,7 +263,8 @@ object ThemePreferences {
         val isRecentPickDefault = customRecentPickHex.value == null ||
                 customRecentPickHex.value.equals(DEFAULT_RECENT_PICK_LIGHT_HEX, ignoreCase = true) ||
                 customRecentPickHex.value.equals("#D9B43D", ignoreCase = true) ||
-                customRecentPickHex.value.equals(DEFAULT_RECENT_PICK_DARK_HEX, ignoreCase = true)
+                customRecentPickHex.value.equals(DEFAULT_RECENT_PICK_DARK_HEX, ignoreCase = true) ||
+                customRecentPickHex.value.equals("#FFFFFF", ignoreCase = true)
         if (isRecentPickDefault) {
             customRecentPickHex.value = null
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()

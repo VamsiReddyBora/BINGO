@@ -54,6 +54,11 @@ data class RoomMessagePacket(
 class OnlineRoomSyncManager(
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 ) {
+
+    init {
+        activeInstance = this
+    }
+
     val instanceId: String = UUID.randomUUID().toString()
 
     private val json = Json {
@@ -64,6 +69,38 @@ class OnlineRoomSyncManager(
 
     private val brokerUrl = NetworkConfig.BROKER_URL
     private var mqttClient: MqttAsyncClient? = null
+
+    val isConnected: Boolean
+        get() = mqttClient?.isConnected == true
+
+    fun publishRetainedRoomMeta(session: OnlineRoomSession) {
+        val client = mqttClient ?: return
+        if (!client.isConnected) return
+        scope.launch(Dispatchers.IO) {
+            try {
+                val jsonStr = json.encodeToString(session)
+                val message = MqttMessage(jsonStr.toByteArray(StandardCharsets.UTF_8)).apply {
+                    qos = 1
+                    isRetained = true
+                }
+                client.publish("bingo/v3/room_meta/${session.roomCode}", message)
+            } catch (_: Exception) {}
+        }
+    }
+
+    fun clearRetainedRoomMeta(roomCode: String) {
+        val client = mqttClient ?: return
+        if (!client.isConnected) return
+        scope.launch(Dispatchers.IO) {
+            try {
+                val message = MqttMessage(ByteArray(0)).apply {
+                    qos = 1
+                    isRetained = true
+                }
+                client.publish("bingo/v3/room_meta/$roomCode", message)
+            } catch (_: Exception) {}
+        }
+    }
 
     private var currentRoomCode: String? = null
     var localPlayer: Player? = null
@@ -221,10 +258,14 @@ class OnlineRoomSyncManager(
         initialPlayers.forEach { p ->
             if (p.id.isNotBlank()) {
                 val isPActuallyHost = p.isHost || (currentHostId != null && p.id == currentHostId)
-                playerRegistry[p.id] = p.copy(
-                    isHost = isPActuallyHost,
-                    lastSeenTimestamp = System.currentTimeMillis()
-                )
+                val isSameAsLocal = (p.id == safePlayer.id) ||
+                    (safePlayer.username.isNotBlank() && p.username.equals(safePlayer.username, ignoreCase = true))
+                if (!isSameAsLocal) {
+                    playerRegistry[p.id] = p.copy(
+                        isHost = isPActuallyHost,
+                        lastSeenTimestamp = System.currentTimeMillis()
+                    )
+                }
             }
         }
         playerRegistry[safePlayer.id] = safePlayer.copy(lastSeenTimestamp = System.currentTimeMillis())
@@ -457,7 +498,8 @@ class OnlineRoomSyncManager(
                     val outgoing = if (packet.senderInstanceId.isBlank()) packet.copy(senderInstanceId = instanceId) else packet
                     val payload = FastPacketCodec.encode(outgoing)
                     val qosLevel = when (packet.type) {
-                        "PICK_NUMBER", "TURN_TIMEOUT", "PING", "PONG", "GAME_SYNC" -> 0 // Instant line-rate flight, zero ACK wait
+                        "PICK_NUMBER", "PING", "PONG" -> 0 // Instant line-rate flight, zero ACK wait
+                        "TURN_TIMEOUT", "GAME_SYNC", "START_GAME", "PLAY_AGAIN", "ROOM_STATE", "SURRENDER", "LEAVE" -> 1 // Guaranteed delivery
                         else -> 1 // Guaranteed delivery for room control & state (START_GAME, PLAY_AGAIN, BOARD_READY, ROOM_STATE, etc.)
                     }
                     val message = MqttMessage(payload.toByteArray(StandardCharsets.UTF_8)).apply {
@@ -487,8 +529,9 @@ class OnlineRoomSyncManager(
                 val pCleanUser = p.username.trim().lowercase().removePrefix("@")
                 val pCleanDisplay = p.displayName.trim().lowercase()
                 if (p.id.isNotBlank() && p.id !in kickedPlayerIds && pCleanUser !in kickedPlayerIds && pCleanDisplay !in kickedPlayerIds) {
-                    val isLocal = (p.id == localP.id)
-                    val existing = playerRegistry[p.id]
+                    val isLocal = (p.id == localP.id) ||
+                        (localP.username.isNotBlank() && p.username.equals(localP.username, ignoreCase = true))
+                    val existing = if (isLocal) (playerRegistry[localP.id] ?: playerRegistry[p.id]) else playerRegistry[p.id]
 
                     if (existing == null && !isLocal) {
                         hasNewPlayer = true
@@ -540,7 +583,13 @@ class OnlineRoomSyncManager(
                         )
                     }
 
-                    playerRegistry[p.id] = p.copy(
+                    val targetId = if (isLocal) localP.id else p.id
+                    if (isLocal && p.id != localP.id) {
+                        playerRegistry.remove(p.id)
+                    }
+
+                    playerRegistry[targetId] = p.copy(
+                        id = targetId,
                         isHost = isPlayerActuallyHost,
                         displayName = effDisplay,
                         username = effUsername,

@@ -206,11 +206,11 @@ fun buildAmoledDarkColors(palette: AppAccentPalette): BingoColors = BingoColors(
     cellOpponentPickBorder = Color(0xFFEA580C),
     cellOpponentPickBevel = Color(0xFF9A3412),
 
-    // Recent Picked: Pure White #FFFFFF with black text
-    recentPickBg = Color(0xFFFFFFFF),
-    recentPickBorder = Color(0xFFFFFFFF),
-    recentPickText = Color(0xFF000000),
-    recentPickGlow = Color(0x30FFFFFF),
+    // Recent Picked: Vibrant Amber Gold #F59E0B with white text and gold border
+    recentPickBg = Color(0xFFF59E0B),
+    recentPickBorder = Color(0xFFD97706),
+    recentPickText = Color(0xFFFFFFFF),
+    recentPickGlow = Color(0x35F59E0B),
 
     // Cells - Completed Winning Line: #64748B with pure white text
     completedLineBg = Color(0xFF64748B),

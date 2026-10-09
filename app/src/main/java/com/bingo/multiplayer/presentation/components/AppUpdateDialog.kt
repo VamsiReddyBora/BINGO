@@ -63,7 +63,7 @@ fun AppUpdateDialog() {
     Dialog(
         onDismissRequest = {
             if (updateState !is UpdateState.Downloading) {
-                AppUpdateManager.dismiss()
+                AppUpdateManager.dismiss(context)
             }
         },
         properties = DialogProperties(
@@ -78,7 +78,7 @@ fun AppUpdateDialog() {
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 8.dp)
-                .border(1.dp, tokens.cellNeutralBorder.copy(alpha = 0.3f), RoundedCornerShape(24.dp))
+                .border(1.dp, tokens.surfaceBorder, RoundedCornerShape(24.dp))
         ) {
             Column(
                 modifier = Modifier
@@ -109,7 +109,7 @@ fun AppUpdateDialog() {
                                 text = "Update Available!",
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = tokens.cellNeutralText
+                                color = tokens.textPrimary
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Surface(
@@ -154,7 +154,7 @@ fun AppUpdateDialog() {
                                         text = "What's New:",
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.SemiBold,
-                                        color = tokens.cellNeutralText
+                                        color = tokens.textPrimary
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
@@ -173,23 +173,36 @@ fun AppUpdateDialog() {
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             OutlinedButton(
-                                onClick = { AppUpdateManager.dismiss() },
+                                onClick = { AppUpdateManager.dismiss(context) },
                                 modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(12.dp)
+                                shape = RoundedCornerShape(12.dp),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, tokens.surfaceBorder)
                             ) {
-                                Text("Later", color = tokens.textMuted, fontSize = 14.sp)
+                                Text("Later", color = tokens.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                             }
+                            val updateButtonBg = if (tokens.isDark) Color(0xFFFFFFFF) else tokens.accentBrand
+                            val updateButtonTextColor = if (tokens.isDark) Color(0xFF000000) else Color(0xFFFFFFFF)
                             Button(
                                 onClick = {
                                     AppUpdateManager.startDownload(context, state.info.downloadUrl)
                                 },
                                 modifier = Modifier.weight(1f),
                                 shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = tokens.accentBrand)
+                                colors = ButtonDefaults.buttonColors(containerColor = updateButtonBg)
                             ) {
-                                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Icon(
+                                    imageVector = Icons.Default.Download,
+                                    contentDescription = null,
+                                    tint = updateButtonTextColor,
+                                    modifier = Modifier.size(16.dp)
+                                )
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("Update", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    text = "Update",
+                                    color = updateButtonTextColor,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
                         }
                     }
@@ -214,7 +227,7 @@ fun AppUpdateDialog() {
                             text = "Downloading Update...",
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold,
-                            color = tokens.cellNeutralText
+                            color = tokens.textPrimary
                         )
                         Spacer(modifier = Modifier.height(12.dp))
 
@@ -260,7 +273,7 @@ fun AppUpdateDialog() {
                             text = "Download Complete! 🎉",
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold,
-                            color = tokens.cellNeutralText
+                            color = tokens.textPrimary
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
@@ -276,7 +289,7 @@ fun AppUpdateDialog() {
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             OutlinedButton(
-                                onClick = { AppUpdateManager.dismiss() },
+                                onClick = { AppUpdateManager.dismiss(context) },
                                 modifier = Modifier.weight(1f),
                                 shape = RoundedCornerShape(12.dp)
                             ) {
@@ -310,7 +323,7 @@ fun AppUpdateDialog() {
                         )
                         Spacer(modifier = Modifier.height(16.dp))
                         Button(
-                            onClick = { AppUpdateManager.dismiss() },
+                            onClick = { AppUpdateManager.dismiss(context) },
                             shape = RoundedCornerShape(12.dp)
                         ) {
                             Text("OK")

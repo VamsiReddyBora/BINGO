@@ -914,12 +914,14 @@ fun LobbyScreen(
                                     Button(
                                         onClick = {
                                             ActionCooldownManager.startInviteCooldown(friend.username)
-                                            val fromUser = currentUser?.username
+                                            val fromUser = currentUser?.username?.ifBlank { null }
+                                                ?: players.firstOrNull { it.isHost }?.username?.ifBlank { null }
                                                 ?: players.firstOrNull { it.isHost }?.id
                                                 ?: "Host"
-                                            val fromName = currentUser?.displayName
-                                                ?: players.firstOrNull { it.isHost }?.displayName
+                                            val fromName = currentUser?.displayName?.ifBlank { null }
+                                                ?: players.firstOrNull { it.isHost }?.displayName?.ifBlank { null }
                                                 ?: "Host"
+                                            val fromAvatar = currentUser?.avatarBase64 ?: currentUser?.avatarUrl ?: players.firstOrNull { it.isHost }?.avatarUrl
 
                                             if (roomCode.isNotBlank()) {
                                                 coroutineScope.launch {
@@ -928,7 +930,7 @@ fun LobbyScreen(
                                                         invite = com.bingo.multiplayer.domain.network.GameInvite(
                                                             fromUsername = fromUser,
                                                             fromDisplayName = fromName,
-                                                            fromAvatarUrl = null,
+                                                            fromAvatarUrl = fromAvatar,
                                                             roomCode = roomCode
                                                         )
                                                     )
@@ -1161,12 +1163,14 @@ fun LobbyScreen(
                                     Button(
                                         onClick = {
                                             ActionCooldownManager.startInviteCooldown(result.username)
-                                            val fromUser = currentUser?.username
+                                            val fromUser = currentUser?.username?.ifBlank { null }
+                                                ?: players.firstOrNull { it.isHost }?.username?.ifBlank { null }
                                                 ?: players.firstOrNull { it.isHost }?.id
                                                 ?: "Host"
-                                            val fromName = currentUser?.displayName
-                                                ?: players.firstOrNull { it.isHost }?.displayName
+                                            val fromName = currentUser?.displayName?.ifBlank { null }
+                                                ?: players.firstOrNull { it.isHost }?.displayName?.ifBlank { null }
                                                 ?: "Host"
+                                            val fromAvatar = currentUser?.avatarBase64 ?: currentUser?.avatarUrl ?: players.firstOrNull { it.isHost }?.avatarUrl
 
                                             if (roomCode.isNotBlank()) {
                                                 coroutineScope.launch {
@@ -1175,7 +1179,7 @@ fun LobbyScreen(
                                                         invite = com.bingo.multiplayer.domain.network.GameInvite(
                                                             fromUsername = fromUser,
                                                             fromDisplayName = fromName,
-                                                            fromAvatarUrl = null,
+                                                            fromAvatarUrl = fromAvatar,
                                                             roomCode = roomCode
                                                         )
                                                     )
@@ -1544,9 +1548,11 @@ fun LobbyScreen(
                 dismissButton = {
                     OutlinedButton(
                         onClick = { playerToKick = null },
-                        shape = RoundedCornerShape(10.dp)
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, tokens.surfaceBorder),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = tokens.cellNeutralText)
                     ) {
-                        Text("Cancel", color = tokens.cellNeutralText)
+                        Text("Cancel", color = tokens.cellNeutralText, fontWeight = FontWeight.SemiBold)
                     }
                 },
                 containerColor = tokens.surface,
