@@ -45,6 +45,7 @@ import kotlin.math.sin
 enum class StampResultType {
     WON,
     LOST,
+    @Deprecated("Draws are decommissioned; only WON, RUNNER, LOST, OFFLINE apply")
     DRAW,
     RUNNER,
     OFFLINE

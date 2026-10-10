@@ -483,15 +483,17 @@ fun GameScreen(
             containerColor = tokens.surface,
             title = {
                 Text(
-                    text = if (isMultiplayerLobbyGame) "Return to Lobby?" else "Exit Match?",
+                    text = if (isMultiplayerLobbyGame && isGameOver) "Return to Lobby?" else if (isMultiplayerLobbyGame) "Surrender Match?" else "Exit Match?",
                     fontWeight = FontWeight.Bold,
                     color = tokens.textPrimary
                 )
             },
             text = {
                 Text(
-                    text = if (isMultiplayerLobbyGame)
-                        "Are you sure you want to leave this match? You will return to the lobby."
+                    text = if (isMultiplayerLobbyGame && isGameOver)
+                        "Are you sure you want to return to the lobby?"
+                    else if (isMultiplayerLobbyGame)
+                        "Are you sure you want to surrender? You will forfeit the match and return to the main menu."
                     else
                         "Are you sure you want to leave the match and return to the main menu?",
                     color = tokens.textSecondary
@@ -505,7 +507,7 @@ fun GameScreen(
                         isEmojiBurstActive = false
                         showStampBadge = false
                         animateStampDrop = false
-                        if (isMultiplayerLobbyGame) {
+                        if (isMultiplayerLobbyGame && isGameOver) {
                             onReturnToLobby?.invoke()
                         } else {
                             onSurrender()
@@ -517,7 +519,7 @@ fun GameScreen(
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Text(
-                        text = if (isMultiplayerLobbyGame) "Return to Lobby" else "Exit to Menu",
+                        text = if (isMultiplayerLobbyGame && isGameOver) "Return to Lobby" else if (isMultiplayerLobbyGame) "Surrender & Exit" else "Exit to Menu",
                         color = Color.White,
                         fontWeight = FontWeight.Bold
                     )
@@ -970,7 +972,6 @@ fun GameScreen(
                                 isLocalDisconnected -> StampResultType.OFFLINE to "OFFLINE"
                                 didPlayerWin -> StampResultType.WON to "YOU'VE WON!"
                                 isRunner -> StampResultType.RUNNER to "RUNNER!"
-                                isDraw -> StampResultType.DRAW to "DRAW!"
                                 else -> StampResultType.LOST to "YOU LOST!"
                             }
                         } else {

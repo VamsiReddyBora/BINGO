@@ -883,9 +883,10 @@ fun RootNavGraph(
             }
             GameMode.ONLINE_ROOM, GameMode.NEARBY_NETWORK -> {
                 val candidatePlayers = (if (matchParticipants.isNotEmpty()) matchParticipants else realTimePlayers)
+                val fullyDisconnected = disconnectedPlayerIds.filter { (consecutiveMissedTurns[it] ?: 0) >= 3 }.toSet()
                 com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.calculateNextTurnPlayerId(
                     allParticipants = candidatePlayers,
-                    disconnectedPlayerIds = disconnectedPlayerIds.toSet(),
+                    disconnectedPlayerIds = fullyDisconnected,
                     currentPickerId = currentPickerId,
                     fallbackPlayerId = myUid,
                     matchSeed = currentMatchSeed,
@@ -2123,6 +2124,7 @@ fun RootNavGraph(
                         isRunnerMatch = false
                         winnerPlayerId = if (won) myUid else ""
                         activeWinReason = "Opponent Surrendered"
+                        activeRunnerPlayerIds = emptyList()
                         recordFinishedMatch(won)
                         com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
                         opponentSurrenderMessage = "$surrenderName surrendered the match! You win!"
@@ -2159,7 +2161,7 @@ fun RootNavGraph(
             "PLAYER_DISCONNECTED" -> {
                 if (packet.playerId.isNotBlank() && packet.playerId != myUid) {
                     val destinationRoute = navController.currentDestination?.route
-                    val inGame = (destinationRoute == Screen.Game.route)
+                    val inGame = (destinationRoute == Screen.Game.route || destinationRoute == Screen.ManualBoardDesign.route)
                     val participants = matchParticipants.ifEmpty { realTimePlayers }
                     markPlayerDisconnected(packet.playerId)
 
@@ -2201,6 +2203,9 @@ fun RootNavGraph(
                                 didPlayerWin = wonByForfeit
                                 isDrawMatch = false
                                 isRunnerMatch = false
+                                winnerPlayerId = if (wonByForfeit) myUid else ""
+                                activeWinReason = "Opponent Disconnected"
+                                activeRunnerPlayerIds = emptyList()
                                 recordFinishedMatch(wonByForfeit)
                                 com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
                                 opponentDisconnectMessage = "Opponent disconnected. You win by forfeit!"
@@ -2236,7 +2241,7 @@ fun RootNavGraph(
 
             "LEAVE", "HOST_LEFT" -> {
                 val destinationRoute = navController.currentDestination?.route
-                val inGame = (destinationRoute == Screen.Game.route)
+                val inGame = (destinationRoute == Screen.Game.route || destinationRoute == Screen.ManualBoardDesign.route)
                 val isSenderHost = packet.isHost || packet.type == "HOST_LEFT" ||
                         realTimePlayers.find { it.id == packet.playerId }?.isHost == true ||
                         matchParticipants.find { it.id == packet.playerId }?.isHost == true
@@ -2257,13 +2262,16 @@ fun RootNavGraph(
                         }
                         if (activeRemaining.size <= 1 || isUsingP2p) {
                             isGameOver = true
-                            val wonByForfeit = if (isUsingP2p) false else (activeRemaining.any { it.id == myUid } || participants.size <= 2)
+                            val wonByForfeit = if (isUsingP2p) true else (activeRemaining.any { it.id == myUid } || participants.size <= 2)
                             didPlayerWin = wonByForfeit
                             isDrawMatch = false
                             isRunnerMatch = false
+                            winnerPlayerId = if (wonByForfeit) myUid else ""
+                            activeWinReason = if (isUsingP2p) "Host Disconnected" else "Opponent Left"
+                            activeRunnerPlayerIds = emptyList()
                             recordFinishedMatch(wonByForfeit)
                             com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
-                            opponentDisconnectMessage = if (isUsingP2p) "Host disconnected. LAN match ended." else "All opponents left the game."
+                            opponentDisconnectMessage = if (isUsingP2p) "Host disconnected. You win by forfeit!" else "All opponents left the game."
                         } else {
                             // Host left, but 2+ players remain! Match continues!
                             val hostMsg = "👑 $hostName (Host) left the game"
@@ -2320,6 +2328,7 @@ fun RootNavGraph(
                         isRunnerMatch = false
                         winnerPlayerId = if (wonByForfeit) myUid else ""
                         activeWinReason = "Opponent Left"
+                        activeRunnerPlayerIds = emptyList()
                         recordFinishedMatch(wonByForfeit)
                         com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
                         opponentDisconnectMessage = "Opponent left the match. You win by forfeit!"
@@ -2444,6 +2453,7 @@ fun RootNavGraph(
                 val targetId = packet.targetPlayerId.ifBlank { packet.playerId }
                 if (targetId == myUid) {
                     Toast.makeText(context, "You were removed from the lobby by the host.", Toast.LENGTH_LONG).show()
+                    com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
                     disconnectRoom()
                     isHosting = false
                     navController.navigate(Screen.MainMenu.route) {
@@ -3656,11 +3666,19 @@ fun RootNavGraph(
                 GameMode.NEARBY_NETWORK -> opponentPlayer?.displayName ?: "Nearby Peer"
             }
 
-            val participants = getActiveParticipants()
+            val participants = getActiveParticipants().filter { !isPlayerDisconnected(it.id) }
             val expectedUids = participants.map { it.id }.filter { it.isNotBlank() }.toSet()
             val readyCount = expectedUids.count { allPlayerBoards.containsKey(it) }
             val totalCount = expectedUids.size.coerceAtLeast(2)
             val allReady = expectedUids.isNotEmpty() && expectedUids.all { allPlayerBoards.containsKey(it) }
+
+            LaunchedEffect(isGameOver) {
+                if (isGameOver) {
+                    navController.navigate(Screen.Game.route) {
+                        popUpTo(Screen.ManualBoardDesign.route) { inclusive = true }
+                    }
+                }
+            }
 
             ManualBoardDesignScreen(
                 boardSize = boardSize,
@@ -3700,7 +3718,7 @@ fun RootNavGraph(
                         broadcastPacket(readyPacket)
                     }
 
-                    val curExpected = getActiveParticipants().map { it.id }.filter { it.isNotBlank() }.toSet()
+                    val curExpected = getActiveParticipants().filter { !isPlayerDisconnected(it.id) }.map { it.id }.filter { it.isNotBlank() }.toSet()
                     val curAllReady = (currentGameMode == GameMode.AI_EASY || currentGameMode == GameMode.AI_HARD) ||
                             (curExpected.isNotEmpty() && curExpected.all { updatedBoards.containsKey(it) })
 
@@ -3709,7 +3727,7 @@ fun RootNavGraph(
                     } else {
                         coroutineScope.launch {
                             while (isActive && isLocalBoardReady && countdownSeconds < 0) {
-                                val latestExpected = getActiveParticipants().map { it.id }.filter { it.isNotBlank() }.toSet()
+                                val latestExpected = getActiveParticipants().filter { !isPlayerDisconnected(it.id) }.map { it.id }.filter { it.isNotBlank() }.toSet()
                                 if (latestExpected.isNotEmpty() && latestExpected.all { allPlayerBoards.containsKey(it) }) {
                                     break
                                 }
@@ -3904,6 +3922,9 @@ fun RootNavGraph(
                             didPlayerWin = wonByForfeit
                             isDrawMatch = false
                             isRunnerMatch = false
+                            winnerPlayerId = if (wonByForfeit) getLocalUid() else ""
+                            activeWinReason = "Opponent Disconnected"
+                            activeRunnerPlayerIds = emptyList()
                             recordFinishedMatch(wonByForfeit)
                             com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
                             opponentDisconnectMessage = "Opponent disconnected. You win by forfeit!"
