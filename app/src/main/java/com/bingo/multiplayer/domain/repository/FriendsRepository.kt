@@ -26,7 +26,7 @@ import java.util.concurrent.ConcurrentHashMap
  * Persists friends locally in SharedPreferences and syncs with cloud key-value storage.
  */
 class FriendsRepository(
-    context: Context,
+    private val context: Context,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 ) {
 
@@ -330,6 +330,13 @@ class FriendsRepository(
         prefs.edit()
             .putString(KEY_FRIENDS, json.encodeToString(list))
             .apply()
+
+        AuthRepository.activeInstance?.getPersistedUserSync()?.let { user ->
+            if (user.uid.isNotBlank()) {
+                com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(context)
+                    .syncFriendsList(user.uid, list)
+            }
+        }
     }
 
     fun onRemoteAvatarUpdated(username: String, newAvatarUrl: String?) {

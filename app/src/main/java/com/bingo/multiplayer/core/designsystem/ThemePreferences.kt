@@ -288,6 +288,7 @@ object ThemePreferences {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val authPrefs = context.getSharedPreferences("bingo_user_profile", Context.MODE_PRIVATE)
         setDarkTheme(prefs, authPrefs, isDark)
+        triggerCloudSync(context)
     }
 
     fun setAccentColor(context: Context, id: String) {
@@ -297,6 +298,7 @@ object ThemePreferences {
             .putString(KEY_ACCENT_ID, id)
             .putBoolean(KEY_USER_CUSTOMIZED_ACCENT, true)
             .apply()
+        triggerCloudSync(context)
     }
 
     fun setCustomColor(context: Context, hex: String) {
@@ -308,6 +310,7 @@ object ThemePreferences {
             .putString(KEY_ACCENT_ID, "custom")
             .putString(KEY_CUSTOM_COLOR, cleanHex)
             .apply()
+        triggerCloudSync(context)
     }
 
     fun setMyPickColor(context: Context, hex: String?) {
@@ -316,6 +319,7 @@ object ThemePreferences {
         val editor = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
         if (cleanHex == null) editor.remove(KEY_CUSTOM_MY_PICK) else editor.putString(KEY_CUSTOM_MY_PICK, cleanHex)
         editor.apply()
+        triggerCloudSync(context)
     }
 
     fun setOpponentPickColor(context: Context, hex: String?) {
@@ -324,6 +328,7 @@ object ThemePreferences {
         val editor = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
         if (cleanHex == null) editor.remove(KEY_CUSTOM_OPPONENT_PICK) else editor.putString(KEY_CUSTOM_OPPONENT_PICK, cleanHex)
         editor.apply()
+        triggerCloudSync(context)
     }
 
     fun setRecentPickColor(context: Context, hex: String?) {
@@ -332,6 +337,7 @@ object ThemePreferences {
         val editor = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
         if (cleanHex == null) editor.remove(KEY_CUSTOM_RECENT_PICK) else editor.putString(KEY_CUSTOM_RECENT_PICK, cleanHex)
         editor.apply()
+        triggerCloudSync(context)
     }
 
     fun setCompletedLineColor(context: Context, hex: String?) {
@@ -340,6 +346,7 @@ object ThemePreferences {
         val editor = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
         if (cleanHex == null) editor.remove(KEY_CUSTOM_COMPLETED_LINE) else editor.putString(KEY_CUSTOM_COMPLETED_LINE, cleanHex)
         editor.apply()
+        triggerCloudSync(context)
     }
 
     fun setCellBorderEnabled(context: Context, enabled: Boolean) {
@@ -347,6 +354,7 @@ object ThemePreferences {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
             .putBoolean(KEY_CELL_BORDER_ENABLED, enabled)
             .apply()
+        triggerCloudSync(context)
     }
 
     fun setCellBorderColor(context: Context, hex: String) {
@@ -355,6 +363,7 @@ object ThemePreferences {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
             .putString(KEY_CELL_BORDER_COLOR, cleanHex)
             .apply()
+        triggerCloudSync(context)
     }
 
     fun resetBoardColors(context: Context) {
@@ -372,6 +381,19 @@ object ThemePreferences {
             .remove(KEY_CELL_BORDER_ENABLED)
             .remove(KEY_CELL_BORDER_COLOR)
             .apply()
+        triggerCloudSync(context)
+    }
+
+    private fun triggerCloudSync(context: Context) {
+        try {
+            val authRepo = com.bingo.multiplayer.domain.repository.AuthRepository.activeInstance
+            val user = authRepo?.getPersistedUserSync()
+            if (user != null && user.uid.isNotBlank()) {
+                val settings = authRepo.getSettings()
+                com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(context)
+                    .syncUserProfile(user, settings)
+            }
+        } catch (_: Exception) {}
     }
 
     fun createCustomPalette(hex: String): AppAccentPalette {

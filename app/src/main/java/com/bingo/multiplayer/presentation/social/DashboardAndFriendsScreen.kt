@@ -74,7 +74,11 @@ fun DashboardAndFriendsScreen(
     val pendingRequests by friendsRepository.pendingRequests.collectAsState()
     val sentRequests by friendsRepository.sentRequestUsernames.collectAsState()
     val presenceMap by PresenceManager.presenceFlow.collectAsState()
-    val matchHistory = remember { authRepository.getMatchHistory() }
+    val firestoreMatches by remember(user.uid) {
+        authRepository.streamFirestoreMatchHistory() ?: kotlinx.coroutines.flow.flowOf(emptyList())
+    }.collectAsState(initial = emptyList())
+    val localMatches = remember { authRepository.getMatchHistory() }
+    val matchHistory = if (firestoreMatches.isNotEmpty()) firestoreMatches else localMatches
 
     // Friend search state
     var searchUsernameInput by remember { mutableStateOf("") }

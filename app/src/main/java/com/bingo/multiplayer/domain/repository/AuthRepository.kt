@@ -252,6 +252,13 @@ class AuthRepository(
                     restoreCloudUserData(googleId)
                 }
             }
+
+            if (context != null) {
+                com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(context)
+                    .startRealtimeProfileListener(user.uid) { _, remoteSettings ->
+                        updateSettings(remoteSettings)
+                    }
+            }
         }
         state
     }
@@ -671,7 +678,16 @@ class AuthRepository(
             soundEnabled = prefs.getBoolean("settings_sound", true),
             hapticsEnabled = prefs.getBoolean("settings_haptics", true),
             preferredBoardSize = prefs.getInt("settings_board_size", 5),
-            darkTheme = com.bingo.multiplayer.core.designsystem.ThemePreferences.isDarkTheme.value
+            darkTheme = com.bingo.multiplayer.core.designsystem.ThemePreferences.isDarkTheme.value,
+            accentColorId = com.bingo.multiplayer.core.designsystem.ThemePreferences.accentColorId.value,
+            customAccentHex = com.bingo.multiplayer.core.designsystem.ThemePreferences.customColorHex.value,
+            customMyPickHex = com.bingo.multiplayer.core.designsystem.ThemePreferences.customMyPickHex.value,
+            customOpponentPickHex = com.bingo.multiplayer.core.designsystem.ThemePreferences.customOpponentPickHex.value,
+            customRecentPickHex = com.bingo.multiplayer.core.designsystem.ThemePreferences.customRecentPickHex.value,
+            customCompletedLineHex = com.bingo.multiplayer.core.designsystem.ThemePreferences.customCompletedLineHex.value,
+            cellBorderEnabled = com.bingo.multiplayer.core.designsystem.ThemePreferences.cellBorderEnabled.value,
+            cellBorderColorHex = com.bingo.multiplayer.core.designsystem.ThemePreferences.cellBorderColorHex.value,
+            isLiquidMetalTheme = com.bingo.multiplayer.core.designsystem.ThemePreferences.isLiquidMetalTheme.value
         )
     }
 
@@ -682,7 +698,22 @@ class AuthRepository(
             .putInt("settings_board_size", settings.preferredBoardSize)
             .putBoolean("settings_dark_theme", settings.darkTheme)
             .apply()
-        context?.let { com.bingo.multiplayer.core.designsystem.ThemePreferences.setDarkTheme(it, settings.darkTheme) }
+        context?.let { ctx ->
+            com.bingo.multiplayer.core.designsystem.ThemePreferences.setDarkTheme(ctx, settings.darkTheme)
+            com.bingo.multiplayer.core.designsystem.ThemePreferences.setAccentColor(ctx, settings.accentColorId)
+            com.bingo.multiplayer.core.designsystem.ThemePreferences.setCustomColor(ctx, settings.customAccentHex)
+            com.bingo.multiplayer.core.designsystem.ThemePreferences.setMyPickColor(ctx, settings.customMyPickHex)
+            com.bingo.multiplayer.core.designsystem.ThemePreferences.setOpponentPickColor(ctx, settings.customOpponentPickHex)
+            com.bingo.multiplayer.core.designsystem.ThemePreferences.setRecentPickColor(ctx, settings.customRecentPickHex)
+            com.bingo.multiplayer.core.designsystem.ThemePreferences.setCompletedLineColor(ctx, settings.customCompletedLineHex)
+            com.bingo.multiplayer.core.designsystem.ThemePreferences.setCellBorderEnabled(ctx, settings.cellBorderEnabled)
+            com.bingo.multiplayer.core.designsystem.ThemePreferences.setCellBorderColor(ctx, settings.cellBorderColorHex)
+            com.bingo.multiplayer.core.designsystem.ThemePreferences.setLiquidMetalTheme(ctx, settings.isLiquidMetalTheme)
+        }
+        val user = (_authState.value as? AuthState.Authenticated)?.user ?: getPersistedUserSync()
+        if (context != null && user != null && user.uid.isNotBlank()) {
+            com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(context).syncUserProfile(user, settings)
+        }
         backupUserDataToCloud()
     }
 
@@ -693,6 +724,13 @@ class AuthRepository(
         } catch (_: Exception) {
             emptyList()
         }
+    }
+
+    fun streamFirestoreMatchHistory(): kotlinx.coroutines.flow.Flow<List<com.bingo.multiplayer.domain.model.MatchRecord>>? {
+        val uid = (_authState.value as? AuthState.Authenticated)?.user?.uid ?: prefs.getString(KEY_UID, "") ?: ""
+        return if (context != null && uid.isNotBlank()) {
+            com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(context).streamMatchHistory(uid)
+        } else null
     }
 
     fun recordMatch(
@@ -717,6 +755,14 @@ class AuthRepository(
         currentHistory.add(0, record)
         val trimmed = if (currentHistory.size > 1000) currentHistory.take(1000) else currentHistory
         prefs.edit().putString("match_history", Json.encodeToString(trimmed)).apply()
+
+        if (context != null) {
+            val uid = (_authState.value as? AuthState.Authenticated)?.user?.uid ?: prefs.getString(KEY_UID, "") ?: ""
+            if (uid.isNotBlank()) {
+                com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(context).recordMatch(uid, record)
+            }
+        }
+
         recordGameFinished(didWin = didWin, isDraw = isDraw)
     }
 
@@ -832,6 +878,9 @@ class AuthRepository(
         }
         sessionManager.stopSessionWatcher()
         com.bingo.multiplayer.domain.network.PresenceManager.stopPresence()
+        if (context != null) {
+            com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(context).stopRealtimeProfileListener()
+        }
         prefs.edit()
             .remove(KEY_UID)
             .remove(KEY_AUTH_TOKEN)
@@ -887,6 +936,11 @@ class AuthRepository(
 
         if (context != null && profile.username.isNotBlank()) {
             com.bingo.multiplayer.domain.network.BingoFcmManager.syncCurrentUserToken(context, profile.username)
+        }
+
+        if (context != null && profile.uid.isNotBlank()) {
+            com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(context)
+                .syncUserProfile(profile, getSettings())
         }
     }
 

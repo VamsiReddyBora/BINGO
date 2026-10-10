@@ -59,7 +59,16 @@ data class UserSettings(
     val soundEnabled: Boolean = true,
     val hapticsEnabled: Boolean = true,
     val preferredBoardSize: Int = 5,
-    val darkTheme: Boolean = false
+    val darkTheme: Boolean = false,
+    val accentColorId: String = "matte_slate",
+    val customAccentHex: String = "#64748B",
+    val customMyPickHex: String? = null,
+    val customOpponentPickHex: String? = null,
+    val customRecentPickHex: String? = null,
+    val customCompletedLineHex: String? = null,
+    val cellBorderEnabled: Boolean = false,
+    val cellBorderColorHex: String = "#FFFFFF",
+    val isLiquidMetalTheme: Boolean = false
 )
 
 @Keep

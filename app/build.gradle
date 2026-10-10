@@ -128,9 +128,11 @@ dependencies {
     // Android WorkManager for Background Periodic Tasks (Updates & Maintenance)
     implementation 'androidx.work:work-runtime-ktx:2.9.0'
 
-    // Firebase Cloud Messaging (FCM)
+    // Firebase Cloud Messaging (FCM) & Cloud Firestore
     implementation platform('com.google.firebase:firebase-bom:33.4.0')
     implementation 'com.google.firebase:firebase-messaging-ktx'
+    implementation 'com.google.firebase:firebase-firestore-ktx'
+    implementation 'com.google.guava:guava:33.2.1-android'
 
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3'

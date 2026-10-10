@@ -1,0 +1,359 @@
+rules_version = '2';
+
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: users
+// Document ID: {userId} (matches Firebase Auth UID)
+// Description: Public player profile, stats, level, and settings.
+// Fields:
+//   - uid: string (required, immutable) - Must match document ID and request.auth.uid
+//   - displayName: string (required, 1-50 chars) - Player's screen name
+//   - username: string (optional, 0-20 chars, alphanumeric + underscore) - Unique handle
+//   - avatarUrl: string (optional, <= 2048 chars) - URL to player avatar image
+//   - avatarBase64: string (optional, <= 200,000 chars) - Base64 encoded avatar thumbnail
+//   - provider: string (optional, in ['PLAY_GAMES', 'GOOGLE', 'GUEST']) - Auth provider badge
+//   - gamesPlayed: number (required, integer >= 0, <= 1,000,000) - Total matches played
+//   - gamesWon: number (required, integer >= 0, <= gamesPlayed) - Total matches won
+//   - currentStreak: number (optional, integer >= 0, <= 100,000) - Consecutive wins
+//   - bestStreak: number (optional, integer >= 0, >= currentStreak) - Career best win streak
+//   - level: number (required, integer >= 1, <= 1000) - Player level
+//   - xp: number (required, integer >= 0, <= 100,000,000) - Player experience points
+//   - appVersion: string (optional, <= 30 chars) - Client app version string
+//   - appVersionCode: number (optional, integer >= 0) - Android versionCode
+//   - settings: map (optional) - User audio, haptic, theme, and color preferences
+//   - lastSeenTimestamp: timestamp | number (optional, > 0) - Last active presence timestamp
+//   - createdAt: timestamp | number (optional, immutable) - Account creation timestamp
+//   - updatedAt: timestamp | number (optional) - Profile last update timestamp
+//   * Note: PII such as email/phone is explicitly forbidden in this public profile collection.
+//
+// Subcollection: users/{userId}/matches
+// Document ID: {matchId} (unique match UUID or record ID)
+// Description: Private match history archive for the player.
+// Fields:
+//   - id: string (optional, matches {matchId}, <= 100 chars) - Match identifier
+//   - mode: string (required, 1-30 chars) - Game mode (Online, Nearby, LAN, etc.)
+//   - opponentName: string (required, 1-50 chars) - Opponent display name
+//   - opponentUid: string (optional, <= 128 chars) - Opponent UID
+//   - didWin: bool (required) - True if the user won the match
+//   - isDraw: bool (optional) - True if the match ended in a draw
+//   - boardSize: number (required, integer in [3, 4, 5, 6, 7]) - Board grid size
+//   - timestamp: timestamp | number (required, > 0, immutable) - Match recorded timestamp
+//   - createdAt: timestamp | number (optional, immutable) - Record creation timestamp
+//   - matchTitle: string (optional, <= 100 chars) - Custom match summary / title
+//   - score: number (optional, integer 0-10,000) - Earned match score
+//   - durationSeconds: number (optional, integer 0-86,400) - Match duration in seconds
+//
+// Subcollection: users/{userId}/friends
+// Document ID: {friendId} (friend user UID)
+// Description: Private in-app friends list for the player.
+// Fields:
+//   - uid: string (required, immutable, matches {friendId}, 1-128 chars) - Friend UID
+//   - displayName: string (required, 1-50 chars) - Friend display name
+//   - username: string (optional, <= 30 chars) - Friend handle
+//   - avatarUrl: string (optional, <= 2048 chars) - Friend avatar URL
+//   - isOnline: bool (optional) - Online status indicator
+//   - lastSeenTimestamp: timestamp | number (optional, > 0) - Last seen timestamp
+//   - addedAt: timestamp | number (optional, immutable) - Friend added timestamp
+//   - createdAt: timestamp | number (optional, immutable) - Record creation timestamp
+//
+// Collection: usernames
+// Document ID: {username} (lowercase handle, ^[a-z0-9_]{3,20}$)
+// Description: Global unique handle reservation registry.
+// Fields:
+//   - uid: string (required, immutable, 1-128 chars) - UID of player who reserved handle
+//   - username: string (required, immutable, matches {username}) - Reserved username
+//   - displayName: string (optional, 1-50 chars) - Public display name for search preview
+//   - avatarUrl: string (optional, <= 2048 chars) - Avatar URL for search preview
+//   - createdAt: timestamp | number (optional, immutable) - Reservation timestamp
+//
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // -------------------------------------------------------------
+    // Core Helper Functions
+    // -------------------------------------------------------------
+
+    // Check if the caller is an authenticated Firebase user
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Check if the caller is the owner of the document based on path userId
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Validate that a field is a timestamp or a positive unix epoch number
+    function isValidTimestampOrMillis(val) {
+      return val is timestamp || (val is number && val > 0);
+    }
+
+    // Verify that specified immutable fields have not been altered during update
+    function areImmutableFieldsUnchanged(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    // -------------------------------------------------------------
+    // Domain Validator: User Settings Map
+    // -------------------------------------------------------------
+    function isValidUserSettings(settings) {
+      let allowedSettings = [
+        'soundEnabled',
+        'hapticsEnabled',
+        'preferredBoardSize',
+        'darkTheme',
+        'accentColorId',
+        'customAccentHex',
+        'customMyPickHex',
+        'customOpponentPickHex',
+        'customRecentPickHex',
+        'customCompletedLineHex',
+        'cellBorderEnabled',
+        'cellBorderColorHex',
+        'isLiquidMetalTheme'
+      ];
+
+      return settings is map &&
+        settings.keys().hasOnly(allowedSettings) &&
+        (!('soundEnabled' in settings) || settings.soundEnabled == null || settings.soundEnabled is bool) &&
+        (!('hapticsEnabled' in settings) || settings.hapticsEnabled == null || settings.hapticsEnabled is bool) &&
+        (!('preferredBoardSize' in settings) || settings.preferredBoardSize == null || (settings.preferredBoardSize is number && settings.preferredBoardSize >= 3 && settings.preferredBoardSize <= 7)) &&
+        (!('darkTheme' in settings) || settings.darkTheme == null || settings.darkTheme is bool) &&
+        (!('accentColorId' in settings) || settings.accentColorId == null || (settings.accentColorId is string && settings.accentColorId.size() <= 50)) &&
+        (!('customAccentHex' in settings) || settings.customAccentHex == null || (settings.customAccentHex is string && settings.customAccentHex.size() <= 16)) &&
+        (!('customMyPickHex' in settings) || settings.customMyPickHex == null || (settings.customMyPickHex is string && settings.customMyPickHex.size() <= 16)) &&
+        (!('customOpponentPickHex' in settings) || settings.customOpponentPickHex == null || (settings.customOpponentPickHex is string && settings.customOpponentPickHex.size() <= 16)) &&
+        (!('customRecentPickHex' in settings) || settings.customRecentPickHex == null || (settings.customRecentPickHex is string && settings.customRecentPickHex.size() <= 16)) &&
+        (!('customCompletedLineHex' in settings) || settings.customCompletedLineHex == null || (settings.customCompletedLineHex is string && settings.customCompletedLineHex.size() <= 16)) &&
+        (!('cellBorderEnabled' in settings) || settings.cellBorderEnabled == null || settings.cellBorderEnabled is bool) &&
+        (!('cellBorderColorHex' in settings) || settings.cellBorderColorHex == null || (settings.cellBorderColorHex is string && settings.cellBorderColorHex.size() <= 16)) &&
+        (!('isLiquidMetalTheme' in settings) || settings.isLiquidMetalTheme == null || settings.isLiquidMetalTheme is bool);
+    }
+
+    // -------------------------------------------------------------
+    // Domain Validator: User Profile & Stats Document
+    // -------------------------------------------------------------
+    function isValidUser(userId, data) {
+      let allowedUserFields = [
+        'uid', 'username', 'displayName', 'avatarUrl', 'avatarBase64',
+        'provider', 'gamesPlayed', 'gamesWon', 'currentStreak', 'bestStreak',
+        'level', 'xp', 'appVersion', 'appVersionCode', 'settings',
+        'lastSeenTimestamp', 'createdAt', 'updatedAt'
+      ];
+      let requiredUserFields = [
+        'uid', 'displayName', 'gamesPlayed', 'gamesWon', 'level', 'xp'
+      ];
+
+      return data.keys().hasAll(requiredUserFields) &&
+        data.keys().hasOnly(allowedUserFields) &&
+        data.uid == userId &&
+        data.uid == request.auth.uid &&
+        data.displayName is string &&
+        data.displayName.size() >= 1 &&
+        data.displayName.size() <= 50 &&
+        (!('username' in data) || data.username == null || (data.username is string && data.username.size() <= 20 && (data.username.size() == 0 || data.username.matches('^[a-zA-Z0-9_]{3,20}$')))) &&
+        (!('avatarUrl' in data) || data.avatarUrl == null || (data.avatarUrl is string && data.avatarUrl.size() <= 2048)) &&
+        (!('avatarBase64' in data) || data.avatarBase64 == null || (data.avatarBase64 is string && data.avatarBase64.size() <= 200000)) &&
+        (!('provider' in data) || data.provider == null || (data.provider is string && data.provider in ['PLAY_GAMES', 'GOOGLE', 'GUEST'])) &&
+        data.gamesPlayed is number &&
+        data.gamesPlayed >= 0 &&
+        data.gamesPlayed <= 1000000 &&
+        data.gamesWon is number &&
+        data.gamesWon >= 0 &&
+        data.gamesWon <= data.gamesPlayed &&
+        (!('currentStreak' in data) || data.currentStreak == null || (data.currentStreak is number && data.currentStreak >= 0 && data.currentStreak <= 100000)) &&
+        (!('bestStreak' in data) || data.bestStreak == null || (data.bestStreak is number && data.bestStreak >= 0 && data.bestStreak <= 100000 && (!('currentStreak' in data) || data.currentStreak == null || data.bestStreak >= data.currentStreak))) &&
+        data.level is number &&
+        data.level >= 1 &&
+        data.level <= 1000 &&
+        data.xp is number &&
+        data.xp >= 0 &&
+        data.xp <= 100000000 &&
+        (!('appVersion' in data) || data.appVersion == null || (data.appVersion is string && data.appVersion.size() <= 30)) &&
+        (!('appVersionCode' in data) || data.appVersionCode == null || (data.appVersionCode is number && data.appVersionCode >= 0)) &&
+        (!('settings' in data) || data.settings == null || isValidUserSettings(data.settings)) &&
+        (!('lastSeenTimestamp' in data) || data.lastSeenTimestamp == null || isValidTimestampOrMillis(data.lastSeenTimestamp)) &&
+        (!('createdAt' in data) || data.createdAt == null || isValidTimestampOrMillis(data.createdAt)) &&
+        (!('updatedAt' in data) || data.updatedAt == null || isValidTimestampOrMillis(data.updatedAt));
+    }
+
+    // -------------------------------------------------------------
+    // Domain Validator: Match Record Document
+    // -------------------------------------------------------------
+    function isValidMatch(matchId, data) {
+      let allowedMatchFields = [
+        'id', 'mode', 'opponentName', 'opponentUid', 'didWin', 'isDraw',
+        'boardSize', 'timestamp', 'createdAt', 'matchTitle', 'score', 'durationSeconds'
+      ];
+      let requiredMatchFields = [
+        'mode', 'opponentName', 'didWin', 'boardSize', 'timestamp'
+      ];
+
+      return data.keys().hasAll(requiredMatchFields) &&
+        data.keys().hasOnly(allowedMatchFields) &&
+        (!('id' in data) || data.id == null || data.id == matchId) &&
+        data.mode is string &&
+        data.mode.size() >= 1 &&
+        data.mode.size() <= 30 &&
+        data.opponentName is string &&
+        data.opponentName.size() >= 1 &&
+        data.opponentName.size() <= 50 &&
+        (!('opponentUid' in data) || data.opponentUid == null || (data.opponentUid is string && data.opponentUid.size() <= 128)) &&
+        data.didWin is bool &&
+        (!('isDraw' in data) || data.isDraw == null || data.isDraw is bool) &&
+        data.boardSize is number &&
+        data.boardSize >= 3 &&
+        data.boardSize <= 7 &&
+        isValidTimestampOrMillis(data.timestamp) &&
+        (!('matchTitle' in data) || data.matchTitle == null || (data.matchTitle is string && data.matchTitle.size() <= 100)) &&
+        (!('score' in data) || data.score == null || (data.score is number && data.score >= 0 && data.score <= 10000)) &&
+        (!('durationSeconds' in data) || data.durationSeconds == null || (data.durationSeconds is number && data.durationSeconds >= 0 && data.durationSeconds <= 86400)) &&
+        (!('createdAt' in data) || data.createdAt == null || isValidTimestampOrMillis(data.createdAt));
+    }
+
+    // -------------------------------------------------------------
+    // Domain Validator: Friend Document
+    // -------------------------------------------------------------
+    function isValidFriend(friendId, data) {
+      let allowedFriendFields = [
+        'uid', 'username', 'displayName', 'avatarUrl', 'isOnline',
+        'lastSeenTimestamp', 'addedAt', 'createdAt'
+      ];
+      let requiredFriendFields = [
+        'uid', 'displayName'
+      ];
+
+      return data.keys().hasAll(requiredFriendFields) &&
+        data.keys().hasOnly(allowedFriendFields) &&
+        data.uid == friendId &&
+        friendId.size() >= 1 &&
+        friendId.size() <= 128 &&
+        data.displayName is string &&
+        data.displayName.size() >= 1 &&
+        data.displayName.size() <= 50 &&
+        (!('username' in data) || data.username == null || (data.username is string && data.username.size() <= 30)) &&
+        (!('avatarUrl' in data) || data.avatarUrl == null || (data.avatarUrl is string && data.avatarUrl.size() <= 2048)) &&
+        (!('isOnline' in data) || data.isOnline == null || data.isOnline is bool) &&
+        (!('lastSeenTimestamp' in data) || data.lastSeenTimestamp == null || isValidTimestampOrMillis(data.lastSeenTimestamp)) &&
+        (!('addedAt' in data) || data.addedAt == null || isValidTimestampOrMillis(data.addedAt)) &&
+        (!('createdAt' in data) || data.createdAt == null || isValidTimestampOrMillis(data.createdAt));
+    }
+
+    // -------------------------------------------------------------
+    // Domain Validator: Username Reservation Document
+    // -------------------------------------------------------------
+    function isValidUsernameReservation(username, data) {
+      let allowedUsernameFields = [
+        'uid', 'username', 'createdAt', 'displayName', 'avatarUrl'
+      ];
+      let requiredUsernameFields = [
+        'uid', 'username'
+      ];
+
+      return data.keys().hasAll(requiredUsernameFields) &&
+        data.keys().hasOnly(allowedUsernameFields) &&
+        username.matches('^[a-z0-9_]{3,20}$') &&
+        data.username == username &&
+        data.uid == request.auth.uid &&
+        data.uid is string &&
+        data.uid.size() >= 1 &&
+        data.uid.size() <= 128 &&
+        (!('displayName' in data) || data.displayName == null || (data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 50)) &&
+        (!('avatarUrl' in data) || data.avatarUrl == null || (data.avatarUrl is string && data.avatarUrl.size() <= 2048)) &&
+        (!('createdAt' in data) || data.createdAt == null || isValidTimestampOrMillis(data.createdAt));
+    }
+
+    // -------------------------------------------------------------
+    // Default Deny Rule
+    // -------------------------------------------------------------
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // -------------------------------------------------------------
+    // 1. User Profiles & Stats
+    // Path: /users/{userId}
+    // -------------------------------------------------------------
+    match /users/{userId} {
+      // Publicly readable so other players can see profiles and match stats
+      allow read: if true;
+
+      // Only the authenticated owner can create their own profile document
+      allow create: if isOwner(userId) && isValidUser(userId, request.resource.data);
+
+      // Only the owner can update, keeping immutable fields intact and enforcing schema
+      allow update: if isOwner(userId) &&
+                       isValidUser(userId, request.resource.data) &&
+                       areImmutableFieldsUnchanged(['uid', 'createdAt']);
+
+      // Only the owner can delete their account profile
+      allow delete: if isOwner(userId);
+
+      // -----------------------------------------------------------
+      // 2. Private Match History Records
+      // Path: /users/{userId}/matches/{matchId}
+      // -----------------------------------------------------------
+      match /matches/{matchId} {
+        // Strictly private: readable only by the owner
+        allow read: if isOwner(userId);
+
+        // Created only by the owner with valid match schema
+        allow create: if isOwner(userId) && isValidMatch(matchId, request.resource.data);
+
+        // Updated only by the owner with schema validation and immutable fields
+        allow update: if isOwner(userId) &&
+                         isValidMatch(matchId, request.resource.data) &&
+                         areImmutableFieldsUnchanged(['id', 'timestamp', 'createdAt']);
+
+        // Deleted only by the owner
+        allow delete: if isOwner(userId);
+      }
+
+      // -----------------------------------------------------------
+      // 3. Private Friends List
+      // Path: /users/{userId}/friends/{friendId}
+      // -----------------------------------------------------------
+      match /friends/{friendId} {
+        // Strictly private: readable only by the owner
+        allow read: if isOwner(userId);
+
+        // Created only by the owner with valid friend schema
+        allow create: if isOwner(userId) && isValidFriend(friendId, request.resource.data);
+
+        // Updated only by the owner with schema validation
+        allow update: if isOwner(userId) &&
+                         isValidFriend(friendId, request.resource.data) &&
+                         areImmutableFieldsUnchanged(['uid', 'createdAt', 'addedAt']);
+
+        // Deleted only by the owner (unfriending)
+        allow delete: if isOwner(userId);
+      }
+    }
+
+    // -------------------------------------------------------------
+    // 4. Username Reservations
+    // Path: /usernames/{username}
+    // Document ID is the unique lowercase username handle.
+    // -------------------------------------------------------------
+    match /usernames/{username} {
+      // Publicly readable so players can search and check availability
+      allow read: if true;
+
+      // Authenticated users can reserve an available username for their own UID
+      allow create: if isAuthenticated() && isValidUsernameReservation(username, request.resource.data);
+
+      // Only the reservation owner can update display details; ownership & handle are immutable
+      allow update: if isAuthenticated() &&
+                       resource.data.uid == request.auth.uid &&
+                       isValidUsernameReservation(username, request.resource.data) &&
+                       areImmutableFieldsUnchanged(['uid', 'username', 'createdAt']);
+
+      // Only the reservation owner can release/delete their username reservation
+      allow delete: if isAuthenticated() && resource.data.uid == request.auth.uid;
+    }
+  }
+}
