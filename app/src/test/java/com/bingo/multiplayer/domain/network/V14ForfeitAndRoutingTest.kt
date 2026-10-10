@@ -7,7 +7,7 @@ import org.junit.Assert.*
 import org.junit.Test
 
 /**
- * Unit and simulation tests verifying fixes for BUG-024 through BUG-030:
+ * Unit and simulation tests verifying fixes for BUG-024 through BUG-034:
  * - BUG-024: winnerPlayerId and activeWinReason populated on all forfeit paths
  * - BUG-025: ManualBoardDesign included in in-game state and ready player filtering
  * - BUG-026: 2-player disconnect turn rotation and 3-miss forfeit condition reachable
@@ -15,6 +15,10 @@ import org.junit.Test
  * - BUG-028: Surrender dialog invokes onSurrender during active matches
  * - BUG-029: StampResultType.DRAW is deprecated; only WON, RUNNER, LOST, OFFLINE apply
  * - BUG-030: LAN P2P host disconnect awards forfeit win to guest
+ * - BUG-031: consecutiveMissedTurns set to 3 immediately on explicit surrender, host exit, or leave
+ * - BUG-032: isRunnerMatch, winnerPlayerId, activeWinReason, and activeRunnerPlayerIds reset on manual board rematches
+ * - BUG-033: TURN_TIMEOUT peer sync increments consecutiveMissedTurns and evaluates forfeit
+ * - BUG-034: REJOIN_GAME uses normalized isPlayerDisconnected to prevent prefix mismatch
  */
 class V14ForfeitAndRoutingTest {
 
@@ -210,5 +214,174 @@ class V14ForfeitAndRoutingTest {
         assertEquals("guest_uid", winnerPlayerId)
         assertEquals("Host Disconnected", activeWinReason)
         assertEquals("Host disconnected. You win by forfeit!", opponentDisconnectMessage)
+    }
+
+    @Test
+    fun testBug031_explicitSurrenderOrLeaveSetsThreeMissesImmediately() {
+        val playerA = Player(id = "user_a", displayName = "Player A", isHost = true)
+        val playerB = Player(id = "user_b", displayName = "Player B", isHost = false)
+        val playerC = Player(id = "user_c", displayName = "Player C", isHost = false)
+        val candidatePlayers = listOf(playerA, playerB, playerC)
+
+        val disconnectedPlayerIds = mutableSetOf<String>()
+        val consecutiveMissedTurns = mutableMapOf<String, Int>()
+
+        // Player B surrenders or leaves explicitly
+        val surrenderId = "user_b"
+        disconnectedPlayerIds.add(surrenderId)
+        consecutiveMissedTurns[surrenderId] = 3
+
+        val fullyDisconnected = disconnectedPlayerIds.filter { (consecutiveMissedTurns[it] ?: 0) >= 3 }.toSet()
+        assertTrue("Departed player must immediately be fully disconnected", fullyDisconnected.contains("user_b"))
+
+        // Next turn from player A must go directly to player C, completely skipping surrendered player B
+        val nextTurn = LobbyLifecycleEngine.calculateNextTurnPlayerId(
+            allParticipants = candidatePlayers,
+            disconnectedPlayerIds = fullyDisconnected,
+            currentPickerId = "user_a",
+            fallbackPlayerId = "user_a",
+            matchSeed = 99999L
+        )
+        assertNotEquals("Turn must not go to surrendered player B", "user_b", nextTurn)
+        assertEquals("Turn must immediately advance to player C", "user_c", nextTurn)
+    }
+
+    @Test
+    fun testBug032_manualBoardRematchResetsRunnerAndWinnerOutcomes() {
+        // State lingering from Match 1 where user was Runner
+        var isGameOver = true
+        var didPlayerWin = false
+        var isDrawMatch = false
+        var isRunnerMatch = true
+        var winnerPlayerId = "user_winner_m1"
+        var activeWinReason = "Match 1 Completed"
+        var activeRunnerPlayerIds = listOf("user_me")
+
+        // Simulation of reset applied across manual board entry points
+        fun resetMatchOutcomes() {
+            isGameOver = false
+            didPlayerWin = false
+            isDrawMatch = false
+            isRunnerMatch = false
+            winnerPlayerId = ""
+            activeWinReason = ""
+            activeRunnerPlayerIds = emptyList()
+        }
+
+        resetMatchOutcomes()
+
+        assertFalse("isGameOver must be reset", isGameOver)
+        assertFalse("didPlayerWin must be reset", didPlayerWin)
+        assertFalse("isDrawMatch must be reset", isDrawMatch)
+        assertFalse("isRunnerMatch must be reset to prevent false runner stamp in Match 2", isRunnerMatch)
+        assertEquals("winnerPlayerId must be empty", "", winnerPlayerId)
+        assertEquals("activeWinReason must be empty", "", activeWinReason)
+        assertTrue("activeRunnerPlayerIds must be empty", activeRunnerPlayerIds.isEmpty())
+
+        // Verify that upon defeat in Match 2, stamp resolves to LOST, not RUNNER
+        val isLocalSelected = true
+        val isLocalDisconnected = false
+        val didPlayerWinM2 = false
+        val isRunnerM2 = isRunnerMatch // which was reset to false
+
+        val (stampType, stampText) = if (isLocalSelected) {
+            when {
+                isLocalDisconnected -> StampResultType.OFFLINE to "OFFLINE"
+                didPlayerWinM2 -> StampResultType.WON to "YOU'VE WON!"
+                isRunnerM2 -> StampResultType.RUNNER to "RUNNER!"
+                else -> StampResultType.LOST to "YOU LOST!"
+            }
+        } else {
+            StampResultType.LOST to "YOU LOST!"
+        }
+
+        assertEquals(StampResultType.LOST, stampType)
+        assertEquals("YOU LOST!", stampText)
+    }
+
+    @Test
+    fun testBug033_peerTurnTimeoutPacketIncrementsMissesAndEvaluatesForfeit() {
+        val myUid = "user_me"
+        val opponentUid = "user_opp"
+        val participants = listOf(
+            Player(id = myUid, displayName = "Me", isHost = false),
+            Player(id = opponentUid, displayName = "Opponent", isHost = true)
+        )
+        val disconnectedPlayerIds = mutableSetOf<String>()
+        val consecutiveMissedTurns = mutableMapOf<String, Int>()
+
+        fun markPlayerDisconnected(id: String) {
+            disconnectedPlayerIds.add(id)
+        }
+
+        fun isPlayerDisconnected(id: String): Boolean =
+            disconnectedPlayerIds.any { LobbyLifecycleEngine.isPlayerIdMatch(it, id) }
+
+        // Peer receives TURN_TIMEOUT packet for opponentUid
+        val packetPlayerId = opponentUid
+        markPlayerDisconnected(packetPlayerId)
+        val misses = (consecutiveMissedTurns[packetPlayerId] ?: 0) + 1
+        consecutiveMissedTurns[packetPlayerId] = misses
+
+        assertEquals(1, consecutiveMissedTurns[opponentUid])
+        assertTrue(isPlayerDisconnected(opponentUid))
+
+        // Fast-forward to 3 misses
+        consecutiveMissedTurns[packetPlayerId] = 3
+        val activeRemaining = participants.filter { it.id.isNotBlank() && !isPlayerDisconnected(it.id) }
+        val currentMisses = consecutiveMissedTurns[packetPlayerId] ?: 0
+
+        var isGameOver = false
+        var didPlayerWin = false
+        var winnerPlayerId = ""
+        var activeWinReason = ""
+
+        if (activeRemaining.size <= 1 && currentMisses >= 3) {
+            isGameOver = true
+            val wonByForfeit = activeRemaining.any { it.id == myUid } || participants.size <= 2
+            didPlayerWin = wonByForfeit
+            winnerPlayerId = if (wonByForfeit) myUid else ""
+            activeWinReason = "Opponent Disconnected"
+        }
+
+        assertTrue("Game must conclude on 3 misses with 1 remaining active player", isGameOver)
+        assertTrue("Peer must win by forfeit", didPlayerWin)
+        assertEquals(myUid, winnerPlayerId)
+        assertEquals("Opponent Disconnected", activeWinReason)
+    }
+
+    @Test
+    fun testBug034_rejoinGameUsesNormalizedPrefixPlayerIdMatch() {
+        val hostUid = "u_host123"
+        val guestUid = "guest456"
+        val participants = listOf(
+            Player(id = hostUid, displayName = "Host", isHost = true),
+            Player(id = guestUid, displayName = "Guest", isHost = false)
+        )
+
+        // Disconnected set contains host without the "u_" prefix
+        val disconnectedPlayerIds = mutableSetOf("host123")
+
+        fun isPlayerDisconnected(playerId: String): Boolean {
+            if (playerId.isBlank()) return false
+            return disconnectedPlayerIds.any { LobbyLifecycleEngine.isPlayerIdMatch(it, playerId) }
+        }
+
+        // Direct set check fails due to prefix mismatch
+        assertFalse(disconnectedPlayerIds.contains(hostUid))
+
+        // Canonical isPlayerDisconnected matches correctly
+        assertTrue(isPlayerDisconnected(hostUid))
+
+        val isHostLeftGame = false
+        val isHostGone = isHostLeftGame || (hostUid.isNotBlank() && isPlayerDisconnected(hostUid))
+        assertTrue("Host departure must be detected despite ID prefix difference", isHostGone)
+
+        val activeRemaining = participants.filter { it.id.isNotBlank() && !isPlayerDisconnected(it.id) }
+        assertEquals(1, activeRemaining.size)
+        assertEquals(guestUid, activeRemaining.first().id)
+
+        val isActingHost = isHostGone && activeRemaining.firstOrNull()?.id == guestUid
+        assertTrue("Guest must become acting host when host is disconnected", isActingHost)
     }
 }

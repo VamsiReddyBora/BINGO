@@ -1,0 +1,354 @@
+================================================================================
+BINGO MULTIPLAYER - ANDROID APPLICATION MODULAR AUDIT & BUG REPORT #007
+================================================================================
+Report ID       : BUG-REPORT-007 (Online Multiplayer Match & Session State Audit)
+Date            : 2026-10-10
+Target Platform : Android Native (Kotlin, Jetpack Compose, Coroutines, StateFlow)
+Scope           : Exclusively Android Application Codebase (app/src/main/java)
+Status          : 4 NEW MODULAR DEFECTS IDENTIFIED & DOCUMENTED
+Audited By      : Antigravity Code Review & Security Audit System
+================================================================================
+
+1. EXECUTIVE SUMMARY & VERIFICATION OVERVIEW
+--------------------------------------------------------------------------------
+Following the verification and merge of commit `dbd3f99` (which resolved defects
+BUG-024 through BUG-030 from Bug Report #006), an exhaustive, multi-device and
+multi-node simulation audit was conducted across the active online multiplayer
+match lifecycle.
+
+In strict adherence to project directives:
+  • Scope is restricted 100% to native Android files (`app/src/main/java/...`).
+  • Web application files are completely excluded.
+  • The audit is organized into clear functional modules:
+      1. In-Game Lifecycle & Turn Authority Engine
+      2. Match Reset & Manual Board State Machine
+      3. Network Handling & Turn State Reconciliation
+      4. Reconnection & Peer Coordination
+  • Draw mechanics remain permanently decommissioned (only Winner, Runner,
+    Lost, and Offline stamps apply).
+
+Full Test Suite Baseline Verification:
+  • 27 unit and simulation test suites executed.
+  • 100% PASS RATE (`./gradlew testDebugUnitTest` BUILD SUCCESSFUL in 2s).
+  • All 7 previous fixes from commit `dbd3f99` verified intact and functioning.
+
+While commit `dbd3f99` successfully addressed blank winner assignments on forfeit,
+Manual Board Design inclusion in in-game checks, ongoing match store cleanup on
+kicks, and guest forfeit wins on LAN host departure, this audit revealed 4 new
+subtle edge cases and race conditions in active online gameplay. These include
+conceded/departed players in group matches lingering in turn rotation for 3
+phantom cycles, residual Runner and Winner stamp leakage across manual board
+rematches, non-host missed-turn tracking omission causing turn desynchronization,
+and direct set lookup bypassing normalized prefix matching during rejoin state sync.
+
+
++-------------------------------------------------------------------------------+
+| SUMMARY OF DETECTED DEFECTS BY MODULE                                         |
++-------------+----------+----------------------------+-------------------------+
+| DEFECT ID   | SEVERITY | COMPONENT / LOCATION       | MODULE / CATEGORY       |
++-------------+----------+----------------------------+-------------------------+
+| BUG-031     | HIGH     | RootNavGraph.kt            | In-Game Lifecycle &     |
+|             |          | (2110-2135, 2253-2303,     | Turn Authority Engine   |
+|             |          |  2316-2380)                | (Phantom 3-Turn Delay)  |
+| BUG-032     | HIGH     | RootNavGraph.kt            | Match Reset &           |
+|             |          | (1108-1110, 1529-1538,     | Manual Board State      |
+|             |          |  3441-3446, 4243-4252)     | (Runner/Winner Leakage) |
+| BUG-033     | HIGH     | RootNavGraph.kt            | Network Handling &      |
+|             |          | (1744-1765)                | Turn State Reconcile    |
+|             |          |                            | (Peer Missed-Turn Sync) |
+| BUG-034     | MEDIUM   | RootNavGraph.kt            | Reconnection &          |
+|             |          | (1872-1873)                | Peer Coordination       |
+|             |          |                            | (Prefix Match Bypass)   |
++-------------+----------+----------------------------+-------------------------+
+
+
+================================================================================
+2. DETAILED DEFECT REPORTS & TECHNICAL FINDINGS BY MODULE
+================================================================================
+
+--------------------------------------------------------------------------------
+DEFECT ID: BUG-031
+SEVERITY : HIGH
+MODULE   : In-Game Lifecycle & Turn Authority Engine
+FILES    : RootNavGraph.kt (lines 2110-2135, 2253-2303, 2316-2380)
+--------------------------------------------------------------------------------
+DESCRIPTION:
+In group matches (3–8 players), when a player explicitly concedes (`SURRENDER`),
+the host exits the game (`HOST_LEFT`), or a player exits via back button (`LEAVE`),
+the departed player remains in the active turn rotation for 3 full phantom turn
+cycles. Active participants are forced to wait through unnecessary 2-second timeout
+periods per cycle before the departed player is finally excluded from rotation.
+
+ROOT CAUSE:
+In BUG-026, `calculateNextTurnPlayerId` was designed to accommodate temporary network
+drops by allowing players up to 3 missed turns before excluding them:
+```kotlin
+val fullyDisconnected = disconnectedPlayerIds.filter { (consecutiveMissedTurns[it] ?: 0) >= 3 }.toSet()
+com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.calculateNextTurnPlayerId(
+    allParticipants = candidatePlayers,
+    disconnectedPlayerIds = fullyDisconnected,
+    currentPickerId = currentPickerId,
+    fallbackPlayerId = myUid,
+    matchSeed = currentMatchSeed,
+    customTurnOrder = randomizedTurnOrder
+)
+```
+When a player experiences an unexpected drop, this 3-miss grace period allows them to
+reconnect. However, when a player intentionally surrenders (`SURRENDER`), the host quits
+(`HOST_LEFT`), or a client quits (`LEAVE`), `markPlayerDisconnected(playerId)` is called,
+but `consecutiveMissedTurns[playerId]` is never set to 3.
+
+Because `(consecutiveMissedTurns[playerId] ?: 0)` evaluates to 0:
+1. `fullyDisconnected` DOES NOT include the departed player.
+2. `LobbyLifecycleEngine.calculateNextTurnPlayerId` considers the conceded/departed
+   player an active participant.
+3. If it was the departed player's turn, `calculateNextTurnPlayerId(departedId)` evaluates
+   circular rotation including the departed player.
+4. On subsequent turns, the rotation cycles right back to the surrendered player, forcing
+   the room to wait for a 2-second timeout to increment misses to 1, then another cycle
+   to increment misses to 2, and another cycle to increment misses to 3.
+
+USER-FACING IMPACT:
+In any multiplayer match with 3 or more players, whenever an opponent surrenders or leaves,
+the match does not smoothly continue among the remaining active peers. Instead, gameplay
+stalls repeatedly as the turn indicator points to the departed/surrendered player 3
+separate times across the game, degrading match flow.
+
+REMEDIATION:
+In `RootNavGraph.kt`, immediately set `consecutiveMissedTurns[playerId] = 3` upon receiving
+explicit departure or surrender events:
+
+1. Under `"SURRENDER"` (line 2113):
+```kotlin
+if (surrenderId.isNotBlank()) {
+    markPlayerDisconnected(surrenderId)
+    consecutiveMissedTurns[surrenderId] = 3
+}
+```
+
+2. Under `"HOST_LEFT"` (line 2257):
+```kotlin
+if (hostId.isNotBlank()) {
+    markPlayerDisconnected(hostId)
+    consecutiveMissedTurns[hostId] = 3
+}
+```
+
+3. Under in-game `"LEAVE"` (line 2318):
+```kotlin
+markPlayerDisconnected(packet.playerId)
+consecutiveMissedTurns[packet.playerId] = 3
+```
+
+
+--------------------------------------------------------------------------------
+DEFECT ID: BUG-032
+SEVERITY : HIGH
+MODULE   : Match Reset & Manual Board State Machine
+FILES    : RootNavGraph.kt (lines 1108-1110, 1529-1538, 3441-3446, 4243-4252)
+           GameScreen.kt (lines 970-989)
+--------------------------------------------------------------------------------
+DESCRIPTION:
+When players complete a match and start a rematch using Custom / Manual Board Design,
+the outcome variables from the previous match (`isRunnerMatch`, `winnerPlayerId`,
+`activeWinReason`, and `activeRunnerPlayerIds`) are not reset. If a player was a
+"RUNNER" in Match 1, their `isRunnerMatch` remains `true` throughout Match 2. If they
+subsequently lose Match 2, they are incorrectly awarded the "RUNNER!" stamp badge and
+celebratory status instead of "YOU LOST!". Additionally, `winnerPlayerId` leaks into
+Match 2 post-game board reviews.
+
+ROOT CAUSE:
+In standard match initialization paths (`startNewGame`, `onReturnToLobby`, `onBackToMenu`,
+and `rejoinOngoingMatch`), all match outcome states are thoroughly reset:
+```kotlin
+isGameOver = false
+didPlayerWin = false
+isDrawMatch = false
+isRunnerMatch = false
+winnerPlayerId = ""
+activeWinReason = ""
+activeRunnerPlayerIds = emptyList()
+```
+However, in all four manual board preparation and transition paths:
+1. `PLAY_AGAIN` manual path for guest (lines 1529-1538)
+2. `onStartGame` manual path for host (lines 3441-3446)
+3. `onPlayAgain` manual path for host/acting host (lines 4243-4252)
+4. `startCountdownAndInitiateTurn()` countdown launch (lines 1108-1110)
+
+The reset code only executes:
+```kotlin
+isGameOver = false
+didPlayerWin = false
+isDrawMatch = false
+```
+It completely omits resetting `isRunnerMatch = false`, `winnerPlayerId = ""`,
+`activeWinReason = ""`, and `activeRunnerPlayerIds = emptyList()`.
+
+USER-FACING IMPACT:
+1. False Runner Stamp on Defeat: In `GameScreen.kt` (lines 970-976):
+```kotlin
+val (stampType, stampText) = if (isLocalSelected) {
+    when {
+        isLocalDisconnected -> StampResultType.OFFLINE to "OFFLINE"
+        didPlayerWin -> StampResultType.WON to "YOU'VE WON!"
+        isRunner -> StampResultType.RUNNER to "RUNNER!"
+        else -> StampResultType.LOST to "YOU LOST!"
+    }
+}
+```
+Because `isRunner` is still `true` from Match 1, a player who clearly lost Match 2
+(did not complete 5 lines) is stamped with `RUNNER!` instead of `YOU LOST!`.
+2. Winner Badge Corruption: In `GameScreen.kt` (lines 978-989), `isWinnerSelected` checks
+`LobbyLifecycleEngine.isPlayerIdMatch(selectedReviewPlayerId, winnerPlayerId)`.
+Because `winnerPlayerId` was not cleared from Match 1, viewing Match 1's winner in Match 2
+incorrectly labels them as `$reviewName WON!` even in games concluded by opponent forfeit.
+
+REMEDIATION:
+Add the missing resets across all 4 manual board entry points in `RootNavGraph.kt`:
+```kotlin
+isGameOver = false
+didPlayerWin = false
+isDrawMatch = false
+isRunnerMatch = false
+winnerPlayerId = ""
+activeWinReason = ""
+activeRunnerPlayerIds = emptyList()
+```
+
+
+--------------------------------------------------------------------------------
+DEFECT ID: BUG-033
+SEVERITY : HIGH
+MODULE   : Network Handling & Turn State Reconciliation
+FILES    : RootNavGraph.kt (lines 1744-1765, 3915-3916)
+--------------------------------------------------------------------------------
+DESCRIPTION:
+When the host detects that an opponent or peer has missed their turn due to a timeout,
+the host increments their missed turns counter (`consecutiveMissedTurns`) and broadcasts
+a `TURN_TIMEOUT` packet. However, non-host peer clients receiving this `TURN_TIMEOUT`
+packet update their turn number and active picker but fail to update their local
+`consecutiveMissedTurns` map and fail to call `markPlayerDisconnected`. As a result,
+peer clients fall out of sync with the host regarding which players are fully disconnected,
+leading to divergent turn rotation calculations.
+
+ROOT CAUSE:
+In `RootNavGraph.kt`, when the turn timer expires on the host (lines 3915-3916):
+```kotlin
+val misses = (consecutiveMissedTurns[activePicker] ?: 0) + 1
+consecutiveMissedTurns[activePicker] = misses
+markPlayerDisconnected(activePicker)
+```
+The host correctly updates `consecutiveMissedTurns[activePicker]` and broadcasts:
+`RoomMessagePacket(type = "TURN_TIMEOUT", playerId = activePicker, ...)`.
+
+However, in the `TURN_TIMEOUT` packet handler on peer devices (lines 1744-1765):
+```kotlin
+"TURN_TIMEOUT" -> {
+    if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
+        if (!com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPacketForActiveMatch(packet.seed, currentMatchSeed)) {
+            return
+        }
+        val shouldAdvance = (packet.turnNumber > turnNumber) ||
+                (packet.turnNumber == turnNumber && packet.playerId.isNotBlank() && com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(packet.playerId, currentTurnPlayerId))
+        if (shouldAdvance) {
+            turnNumber = maxOf(packet.turnNumber, turnNumber + 1)
+            turnTimer = 30
+            val nextId = if (packet.currentTurnPlayerId.isNotBlank()) {
+                packet.currentTurnPlayerId
+            } else {
+                calculateNextTurnPlayerId(packet.playerId)
+            }
+            currentTurnPlayerId = nextId
+            isMyTurn = (currentTurnPlayerId == myUid)
+            recentPick = RecentPick(number = -1, pickedByPlayerId = packet.playerId, turnNumber = turnNumber)
+            // MISSING: consecutiveMissedTurns increment and markPlayerDisconnected!
+        }
+    }
+}
+```
+Peer clients never update `consecutiveMissedTurns[packet.playerId]`.
+
+USER-FACING IMPACT:
+On peer devices, `consecutiveMissedTurns` for the timed-out player remains 0. When that
+peer client subsequently makes a pick and calls `calculateNextTurnPlayerId(myUid)`:
+```kotlin
+val fullyDisconnected = disconnectedPlayerIds.filter { (consecutiveMissedTurns[it] ?: 0) >= 3 }.toSet()
+```
+Because `(consecutiveMissedTurns[it] ?: 0)` is 0 on the peer's device, the peer's engine
+does not place the timed-out player into `fullyDisconnected`. The peer calculates the next
+turn and routes it to the disconnected player, broadcasting an out-of-sync
+`currentTurnPlayerId` that conflicts with the host. Furthermore, if host migration occurs,
+the new acting host has no record of previous missed turns and resets the timeout count.
+
+REMEDIATION:
+In `RootNavGraph.kt` under `"TURN_TIMEOUT"` (line 1751), increment `consecutiveMissedTurns`
+and mark the player disconnected:
+```kotlin
+if (packet.playerId.isNotBlank()) {
+    markPlayerDisconnected(packet.playerId)
+    val misses = (consecutiveMissedTurns[packet.playerId] ?: 0) + 1
+    consecutiveMissedTurns[packet.playerId] = misses
+}
+```
+
+
+--------------------------------------------------------------------------------
+DEFECT ID: BUG-034
+SEVERITY : MEDIUM
+MODULE   : Reconnection & Peer Coordination
+FILES    : RootNavGraph.kt (lines 1872-1873, 2428-2429)
+--------------------------------------------------------------------------------
+DESCRIPTION:
+In the `REJOIN_GAME` packet handler, `RootNavGraph.kt` uses direct set membership checks
+(`disconnectedPlayerIds.contains(hostUid)` and `it.id !in disconnectedPlayerIds`) instead
+of the canonical `isPlayerDisconnected(...)` helper function. Because player IDs can have
+varying prefix normalizations (e.g. `u_` prefixes between auth providers and MQTT client
+identities), direct set lookups fail to match, causing disconnected peers to be mistakenly
+counted as active remaining peers and interfering with acting host / senior peer resolution.
+
+ROOT CAUSE:
+In `RootNavGraph.kt` line 1872-1873 under `"REJOIN_GAME"`:
+```kotlin
+val isHostGone = isHostLeftGame || (hostUid.isNotBlank() && disconnectedPlayerIds.contains(hostUid))
+val activeRemaining = (matchParticipants.ifEmpty { realTimePlayers }).filter { it.id.isNotBlank() && it.id !in disconnectedPlayerIds }
+```
+Direct `contains` and `!in` checks compare exact string equality. In contrast, line 194-197:
+```kotlin
+fun isPlayerDisconnected(playerId: String): Boolean {
+    if (playerId.isBlank()) return false
+    return disconnectedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, playerId) }
+}
+```
+`isPlayerDisconnected` uses `LobbyLifecycleEngine.isPlayerIdMatch`, which normalizes
+prefixes like `u_` and case differences. Lines 2428-2429 under `"SYNC_REQUEST"` properly use:
+```kotlin
+val isHostGone = isHostLeftGame || (hostUid.isNotBlank() && isPlayerDisconnected(hostUid))
+val activeRemaining = (matchParticipants.ifEmpty { realTimePlayers }).filter { it.id.isNotBlank() && !isPlayerDisconnected(it.id) }
+```
+Lines 1872-1873 are inconsistent with the rest of the codebase.
+
+USER-FACING IMPACT:
+When a rejoining peer enters a room where the host disconnected, if ID normalization
+differs by a `u_` prefix, `isHostGone` evaluates to `false` and `activeRemaining` includes
+disconnected players. A peer that should become acting host fails to recognize host departure,
+preventing `GAME_SYNC` response packets from being broadcast to the rejoining client and
+leaving the rejoining client stuck on an out-of-sync board.
+
+REMEDIATION:
+Update lines 1872-1873 in `RootNavGraph.kt` to use `isPlayerDisconnected`:
+```kotlin
+val isHostGone = isHostLeftGame || (hostUid.isNotBlank() && isPlayerDisconnected(hostUid))
+val activeRemaining = (matchParticipants.ifEmpty { realTimePlayers }).filter { it.id.isNotBlank() && !isPlayerDisconnected(it.id) }
+```
+
+
+================================================================================
+3. CONCLUSION & RECOMMENDED ACTION PLAN
+================================================================================
+The online match multiplayer engine is robust across core 2-player and AI flows,
+with all previous BUG-024 through BUG-030 fixes passing 100% of the unit test suite.
+However, resolving these 4 edge cases (BUG-031 through BUG-034) will solidify
+group match integrity (3–8 players), eliminate phantom turn delays on forfeits,
+prevent runner stamp contamination during manual board rematches, and maintain
+ironclad turn synchronization across network peers.
+================================================================================

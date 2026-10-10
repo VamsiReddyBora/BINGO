@@ -1108,6 +1108,10 @@ fun RootNavGraph(
                 isGameOver = false
                 didPlayerWin = false
                 isDrawMatch = false
+                isRunnerMatch = false
+                winnerPlayerId = ""
+                activeWinReason = ""
+                activeRunnerPlayerIds = emptyList()
                 latestIncomingEmote = null
                 latestIncomingEmoteScale = 1.0f
                 latestIncomingEmoteTimestamp = 0L
@@ -1529,6 +1533,10 @@ fun RootNavGraph(
                         isGameOver = false
                         didPlayerWin = false
                         isDrawMatch = false
+                        isRunnerMatch = false
+                        winnerPlayerId = ""
+                        activeWinReason = ""
+                        activeRunnerPlayerIds = emptyList()
                         wantsToPlayAgainPlayerName = null
                         opponentDisconnectMessage = null
                         opponentSurrenderMessage = null
@@ -1749,6 +1757,11 @@ fun RootNavGraph(
                     val shouldAdvance = (packet.turnNumber > turnNumber) ||
                             (packet.turnNumber == turnNumber && packet.playerId.isNotBlank() && com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(packet.playerId, currentTurnPlayerId))
                     if (shouldAdvance) {
+                        if (packet.playerId.isNotBlank()) {
+                            markPlayerDisconnected(packet.playerId)
+                            val misses = (consecutiveMissedTurns[packet.playerId] ?: 0) + 1
+                            consecutiveMissedTurns[packet.playerId] = misses
+                        }
                         turnNumber = maxOf(packet.turnNumber, turnNumber + 1)
                         turnTimer = 30
                         val nextId = if (packet.currentTurnPlayerId.isNotBlank()) {
@@ -1759,6 +1772,23 @@ fun RootNavGraph(
                         currentTurnPlayerId = nextId
                         isMyTurn = (currentTurnPlayerId == myUid)
                         recentPick = RecentPick(number = -1, pickedByPlayerId = packet.playerId, turnNumber = turnNumber)
+
+                        val participants = matchParticipants.ifEmpty { realTimePlayers }
+                        val activeRemaining = participants.filter { it.id.isNotBlank() && !isPlayerDisconnected(it.id) }
+                        val misses = consecutiveMissedTurns[packet.playerId] ?: 0
+                        if (activeRemaining.size <= 1 && misses >= 3) {
+                            isGameOver = true
+                            val wonByForfeit = activeRemaining.any { it.id == myUid } || participants.size <= 2
+                            didPlayerWin = wonByForfeit
+                            isDrawMatch = false
+                            isRunnerMatch = false
+                            winnerPlayerId = if (wonByForfeit) myUid else ""
+                            activeWinReason = "Opponent Disconnected"
+                            activeRunnerPlayerIds = emptyList()
+                            recordFinishedMatch(wonByForfeit)
+                            com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
+                            opponentDisconnectMessage = "Opponent disconnected. You win by forfeit!"
+                        }
 
                         val skippedPlayerName = matchParticipants.find { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it.id, packet.playerId) }?.displayName
                             ?: realTimePlayers.find { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it.id, packet.playerId) }?.displayName
@@ -1869,8 +1899,8 @@ fun RootNavGraph(
                             } else it
                         }
                     }
-                    val isHostGone = isHostLeftGame || (hostUid.isNotBlank() && disconnectedPlayerIds.contains(hostUid))
-                    val activeRemaining = (matchParticipants.ifEmpty { realTimePlayers }).filter { it.id.isNotBlank() && it.id !in disconnectedPlayerIds }
+                    val isHostGone = isHostLeftGame || (hostUid.isNotBlank() && isPlayerDisconnected(hostUid))
+                    val activeRemaining = (matchParticipants.ifEmpty { realTimePlayers }).filter { it.id.isNotBlank() && !isPlayerDisconnected(it.id) }
                     val isActingHost = isHostGone && activeRemaining.firstOrNull()?.id == myUid
                     val isSeniorActivePeer = activeRemaining.firstOrNull { !com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it.id, packet.playerId) }?.id == myUid
                     if (isHosting || currentTurnPlayerId == myUid || isActingHost || isSeniorActivePeer) {
@@ -2111,6 +2141,7 @@ fun RootNavGraph(
                     val surrenderName = packet.displayName.ifBlank { packet.username.ifBlank { "Opponent" } }
                     if (surrenderId.isNotBlank()) {
                         markPlayerDisconnected(surrenderId)
+                        consecutiveMissedTurns[surrenderId] = 3
                     }
 
                     val participants = matchParticipants.ifEmpty { realTimePlayers }
@@ -2255,6 +2286,7 @@ fun RootNavGraph(
                         }
                         if (hostId.isNotBlank()) {
                             markPlayerDisconnected(hostId)
+                            consecutiveMissedTurns[hostId] = 3
                         }
                         val participants = matchParticipants.ifEmpty { realTimePlayers }
                         val activeRemaining = participants.filter {
@@ -2316,6 +2348,7 @@ fun RootNavGraph(
                 if (inGame && !isGameOver && packet.playerId.isNotBlank() && packet.playerId != myUid) {
                     val participants = matchParticipants.ifEmpty { realTimePlayers }
                     markPlayerDisconnected(packet.playerId)
+                    consecutiveMissedTurns[packet.playerId] = 3
                     val activeRemaining = participants.filter {
                         it.id.isNotBlank() && !isPlayerDisconnected(it.id)
                     }
@@ -3441,6 +3474,10 @@ fun RootNavGraph(
                         isGameOver = false
                         didPlayerWin = false
                         isDrawMatch = false
+                        isRunnerMatch = false
+                        winnerPlayerId = ""
+                        activeWinReason = ""
+                        activeRunnerPlayerIds = emptyList()
                         wantsToPlayAgainPlayerName = null
                         opponentDisconnectMessage = null
                         opponentSurrenderMessage = null
@@ -4243,6 +4280,10 @@ fun RootNavGraph(
                                 isGameOver = false
                                 didPlayerWin = false
                                 isDrawMatch = false
+                                isRunnerMatch = false
+                                winnerPlayerId = ""
+                                activeWinReason = ""
+                                activeRunnerPlayerIds = emptyList()
                                 wantsToPlayAgainPlayerName = null
                                 opponentDisconnectMessage = null
                                 opponentSurrenderMessage = null
