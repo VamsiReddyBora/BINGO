@@ -324,6 +324,15 @@ class FriendsRepository(
                 _friends.value = emptyList()
             }
         }
+        val currentList = _friends.value
+        if (currentList.isNotEmpty()) {
+            AuthRepository.activeInstance?.getPersistedUserSync()?.let { user ->
+                if (user.uid.isNotBlank()) {
+                    com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(context)
+                        .syncFriendsList(user.uid, currentList)
+                }
+            }
+        }
     }
 
     private fun persistFriends(list: List<Friend>) {

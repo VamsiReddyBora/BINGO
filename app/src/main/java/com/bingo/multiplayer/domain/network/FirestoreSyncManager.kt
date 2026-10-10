@@ -243,6 +243,42 @@ class FirestoreSyncManager(
     }
 
     /**
+     * Bulk uploads an entire list of match records to `users/{uid}/matches`.
+     */
+    fun syncAllMatches(uid: String, matches: List<MatchRecord>) {
+        if (uid.isBlank() || matches.isEmpty()) return
+        scope.launch {
+            try {
+                matches.chunked(400).forEach { chunk ->
+                    val batch = firestore.batch()
+                    val matchesColl = firestore.collection(COLLECTION_USERS)
+                        .document(uid)
+                        .collection(SUBCOLLECTION_MATCHES)
+
+                    chunk.forEach { record ->
+                        val docRef = matchesColl.document(record.id)
+                        val payload = hashMapOf(
+                            "id" to record.id,
+                            "mode" to record.mode,
+                            "opponentName" to record.opponentName,
+                            "didWin" to record.didWin,
+                            "isDraw" to record.isDraw,
+                            "boardSize" to record.boardSize,
+                            "timestamp" to record.timestamp,
+                            "matchTitle" to record.matchTitle
+                        )
+                        batch.set(docRef, payload, SetOptions.merge())
+                    }
+                    batch.commit().await()
+                }
+                Log.d(TAG, "Successfully bulk-synced ${matches.size} matches to Firestore for uid $uid")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to bulk-sync matches to Firestore: ${e.message}")
+            }
+        }
+    }
+
+    /**
      * Streams match records from Firestore `users/{uid}/matches` ordered by timestamp.
      */
     fun streamMatchHistory(uid: String, maxLimit: Long = 100): Flow<List<MatchRecord>> = callbackFlow {

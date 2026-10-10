@@ -254,10 +254,20 @@ class AuthRepository(
             }
 
             if (context != null) {
-                com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(context)
-                    .startRealtimeProfileListener(user.uid) { _, remoteSettings ->
-                        updateSettings(remoteSettings)
-                    }
+                val firestoreSync = com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(context)
+                // 1. Immediately upload/sync current user profile and custom theme settings
+                firestoreSync.syncUserProfile(user, getSettings())
+
+                // 2. Upload all existing match history records
+                val existingMatches = getMatchHistory()
+                if (existingMatches.isNotEmpty()) {
+                    firestoreSync.syncAllMatches(user.uid, existingMatches)
+                }
+
+                // 3. Start realtime profile listener
+                firestoreSync.startRealtimeProfileListener(user.uid) { _, remoteSettings ->
+                    updateSettings(remoteSettings)
+                }
             }
         }
         state
@@ -939,8 +949,12 @@ class AuthRepository(
         }
 
         if (context != null && profile.uid.isNotBlank()) {
-            com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(context)
-                .syncUserProfile(profile, getSettings())
+            val firestoreSync = com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(context)
+            firestoreSync.syncUserProfile(profile, getSettings())
+            val existingMatches = getMatchHistory()
+            if (existingMatches.isNotEmpty()) {
+                firestoreSync.syncAllMatches(profile.uid, existingMatches)
+            }
         }
     }
 
