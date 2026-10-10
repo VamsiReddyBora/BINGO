@@ -64,6 +64,11 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.ui.graphics.graphicsLayer
 import com.bingo.multiplayer.core.designsystem.ThemePreferences
 import com.bingo.multiplayer.core.designsystem.NotificationPreferences
+import com.bingo.multiplayer.core.designsystem.SoundPreferences
+import com.bingo.multiplayer.core.designsystem.BingoSoundEffects
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
+import androidx.compose.material.icons.filled.VolumeUp
 import com.bingo.multiplayer.core.designsystem.computeContrastText
 import com.bingo.multiplayer.domain.network.EmojiPreferences
 import com.bingo.multiplayer.presentation.components.AnimatedEmoji
@@ -173,6 +178,7 @@ fun SettingsScreen(
     var isEmojisExpanded by remember { mutableStateOf(false) }
     var isQuickChatExpanded by remember { mutableStateOf(false) }
     var isNotificationsExpanded by remember { mutableStateOf(false) }
+    var isSoundExpanded by remember { mutableStateOf(false) }
 
     var selectedProfilePlayer by remember { mutableStateOf<PlayerProfileData?>(null) }
 
@@ -2259,9 +2265,34 @@ fun SettingsScreen(
                 }
             }
 
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // ── Section 8: Sound & Vibration Card (Collapsible, placed right above Sign Out) ──
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                color = tokens.surface,
+                border = BorderStroke(1.dp, tokens.surfaceBorder),
+                shadowElevation = 1.dp
+            ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    SettingsCardHeader(
+                        title = "SOUND & VIBRATION",
+                        subtitle = "Audio feedback and haptics",
+                        icon = Icons.Default.VolumeUp,
+                        isExpanded = isSoundExpanded,
+                        onToggle = { isSoundExpanded = !isSoundExpanded }
+                    )
+
+                    AnimatedVisibility(visible = isSoundExpanded) {
+                        SoundSettingsContent(context = context)
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(16.dp))
 
-            // ── Section 8: Sign Out ──
+            // ── Section 9: Sign Out ──
             OutlinedButton(
                 onClick = { showSignOutDialog = true },
                 modifier = Modifier
@@ -2485,6 +2516,170 @@ private fun NotificationSettingsContent(
             isChild = true,
             onCheckedChange = { NotificationPreferences.setInAppPlayerInvitesEnabled(context, it) }
         )
+    }
+}
+
+@Composable
+private fun SoundSettingsContent(
+    context: Context
+) {
+    val tokens = BingoTheme.colors
+    val soundEnabled = SoundPreferences.soundEnabled.value
+    val hapticsEnabled = SoundPreferences.hapticsEnabled.value
+    val selectedPresetId = SoundPreferences.pickSoundPresetId.value
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 14.dp, end = 14.dp, bottom = 14.dp)
+    ) {
+        // Section 1: Audio & Haptic Masters
+        Text(
+            text = "AUDIO & HAPTICS",
+            fontSize = 10.5.sp,
+            fontWeight = FontWeight.Bold,
+            color = tokens.accentBrand,
+            letterSpacing = 0.8.sp
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+
+        SlimToggleRow(
+            title = "Sounds",
+            checked = soundEnabled,
+            onCheckedChange = {
+                SoundPreferences.setSoundEnabled(context, it)
+                if (it) {
+                    BingoSoundEffects.playPickSound(context, forceSound = true)
+                }
+            }
+        )
+
+        SlimToggleRow(
+            title = "Vibration",
+            checked = hapticsEnabled,
+            onCheckedChange = {
+                SoundPreferences.setHapticsEnabled(context, it)
+                if (it) {
+                    BingoSoundEffects.playVibration(context, forceVibrate = true)
+                }
+            }
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+        HorizontalDivider(
+            thickness = 0.5.dp,
+            color = tokens.surfaceBorder
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Section 2: 10 Number Pick Presets
+        Text(
+            text = "NUMBER PICK SOUND (10 PRESETS)",
+            fontSize = 10.5.sp,
+            fontWeight = FontWeight.Bold,
+            color = tokens.accentBrand,
+            letterSpacing = 0.8.sp
+        )
+        Text(
+            text = "Tap to choose and preview sound played when picking numbers",
+            fontSize = 11.sp,
+            color = tokens.textMuted
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+
+        BingoSoundEffects.PRESETS.forEach { preset ->
+            val isSelected = (selectedPresetId == preset.id)
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = if (isSelected) tokens.accentBrand.copy(alpha = if (tokens.isDark) 0.18f else 0.08f) else Color.Transparent,
+                border = BorderStroke(
+                    width = if (isSelected) 1.5.dp else 0.5.dp,
+                    color = if (isSelected) tokens.accentBrand else tokens.surfaceBorder.copy(alpha = 0.6f)
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 3.dp)
+                    .clickable {
+                        SoundPreferences.setPickSoundPresetId(context, preset.id)
+                        BingoSoundEffects.playPickSound(context, overridePresetId = preset.id, forceSound = true)
+                        BingoSoundEffects.playVibration(context)
+                    }
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        RadioButton(
+                            selected = isSelected,
+                            onClick = {
+                                SoundPreferences.setPickSoundPresetId(context, preset.id)
+                                BingoSoundEffects.playPickSound(context, overridePresetId = preset.id, forceSound = true)
+                                BingoSoundEffects.playVibration(context)
+                            },
+                            colors = RadioButtonDefaults.colors(
+                                selectedColor = tokens.accentBrand,
+                                unselectedColor = tokens.textMuted
+                            ),
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = preset.name,
+                                    fontSize = 13.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                                    color = if (isSelected) tokens.accentBrand else tokens.cellNeutralText
+                                )
+                                if (preset.isDefault) {
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Surface(
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = tokens.accentBrand.copy(alpha = 0.15f)
+                                    ) {
+                                        Text(
+                                            text = "DEFAULT",
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = tokens.accentBrand,
+                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                        )
+                                    }
+                                }
+                            }
+                            Text(
+                                text = preset.subtitle,
+                                fontSize = 11.sp,
+                                color = tokens.textMuted
+                            )
+                        }
+                    }
+
+                    // Play / Preview Button
+                    IconButton(
+                        onClick = {
+                            BingoSoundEffects.playPickSound(context, overridePresetId = preset.id, forceSound = true)
+                            BingoSoundEffects.playVibration(context)
+                        },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.VolumeUp,
+                            contentDescription = "Preview sound",
+                            tint = if (isSelected) tokens.accentBrand else tokens.textMuted,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 

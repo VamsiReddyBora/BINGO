@@ -142,7 +142,9 @@ fun BingoCell(
                 indication = null,
                 enabled = isInteractive,
                 onClick = {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    if (com.bingo.multiplayer.core.designsystem.SoundPreferences.isHapticsAllowed()) {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    }
                     onCellClick()
                 }
             ),

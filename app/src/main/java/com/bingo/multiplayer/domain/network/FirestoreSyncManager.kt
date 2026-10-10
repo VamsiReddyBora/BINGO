@@ -84,6 +84,7 @@ class FirestoreSyncManager(
                     "settings" to hashMapOf(
                         "soundEnabled" to settings.soundEnabled,
                         "hapticsEnabled" to settings.hapticsEnabled,
+                        "pickSoundPresetId" to settings.pickSoundPresetId,
                         "preferredBoardSize" to settings.preferredBoardSize,
                         "darkTheme" to settings.darkTheme,
                         "accentColorId" to settings.accentColorId,
@@ -187,8 +188,9 @@ class FirestoreSyncManager(
                             UserSettings(
                                 soundEnabled = settingsMap["soundEnabled"] as? Boolean ?: true,
                                 hapticsEnabled = settingsMap["hapticsEnabled"] as? Boolean ?: true,
+                                pickSoundPresetId = settingsMap["pickSoundPresetId"] as? String ?: "classic_pop",
                                 preferredBoardSize = (settingsMap["preferredBoardSize"] as? Long)?.toInt() ?: 5,
-                                darkTheme = settingsMap["darkTheme"] as? Boolean ?: false,
+                                darkTheme = settingsMap["darkTheme"] as? Boolean ?: com.bingo.multiplayer.core.designsystem.ThemePreferences.isDarkTheme.value,
                                 accentColorId = settingsMap["accentColorId"] as? String ?: "matte_slate",
                                 customAccentHex = settingsMap["customAccentHex"] as? String ?: "#64748B",
                                 customMyPickHex = settingsMap["customMyPickHex"] as? String,

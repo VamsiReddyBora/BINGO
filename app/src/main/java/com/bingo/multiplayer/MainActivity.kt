@@ -42,6 +42,7 @@ class MainActivity : ComponentActivity() {
         // Initialize Theme & Notification Preferences from persistent storage immediately before composing UI
         ThemePreferences.init(applicationContext)
         com.bingo.multiplayer.core.designsystem.NotificationPreferences.init(applicationContext)
+        com.bingo.multiplayer.core.designsystem.SoundPreferences.init(applicationContext)
 
         // Immediately enforce window background and system bar icon contrast matching theme before UI composition
         val initIsDark = ThemePreferences.isDarkTheme.value

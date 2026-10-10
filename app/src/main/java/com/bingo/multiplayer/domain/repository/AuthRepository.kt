@@ -264,9 +264,19 @@ class AuthRepository(
                     firestoreSync.syncAllMatches(user.uid, existingMatches)
                 }
 
-                // 3. Start realtime profile listener
                 firestoreSync.startRealtimeProfileListener(user.uid) { _, remoteSettings ->
-                    updateSettings(remoteSettings, syncToCloud = false)
+                    // Preserve local dark theme and sound/vibration preferences to prevent remote echo from reverting local settings
+                    val localDark = com.bingo.multiplayer.core.designsystem.ThemePreferences.isDarkTheme.value
+                    val localSound = com.bingo.multiplayer.core.designsystem.SoundPreferences.soundEnabled.value
+                    val localHaptics = com.bingo.multiplayer.core.designsystem.SoundPreferences.hapticsEnabled.value
+                    val localPreset = com.bingo.multiplayer.core.designsystem.SoundPreferences.pickSoundPresetId.value
+                    val consistentSettings = remoteSettings.copy(
+                        darkTheme = localDark,
+                        soundEnabled = localSound,
+                        hapticsEnabled = localHaptics,
+                        pickSoundPresetId = localPreset
+                    )
+                    updateSettings(consistentSettings, syncToCloud = false)
                 }
             }
         }
@@ -685,8 +695,9 @@ class AuthRepository(
 
     fun getSettings(): com.bingo.multiplayer.domain.model.UserSettings {
         return com.bingo.multiplayer.domain.model.UserSettings(
-            soundEnabled = prefs.getBoolean("settings_sound", true),
-            hapticsEnabled = prefs.getBoolean("settings_haptics", true),
+            soundEnabled = com.bingo.multiplayer.core.designsystem.SoundPreferences.soundEnabled.value,
+            hapticsEnabled = com.bingo.multiplayer.core.designsystem.SoundPreferences.hapticsEnabled.value,
+            pickSoundPresetId = com.bingo.multiplayer.core.designsystem.SoundPreferences.pickSoundPresetId.value,
             preferredBoardSize = prefs.getInt("settings_board_size", 5),
             darkTheme = com.bingo.multiplayer.core.designsystem.ThemePreferences.isDarkTheme.value,
             accentColorId = com.bingo.multiplayer.core.designsystem.ThemePreferences.accentColorId.value,
@@ -714,11 +725,19 @@ class AuthRepository(
         prefs.edit()
             .putBoolean("settings_sound", settings.soundEnabled)
             .putBoolean("settings_haptics", settings.hapticsEnabled)
+            .putString("settings_pick_sound_preset", settings.pickSoundPresetId)
             .putInt("settings_board_size", settings.preferredBoardSize)
             .putBoolean("settings_dark_theme", settings.darkTheme)
             .apply()
         context?.let { ctx ->
-            com.bingo.multiplayer.core.designsystem.ThemePreferences.setDarkTheme(ctx, settings.darkTheme)
+            com.bingo.multiplayer.core.designsystem.SoundPreferences.applySettings(
+                sound = settings.soundEnabled,
+                haptics = settings.hapticsEnabled,
+                presetId = settings.pickSoundPresetId,
+                context = ctx,
+                syncToCloud = false
+            )
+            com.bingo.multiplayer.core.designsystem.ThemePreferences.setDarkThemeDirect(ctx, settings.darkTheme)
             com.bingo.multiplayer.core.designsystem.ThemePreferences.setAccentColor(ctx, settings.accentColorId)
             com.bingo.multiplayer.core.designsystem.ThemePreferences.setCustomColor(ctx, settings.customAccentHex)
             com.bingo.multiplayer.core.designsystem.ThemePreferences.setMyPickColor(ctx, settings.customMyPickHex)
@@ -875,7 +894,22 @@ class AuthRepository(
         setGoogleUserRegistered(googleId, true)
         setSavedGoogleDisplayName(googleId, finalProfile.displayName)
         setSavedGoogleUsername(googleId, finalProfile.username)
-        updateSettings(cloudData.settings)
+        val localDark = com.bingo.multiplayer.core.designsystem.ThemePreferences.isDarkTheme.value
+        val localSound = com.bingo.multiplayer.core.designsystem.SoundPreferences.soundEnabled.value
+        val localHaptics = com.bingo.multiplayer.core.designsystem.SoundPreferences.hapticsEnabled.value
+        val localPreset = com.bingo.multiplayer.core.designsystem.SoundPreferences.pickSoundPresetId.value
+        updateSettings(
+            cloudData.settings.copy(
+                darkTheme = localDark,
+                soundEnabled = localSound,
+                hapticsEnabled = localHaptics,
+                pickSoundPresetId = localPreset
+            ),
+            syncToCloud = false
+        )
+        if (cloudData.settings.darkTheme != localDark) {
+            backupUserDataToCloud()
+        }
         if (cloudData.matchHistory.isNotEmpty()) {
             val localHistory = getMatchHistory()
             val merged = (localHistory + cloudData.matchHistory)

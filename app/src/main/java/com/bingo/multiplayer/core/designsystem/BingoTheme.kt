@@ -7,9 +7,13 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -428,11 +432,23 @@ fun BingoAppTheme(
         )
     }
 
+    val systemHaptic = LocalHapticFeedback.current
+    val conditionalHaptic = remember(systemHaptic) {
+        object : HapticFeedback {
+            override fun performHapticFeedback(hapticFeedbackType: HapticFeedbackType) {
+                if (SoundPreferences.isHapticsAllowed()) {
+                    systemHaptic.performHapticFeedback(hapticFeedbackType)
+                }
+            }
+        }
+    }
+
     CompositionLocalProvider(
         LocalBingoColors provides bingoColors,
         LocalBingoTypography provides BingoTypography(),
         LocalBingoShapes provides BingoShapes(),
-        LocalBingoElevations provides BingoElevations()
+        LocalBingoElevations provides BingoElevations(),
+        LocalHapticFeedback provides conditionalHaptic
     ) {
         MaterialTheme(
             colorScheme = materialColorScheme,

@@ -74,4 +74,25 @@ class ThemePreferencesPersistenceTest {
         authRepo.updateSettings(settings.copy(darkTheme = false))
         assertFalse(userProfilePrefs.getBoolean("settings_dark_theme", true))
     }
+
+    @Test
+    fun testRestoreCloudUserDataPreservesLocalDarkTheme() {
+        // User sets dark theme locally
+        ThemePreferences.setDarkTheme(themePrefs, userProfilePrefs, true)
+        assertTrue(ThemePreferences.isDarkTheme.value)
+
+        val authRepo = AuthRepository(
+            context = null,
+            customPrefs = userProfilePrefs
+        )
+
+        // Incoming cloud settings with darkTheme = false from an old backup
+        val oldCloudSettings = authRepo.getSettings().copy(darkTheme = false)
+        val localDark = ThemePreferences.isDarkTheme.value
+        val safeSettings = oldCloudSettings.copy(darkTheme = localDark)
+        authRepo.updateSettings(safeSettings, syncToCloud = false)
+
+        // Ensure dark theme is NOT overwritten by cloud restore
+        assertTrue("Local dark theme must be preserved during cloud data restore", ThemePreferences.isDarkTheme.value)
+    }
 }

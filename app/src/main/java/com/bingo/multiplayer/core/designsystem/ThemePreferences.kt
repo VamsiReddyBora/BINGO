@@ -236,7 +236,6 @@ object ThemePreferences {
             authPrefs?.getBoolean("settings_dark_theme", false) ?: false
         }
         isDarkTheme.value = savedDark
-        applyNightModeSafely(savedDark)
         val defaultAccent = "matte_slate"
         val savedAccent = prefs.getString(KEY_ACCENT_ID, defaultAccent) ?: defaultAccent
         // If saved accent was the old default "royal_violet" and user hadn't explicitly chosen it, default to "matte_slate"
@@ -258,7 +257,7 @@ object ThemePreferences {
 
     fun init(context: Context) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val authPrefs = context.getSharedPreferences("bingo_user_profile", Context.MODE_PRIVATE)
+        val authPrefs = context.getSharedPreferences("bingo_auth_prefs", Context.MODE_PRIVATE)
         initWithPrefs(prefs, authPrefs)
     }
 
@@ -283,28 +282,32 @@ object ThemePreferences {
         }
         prefs.edit().putBoolean(KEY_IS_DARK, isDark).apply()
         authPrefs?.edit()?.putBoolean("settings_dark_theme", isDark)?.apply()
-        applyNightModeSafely(isDark)
     }
 
-    private fun applyNightModeSafely(isDark: Boolean) {
-        try {
-            val targetMode = if (isDark) {
-                androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES
-            } else {
-                androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO
-            }
-            if (androidx.appcompat.app.AppCompatDelegate.getDefaultNightMode() != targetMode) {
-                androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(targetMode)
-            }
-        } catch (_: Throwable) {
-            // Graceful fallback for non-Android / testing environments
+    /**
+     * Applies dark theme locally without triggering a cloud sync echo loop.
+     */
+    fun setDarkThemeDirect(context: Context, isDark: Boolean) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val authPrefs = context.getSharedPreferences("bingo_auth_prefs", Context.MODE_PRIVATE)
+        setDarkTheme(prefs, authPrefs, isDark)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            try {
+                val uiModeManager = context.getSystemService(Context.UI_MODE_SERVICE) as? android.app.UiModeManager
+                val targetNightMode = if (isDark) {
+                    android.app.UiModeManager.MODE_NIGHT_YES
+                } else {
+                    android.app.UiModeManager.MODE_NIGHT_NO
+                }
+                if (uiModeManager != null && uiModeManager.nightMode != targetNightMode) {
+                    uiModeManager.setApplicationNightMode(targetNightMode)
+                }
+            } catch (_: Throwable) {}
         }
     }
 
     fun setDarkTheme(context: Context, isDark: Boolean) {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val authPrefs = context.getSharedPreferences("bingo_user_profile", Context.MODE_PRIVATE)
-        setDarkTheme(prefs, authPrefs, isDark)
+        setDarkThemeDirect(context, isDark)
         triggerCloudSync(context)
     }
 
@@ -409,6 +412,7 @@ object ThemePreferences {
                 val settings = authRepo.getSettings()
                 com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(context)
                     .syncUserProfile(user, settings)
+                authRepo.backupUserDataToCloud()
             }
         } catch (_: Exception) {}
     }

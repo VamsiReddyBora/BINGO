@@ -345,7 +345,7 @@ fun GameScreen(
 
     // Trigger haptic clock tick in the player's hands on countdown <= 5s
     LaunchedEffect(turnTimeRemaining, isMyTurn) {
-        if (isUrgentTimer && isMyTurn) {
+        if (isUrgentTimer && isMyTurn && com.bingo.multiplayer.core.designsystem.SoundPreferences.isHapticsAllowed()) {
             try {
                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
             } catch (_: Exception) {}
@@ -360,7 +360,7 @@ fun GameScreen(
             } else {
                 !isMyTurn || recentPick.pickedByPlayerId.contains("ai", ignoreCase = true)
             }
-            if (isOpponentPick) {
+            if (isOpponentPick && com.bingo.multiplayer.core.designsystem.SoundPreferences.isHapticsAllowed()) {
                 try {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 } catch (_: Exception) {}
@@ -1160,7 +1160,9 @@ fun GameScreen(
                             currentPhrases.forEach { phrase ->
                                 Surface(
                                     onClick = {
-                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        if (com.bingo.multiplayer.core.designsystem.SoundPreferences.isHapticsAllowed()) {
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        }
                                         showQuickChat = false
                                         isCustomChatFocused = false
                                         // Move tapped phrase to front (recent like emojis)

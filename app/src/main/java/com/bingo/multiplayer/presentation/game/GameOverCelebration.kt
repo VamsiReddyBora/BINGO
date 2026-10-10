@@ -119,9 +119,11 @@ fun VictoryStampBadge(
                 animationSpec = tween(durationMillis = 240, easing = FastOutSlowInEasing)
             )
 
-            try {
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-            } catch (_: Exception) {}
+            if (com.bingo.multiplayer.core.designsystem.SoundPreferences.isHapticsAllowed()) {
+                try {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                } catch (_: Exception) {}
+            }
             showDustEffect = true
 
             stampScale.animateTo(

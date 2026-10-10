@@ -33,6 +33,11 @@ class AuthRepositoryTest {
         )
     }
 
+    @org.junit.After
+    fun tearDown() {
+        repository.sessionManager.stopSessionWatcher()
+    }
+
     @Test
     fun testUnauthenticated_onLaunchWithNoPersistedUser() = runBlocking {
         val state = repository.verifyPersistedSession()
@@ -263,6 +268,7 @@ class AuthRepositoryTest {
         assertTrue(freshRepository.isGoogleUserRegistered(googleId))
         assertEquals("Persistent Hero", freshRepository.getSavedGoogleDisplayName(googleId))
         assertEquals("super_hero", freshRepository.getSavedGoogleUsername(googleId))
+        freshRepository.sessionManager.stopSessionWatcher()
     }
 
     @Test

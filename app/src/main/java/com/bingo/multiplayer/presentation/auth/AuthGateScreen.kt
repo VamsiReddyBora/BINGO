@@ -48,8 +48,8 @@ fun AuthGateScreen(
     val iconAlpha = remember { Animatable(1.0f) }
 
     LaunchedEffect(Unit) {
-        // 1. Background ongoing match refresh & cleanup in background
-        launch(Dispatchers.IO) {
+        // 1. Background ongoing match refresh & cleanup
+        val refreshJob = launch(Dispatchers.IO) {
             try {
                 val ongoing = OngoingMatchStore.getOngoingMatch(context)
                 if (ongoing != null) {
@@ -61,14 +61,30 @@ fun AuthGateScreen(
             } catch (_: Exception) {}
         }
 
-        // 2. Ensure auth state is resolved (retrieved from local cache)
+        // 2. User-requested 1000ms opening splash delay
+        delay(1000L)
+        refreshJob.join()
+
+        // Ensure auth state is resolved (retrieved from local cache)
         var currentAuth = authRepository.authState.value
         var waitIterations = 0
-        while (currentAuth is AuthState.Loading && waitIterations < 5) {
-            delay(40L)
+        while (currentAuth is AuthState.Loading && waitIterations < 10) {
+            delay(50L)
             currentAuth = authRepository.authState.value
             waitIterations++
         }
+
+        // 3. Smooth cinematic zoom-out animation
+        launch {
+            iconScale.animateTo(
+                targetValue = 1.35f,
+                animationSpec = tween(durationMillis = 380, easing = FastOutSlowInEasing)
+            )
+        }
+        iconAlpha.animateTo(
+            targetValue = 0f,
+            animationSpec = tween(durationMillis = 350, easing = LinearEasing)
+        )
 
         withContext(Dispatchers.Main) {
             when (currentAuth) {
@@ -86,7 +102,7 @@ fun AuthGateScreen(
         contentAlignment = Alignment.Center
     ) {
         Image(
-            painter = painterResource(id = R.drawable.ic_bingo_logo),
+            painter = painterResource(id = R.drawable.ic_splash_logo),
             contentDescription = "Bingo Logo",
             modifier = Modifier
                 .size(280.dp)

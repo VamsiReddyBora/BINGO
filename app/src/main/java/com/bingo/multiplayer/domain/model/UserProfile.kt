@@ -58,6 +58,7 @@ data class UserProfile(
 data class UserSettings(
     val soundEnabled: Boolean = true,
     val hapticsEnabled: Boolean = true,
+    val pickSoundPresetId: String = "classic_pop",
     val preferredBoardSize: Int = 5,
     val darkTheme: Boolean = false,
     val accentColorId: String = "matte_slate",

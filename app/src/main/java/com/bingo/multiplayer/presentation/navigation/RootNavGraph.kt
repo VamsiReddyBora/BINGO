@@ -1185,6 +1185,12 @@ fun RootNavGraph(
             val isTimeoutPass = (number <= 0)
 
             if (!isTimeoutPass) {
+                // Play audio and tactile haptic feedback for picked number
+                com.bingo.multiplayer.core.designsystem.BingoSoundEffects.playPickSound(context)
+                if (isOwnPick) {
+                    com.bingo.multiplayer.core.designsystem.BingoSoundEffects.playVibration(context)
+                }
+
                 consecutiveMissedTurns.remove(pickerId)
                 markPlayerReconnected(pickerId)
                 pickedNumbersHistory.add(number)
@@ -2531,7 +2537,7 @@ fun RootNavGraph(
         composable(
             route = Screen.AuthGate.route,
             exitTransition = {
-                androidx.compose.animation.fadeOut(animationSpec = androidx.compose.animation.core.tween(150))
+                androidx.compose.animation.fadeOut(animationSpec = androidx.compose.animation.core.tween(300))
             }
         ) {
             AuthGateScreen(
@@ -4551,13 +4557,7 @@ fun RootNavGraph(
     LaunchedEffect(incomingInvite?.roomCode) {
         if (incomingInvite != null) {
             try {
-                val vibrator = context.getSystemService(android.content.Context.VIBRATOR_SERVICE) as? android.os.Vibrator
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                    vibrator?.vibrate(android.os.VibrationEffect.createOneShot(200, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
-                } else {
-                    @Suppress("DEPRECATION")
-                    vibrator?.vibrate(200)
-                }
+                com.bingo.multiplayer.core.designsystem.BingoSoundEffects.playVibration(context, durationMs = 200L)
             } catch (_: Exception) {}
         }
     }

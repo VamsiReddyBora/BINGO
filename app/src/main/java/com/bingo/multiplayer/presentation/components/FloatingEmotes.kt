@@ -140,7 +140,9 @@ fun FloatingEmoteBar(
                                                 isPressed = false
                                             },
                                             onTap = {
-                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                if (com.bingo.multiplayer.core.designsystem.SoundPreferences.isHapticsAllowed()) {
+                                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                }
                                                 onEmoteSelected(emoji)
                                                 isExpanded = false
                                             }
@@ -185,7 +187,9 @@ fun FloatingEmoteBar(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clickable {
-                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            if (com.bingo.multiplayer.core.designsystem.SoundPreferences.isHapticsAllowed()) {
+                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            }
                                             onPhraseSelected(phrase)
                                             isExpanded = false
                                         }
@@ -214,7 +218,9 @@ fun FloatingEmoteBar(
                 modifier = Modifier
                     .size(44.dp)
                     .clickable {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        if (com.bingo.multiplayer.core.designsystem.SoundPreferences.isHapticsAllowed()) {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        }
                         isExpanded = true
                     }
             ) {
@@ -360,9 +366,11 @@ fun EmojiReactionStripWithChat(
                                                     }
                                                     if (tier > lastHapticTier) {
                                                         lastHapticTier = tier
-                                                        try {
-                                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                        } catch (_: Exception) {}
+                                                        if (com.bingo.multiplayer.core.designsystem.SoundPreferences.isHapticsAllowed()) {
+                                                            try {
+                                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                            } catch (_: Exception) {}
+                                                        }
                                                     }
                                                     delay(16)
                                                 }
@@ -374,9 +382,11 @@ fun EmojiReactionStripWithChat(
                                             pressingScale = 1.0f
 
                                             if (released) {
-                                                try {
-                                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                } catch (_: Exception) {}
+                                                if (com.bingo.multiplayer.core.designsystem.SoundPreferences.isHapticsAllowed()) {
+                                                    try {
+                                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                    } catch (_: Exception) {}
+                                                }
 
                                                 val finalScale = if (isLongPress) currentScale else 1.0f
                                                 onSendEmote(emoji, finalScale)
@@ -418,11 +428,15 @@ fun EmojiReactionStripWithChat(
                         .pointerInput(Unit) {
                             detectTapGestures(
                                 onTap = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    if (com.bingo.multiplayer.core.designsystem.SoundPreferences.isHapticsAllowed()) {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    }
                                     onToggleQuickChat()
                                 },
                                 onLongPress = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    if (com.bingo.multiplayer.core.designsystem.SoundPreferences.isHapticsAllowed()) {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    }
                                     coroutineScope.launch {
                                         scrollState.animateScrollTo(
                                             value = 0,
