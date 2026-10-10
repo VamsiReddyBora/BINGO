@@ -697,7 +697,13 @@ class AuthRepository(
             customCompletedLineHex = com.bingo.multiplayer.core.designsystem.ThemePreferences.customCompletedLineHex.value,
             cellBorderEnabled = com.bingo.multiplayer.core.designsystem.ThemePreferences.cellBorderEnabled.value,
             cellBorderColorHex = com.bingo.multiplayer.core.designsystem.ThemePreferences.cellBorderColorHex.value,
-            isLiquidMetalTheme = com.bingo.multiplayer.core.designsystem.ThemePreferences.isLiquidMetalTheme.value
+            isLiquidMetalTheme = com.bingo.multiplayer.core.designsystem.ThemePreferences.isLiquidMetalTheme.value,
+            systemNotificationsEnabled = com.bingo.multiplayer.core.designsystem.NotificationPreferences.systemNotificationsEnabled.value,
+            playerOnlineNotificationsEnabled = com.bingo.multiplayer.core.designsystem.NotificationPreferences.playerOnlineNotificationsEnabled.value,
+            playerInvitesNotificationsEnabled = com.bingo.multiplayer.core.designsystem.NotificationPreferences.playerInvitesNotificationsEnabled.value,
+            inAppNotificationsEnabled = com.bingo.multiplayer.core.designsystem.NotificationPreferences.inAppNotificationsEnabled.value,
+            inAppPlayerOnlineEnabled = com.bingo.multiplayer.core.designsystem.NotificationPreferences.inAppPlayerOnlineEnabled.value,
+            inAppPlayerInvitesEnabled = com.bingo.multiplayer.core.designsystem.NotificationPreferences.inAppPlayerInvitesEnabled.value
         )
     }
 
@@ -719,6 +725,12 @@ class AuthRepository(
             com.bingo.multiplayer.core.designsystem.ThemePreferences.setCellBorderEnabled(ctx, settings.cellBorderEnabled)
             com.bingo.multiplayer.core.designsystem.ThemePreferences.setCellBorderColor(ctx, settings.cellBorderColorHex)
             com.bingo.multiplayer.core.designsystem.ThemePreferences.setLiquidMetalTheme(ctx, settings.isLiquidMetalTheme)
+            com.bingo.multiplayer.core.designsystem.NotificationPreferences.setSystemNotificationsEnabled(ctx, settings.systemNotificationsEnabled)
+            com.bingo.multiplayer.core.designsystem.NotificationPreferences.setPlayerOnlineNotificationsEnabled(ctx, settings.playerOnlineNotificationsEnabled)
+            com.bingo.multiplayer.core.designsystem.NotificationPreferences.setPlayerInvitesNotificationsEnabled(ctx, settings.playerInvitesNotificationsEnabled)
+            com.bingo.multiplayer.core.designsystem.NotificationPreferences.setInAppNotificationsEnabled(ctx, settings.inAppNotificationsEnabled)
+            com.bingo.multiplayer.core.designsystem.NotificationPreferences.setInAppPlayerOnlineEnabled(ctx, settings.inAppPlayerOnlineEnabled)
+            com.bingo.multiplayer.core.designsystem.NotificationPreferences.setInAppPlayerInvitesEnabled(ctx, settings.inAppPlayerInvitesEnabled)
         }
         val user = (_authState.value as? AuthState.Authenticated)?.user ?: getPersistedUserSync()
         if (context != null && user != null && user.uid.isNotBlank()) {

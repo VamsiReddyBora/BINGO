@@ -94,7 +94,13 @@ class FirestoreSyncManager(
                         "customCompletedLineHex" to settings.customCompletedLineHex,
                         "cellBorderEnabled" to settings.cellBorderEnabled,
                         "cellBorderColorHex" to settings.cellBorderColorHex,
-                        "isLiquidMetalTheme" to settings.isLiquidMetalTheme
+                        "isLiquidMetalTheme" to settings.isLiquidMetalTheme,
+                        "systemNotificationsEnabled" to settings.systemNotificationsEnabled,
+                        "playerOnlineNotificationsEnabled" to settings.playerOnlineNotificationsEnabled,
+                        "playerInvitesNotificationsEnabled" to settings.playerInvitesNotificationsEnabled,
+                        "inAppNotificationsEnabled" to settings.inAppNotificationsEnabled,
+                        "inAppPlayerOnlineEnabled" to settings.inAppPlayerOnlineEnabled,
+                        "inAppPlayerInvitesEnabled" to settings.inAppPlayerInvitesEnabled
                     )
                 )
 
@@ -187,7 +193,13 @@ class FirestoreSyncManager(
                                 customCompletedLineHex = settingsMap["customCompletedLineHex"] as? String,
                                 cellBorderEnabled = settingsMap["cellBorderEnabled"] as? Boolean ?: false,
                                 cellBorderColorHex = settingsMap["cellBorderColorHex"] as? String ?: "#FFFFFF",
-                                isLiquidMetalTheme = settingsMap["isLiquidMetalTheme"] as? Boolean ?: false
+                                isLiquidMetalTheme = settingsMap["isLiquidMetalTheme"] as? Boolean ?: false,
+                                systemNotificationsEnabled = settingsMap["systemNotificationsEnabled"] as? Boolean ?: true,
+                                playerOnlineNotificationsEnabled = settingsMap["playerOnlineNotificationsEnabled"] as? Boolean ?: true,
+                                playerInvitesNotificationsEnabled = settingsMap["playerInvitesNotificationsEnabled"] as? Boolean ?: true,
+                                inAppNotificationsEnabled = settingsMap["inAppNotificationsEnabled"] as? Boolean ?: true,
+                                inAppPlayerOnlineEnabled = settingsMap["inAppPlayerOnlineEnabled"] as? Boolean ?: true,
+                                inAppPlayerInvitesEnabled = settingsMap["inAppPlayerInvitesEnabled"] as? Boolean ?: true
                             )
                         } else {
                             UserSettings()

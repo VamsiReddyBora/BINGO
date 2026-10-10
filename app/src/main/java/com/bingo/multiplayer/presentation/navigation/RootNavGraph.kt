@@ -618,7 +618,8 @@ fun RootNavGraph(
             val now = System.currentTimeMillis()
             val lastHandled = handledInviteRoomCodes[staged.roomCode] ?: 0L
             val isRecentlyHandled = (now - lastHandled) < 60_000L
-            if (!isJoiningRoom && !isRecentlyHandled && roomCode != staged.roomCode && (now - staged.timestamp) < 120_000L) {
+            val canShowInApp = com.bingo.multiplayer.core.designsystem.NotificationPreferences.canShowInAppInvite(context)
+            if (canShowInApp && !isJoiningRoom && !isRecentlyHandled && roomCode != staged.roomCode && (now - staged.timestamp) < 120_000L) {
                 val currentDest = navController.currentDestination?.route
                 val isActivelyPlaying = (currentDest == Screen.Game.route || currentDest == Screen.ManualBoardDesign.route) && !isGameOver
                 if (!isActivelyPlaying) {
@@ -631,12 +632,21 @@ fun RootNavGraph(
             val now = System.currentTimeMillis()
             val lastHandled = handledInviteRoomCodes[invite.roomCode] ?: 0L
             val isRecentlyHandled = (now - lastHandled) < 60_000L
-            if (!isJoiningRoom && !isRecentlyHandled && roomCode != invite.roomCode && (now - invite.timestamp) < 120_000L) {
+            val canShowInApp = com.bingo.multiplayer.core.designsystem.NotificationPreferences.canShowInAppInvite(context)
+            if (canShowInApp && !isJoiningRoom && !isRecentlyHandled && roomCode != invite.roomCode && (now - invite.timestamp) < 120_000L) {
                 val currentDest = navController.currentDestination?.route
                 val isActivelyPlaying = (currentDest == Screen.Game.route || currentDest == Screen.ManualBoardDesign.route) && !isGameOver
                 if (!isActivelyPlaying) {
                     incomingInvite = invite
                 }
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        com.bingo.multiplayer.domain.network.PresenceManager.friendOnlineAlertFlow.collect { friendName ->
+            if (com.bingo.multiplayer.core.designsystem.NotificationPreferences.canShowInAppPlayerOnline(context)) {
+                android.widget.Toast.makeText(context, "🟢 $friendName is online", android.widget.Toast.LENGTH_SHORT).show()
             }
         }
     }

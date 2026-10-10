@@ -68,7 +68,13 @@ data class UserSettings(
     val customCompletedLineHex: String? = null,
     val cellBorderEnabled: Boolean = false,
     val cellBorderColorHex: String = "#FFFFFF",
-    val isLiquidMetalTheme: Boolean = false
+    val isLiquidMetalTheme: Boolean = false,
+    val systemNotificationsEnabled: Boolean = true,
+    val playerOnlineNotificationsEnabled: Boolean = true,
+    val playerInvitesNotificationsEnabled: Boolean = true,
+    val inAppNotificationsEnabled: Boolean = true,
+    val inAppPlayerOnlineEnabled: Boolean = true,
+    val inAppPlayerInvitesEnabled: Boolean = true
 )
 
 @Keep

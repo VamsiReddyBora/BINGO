@@ -182,8 +182,48 @@ object BingoNotificationManager {
         lastSeenTimestamp: Long,
         bypassGates: Boolean = false
     ) {
-        // Suppressed: focusing strictly on Game Invites
-        Log.d(TAG, "notifyFriendOnline suppressed (focusing on game invites)")
+        init(context)
+        if (!bypassGates && !com.bingo.multiplayer.core.designsystem.NotificationPreferences.canShowSystemPlayerOnlineNotification(context)) {
+            Log.d(TAG, "Friend online notification suppressed by NotificationPreferences")
+            return
+        }
+        if (!bypassGates && AppLifecycleObserver.isAppInForeground.value) {
+            Log.d(TAG, "Friend online status suppressed: app in foreground")
+            return
+        }
+
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+        val title = "🟢 $friendDisplayName is online"
+        val body = "Challenge @$friendUsername to a Bingo match!"
+
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra(EXTRA_ACTION, ACTION_INVITE_FRIEND)
+            putExtra(EXTRA_TARGET_USER, friendUsername)
+        }
+        val pi = PendingIntent.getActivity(
+            context,
+            NOTIFICATION_ID_FRIEND_ONLINE,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notif = NotificationCompat.Builder(context, CHANNEL_SOCIAL)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setColor(0xFF10B981.toInt())
+            .setContentTitle(title)
+            .setContentText(body)
+            .setContentIntent(pi)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .build()
+
+        try {
+            nm.notify(NOTIFICATION_ID_FRIEND_ONLINE, notif)
+            Log.i(TAG, "Posted friend online notification for $friendUsername")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to post friend online notification: ${e.message}")
+        }
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -221,7 +261,13 @@ object BingoNotificationManager {
     fun showInviteNotification(context: Context, invite: GameInvite, forceShow: Boolean = false) {
         init(context)
 
-        // 1. Foreground suppression: If user is inside app, in-app modal takes priority (Rule 1)
+        // 1. Check user notification settings
+        if (!forceShow && !com.bingo.multiplayer.core.designsystem.NotificationPreferences.canShowSystemInviteNotification(context)) {
+            Log.d(TAG, "Invite notification suppressed from status bar: disabled in NotificationPreferences")
+            return
+        }
+
+        // 2. Foreground suppression: If user is inside app, in-app modal takes priority (Rule 1)
         if (!forceShow && AppLifecycleObserver.isAppInForeground.value) {
             Log.d(TAG, "Invite notification suppressed from status bar: app is in foreground")
             return

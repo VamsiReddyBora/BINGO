@@ -88,6 +88,7 @@ object PresenceManager {
     private var presenceClient: MqttAsyncClient? = null
     private var heartbeatJob: Job? = null
     private var watcherStartTime: Long = 0L
+    val friendOnlineAlertFlow = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 5)
     var currentActiveUsername: String? = null
         private set
 
@@ -617,7 +618,15 @@ object PresenceManager {
                 if (ctx != null && BingoNotificationManager.isFriend(ctx, cleanUser)) {
                     val displayName = BingoNotificationManager.getFriendDisplayName(ctx, cleanUser)
                     val lastSeen = previous?.timestamp ?: BingoNotificationManager.getFriendLastSeen(ctx, cleanUser)
+
+                    // 1. Post system notification if app in background
                     BingoNotificationManager.notifyFriendOnline(ctx, cleanUser, displayName, lastSeen)
+
+                    // 2. Deliver in-app alert if app in foreground and setting is ON
+                    if (com.bingo.multiplayer.domain.network.AppLifecycleObserver.isAppInForeground.value &&
+                        com.bingo.multiplayer.core.designsystem.NotificationPreferences.canShowInAppPlayerOnline(ctx)) {
+                        friendOnlineAlertFlow.tryEmit(displayName)
+                    }
                 }
             }
         }

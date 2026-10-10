@@ -46,20 +46,30 @@ class BingoFirebaseMessagingService : FirebaseMessagingService() {
                         val inForeground = AppLifecycleObserver.isAppInForeground.value
 
                         if (!isSelfTest && inForeground) {
-                            // Rule 1: App is open (in foreground) - In-app notification only
-                            Log.d(TAG, "Game invite received via FCM while app in foreground — delivering in-app only")
-                            GameInviteManager.deliverForegroundInvite(invite)
+                            if (com.bingo.multiplayer.core.designsystem.NotificationPreferences.canShowInAppInvite(applicationContext)) {
+                                Log.d(TAG, "Game invite received via FCM while app in foreground — delivering in-app only")
+                                GameInviteManager.deliverForegroundInvite(invite)
+                            }
                         } else {
-                            // Rule 2 & 3: App is in background (recents) or completely closed
-                            // Notify via push notification AND stage in-app invite
-                            Log.d(TAG, "Game invite received via FCM while app in background/closed — posting push notification and staging invite")
-                            BingoNotificationManager.showInviteNotification(applicationContext, invite, forceShow = isSelfTest)
-                            GameInviteManager.deliverForegroundInvite(invite)
+                            if (isSelfTest || com.bingo.multiplayer.core.designsystem.NotificationPreferences.canShowSystemInviteNotification(applicationContext)) {
+                                BingoNotificationManager.showInviteNotification(applicationContext, invite, forceShow = isSelfTest)
+                            }
+                            if (com.bingo.multiplayer.core.designsystem.NotificationPreferences.canShowInAppInvite(applicationContext)) {
+                                GameInviteManager.deliverForegroundInvite(invite)
+                            }
                         }
                     }
                 }
+                "FRIEND_ONLINE" -> {
+                    val username = data["username"].orEmpty()
+                    val displayName = data["displayName"].orEmpty().ifBlank { username }
+                    val timestamp = data["timestamp"]?.toLongOrNull() ?: System.currentTimeMillis()
+                    if (username.isNotBlank()) {
+                        BingoNotificationManager.notifyFriendOnline(applicationContext, username, displayName, timestamp)
+                    }
+                }
                 else -> {
-                    Log.d(TAG, "FCM message type '$type' suppressed (focusing strictly on game invites)")
+                    Log.d(TAG, "FCM message type '$type' unhandled")
                 }
             }
         }

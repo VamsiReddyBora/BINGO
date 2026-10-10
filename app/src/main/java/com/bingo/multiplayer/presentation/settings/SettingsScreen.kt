@@ -59,8 +59,10 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.ui.graphics.graphicsLayer
 import com.bingo.multiplayer.core.designsystem.ThemePreferences
+import com.bingo.multiplayer.core.designsystem.NotificationPreferences
 import com.bingo.multiplayer.core.designsystem.computeContrastText
 import com.bingo.multiplayer.domain.network.EmojiPreferences
 import com.bingo.multiplayer.presentation.components.AnimatedEmoji
@@ -2325,7 +2327,8 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             // ── Notification Diagnostics & Testing ──
-            NotificationDiagnosticsCard(context = context)
+            // ── Notification Preferences ──
+            NotificationSettingsCard(context = context)
 
             Spacer(modifier = Modifier.height(84.dp))
         }
@@ -2343,30 +2346,19 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun NotificationDiagnosticsCard(
+private fun NotificationSettingsCard(
     context: Context
 ) {
     val tokens = BingoTheme.colors
-    var areNotificationsEnabled by remember {
-        mutableStateOf(NotificationManagerCompat.from(context).areNotificationsEnabled())
-    }
-    var fcmToken by remember {
-        mutableStateOf(BingoFcmManager.getSavedToken(context))
-    }
-    var testStatusMessage by remember { mutableStateOf<String?>(null) }
-    var isSendingFcm by remember { mutableStateOf(false) }
+    val systemEnabled = NotificationPreferences.systemNotificationsEnabled.value
+    val onlineSystemEnabled = NotificationPreferences.playerOnlineNotificationsEnabled.value
+    val invitesSystemEnabled = NotificationPreferences.playerInvitesNotificationsEnabled.value
 
-    LaunchedEffect(Unit) {
-        if (fcmToken.isNullOrBlank()) {
-            FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
-                if (task.isSuccessful && !task.result.isNullOrBlank()) {
-                    val tok = task.result
-                    fcmToken = tok
-                    BingoFcmManager.saveToken(context, tok)
-                }
-            }
-        }
-    }
+    val inAppEnabled = NotificationPreferences.inAppNotificationsEnabled.value
+    val onlineInAppEnabled = NotificationPreferences.inAppPlayerOnlineEnabled.value
+    val invitesInAppEnabled = NotificationPreferences.inAppPlayerInvitesEnabled.value
+
+    val areOsNotificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -2377,6 +2369,7 @@ private fun NotificationDiagnosticsCard(
         Column(
             modifier = Modifier.padding(16.dp)
         ) {
+            // Header
             Row(
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -2388,166 +2381,191 @@ private fun NotificationDiagnosticsCard(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Notification Diagnostics",
+                    text = "Notification Settings",
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,
                     color = tokens.cellNeutralText
                 )
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "Verify heads-up alerts, action buttons, and background FCM pushes directly on your device.",
+                text = "Customize system notifications and in-app alerts for players and invitations.",
                 fontSize = 12.sp,
                 color = tokens.textMuted,
                 lineHeight = 16.sp
             )
 
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Permission Status
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        val intent = Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                            putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+            if (!areOsNotificationsEnabled) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            val intent = Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                                putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                            }
+                            try {
+                                context.startActivity(intent)
+                            } catch (_: Exception) {}
                         }
-                        try {
-                            context.startActivity(intent)
-                        } catch (_: Exception) {}
-                    }
-                    .padding(vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = if (areNotificationsEnabled) "✓ System Notifications: Enabled" else "⚠️ System Notifications: Blocked (Tap to Enable)",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = if (areNotificationsEnabled) Color(0xFF10B981) else Color(0xFFEF4444)
-                )
-            }
-
-            // FCM Token Status
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val hasToken = !fcmToken.isNullOrBlank()
-                Text(
-                    text = if (hasToken) "✓ FCM Cloud Messaging: Active" else "⏳ FCM Cloud Messaging: Registering...",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = if (hasToken) Color(0xFF10B981) else Color(0xFFF59E0B)
-                )
-            }
-
-            if (testStatusMessage != null) {
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = testStatusMessage.orEmpty(),
-                    fontSize = 11.sp,
-                    color = tokens.accentBrand,
-                    fontWeight = FontWeight.Medium
-                )
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "⚠️ System Notifications are disabled in Android settings (Tap to enable)",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFFEF4444)
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(14.dp))
+
+            // ══════════════════════════════════════════
+            // SECTION 1: SYSTEM NOTIFICATIONS (Push / Device)
+            // ══════════════════════════════════════════
             Text(
-                text = "1-Tap Verification Triggers:",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = tokens.cellNeutralText
+                text = "SYSTEM NOTIFICATIONS (DEVICE)",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                color = tokens.accentBrand,
+                letterSpacing = 0.8.sp
             )
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Row 1: Invite & Friend Online
-            Row(
+            // Master Toggle 1: All Notifications ON/OFF
+            NotificationToggleRow(
+                title = "All Notifications",
+                description = "Enable or disable all system status bar notifications",
+                checked = systemEnabled,
+                onCheckedChange = { NotificationPreferences.setSystemNotificationsEnabled(context, it) }
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // Sub Toggle 1A: Players Online Notifications
+            NotificationToggleRow(
+                title = "Players Online Notifications",
+                description = "Alert when friends come online to play",
+                checked = onlineSystemEnabled && systemEnabled,
+                enabled = systemEnabled,
+                isChild = true,
+                onCheckedChange = { NotificationPreferences.setPlayerOnlineNotificationsEnabled(context, it) }
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // Sub Toggle 1B: Player Invites Notifications
+            NotificationToggleRow(
+                title = "Player Invites Notifications",
+                description = "Receive heads-up alerts when someone invites you to a match",
+                checked = invitesSystemEnabled && systemEnabled,
+                enabled = systemEnabled,
+                isChild = true,
+                onCheckedChange = { NotificationPreferences.setPlayerInvitesNotificationsEnabled(context, it) }
+            )
+
+            Spacer(modifier = Modifier.height(14.dp))
+            HorizontalDivider(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedButton(
-                    onClick = {
-                        testStatusMessage = "Heads-up invite sent with [Accept] & [Decline] buttons"
-                        BingoNotificationManager.testInviteNotification(context)
-                    },
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(10.dp),
-                    border = BorderStroke(1.dp, tokens.cellNeutralBorder.copy(alpha = 0.4f)),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
-                ) {
-                    Text("🎮 Test Invite Alert", fontSize = 11.sp, color = tokens.cellNeutralText, maxLines = 1)
-                }
+                thickness = 0.5.dp,
+                color = tokens.cellNeutralBorder.copy(alpha = 0.25f)
+            )
+            Spacer(modifier = Modifier.height(14.dp))
 
-                OutlinedButton(
-                    onClick = {
-                        testStatusMessage = "Friend online alert sent with [Invite to Game] button"
-                        BingoNotificationManager.testFriendOnlineNotification(context)
-                    },
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(10.dp),
-                    border = BorderStroke(1.dp, tokens.cellNeutralBorder.copy(alpha = 0.4f)),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
-                ) {
-                    Text("🟢 Test Friend Online", fontSize = 11.sp, color = tokens.cellNeutralText, maxLines = 1)
-                }
-            }
-
+            // ══════════════════════════════════════════
+            // SECTION 2: IN-APP NOTIFICATIONS (In-Game Banners)
+            // ══════════════════════════════════════════
+            Text(
+                text = "IN-APP NOTIFICATIONS (ALERTS)",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                color = tokens.accentBrand,
+                letterSpacing = 0.8.sp
+            )
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Row 2: Announcement & FCM Push
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedButton(
-                    onClick = {
-                        testStatusMessage = "Announcement notification posted"
-                        BingoNotificationManager.testBroadcastNotification(context)
-                    },
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(10.dp),
-                    border = BorderStroke(1.dp, tokens.cellNeutralBorder.copy(alpha = 0.4f)),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
-                ) {
-                    Text("📢 Test Announcement", fontSize = 11.sp, color = tokens.cellNeutralText, maxLines = 1)
-                }
+            // Master Toggle 2: All In-App Notifications ON/OFF
+            NotificationToggleRow(
+                title = "All In-App Notifications",
+                description = "Show popup alerts and banners while inside the app",
+                checked = inAppEnabled,
+                onCheckedChange = { NotificationPreferences.setInAppNotificationsEnabled(context, it) }
+            )
 
-                Button(
-                    onClick = {
-                        if (!isSendingFcm) {
-                            isSendingFcm = true
-                            testStatusMessage = "Sending FCM push... Minimize or lock phone to see it wake device!"
-                            Toast.makeText(context, "Minimize or lock your phone now! Push will arrive in ~2-4s", Toast.LENGTH_LONG).show()
-                            BingoFcmManager.sendSelfTestPush(context) { success, msg ->
-                                isSendingFcm = false
-                                testStatusMessage = if (success) "✓ FCM push sent successfully to Google servers!" else "❌ FCM failed: $msg"
-                            }
-                        }
-                    },
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = tokens.accentBrand),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
-                ) {
-                    if (isSendingFcm) {
-                        CircularProgressIndicator(modifier = Modifier.size(12.dp), color = Color.White, strokeWidth = 2.dp)
-                        Spacer(modifier = Modifier.width(4.dp))
-                    }
-                    Text("☁️ Test FCM Push", fontSize = 11.sp, color = Color.White, maxLines = 1, fontWeight = FontWeight.Bold)
-                }
-            }
+            Spacer(modifier = Modifier.height(6.dp))
 
-            Spacer(modifier = Modifier.height(10.dp))
+            // Sub Toggle 2A: Players Online In-App Alerts
+            NotificationToggleRow(
+                title = "Players Online In-App Alerts",
+                description = "Display in-game toast banner when a friend joins",
+                checked = onlineInAppEnabled && inAppEnabled,
+                enabled = inAppEnabled,
+                isChild = true,
+                onCheckedChange = { NotificationPreferences.setInAppPlayerOnlineEnabled(context, it) }
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // Sub Toggle 2B: Player Invites In-App Alerts
+            NotificationToggleRow(
+                title = "Player Invites In-App Alerts",
+                description = "Show interactive match invite modal dialog in lobby & menus",
+                checked = invitesInAppEnabled && inAppEnabled,
+                enabled = inAppEnabled,
+                isChild = true,
+                onCheckedChange = { NotificationPreferences.setInAppPlayerInvitesEnabled(context, it) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun NotificationToggleRow(
+    title: String,
+    description: String,
+    checked: Boolean,
+    enabled: Boolean = true,
+    isChild: Boolean = false,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    val tokens = BingoTheme.colors
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = if (isChild) 12.dp else 0.dp, top = 2.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(
+            modifier = Modifier.weight(1f)
+        ) {
             Text(
-                text = "Rule Guide: Live friend alerts require >1h absence. Invites show in-app modal when open, heads-up notification with Accept/Decline when minimized. Auto-dismisses on app open.",
-                fontSize = 10.sp,
-                color = tokens.textMuted.copy(alpha = 0.8f),
+                text = title,
+                fontSize = 13.sp,
+                fontWeight = if (isChild) FontWeight.Medium else FontWeight.SemiBold,
+                color = if (enabled) tokens.cellNeutralText else tokens.cellNeutralText.copy(alpha = 0.4f)
+            )
+            Text(
+                text = description,
+                fontSize = 11.sp,
+                color = if (enabled) tokens.textMuted else tokens.textMuted.copy(alpha = 0.4f),
                 lineHeight = 14.sp
             )
         }
+        Spacer(modifier = Modifier.width(10.dp))
+        androidx.compose.material3.Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            enabled = enabled,
+            colors = androidx.compose.material3.SwitchDefaults.colors(
+                checkedThumbColor = Color.White,
+                checkedTrackColor = tokens.accentBrand,
+                uncheckedThumbColor = tokens.textMuted,
+                uncheckedTrackColor = tokens.cellNeutralBorder.copy(alpha = 0.3f)
+            )
+        )
     }
 }
 
