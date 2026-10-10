@@ -3,6 +3,6 @@
   "versionName": "1.4.1",
   "tag_name": "v1.4.1",
   "downloadUrl": "https://vamsireddybora.github.io/BINGO/Bingo.apk",
-  "releaseNotes": "• v1.4.1: Unified Theme Launch & Instant Startup\n• Seamless Theme Match: System splash screen, window decor, and status/nav bars now accurately match active theme (Clean Light / AMOLED Black) from the very first frame\n• Instant Startup: Eliminated redundant secondary launch screen delay for immediate access to main menu\n• Direct high-speed CDN distribution on GitHub Pages",
-  "apkSize": 6741805
+  "releaseNotes": "• v1.4.1: Sound & Vibration Settings & Launch Polish\n• Sounds & Vibration: New settings card with granular toggles for audio effects and complete haptic silencing\n• 10 Preset Sounds: Customizable pick sounds with instant live previews\n• Splash & Launch Animation: Unified theme match with smooth 1000ms delay and zoom effect\n• Direct high-speed CDN distribution on GitHub Pages",
+  "apkSize": 6943970
 }
