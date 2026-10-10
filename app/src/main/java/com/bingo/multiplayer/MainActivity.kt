@@ -43,6 +43,17 @@ class MainActivity : ComponentActivity() {
         ThemePreferences.init(applicationContext)
         com.bingo.multiplayer.core.designsystem.NotificationPreferences.init(applicationContext)
 
+        // Immediately enforce window background and system bar icon contrast matching theme before UI composition
+        val initIsDark = ThemePreferences.isDarkTheme.value
+        val initBg = if (initIsDark) android.graphics.Color.BLACK else android.graphics.Color.parseColor("#FAFAFC")
+        window.statusBarColor = initBg
+        window.navigationBarColor = initBg
+        window.decorView.setBackgroundColor(initBg)
+        window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(initBg))
+        val initialInsetsController = WindowCompat.getInsetsController(window, window.decorView)
+        initialInsetsController.isAppearanceLightStatusBars = !initIsDark
+        initialInsetsController.isAppearanceLightNavigationBars = !initIsDark
+
         // Initialize Notification Channels and background WorkManager checks
         BingoNotificationManager.init(applicationContext)
         BingoFcmManager.init(applicationContext)

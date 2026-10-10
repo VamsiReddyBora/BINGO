@@ -44,26 +44,11 @@ fun AuthGateScreen(
     val tokens = BingoTheme.colors
     val context = LocalContext.current
 
-    val iconScale = remember { Animatable(0.58f) }
-    val iconAlpha = remember { Animatable(0f) }
+    val iconScale = remember { Animatable(1.0f) }
+    val iconAlpha = remember { Animatable(1.0f) }
 
     LaunchedEffect(Unit) {
-        // 1. Smooth opening zoom-in and alpha reveal animation (~650ms)
-        val zoomInSpec = androidx.compose.animation.core.CubicBezierEasing(0.16f, 1f, 0.3f, 1f)
-        launch {
-            iconScale.animateTo(
-                targetValue = 1.0f,
-                animationSpec = tween(durationMillis = 650, easing = zoomInSpec)
-            )
-        }
-        launch {
-            iconAlpha.animateTo(
-                targetValue = 1.0f,
-                animationSpec = tween(durationMillis = 400, easing = LinearEasing)
-            )
-        }
-
-        // 2. Background ongoing match refresh & cleanup
+        // 1. Background ongoing match refresh & cleanup
         val refreshJob = launch(Dispatchers.IO) {
             try {
                 val ongoing = OngoingMatchStore.getOngoingMatch(context)

@@ -236,6 +236,7 @@ object ThemePreferences {
             authPrefs?.getBoolean("settings_dark_theme", false) ?: false
         }
         isDarkTheme.value = savedDark
+        applyNightModeSafely(savedDark)
         val defaultAccent = "matte_slate"
         val savedAccent = prefs.getString(KEY_ACCENT_ID, defaultAccent) ?: defaultAccent
         // If saved accent was the old default "royal_violet" and user hadn't explicitly chosen it, default to "matte_slate"
@@ -282,6 +283,22 @@ object ThemePreferences {
         }
         prefs.edit().putBoolean(KEY_IS_DARK, isDark).apply()
         authPrefs?.edit()?.putBoolean("settings_dark_theme", isDark)?.apply()
+        applyNightModeSafely(isDark)
+    }
+
+    private fun applyNightModeSafely(isDark: Boolean) {
+        try {
+            val targetMode = if (isDark) {
+                androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES
+            } else {
+                androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO
+            }
+            if (androidx.appcompat.app.AppCompatDelegate.getDefaultNightMode() != targetMode) {
+                androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(targetMode)
+            }
+        } catch (_: Throwable) {
+            // Graceful fallback for non-Android / testing environments
+        }
     }
 
     fun setDarkTheme(context: Context, isDark: Boolean) {
