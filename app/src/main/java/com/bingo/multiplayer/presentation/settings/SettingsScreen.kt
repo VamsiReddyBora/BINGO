@@ -553,7 +553,7 @@ fun SettingsScreen(
             ColorPickerTarget.MY_PICK -> ThemePreferences.customMyPickHex.value ?: if (isDarkTheme) "#38BDF8" else "#EADBFF"
             ColorPickerTarget.OPPONENT_PICK -> ThemePreferences.customOpponentPickHex.value ?: if (isDarkTheme) "#F97316" else "#D3EEFF"
             ColorPickerTarget.RECENT_PICK -> ThemePreferences.customRecentPickHex.value ?: if (isDarkTheme) "#FB923C" else "#FFE0B8"
-            ColorPickerTarget.LINE_COMPLETION -> ThemePreferences.customCompletedLineHex.value ?: if (isDarkTheme) "#2C2D35" else "#94A3B8"
+            ColorPickerTarget.LINE_COMPLETION -> ThemePreferences.customCompletedLineHex.value ?: ThemePreferences.DEFAULT_COMPLETED_LINE_HEX
             ColorPickerTarget.CELL_BORDER -> ThemePreferences.cellBorderColorHex.value
         }
         val targetTitle = when (currentPickerTarget) {

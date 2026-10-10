@@ -60,6 +60,7 @@ data class BingoColors(
     // Cells - Completed Winning Line
     val completedLineBg: Color,
     val completedLineText: Color,
+    val completedLineBorder: Color = Color.Transparent,
 
     // Completed B-I-N-G-O letters
     val completedLetterGradientStart: Color,
@@ -154,6 +155,7 @@ fun buildCleanLightColors(palette: AppAccentPalette): BingoColors = BingoColors(
     // Cells - Completed Winning Line: #64748B with pure white text
     completedLineBg = Color(0xFF64748B),
     completedLineText = Color(0xFFFFFFFF),
+    completedLineBorder = Color.Transparent,
 
     // Completed B-I-N-G-O Letters: Clean amber gold
     completedLetterGradientStart = Color(0xFFFBBF24),
@@ -215,6 +217,7 @@ fun buildAmoledDarkColors(palette: AppAccentPalette): BingoColors = BingoColors(
     // Cells - Completed Winning Line: #64748B with pure white text
     completedLineBg = Color(0xFF64748B),
     completedLineText = Color(0xFFFFFFFF),
+    completedLineBorder = Color.Transparent,
 
     // Completed B-I-N-G-O Letters: Clean gold
     completedLetterGradientStart = Color(0xFFF59E0B),
@@ -386,6 +389,7 @@ fun BingoAppTheme(
 
         completedLineBg = customCompletedLineBg ?: baseColors.completedLineBg,
         completedLineText = customCompletedLineBg?.let { computeContrastText(it) } ?: baseColors.completedLineText,
+        completedLineBorder = if (cellBorderEnabled) customBorderColor else Color.Transparent,
 
         cellNeutralBorder = if (cellBorderEnabled) customBorderColor else baseColors.cellNeutralBorder
     )

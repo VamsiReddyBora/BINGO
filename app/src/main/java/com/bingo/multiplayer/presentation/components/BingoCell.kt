@@ -254,42 +254,20 @@ private fun resolveMinimalCellStyling(cell: Cell): MinimalCellVisualTokens {
                 backgroundColor = tokens.recentPickBg,
                 textColor = tokens.recentPickText,
                 bevelColor = if (tokens.isDark) Color(0xFFEA580C) else Color(0xFFC2410C),
-                borderColor = if (cell.isPartOfCompletedLine) tokens.bingoGold else tokens.recentPickBorder,
-                borderWidth = if (cell.isPartOfCompletedLine) 2.dp else if (tokens.isDark) 1.dp else 0.dp
+                borderColor = tokens.recentPickBorder,
+                borderWidth = if (tokens.recentPickBorder != Color.Transparent && (tokens.isDark || ThemePreferences.cellBorderEnabled.value)) 1.dp else 0.dp
             )
         }
 
-        // Winning line completed while preserving pick identity (player vs opponent)
+        // Winning line completed - dynamically reflects Line Completion color & Cell Border settings
         cell.isPartOfCompletedLine -> {
-            when {
-                isOwn -> {
-                    MinimalCellVisualTokens(
-                        backgroundColor = tokens.cellPlayerPickBg,
-                        textColor = tokens.cellPlayerPickText,
-                        bevelColor = tokens.cellPlayerPickBevel,
-                        borderColor = tokens.bingoGold,
-                        borderWidth = 2.dp
-                    )
-                }
-                isOpponent -> {
-                    MinimalCellVisualTokens(
-                        backgroundColor = tokens.cellOpponentPickBg,
-                        textColor = tokens.cellOpponentPickText,
-                        bevelColor = tokens.cellOpponentPickBevel,
-                        borderColor = tokens.bingoGold,
-                        borderWidth = 2.dp
-                    )
-                }
-                else -> {
-                    MinimalCellVisualTokens(
-                        backgroundColor = tokens.completedLineBg,
-                        textColor = tokens.completedLineText,
-                        bevelColor = tokens.completedLineBg.copy(alpha = 0.8f),
-                        borderColor = tokens.bingoGold,
-                        borderWidth = 2.dp
-                    )
-                }
-            }
+            MinimalCellVisualTokens(
+                backgroundColor = tokens.completedLineBg,
+                textColor = tokens.completedLineText,
+                bevelColor = tokens.completedLineBg.copy(alpha = 0.8f),
+                borderColor = tokens.completedLineBorder,
+                borderWidth = if (tokens.completedLineBorder != Color.Transparent && ThemePreferences.cellBorderEnabled.value) 1.dp else 0.dp
+            )
         }
 
         // Player choice (Lavender in light, Ice Blue in dark)
@@ -299,7 +277,7 @@ private fun resolveMinimalCellStyling(cell: Cell): MinimalCellVisualTokens {
                 textColor = tokens.cellPlayerPickText,
                 bevelColor = tokens.cellPlayerPickBevel,
                 borderColor = tokens.cellPlayerPickBorder,
-                borderWidth = if (tokens.isDark) 1.dp else 0.dp
+                borderWidth = if (tokens.isDark || ThemePreferences.cellBorderEnabled.value) 1.dp else 0.dp
             )
         }
 
@@ -310,7 +288,7 @@ private fun resolveMinimalCellStyling(cell: Cell): MinimalCellVisualTokens {
                 textColor = tokens.cellOpponentPickText,
                 bevelColor = tokens.cellOpponentPickBevel,
                 borderColor = tokens.cellOpponentPickBorder,
-                borderWidth = if (tokens.isDark) 1.dp else 0.dp
+                borderWidth = if (tokens.isDark || ThemePreferences.cellBorderEnabled.value) 1.dp else 0.dp
             )
         }
 

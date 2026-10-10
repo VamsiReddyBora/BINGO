@@ -404,17 +404,23 @@ class V14ForfeitAndRoutingTest {
 
         val styleBranch = when {
             isOpponentRecent -> "RECENT_OPPONENT_PICK"
-            isPartOfCompletedLine -> when {
-                isOwn -> "OWN_COMPLETED_LINE"
-                isOpponent -> "OPPONENT_COMPLETED_LINE"
-                else -> "NEUTRAL_COMPLETED_LINE"
-            }
+            isPartOfCompletedLine -> "COMPLETED_LINE"
             isOwn -> "OWN_PICK"
             isOpponent -> "OPPONENT_PICK"
             else -> "UNPICKED"
         }
 
         assertEquals("Opponent recent pick must take precedence to preserve active radar wave", "RECENT_OPPONENT_PICK", styleBranch)
+
+        // When cell is part of a completed line and NOT recent opponent pick, it must resolve to COMPLETED_LINE
+        val completedLineBranch = when {
+            false -> "RECENT_OPPONENT_PICK"
+            isPartOfCompletedLine -> "COMPLETED_LINE"
+            isOwn -> "OWN_PICK"
+            isOpponent -> "OPPONENT_PICK"
+            else -> "UNPICKED"
+        }
+        assertEquals("Completed line cells must resolve to COMPLETED_LINE to dynamically use settings color", "COMPLETED_LINE", completedLineBranch)
     }
 
     @Test

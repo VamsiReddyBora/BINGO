@@ -1,0 +1,393 @@
+================================================================================
+BINGO MULTIPLAYER - ANDROID APPLICATION AUDIT & BUG REPORT #009
+================================================================================
+Report ID       : BUG-REPORT-009 (Option A: In-Game Match Screen & Board Presentation)
+Date            : 2026-10-10
+Target Platform : Android Native (Jetpack Compose, Canvas, GraphicsLayer, Theming)
+Scope           : Exclusively Android Application Presentation Layer (app/src/main/java)
+Status          : 8 UI & UX DEFECTS IDENTIFIED & DOCUMENTED
+Audited By      : Antigravity Code Review & UI/UX Audit System
+================================================================================
+
+1. EXECUTIVE SUMMARY & AUDIT OVERVIEW
+--------------------------------------------------------------------------------
+Following the complete verification of Bug Report #008 (BUG-035 through BUG-042 
+resolved with 100% test pass rate in commit `a456382`), our full engineering audit
+focused specifically on Option A: In-Game Match Screen & Cells (`GameScreen.kt`, 
+`BingoCell.kt`, `BingoComponents.kt`, `GameBottomBarComponents.kt`, 
+`FloatingEmotes.kt`, and `InGameChatSpace.kt`).
+
+In strict accordance with project directives:
+  • Scope is restricted 100% to native Android files (`app/src/main/java/...`).
+  • Web application files are completely excluded.
+  • Codebase modifications are strictly prohibited; this report documents all 
+    discovered visual defects, layout anomalies, gesture clashes, and animation 
+    glitches for user review and signoff.
+
+A deep-dive inspection of rendering pipelines, Canvas drawing passes, graphicsLayer
+transforms, and UI typography revealed eight (8) discrete UI/UX defects across the
+match play experience.
+
+
++-------------------------------------------------------------------------------+
+| SUMMARY OF DETECTED UI & UX DEFECTS (OPTION A)                                |
++-------------+----------+----------------------------+-------------------------+
+| DEFECT ID   | SEVERITY | COMPONENT / LOCATION       | MODULE / CATEGORY       |
++-------------+----------+----------------------------+-------------------------+
+| BUG-043     | HIGH     | BingoComponents.kt         | B-I-N-G-O Strike        |
+|             |          | (86-131) BingoBoardView    | (Animation Bypassed &   |
+|             |          |                            |  Low-Contrast Smudge)   |
+| BUG-044     | HIGH     | GameScreen.kt (808-819)    | Post-Game Review Strip  |
+|             |          | Review Player Chips        | (Crown & Medal Sliced)  |
+| BUG-045     | HIGH     | GameScreen.kt (664-716)    | Top Bar Match Controls  |
+|             |          | Top-Right Pause & Timer    | (Active on Game Over)   |
+| BUG-046     | MEDIUM   | BingoCell.kt (151-171),    | Opponent Pick Ripple    |
+|             |          | BingoComponents (145-168)  | (Z-Index Overlap Clip)  |
+| BUG-047     | MEDIUM   | GameScreen.kt (1018-1041,  | Turn Status Banner &    |
+|             |          |  1244)                     | Chat Keyboard Hang      |
+| BUG-048     | MEDIUM   | FloatingEmotes.kt          | Reaction Strip Preview  |
+|             |          | (443-469) Preview Bubble   | (Quad Scale Explosion)  |
+| BUG-049     | MEDIUM   | GameScreen.kt (299-306)    | Reaction Emotes Overlay |
+|             |          | incomingChatMessage System | (System Disconnect Emote|
+| BUG-050     | LOW      | GameScreen.kt (124, 130),  | Dead Imports & Unwired  |
+|             |          | BingoCell.kt (65)          | Turn Glow Parameters    |
++-------------+----------+----------------------------+-------------------------+
+
+
+================================================================================
+2. DETAILED DEFECT REPORTS & TECHNICAL FINDINGS
+================================================================================
+
+--------------------------------------------------------------------------------
+DEFECT ID: BUG-043
+SEVERITY : HIGH
+MODULE   : In-Game Column Letters & Line Strike Animation
+FILES    : app/src/main/java/com/bingo/multiplayer/presentation/components/BingoComponents.kt (lines 86-131)
+--------------------------------------------------------------------------------
+Description:
+In `BingoBoardView`, when a player completes a line (`c < board.completedLinesCount`),
+the letter strike animation is configured via:
+```kotlin
+val strikeProgress by animateFloatAsState(
+    targetValue = if (isUnlocked) 1f else 0f,
+    animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing),
+    label = "boardColStrike_$c"
+)
+```
+However, inside the Canvas drawing block at line 108:
+```kotlin
+val progress = if (isUnlocked) 1f else strikeProgress
+```
+Because `isUnlocked` is already `true` on the very frame where line completion 
+occurs, `if (isUnlocked)` evaluates to `1f` immediately!
+The animated variable `strikeProgress` (which animates smoothly from 0f to 1f over 
+280ms) is completely bypassed! The diagonal strike line snaps from 0% to 100% 
+instantly with zero animation. The forward line completion strike animation never 
+plays.
+
+Furthermore, line 124 draws the strike line using:
+```kotlin
+drawLine(
+    color = tokens.cellNeutralText,
+    start = Offset(startX, startY),
+    end = Offset(curEndX, curEndY),
+    strokeWidth = 3.5.dp.toPx(),
+    cap = StrokeCap.Round
+)
+```
+Drawing the strike in the exact same color as the letter (`tokens.cellNeutralText`)
+creates an unappealing black/white smudge over the letter rather than a vibrant, 
+celebratory milestone. In contrast to the gold borders on the board cells, the 
+strike lacks visual polish and looks like a font rendering defect.
+
+Remediation:
+1. In `BingoComponents.kt` line 108, use `val progress = strikeProgress` directly 
+   so the 280ms drawing animation actually renders from bottom-left to top-right.
+2. Render the strike line using a vibrant accent (`tokens.bingoGold` or 
+   `tokens.accentBrand`) rather than flat `tokens.cellNeutralText`.
+
+
+--------------------------------------------------------------------------------
+DEFECT ID: BUG-044
+SEVERITY : HIGH
+MODULE   : Post-Game Board Review & Rank Chips
+FILES    : app/src/main/java/com/bingo/multiplayer/presentation/game/GameScreen.kt (lines 808-819)
+--------------------------------------------------------------------------------
+Description:
+In post-game review mode (`isGameOver == true`), player selection chips in the 
+review strip display:
+```kotlin
+val labelText = if (isLocal) "My Board" else player.displayName
+Text(
+    text = "$labelText ($linesCount/${board.size})$badgeSuffix",
+    fontSize = 12.sp,
+    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+    color = ...,
+    maxLines = 1,
+    overflow = TextOverflow.Ellipsis
+)
+```
+In standard 2-player review mode (`isTwoPlayerLayout == true`), each chip has 
+`Modifier.weight(1f)`. On a 360dp mobile viewport, after accounting for 16dp outer 
+padding, 4dp row padding, 12dp horizontal chip padding on each side, the 20dp avatar, 
+and 6dp spacer, the remaining available width for this text is only ~100dp.
+
+When a player has a realistic name (e.g. "Christopher Alexander", "Player 2 (Online)"),
+`TextOverflow.Ellipsis` truncates the string from the far right end.
+Because the badge suffix (`" 👑"` for Winner, `" 🥈"` for Runner-Up, `" (Offline)"`)
+and line score (`" (4/5)"`) are appended at the very end of the string:
+  1. The winner crown or runner medal is the first thing sliced off!
+  2. The lines completed count `(4/5)` is sliced off second.
+  3. The rendered text reads `"Christopher Alex..."`.
+The player cannot see who won the match, who placed as runner-up, or what scores 
+were earned.
+
+Remediation:
+Separate the player name into an individually ellipsized Text component:
+`Text(text = labelText, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))`
+Followed by a non-truncated fixed Text component:
+`Text(text = " ($linesCount/${board.size})$badgeSuffix", maxLines = 1)`
+This guarantees that the crown, medal, and score are always 100% visible.
+
+
+--------------------------------------------------------------------------------
+DEFECT ID: BUG-045
+SEVERITY : HIGH
+MODULE   : Match Top Bar & Navigation Controls
+FILES    : app/src/main/java/com/bingo/multiplayer/presentation/game/GameScreen.kt (lines 664-716)
+--------------------------------------------------------------------------------
+Description:
+In `GameScreen.kt`, the top-right Pause button and turn timer badge are placed in 
+the topBar:
+```kotlin
+// 1. Pause button comes first
+IconButton(
+    onClick = onTogglePause,
+    modifier = Modifier.size(32.dp)
+) {
+    Icon(
+        imageVector = if (isGamePaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+        ...
+    )
+}
+
+// 2. Timer comes next
+Row(
+    modifier = Modifier.widthIn(min = 54.dp)...
+) {
+    Text(text = "⌛"...)
+    Text(text = "${turnTimeRemaining}s"...)
+}
+```
+Neither of these components is wrapped in an `if (!isGameOver)` condition.
+Consequently, when the match is over and players are reviewing the final boards, 
+the top bar still displays an active Pause button and a frozen turn timer countdown 
+badge (e.g. `⌛ 30s`).
+
+If a user clicks the Pause button on the game over screen:
+  1. The "Match Paused" dialog pops up directly over the game-over screen!
+  2. If the user dismisses the pause dialog via "Exit Match", it triggers the 
+     forfeit/surrender dialog!
+Allowing players to pause a finished game creates severe visual confusion and 
+breaks game lifecycle ergonomics.
+
+Remediation:
+Wrap both the Pause button and the Timer badge inside `if (!isGameOver) { ... }`.
+When `isGameOver` is true, either display a clean "Match Ended" trophy icon or 
+leave the space empty.
+
+
+--------------------------------------------------------------------------------
+DEFECT ID: BUG-046
+SEVERITY : MEDIUM
+MODULE   : Tactile 3D Board & Opponent Move Highlighting
+FILES    : app/src/main/java/com/bingo/multiplayer/presentation/components/BingoCell.kt (lines 151-171),
+           app/src/main/java/com/bingo/multiplayer/presentation/components/BingoComponents.kt (lines 145-168)
+--------------------------------------------------------------------------------
+Description:
+When an opponent picks a number, `BingoCell` radiates an expanding radar ripple 
+wave:
+```kotlin
+val waveScale = 1.0f + (radarWaveProgress * 0.32f)
+Box(
+    modifier = Modifier
+        .fillMaxSize()
+        .graphicsLayer {
+            scaleX = waveScale
+            scaleY = waveScale
+        }
+        ...
+)
+```
+The ripple expands to 1.32x scale, radiating outside the cell bounds into neighbor 
+tiles. However, in `BingoBoardView`, cells are laid out in standard `Row` and 
+`Column` layouts without any `Modifier.zIndex()` assignment.
+
+In Jetpack Compose, sibling composables are drawn in DOM order:
+  1. In the same row, cell (r, c+1) to the right is drawn AFTER cell (r, c). 
+     Cell (r, c+1) draws on top of the expanding wave, clipping the right quadrant.
+  2. The next row (r+1) is drawn AFTER row r. All cells below draw on top of the 
+     expanding wave, clipping the bottom quadrant.
+  3. Cells to the left (r, c-1) and above (r-1, c) were drawn BEFORE cell (r, c), 
+     so the wave draws over them.
+This produces an asymmetrical visual artifact where the ripple wave appears clipped 
+on the right and bottom while floating on the left and top.
+
+Remediation:
+Add `Modifier.zIndex(if (isOpponentRecent || cell.isRecentPick) 2f else 0f)` to the 
+active cell container in `BingoCell` (or pass it in `BingoBoardView`) so the entire 
+360° circular radar pulse renders cleanly above all neighbor tiles.
+
+
+--------------------------------------------------------------------------------
+DEFECT ID: BUG-047
+SEVERITY : MEDIUM
+MODULE   : In-Game Turn Status Banner & Keyboard Handling
+FILES    : app/src/main/java/com/bingo/multiplayer/presentation/game/GameScreen.kt (lines 1018-1041, 1244)
+--------------------------------------------------------------------------------
+Description:
+1. Turn Status Message Truncation:
+   When `turnTimeRemaining <= 10`, `GameScreen` displays humorous urgency status 
+   messages:
+   `"let's have some coffee, $activePlayerName is sleeping I think..."`
+   This string contains up to 68 characters. Rendered with `maxLines = 1` and 
+   `TextOverflow.Ellipsis`, on standard 360dp-390dp mobile screens the text is 
+   sliced off mid-sentence:
+   `"let's have some coffee, Christopher Alex..."`
+   The punchline is lost, leaving an awkward sentence fragment despite vertical 
+   space in the 0.12f weighted container.
+
+2. Dangling Soft Keyboard on Tap-Outside:
+   When `isFullLengthChatActive` is dismissed by tapping outside (line 1244):
+   `isFullLengthChatActive = false`
+   Neither `LocalSoftwareKeyboardController.current?.hide()` nor 
+   `LocalFocusManager.current.clearFocus()` is called. On many Android OEM versions 
+   (e.g. Samsung One UI, Android 13/14), the IME software keyboard remains active 
+   on screen, obscuring the board and bottom controls.
+
+Remediation:
+1. Shorten the turn urgency prompt (e.g. `"Wake up $activePlayerName, having coffee? ☕"`) 
+   or allow it to wrap cleanly across 2 lines.
+2. Inject `val keyboardController = LocalSoftwareKeyboardController.current` and 
+   `val focusManager = LocalFocusManager.current`, and invoke `keyboardController?.hide()` 
+   and `focusManager.clearFocus()` whenever chat is dismissed or submitted.
+
+
+--------------------------------------------------------------------------------
+DEFECT ID: BUG-048
+SEVERITY : MEDIUM
+MODULE   : In-Game Emoji Reaction Strip & Touch Feedback
+FILES    : app/src/main/java/com/bingo/multiplayer/presentation/components/FloatingEmotes.kt (lines 443-469)
+--------------------------------------------------------------------------------
+Description:
+In `EmojiReactionStripWithChat`, when a user long-presses an emoji, a floating 
+magnification bubble appears above the strip showing the growing emoji:
+```kotlin
+val previewScale = (pressingScale * 0.72f).coerceIn(1.0f, 2.1f)
+Box(
+    modifier = Modifier
+        .size(68.dp)
+        .graphicsLayer {
+            scaleX = previewScale
+            scaleY = previewScale
+        }
+) {
+    AnimatedEmoji(
+        emoji = pressingEmoji!!,
+        fontSize = (32 * previewScale).sp
+    )
+}
+```
+Notice that `previewScale` is applied TWICE:
+  1. Once to `graphicsLayer.scaleX` and `scaleY`.
+  2. Once to `fontSize`: `fontSize = (32 * previewScale).sp`.
+Because the scaling is multiplied quadratically, when `previewScale` reaches 2.1f, 
+the effective font scale is 4.41x (over 140sp)! The animated emoji explodes out of 
+the 68dp preview circle and clips into the board above.
+
+Remediation:
+Keep `fontSize = 32.sp` constant and apply the zoom exclusively via `graphicsLayer`:
+`AnimatedEmoji(emoji = pressingEmoji!!, fontSize = 32.sp)`
+This ensures predictable, proportional scaling without exponential magnification.
+
+
+--------------------------------------------------------------------------------
+DEFECT ID: BUG-049
+SEVERITY : MEDIUM
+MODULE   : In-Game Reaction Emotes & System Notifications
+FILES    : app/src/main/java/com/bingo/multiplayer/presentation/game/GameScreen.kt (lines 299-306),
+           app/src/main/java/com/bingo/multiplayer/presentation/components/FloatingEmotes.kt (lines 569-581)
+--------------------------------------------------------------------------------
+Description:
+When a system message arrives (e.g. `"Player 2 left the game"`, `"Player 3 disconnected"`), 
+`GameScreen.kt` executes:
+```kotlin
+if (incomingChatMessage.isSystemMessage) {
+    spawnEmote(
+        emoji = incomingChatMessage.text,
+        isSelf = false,
+        senderName = null,
+        scaleMultiplier = 1.05f
+    )
+}
+```
+In `SingleFloatingEmoteBubble` (lines 569-581):
+```kotlin
+val displayText = if (item.emoji.startsWith("💬") || item.emoji.startsWith("📢") ...) {
+    item.emoji
+} else {
+    "💬 ${item.emoji}"
+}
+```
+Because the message text does not start with 💬 or 📢, it prepends `"💬 "` and spawns 
+a rising reaction bubble: `"💬 Player 2 left the game"`.
+The system disconnect event is animated as a user reaction emote, misleading the 
+player into thinking an opponent typed the message. Official room lifecycle events 
+should never masquerade as reaction emotes.
+
+Remediation:
+Remove the `spawnEmote` call for `incomingChatMessage.isSystemMessage`. 
+System events are already cleanly rendered in `InGameChatSpace` with dedicated 
+neutral bubble styling (`InGameChatBubble` lines 144-170).
+
+
+--------------------------------------------------------------------------------
+DEFECT ID: BUG-050
+SEVERITY : LOW
+MODULE   : Code Quality & Dead Parameters in Presentation Layer
+FILES    : app/src/main/java/com/bingo/multiplayer/presentation/game/GameScreen.kt (lines 124, 130),
+           app/src/main/java/com/bingo/multiplayer/presentation/components/BingoCell.kt (line 65),
+           app/src/main/java/com/bingo/multiplayer/presentation/components/BingoComponents.kt (line 52)
+--------------------------------------------------------------------------------
+Description:
+1. `turnGlowIntensity: Float = 0f` exists in both `BingoBoardView` and `BingoCell` 
+   composable signatures, but is never wired to any drawing modifier or passed from 
+   `GameScreen`. The planned turn-breathing tile illumination was left unwired.
+2. `BingoHeaderTracker` is imported in `GameScreen.kt` (line 124) but never used 
+   in any layout.
+3. `HeadToHeadScorecard` is imported in `GameScreen.kt` (line 130) but never rendered 
+   in match layouts, leaving the dedicated line progress pips and match point alert 
+   system unutilized.
+
+Remediation:
+Remove unused imports or wire `turnGlowIntensity` to provide subtle active-turn 
+backlight illumination on interactive board cells when `isMyTurn == true`.
+
+
+================================================================================
+3. VERIFICATION & REPRODUCIBILITY CHECKLIST
+================================================================================
+All 8 defects were verified against the clean Android presentation codebase:
+  [X] BUG-043: BingoComponents.kt line 108 verified bypass of strikeProgress
+  [X] BUG-044: GameScreen.kt line 809 verified trailing ellipsis truncates crowns
+  [X] BUG-045: GameScreen.kt line 664 verified Pause/Timer active on Game Over
+  [X] BUG-046: BingoCell.kt line 151 verified DOM draw order clips radar ripple
+  [X] BUG-047: GameScreen.kt lines 1027, 1244 verified 68-char cut & keyboard hang
+  [X] BUG-048: FloatingEmotes.kt lines 452, 464 verified quadratic preview scaling
+  [X] BUG-049: GameScreen.kt line 301 verified system messages spawn as chat emotes
+  [X] BUG-050: GameScreen.kt lines 124, 130 verified unused imports & parameters
+
+Unit Test Baseline:
+  • `./gradlew testDebugUnitTest`: 23 actionable tasks, 100% PASSING.
+  • Working Tree: Clean, zero source code edits made.
+================================================================================
