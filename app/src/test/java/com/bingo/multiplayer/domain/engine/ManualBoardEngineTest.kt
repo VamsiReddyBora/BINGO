@@ -197,4 +197,59 @@ class ManualBoardEngineTest {
         assertTrue("Count A should be near 500 (was $countA)", countA in 400..600)
         assertTrue("Count B should be near 500 (was $countB)", countB in 400..600)
     }
+
+    @Test
+    fun testSwapCells_swapsFilledAndEmptyOrTwoFilledCells() {
+        var grid = ManualBoardEngine.createEmptyGrid(5)
+        grid = ManualBoardEngine.placeNextNumber(grid, 0, 1, 5)!!.first
+        grid = ManualBoardEngine.placeNextNumber(grid, 5, 2, 5)!!.first
+
+        // Move number 1 from index 0 to empty index 12
+        val moved = ManualBoardEngine.swapCells(grid, 0, 12)
+        assertNotNull(moved)
+        assertNull(moved!![0])
+        assertEquals(1, moved[12])
+        assertEquals(2, moved[5])
+
+        // Swap two filled cells (index 12 with 1, index 5 with 2)
+        val swapped = ManualBoardEngine.swapCells(moved, 12, 5)
+        assertNotNull(swapped)
+        assertEquals(2, swapped!![12])
+        assertEquals(1, swapped[5])
+
+        // Out of bounds check returns null
+        assertNull(ManualBoardEngine.swapCells(grid, -1, 5))
+        assertNull(ManualBoardEngine.swapCells(grid, 0, 99))
+    }
+
+    @Test
+    fun testRemoveNumberAt_shiftsHigherNumbersDownAndMaintainsContiguity() {
+        var grid = ManualBoardEngine.createEmptyGrid(5)
+        // Place numbers 1 through 5
+        for (i in 0 until 5) {
+            grid = ManualBoardEngine.placeNextNumber(grid, i, i + 1, 5)!!.first
+        }
+        var nextNum = 6
+
+        // Remove number 3 (at index 2)
+        val result = ManualBoardEngine.removeNumberAt(grid, 2, nextNum)
+        assertNotNull(result)
+        val updatedGrid = result!!.first
+        val updatedNextNum = result.second
+
+        // Index 2 should now be empty
+        assertNull(updatedGrid[2])
+        // Numbers 1 and 2 should remain untouched
+        assertEquals(1, updatedGrid[0])
+        assertEquals(2, updatedGrid[1])
+        // Numbers 4 and 5 should be shifted down to 3 and 4
+        assertEquals(3, updatedGrid[3])
+        assertEquals(4, updatedGrid[4])
+        // Next number to place is decremented to 5
+        assertEquals(5, updatedNextNum)
+
+        // Removing from invalid index or empty cell returns null
+        assertNull(ManualBoardEngine.removeNumberAt(grid, 20, nextNum))
+        assertNull(ManualBoardEngine.removeNumberAt(grid, -1, nextNum))
+    }
 }

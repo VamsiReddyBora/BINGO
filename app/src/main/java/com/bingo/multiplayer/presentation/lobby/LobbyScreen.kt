@@ -409,7 +409,7 @@ fun LobbyScreen(
 
                         if (isNearbyNetwork) {
                             Button(
-                                onClick = { HotspotAndWifiManager.openHotspotSettings(context) },
+                                onClick = { showNearbyQrDialog = true },
                                 shape = RoundedCornerShape(8.dp),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = tokens.primaryButtonBg,

@@ -381,9 +381,8 @@ fun EmojiReactionStripWithChat(
                                                 val finalScale = if (isLongPress) currentScale else 1.0f
                                                 onSendEmote(emoji, finalScale)
 
-                                                // Record used emoji: favorites stay pinned at front, recents update right behind favorites
+                                                // Record used emoji for subsequent sessions without jumping active items under thumb
                                                 EmojiPreferences.recordUsedEmoji(context, emoji)
-                                                emojiList = EmojiPreferences.getComposedReactionStrip(context)
                                             }
                                         }
                                     )

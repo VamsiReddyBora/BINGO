@@ -13,9 +13,11 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -139,6 +141,7 @@ fun VictoryStampBadge(
     Box(
         modifier = modifier
             .wrapContentSize()
+            .widthIn(max = 280.dp)
             .graphicsLayer {
                 scaleX = stampScale.value
                 scaleY = stampScale.value
@@ -149,6 +152,7 @@ fun VictoryStampBadge(
     ) {
         Box(
             modifier = Modifier
+                .widthIn(max = 280.dp)
                 .border(
                     width = 2.8.dp,
                     color = mainColor,
@@ -162,6 +166,7 @@ fun VictoryStampBadge(
         ) {
             Box(
                 modifier = Modifier
+                    .widthIn(max = 274.dp)
                     .border(
                         width = 1.4.dp,
                         color = mainColor,
@@ -170,13 +175,20 @@ fun VictoryStampBadge(
                     .padding(horizontal = 14.dp, vertical = 5.dp),
                 contentAlignment = Alignment.Center
             ) {
+                val computedFontSize = when {
+                    text.length > 16 -> 14.sp
+                    text.length > 11 -> 17.sp
+                    else -> 21.sp
+                }
                 Text(
                     text = text,
-                    fontSize = 21.sp,
+                    fontSize = computedFontSize,
                     fontWeight = FontWeight.Bold,
                     fontFamily = ChalkSketchFont,
-                    letterSpacing = 2.2.sp,
-                    color = mainColor
+                    letterSpacing = if (text.length > 12) 1.2.sp else 2.2.sp,
+                    color = mainColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }

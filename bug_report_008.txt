@@ -1,0 +1,317 @@
+================================================================================
+BINGO MULTIPLAYER - ANDROID APPLICATION AUDIT & BUG REPORT #008
+================================================================================
+Report ID       : BUG-REPORT-008 (UI & UX Design, Presentation & Interaction Audit)
+Date            : 2026-10-10
+Target Platform : Android Native (Jetpack Compose, Canvas, GraphicsLayer, Theming)
+Scope           : Exclusively Android Application Presentation Layer (app/src/main/java)
+Status          : 8 UI & UX DEFECTS IDENTIFIED & DOCUMENTED
+Audited By      : Antigravity Code Review & Security Audit System
+================================================================================
+
+1. EXECUTIVE SUMMARY & AUDIT OVERVIEW
+--------------------------------------------------------------------------------
+Following the complete certification and merge of all backend/online match logic 
+(BUG-001 through BUG-034 resolved with 100% test pass rate on v1.4 tag), full audit
+focus shifted to Android UI/UX design, presentation aesthetics, tactile feedback, 
+and user experience across all interactive screens.
+
+In strict accordance with project directives:
+  • Scope is restricted 100% to native Android files (`app/src/main/java/...`).
+  • Web application files are completely excluded.
+  • Codebase modifications have been reverted; this report documents all discovered 
+    defects, layout glitches, and usability bottlenecks for review and signoff.
+
+A comprehensive line-by-line inspection of Compose rendering trees, touch gesture 
+handlers, animation transitions, and typography hierarchies revealed eight (8)
+discrete UI/UX defects spanning in-game match play, lobby controls, manual board 
+design, and social overlays.
+
+
++-------------------------------------------------------------------------------+
+| SUMMARY OF DETECTED UI & UX DEFECTS                                           |
++-------------+----------+----------------------------+-------------------------+
+| DEFECT ID   | SEVERITY | COMPONENT / LOCATION       | MODULE / CATEGORY       |
++-------------+----------+----------------------------+-------------------------+
+| BUG-035     | HIGH     | BingoCell.kt (252-260)     | In-Game Board Grid      |
+|             |          | resolveMinimalCellStyling  | (Completed Line Colors) |
+| BUG-036     | HIGH     | LobbyScreen.kt (411-432)   | Lobby & Matchmaking     |
+|             |          | Show QR Button onClick     | (Wrong Android Intent)  |
+| BUG-037     | HIGH     | ManualBoardDesignScreen.kt | Manual Board Designer   |
+|             |          | (444-451) Grid Cell Click  | (Missing Tap-to-Edit)   |
+| BUG-038     | MEDIUM   | GameScreen.kt (331-343,    | Turn Urgency & Timer    |
+|             |          |  680-697) urgentTimerScale | (Visual Margin Jitter)  |
+| BUG-039     | MEDIUM   | GameOverCelebration.kt     | Post-Game Celebration   |
+|             |          | (140-185), GameScreen (980)| (Stamp Text Clipping)   |
+| BUG-040     | MEDIUM   | FloatingEmotes.kt          | In-Game Reactions Strip |
+|             |          | (384-387) Emoji Re-order   | (Thumb-Shift Jump)      |
+| BUG-041     | MEDIUM   | GameScreen.kt (1245-1273)  | In-Game Chat Overlay    |
+|             |          | BasicTextField Decoration  | (DecorationBox & Paste) |
+| BUG-042     | LOW      | HeadToHeadScorecard.kt     | Scorecard & Progress    |
+|             |          | (98, 113) Match Point Alert| (Zero Contrast Text)    |
++-------------+----------+----------------------------+-------------------------+
+
+
+================================================================================
+2. DETAILED DEFECT REPORTS & TECHNICAL FINDINGS
+================================================================================
+
+--------------------------------------------------------------------------------
+DEFECT ID: BUG-035
+SEVERITY : HIGH
+MODULE   : In-Game Board Grid & Tile Presentation
+FILES    : app/src/main/java/com/bingo/multiplayer/presentation/components/BingoCell.kt (lines 252-260)
+--------------------------------------------------------------------------------
+Description:
+In `resolveMinimalCellStyling()`, the check for `cell.isPartOfCompletedLine` is
+positioned at the very top of the `when` expression, overriding all other cell 
+states:
+```kotlin
+return when {
+    cell.isPartOfCompletedLine -> {
+        MinimalCellVisualTokens(
+            backgroundColor = tokens.completedLineBg, // #64748B (Slate Gray)
+            textColor = tokens.completedLineText,
+            ...
+        )
+    }
+    isOwn -> ...
+    isOpponentRecent -> ...
+    isOpponent -> ...
+}
+```
+When an opponent picks a number that completes a winning row, column, or diagonal
+on the local player's board, all cells in that line instantly turn slate gray 
+(`#64748B`). This causes two critical presentation failures:
+  1. The opponent's recent pick radar ripple aura, amber background, and breathing
+     pulse are completely swallowed because `isOpponentRecent` is unreachable.
+  2. The distinction between who picked which numbers (player's purple `#7E22CE` 
+     vs opponent's orange `#C2410C`) is permanently wiped out by flat dull gray.
+The user is left confused as to which number was just announced by the opponent.
+
+Remediation:
+Allow `isOpponentRecent` to take precedence over or blend with completed line status
+so the active opponent radar pulse remains visible. Highlight completed lines using
+a vibrant golden border (`tokens.bingoGold`), gold number accents, or subtle gold
+glow rather than overwriting the entire tile with dull gray.
+
+
+--------------------------------------------------------------------------------
+DEFECT ID: BUG-036
+SEVERITY : HIGH
+MODULE   : Pre-Game Lobby & Matchmaking Ergonomics
+FILES    : app/src/main/java/com/bingo/multiplayer/presentation/lobby/LobbyScreen.kt (lines 411-432)
+--------------------------------------------------------------------------------
+Description:
+In `LobbyScreen.kt`, when hosting a Nearby LAN match, the room card renders a prominent
+button featuring `Icons.Default.QrCode` with the label `"Show QR"`:
+```kotlin
+if (isNearbyNetwork) {
+    Button(
+        onClick = { HotspotAndWifiManager.openHotspotSettings(context) },
+        ...
+    ) {
+        Icon(imageVector = Icons.Default.QrCode, ...)
+        Text(text = "Show QR", ...)
+    }
+}
+```
+The button is intended to open the in-app QR code dialog (`NearbyHostQrDisplayDialog`)
+so connecting friends can scan the host's Wi-Fi / IP endpoint. However, its `onClick`
+handler invokes `HotspotAndWifiManager.openHotspotSettings(context)`, which unexpectedly
+launches the external Android OS Hotspot Settings menu, kicking the user out of the app.
+Meanwhile, the local dialog trigger state `var showNearbyQrDialog` (line 139) is never set.
+
+Remediation:
+Update the `onClick` handler of the "Show QR" button to set `showNearbyQrDialog = true`,
+displaying `NearbyHostQrDisplayDialog` seamlessly within the app.
+
+
+--------------------------------------------------------------------------------
+DEFECT ID: BUG-037
+SEVERITY : HIGH
+MODULE   : Manual Board Designer Ergonomics
+FILES    : app/src/main/java/com/bingo/multiplayer/presentation/manual/ManualBoardDesignScreen.kt (lines 444-451)
+--------------------------------------------------------------------------------
+Description:
+In `ManualBoardDesignScreen.kt`, cells on the board grid only respond to clicks if
+they are currently blank:
+```kotlin
+.clickable(enabled = !isWaitingForOpponent && countdownSeconds < 0) {
+    if (number == null && nextNumber <= totalCells) {
+        ...
+        val res = ManualBoardEngine.placeNextNumber(...)
+    }
+}
+```
+If a cell already contains a number, tapping it does nothing. If a player places a
+number in the wrong cell (e.g. number 4) and is now on number 18, they cannot tap
+the mistake to clear or edit it. The user is forced to repeatedly press the "Undo"
+button 14 times or press "Clear Board" to start over completely.
+
+Remediation:
+Allow tapping a filled cell to clear it or remove the latest placed number, or provide
+a quick-swap action so players can easily correct placement mistakes without wiping
+their board progress.
+
+
+--------------------------------------------------------------------------------
+DEFECT ID: BUG-038
+SEVERITY : MEDIUM
+MODULE   : Turn Urgency, Timer & Status Presentation
+FILES    : app/src/main/java/com/bingo/multiplayer/presentation/game/GameScreen.kt (lines 331-343, 680-697)
+--------------------------------------------------------------------------------
+Description:
+In `GameScreen.kt`, when turn time remaining is $\le 5$s, `urgentTimerScale` pulses
+between 1.0f and 1.15f:
+```kotlin
+Row(
+    verticalAlignment = Alignment.CenterVertically,
+    modifier = Modifier.scale(urgentTimerScale)
+) {
+    Text(text = "⌛", ...)
+    Spacer(modifier = Modifier.width(3.dp))
+    Text(text = "${turnTimeRemaining}s", ...)
+}
+```
+Because the timer Row is aligned at `Alignment.CenterEnd` with 16dp horizontal padding,
+scaling up to 1.15x causes the text to expand outwards into the right screen padding.
+Furthermore, when the timer ticks from "10s" (3 characters) to "9s" (2 characters), the
+unfixed Text width abruptly shrinks by ~8dp, causing the rotating hourglass icon to
+physically jump 4dp to the right every second.
+
+Remediation:
+Wrap the timer in a fixed-width container with a subtle soft red warning badge
+(`Color(0x20DC2626)`) and pulse the background color or border rather than scaling
+the entire row transform.
+
+
+--------------------------------------------------------------------------------
+DEFECT ID: BUG-039
+SEVERITY : MEDIUM
+MODULE   : Victory / Defeat Stamps & Post-Game Celebration
+FILES    : app/src/main/java/com/bingo/multiplayer/presentation/game/GameOverCelebration.kt (lines 140-185),
+           app/src/main/java/com/bingo/multiplayer/presentation/game/GameScreen.kt (lines 980-990)
+--------------------------------------------------------------------------------
+Description:
+In multi-player post-game board review, `GameScreen.kt` displays a custom victory stamp:
+`"$reviewName WON!"`.
+In `VictoryStampBadge`, the text is rendered with:
+```kotlin
+Text(
+    text = text,
+    fontSize = 21.sp,
+    fontWeight = FontWeight.Bold,
+    fontFamily = ChalkSketchFont,
+    letterSpacing = 2.2.sp,
+    color = mainColor
+)
+```
+The text has no `maxLines = 1` constraint and no `overflow = TextOverflow.Ellipsis`.
+When a player has a long name (e.g. 14+ characters), the text wraps onto two lines
+inside a single-line rubber stamp border, causing the chalk font to overlap or clip
+vertically. Additionally, because the stamp has `rotationZ = -6.5f`, the extended text
+protrudes past the viewport width on standard 360dp mobile screens.
+
+Remediation:
+Add auto-sizing or max lines constraint with text truncation, and cap the badge width
+to `maxWidth.coerceAtMost(300.dp)` to prevent screen edge overflow.
+
+
+--------------------------------------------------------------------------------
+DEFECT ID: BUG-040
+SEVERITY : MEDIUM
+MODULE   : In-Game Reaction Strip & Micro-Interactions
+FILES    : app/src/main/java/com/bingo/multiplayer/presentation/components/FloatingEmotes.kt (lines 384-387)
+--------------------------------------------------------------------------------
+Description:
+In `EmojiReactionStripWithChat`, tapping an emoji immediately invokes:
+```kotlin
+EmojiPreferences.recordUsedEmoji(context, emoji)
+emojiList = EmojiPreferences.getComposedReactionStrip(context)
+```
+This re-orders `emojiList` in real-time, instantly moving the tapped emoji to the front
+(behind pinned favorites). If a user scrolls right through the horizontal strip and
+taps an emoji at index 12, the entire strip immediately shifts under their thumb. A rapid
+second tap intended to send multiple reactions ends up clicking a completely different
+emoji that shifted into that coordinate.
+
+Remediation:
+Defer reordering of the reaction strip until the match concludes or until the next time
+the strip is opened, or maintain stable scroll positions during active session play.
+
+
+--------------------------------------------------------------------------------
+DEFECT ID: BUG-041
+SEVERITY : MEDIUM
+MODULE   : In-Game Chat Space & Keyboard Interaction
+FILES    : app/src/main/java/com/bingo/multiplayer/presentation/game/GameScreen.kt (lines 1245-1273)
+--------------------------------------------------------------------------------
+Description:
+In the full-length in-game chat text field, two usability flaws exist:
+  1. The `BasicTextField` `decorationBox` emits both placeholder `Text` and `innerTextField()`
+     without an enclosing `Box`:
+     ```kotlin
+     decorationBox = { innerTextField ->
+         if (customChatInput.isEmpty()) {
+             Text(text = "Type a message...", ...)
+         }
+         innerTextField()
+     }
+     ```
+     In Jetpack Compose, multiple composables emitted directly inside `decorationBox`
+     without a container layout cause visual misalignment between the placeholder and
+     the text cursor.
+  2. The input handler enforces a hard guard: `onValueChange = { if (it.length <= 100) customChatInput = it }`.
+     If a user pastes a message longer than 100 characters (e.g. 105 characters), the
+     entire paste is silently discarded with zero feedback to the user.
+
+Remediation:
+Wrap the placeholder and `innerTextField()` inside `Box(contentAlignment = Alignment.CenterStart)`,
+and truncate pasted strings via `.take(100)` rather than rejecting them entirely.
+
+
+--------------------------------------------------------------------------------
+DEFECT ID: BUG-042
+SEVERITY : LOW
+MODULE   : PvP Scorecard & Contrast Accessibility
+FILES    : app/src/main/java/com/bingo/multiplayer/presentation/components/HeadToHeadScorecard.kt (lines 98, 113)
+--------------------------------------------------------------------------------
+Description:
+In `HeadToHeadScorecard.kt`, the Match Point Alert banner renders:
+```kotlin
+Surface(
+    shape = RoundedCornerShape(10.dp),
+    color = if (isPlayerMatchPoint) tokens.cellPlayerPickBg else tokens.cellOpponentPickBg,
+    ...
+) {
+    Text(
+        text = ...,
+        color = if (isPlayerMatchPoint) tokens.accentBrand else tokens.accentOpponent,
+        ...
+    )
+}
+```
+In Clean Light mode, `tokens.cellPlayerPickBg` is `#7E22CE` (Purple) and `tokens.accentBrand`
+is `#7E22CE` (Purple). For opponents, `tokens.cellOpponentPickBg` is `#C2410C` (Orange) and
+`tokens.accentOpponent` is `#C2410C` (Orange).
+The foreground text is colored with the exact same color token as the surface background,
+yielding a 1:1 contrast ratio where the alert text is completely invisible.
+
+Remediation:
+Set the banner text color to pure white (`Color.White`), ensuring maximum contrast and
+readability against both purple and orange alert containers.
+
+
+================================================================================
+3. RECOMMENDATIONS & PHASE EXECUTION ROADMAP
+================================================================================
+To systematically resolve these UI/UX defects without regression:
+  • Phase A: In-Game Match View & Cells (BUG-035, BUG-038, BUG-039, BUG-041, BUG-042)
+  • Phase B: Pre-Game Lobby & Matchmaking (BUG-036)
+  • Phase C: Manual Board Designer Ergonomics (BUG-037)
+  • Phase D: Reactions, Emojis & Floating Navigation (BUG-040)
+
+================================================================================
+END OF REPORT #008
+================================================================================

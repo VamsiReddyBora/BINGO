@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -325,21 +326,21 @@ fun GameScreen(
         }
     }
 
-    // ── Turn Urgency Countdown & Pulse ──
+    // ── Turn Urgency Countdown & Warning Pulse ──
     val isUrgentTimer = turnTimeRemaining <= 5 && !isGamePaused && !isGameOver
     val urgentInfiniteTransition = rememberInfiniteTransition(label = "urgentCountdownTransition")
-    val urgentTimerScale by if (isUrgentTimer) {
+    val urgentWarningAlpha by if (isUrgentTimer) {
         urgentInfiniteTransition.animateFloat(
-            initialValue = 1.0f,
-            targetValue = 1.15f,
+            initialValue = 0.35f,
+            targetValue = 1.0f,
             animationSpec = infiniteRepeatable(
                 animation = tween(durationMillis = 400, easing = FastOutSlowInEasing),
                 repeatMode = RepeatMode.Reverse
             ),
-            label = "urgentTimerScale"
+            label = "urgentWarningAlpha"
         )
     } else {
-        remember { mutableFloatStateOf(1.0f) }
+        remember { mutableFloatStateOf(0f) }
     }
 
     // Trigger haptic clock tick in the player's hands on countdown <= 5s
@@ -674,14 +675,31 @@ fun GameScreen(
 
                         Spacer(modifier = Modifier.width(4.dp))
 
-                        // 2. Timer comes next
+                        // 2. Timer comes next (Fixed-width badge preventing jitter on tick and margin clipping)
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.scale(urgentTimerScale)
+                            horizontalArrangement = Arrangement.Center,
+                            modifier = Modifier
+                                .widthIn(min = 54.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .then(
+                                    if (isUrgentTimer) {
+                                        Modifier
+                                            .background(Color(0xFFDC2626).copy(alpha = 0.14f * urgentWarningAlpha))
+                                            .border(
+                                                1.dp,
+                                                Color(0xFFDC2626).copy(alpha = urgentWarningAlpha),
+                                                RoundedCornerShape(8.dp)
+                                            )
+                                    } else {
+                                        Modifier
+                                    }
+                                )
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
                         ) {
                             Text(
                                 text = "⌛",
-                                fontSize = 16.sp,
+                                fontSize = 15.sp,
                                 modifier = Modifier.graphicsLayer {
                                     rotationZ = hourglassFlipAngle
                                 }
@@ -691,7 +709,8 @@ fun GameScreen(
                                 text = "${turnTimeRemaining}s",
                                 fontSize = 13.5.sp,
                                 fontWeight = FontWeight.ExtraBold,
-                                color = if (turnTimeRemaining <= 5) Color(0xFFDC2626) else tokens.cellNeutralText
+                                color = if (turnTimeRemaining <= 5) Color(0xFFDC2626) else tokens.cellNeutralText,
+                                maxLines = 1
                             )
                         }
                     }
@@ -1243,7 +1262,7 @@ fun GameScreen(
                     ) {
                         BasicTextField(
                             value = customChatInput,
-                            onValueChange = { if (it.length <= 100) customChatInput = it },
+                            onValueChange = { customChatInput = it.take(100) },
                             textStyle = TextStyle(
                                 fontSize = 14.sp,
                                 color = tokens.cellNeutralText,
@@ -1261,14 +1280,16 @@ fun GameScreen(
                                 .weight(1f)
                                 .focusRequester(chatFocusRequester),
                             decorationBox = { innerTextField ->
-                                if (customChatInput.isEmpty()) {
-                                    Text(
-                                        text = "Type a message...",
-                                        fontSize = 13.5.sp,
-                                        color = tokens.cellNeutralText.copy(alpha = 0.45f)
-                                    )
+                                Box(contentAlignment = Alignment.CenterStart) {
+                                    if (customChatInput.isEmpty()) {
+                                        Text(
+                                            text = "Type a message...",
+                                            fontSize = 13.5.sp,
+                                            color = tokens.cellNeutralText.copy(alpha = 0.45f)
+                                        )
+                                    }
+                                    innerTextField()
                                 }
-                                innerTextField()
                             }
                         )
 

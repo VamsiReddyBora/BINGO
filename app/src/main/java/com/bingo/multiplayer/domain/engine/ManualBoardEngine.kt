@@ -55,6 +55,38 @@ object ManualBoardEngine {
     }
 
     /**
+     * Swaps the contents of two cells at [indexA] and [indexB].
+     * Supports moving a placed number to an empty cell or swapping two placed numbers.
+     */
+    fun swapCells(grid: List<Int?>, indexA: Int, indexB: Int): List<Int?>? {
+        if (indexA !in grid.indices || indexB !in grid.indices) return null
+        if (indexA == indexB) return grid
+        val updated = grid.toMutableList()
+        val temp = updated[indexA]
+        updated[indexA] = updated[indexB]
+        updated[indexB] = temp
+        return updated
+    }
+
+    /**
+     * Removes the placed number at [index] and shifts down all numbers greater than it,
+     * maintaining contiguous 1..N-1 numbering and decrementing [currentNextNumber] by 1.
+     */
+    fun removeNumberAt(grid: List<Int?>, index: Int, currentNextNumber: Int): Pair<List<Int?>, Int>? {
+        if (index !in grid.indices || currentNextNumber <= 1) return null
+        val target = grid[index] ?: return null
+        val updated = grid.toMutableList()
+        updated[index] = null
+        for (i in updated.indices) {
+            val n = updated[i]
+            if (n != null && n > target) {
+                updated[i] = n - 1
+            }
+        }
+        return Pair(updated, currentNextNumber - 1)
+    }
+
+    /**
      * Clears all placed numbers, returning an empty grid and resetting next number to 1.
      */
     fun clearAll(size: Int): Pair<List<Int?>, Int> {

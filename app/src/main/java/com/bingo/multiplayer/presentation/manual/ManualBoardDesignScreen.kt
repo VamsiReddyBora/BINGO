@@ -83,6 +83,7 @@ fun ManualBoardDesignScreen(
 
     var grid by remember { mutableStateOf(ManualBoardEngine.createEmptyGrid(boardSize)) }
     var nextNumber by remember { mutableIntStateOf(1) }
+    var selectedCellIndex by remember { mutableStateOf<Int?>(null) }
     var showLeaveDialog by remember { mutableStateOf(false) }
 
     val isComplete = ManualBoardEngine.isBoardComplete(grid, boardSize)
@@ -429,32 +430,59 @@ fun ManualBoardDesignScreen(
                                 val idx = r * boardSize + c
                                 val number = grid.getOrNull(idx)
                                 val isMostRecent = (number != null && number == nextNumber - 1)
+                                val isSelected = (selectedCellIndex == idx)
 
                                 Box(
                                     modifier = Modifier
                                         .weight(1f)
                                         .aspectRatio(1f)
                                         .clip(cellShape)
-                                        .background(tokens.cellNeutralBg)
+                                        .background(
+                                            if (isSelected) tokens.accentBrand.copy(alpha = 0.15f)
+                                            else tokens.cellNeutralBg
+                                        )
                                         .border(
-                                            width = if (isMostRecent) 1.5.dp else 1.dp,
-                                            color = if (isMostRecent) tokens.accentBrand else tokens.cellNeutralBorder,
+                                            width = if (isSelected) 2.dp else if (isMostRecent) 1.5.dp else 1.dp,
+                                            color = when {
+                                                isSelected -> tokens.bingoGold
+                                                isMostRecent -> tokens.accentBrand
+                                                else -> tokens.cellNeutralBorder
+                                            },
                                             shape = cellShape
                                         )
                                         .clickable(enabled = !isWaitingForOpponent && countdownSeconds < 0) {
-                                            if (number == null && nextNumber <= totalCells) {
-                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                val res = ManualBoardEngine.placeNextNumber(grid, idx, nextNumber, boardSize)
-                                                if (res != null) {
-                                                    grid = res.first
-                                                    nextNumber = res.second
+                                            val currentSelected = selectedCellIndex
+                                            if (currentSelected != null) {
+                                                if (currentSelected == idx) {
+                                                    // Tapped same selected cell again -> clear / remove this number!
+                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                    val res = ManualBoardEngine.removeNumberAt(grid, idx, nextNumber)
+                                                    if (res != null) {
+                                                        grid = res.first
+                                                        nextNumber = res.second
+                                                    }
+                                                    selectedCellIndex = null
+                                                } else {
+                                                    // Tapped another cell -> move to blank or swap with filled!
+                                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                    val res = ManualBoardEngine.swapCells(grid, currentSelected, idx)
+                                                    if (res != null) {
+                                                        grid = res
+                                                    }
+                                                    selectedCellIndex = null
                                                 }
-                                            } else if (isMostRecent) {
-                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                val res = ManualBoardEngine.undoLastNumber(grid, nextNumber)
-                                                if (res != null) {
-                                                    grid = res.first
-                                                    nextNumber = res.second
+                                            } else {
+                                                if (number == null && nextNumber <= totalCells) {
+                                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                    val res = ManualBoardEngine.placeNextNumber(grid, idx, nextNumber, boardSize)
+                                                    if (res != null) {
+                                                        grid = res.first
+                                                        nextNumber = res.second
+                                                    }
+                                                } else if (number != null) {
+                                                    // Tap placed number to select for quick-swap / move / clear
+                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                    selectedCellIndex = idx
                                                 }
                                             }
                                         },
@@ -465,7 +493,11 @@ fun ManualBoardDesignScreen(
                                             text = number.toString(),
                                             fontSize = computeMinimalFontSize(boardSize),
                                             fontWeight = FontWeight.Bold,
-                                            color = if (isMostRecent) tokens.accentBrand else tokens.cellNeutralText
+                                            color = when {
+                                                isSelected -> tokens.bingoGold
+                                                isMostRecent -> tokens.accentBrand
+                                                else -> tokens.cellNeutralText
+                                            }
                                         )
                                     }
                                 }
@@ -485,6 +517,7 @@ fun ManualBoardDesignScreen(
             ) {
                 OutlinedButton(
                     onClick = {
+                        selectedCellIndex = null
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         val res = ManualBoardEngine.undoLastNumber(grid, nextNumber)
                         if (res != null) {
@@ -511,6 +544,7 @@ fun ManualBoardDesignScreen(
 
                 OutlinedButton(
                     onClick = {
+                        selectedCellIndex = null
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         val res = ManualBoardEngine.clearAll(boardSize)
                         grid = res.first
@@ -535,6 +569,7 @@ fun ManualBoardDesignScreen(
 
                 OutlinedButton(
                     onClick = {
+                        selectedCellIndex = null
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         val res = ManualBoardEngine.autoFillRemaining(grid, boardSize)
                         grid = res.first

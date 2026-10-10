@@ -110,7 +110,7 @@ fun HeadToHeadScorecard(
                         },
                         fontSize = 11.sp,
                         fontWeight = FontWeight.ExtraBold,
-                        color = if (isPlayerMatchPoint) tokens.accentBrand else tokens.accentOpponent,
+                        color = Color.White,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
                     )
                 }
