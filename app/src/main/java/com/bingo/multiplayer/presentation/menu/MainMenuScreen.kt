@@ -255,7 +255,7 @@ fun MainMenuScreen(
                     ) {
                         Box(modifier = Modifier.padding(3.dp)) {
                             PlayerAvatar(
-                                avatarPathOrUri = userProfile.avatarUrl,
+                                avatarPathOrUri = userProfile.avatarBase64?.takeIf { it.isNotBlank() } ?: userProfile.avatarUrl,
                                 displayName = userProfile.displayName,
                                 size = 36.dp,
                                 borderWidth = 1.2.dp,

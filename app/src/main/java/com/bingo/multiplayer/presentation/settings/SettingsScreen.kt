@@ -940,7 +940,7 @@ fun SettingsScreen(
                                     .clickable { photoPickerLauncher.launch("image/*") }
                             ) {
                                 PlayerAvatar(
-                                    avatarPathOrUri = user.avatarUrl,
+                                    avatarPathOrUri = user.avatarBase64?.takeIf { it.isNotBlank() } ?: user.avatarUrl,
                                     displayName = user.displayName,
                                     size = 86.dp,
                                     borderWidth = 2.dp,

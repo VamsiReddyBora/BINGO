@@ -64,7 +64,7 @@ data class PlayerProfileData(
         fun fromPlayer(p: Player, currentUser: com.bingo.multiplayer.domain.model.UserProfile? = null): PlayerProfileData {
             val isMe = p.id == currentUser?.uid || (currentUser?.username?.isNotBlank() == true && (p.username.equals(currentUser.username, ignoreCase = true) || p.displayName.equals(currentUser.username, ignoreCase = true)))
             val effAvatar = if (isMe) {
-                currentUser?.avatarUrl?.takeIf { it.isNotBlank() } ?: currentUser?.avatarBase64 ?: p.avatarUrl
+                currentUser?.avatarBase64?.takeIf { it.isNotBlank() } ?: currentUser?.avatarUrl ?: p.avatarUrl
             } else {
                 p.avatarUrl
             }
@@ -198,7 +198,7 @@ fun PlayerProfileDialog(
         if (isSelf && currentUser != null) {
             effectiveData = effectiveData.copy(
                 displayName = currentUser.displayName,
-                avatarUrl = currentUser.avatarUrl?.takeIf { it.isNotBlank() } ?: currentUser.avatarBase64 ?: effectiveData.avatarUrl,
+                avatarUrl = currentUser.avatarBase64?.takeIf { it.isNotBlank() } ?: currentUser.avatarUrl ?: effectiveData.avatarUrl,
                 gamesPlayed = currentUser.gamesPlayed,
                 gamesWon = currentUser.gamesWon,
                 currentStreak = currentUser.currentStreak,

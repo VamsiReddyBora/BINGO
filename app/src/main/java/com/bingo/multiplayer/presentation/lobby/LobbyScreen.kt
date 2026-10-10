@@ -574,7 +574,7 @@ fun LobbyScreen(
                                     }
                                 }
                                 val effectiveAvatar = if (isMe) {
-                                    currentUser?.avatarUrl?.takeIf { it.isNotBlank() } ?: currentUser?.avatarBase64 ?: player.avatarUrl
+                                    currentUser?.avatarBase64?.takeIf { it.isNotBlank() } ?: currentUser?.avatarUrl ?: player.avatarUrl
                                 } else {
                                     remoteAvatar ?: player.avatarUrl
                                 }
@@ -779,8 +779,14 @@ fun LobbyScreen(
                     allFriends.filter { f ->
                         val cleanF = f.username.trim().lowercase().removePrefix("@")
                         val pres = presenceMap[cleanF]
-                        val effectiveTs = pres?.timestamp?.takeIf { it > 0L } ?: f.lastSeenTimestamp
-                        val status = com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(cleanF, effectiveTs)
+                        val effectiveTs = pres?.timestamp?.takeIf { it > 0L } ?: f.lastSeenTimestamp.takeIf { it > 0L }
+                        val status = if (pres != null) {
+                            com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(cleanF, effectiveTs)
+                        } else if (f.lastSeenTimestamp > 0L && (System.currentTimeMillis() - f.lastSeenTimestamp) >= 60_000L) {
+                            com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(cleanF, f.lastSeenTimestamp)
+                        } else {
+                            "offline"
+                        }
                         val isOnlineByPres = com.bingo.multiplayer.domain.network.PresenceManager.isStatusOnline(status)
                         val notInRoom = players.none { p ->
                             p.id == f.uid ||
@@ -898,9 +904,16 @@ fun LobbyScreen(
 
                                         val cleanF = friend.username.trim().lowercase().removePrefix("@")
                                         val livePres = presenceMap[cleanF]
-                                        val effectiveTs = livePres?.timestamp?.takeIf { it > 0L } ?: friend.lastSeenTimestamp
+                                        val effectiveTs = livePres?.timestamp?.takeIf { it > 0L } ?: friend.lastSeenTimestamp.takeIf { it > 0L }
                                         if (ticker >= 0L) Unit
-                                        val statusText = com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(cleanF, effectiveTs)
+                                        val now = System.currentTimeMillis()
+                                        val statusText = if (livePres != null) {
+                                            com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(cleanF, effectiveTs)
+                                        } else if (friend.lastSeenTimestamp > 0L && (now - friend.lastSeenTimestamp) >= 60_000L) {
+                                            com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(cleanF, friend.lastSeenTimestamp)
+                                        } else {
+                                            "offline"
+                                        }
                                         val statusColor = com.bingo.multiplayer.domain.network.PresenceManager.getStatusColor(statusText)
 
                                         Text(

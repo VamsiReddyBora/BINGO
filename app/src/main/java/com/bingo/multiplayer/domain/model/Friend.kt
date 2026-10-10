@@ -14,6 +14,6 @@ data class Friend(
     val displayName: String,
     val avatarUrl: String? = null,
     val isOnline: Boolean = false,
-    val lastSeenTimestamp: Long = System.currentTimeMillis()
+    val lastSeenTimestamp: Long = 0L
 )
 

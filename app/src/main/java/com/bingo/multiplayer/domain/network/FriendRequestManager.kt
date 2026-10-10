@@ -149,19 +149,22 @@ object FriendRequestManager {
                     uid = request.fromUid,
                     username = request.fromUsername,
                     displayName = request.fromDisplayName,
-                    avatarUrl = request.fromAvatarUrl?.takeIf { it.length <= 120 },
-                    isOnline = true
+                    avatarUrl = request.fromAvatarUrl,
+                    isOnline = false,
+                    lastSeenTimestamp = 0L
                 )
             )
 
+            val myEffectiveAvatar = myProfile.avatarBase64?.takeIf { it.isNotBlank() } ?: myProfile.avatarUrl
             addFriendToCloudList(
                 sender,
                 Friend(
                     uid = myProfile.uid,
                     username = myProfile.username,
                     displayName = myProfile.displayName,
-                    avatarUrl = myProfile.avatarUrl?.takeIf { it.length <= 120 },
-                    isOnline = true
+                    avatarUrl = myEffectiveAvatar,
+                    isOnline = false,
+                    lastSeenTimestamp = 0L
                 )
             )
 
@@ -170,8 +173,9 @@ object FriendRequestManager {
                 uid = myProfile.uid,
                 username = myProfile.username,
                 displayName = myProfile.displayName,
-                avatarUrl = myProfile.avatarUrl?.takeIf { it.length <= 120 },
-                isOnline = true
+                avatarUrl = myEffectiveAvatar,
+                isOnline = false,
+                lastSeenTimestamp = 0L
             )
             val acceptPacket = FriendRequestPacket(
                 type = "FRIEND_ACCEPT",

@@ -297,7 +297,7 @@ class FirestoreSyncManager(
     /**
      * Streams match records from Firestore `users/{uid}/matches` ordered by timestamp.
      */
-    fun streamMatchHistory(uid: String, maxLimit: Long = 100): Flow<List<MatchRecord>> = callbackFlow {
+    fun streamMatchHistory(uid: String, maxLimit: Long = 250): Flow<List<MatchRecord>> = callbackFlow {
         if (uid.isBlank()) {
             trySend(emptyList())
             close()
@@ -402,7 +402,7 @@ class FirestoreSyncManager(
                                 displayName = doc.getString("displayName") ?: "Friend",
                                 avatarUrl = doc.getString("avatarUrl"),
                                 isOnline = doc.getBoolean("isOnline") ?: false,
-                                lastSeenTimestamp = doc.getLong("lastSeenTimestamp") ?: System.currentTimeMillis()
+                                lastSeenTimestamp = doc.getLong("lastSeenTimestamp") ?: 0L
                             )
                         } catch (_: Exception) {
                             null

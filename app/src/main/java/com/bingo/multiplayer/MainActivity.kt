@@ -57,6 +57,8 @@ class MainActivity : ComponentActivity() {
 
         // Initialize presence manager with application context for persistent active user tracking
         PresenceManager.init(applicationContext)
+        // Initialize disk cache for player avatars
+        com.bingo.multiplayer.presentation.common.PlayerAvatarCache.init(applicationContext)
         // Initialize app-lifecycle-based presence tracking (foreground/background detection)
         AppLifecycleObserver.init()
 

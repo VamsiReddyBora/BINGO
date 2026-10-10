@@ -151,7 +151,8 @@ class FriendsRepository(
         val cleanTarget = targetUsername.trim().lowercase().removePrefix("@")
         if (cleanTarget.isBlank() || isFriend(cleanTarget)) return false
 
-        val safeAvatarUrl = currentUser.avatarUrl?.takeIf { !com.bingo.multiplayer.domain.network.isLocalFilePath(it) && it.length < 300 }
+        val safeAvatarUrl = currentUser.avatarBase64?.takeIf { it.isNotBlank() }
+            ?: currentUser.avatarUrl?.takeIf { !com.bingo.multiplayer.domain.network.isLocalFilePath(it) }
         val request = FriendRequest(
             id = UUID.randomUUID().toString(),
             fromUid = currentUser.uid,
@@ -178,8 +179,9 @@ class FriendsRepository(
         request: FriendRequest,
         currentUser: UserProfile
     ): Boolean {
-        val safeAvatarUrl = currentUser.avatarUrl?.takeIf { !com.bingo.multiplayer.domain.network.isLocalFilePath(it) && it.length < 300 }
-        val success = FriendRequestManager.acceptFriendRequest(request, currentUser.copy(avatarUrl = safeAvatarUrl))
+        val safeAvatarUrl = currentUser.avatarBase64?.takeIf { it.isNotBlank() }
+            ?: currentUser.avatarUrl?.takeIf { !com.bingo.multiplayer.domain.network.isLocalFilePath(it) }
+        val success = FriendRequestManager.acceptFriendRequest(request, currentUser.copy(avatarUrl = safeAvatarUrl, avatarBase64 = currentUser.avatarBase64))
         if (success) {
             // Add sender to local friends list
             val newFriend = Friend(
@@ -187,8 +189,8 @@ class FriendsRepository(
                 username = request.fromUsername,
                 displayName = request.fromDisplayName,
                 avatarUrl = request.fromAvatarUrl,
-                isOnline = true,
-                lastSeenTimestamp = System.currentTimeMillis()
+                isOnline = false,
+                lastSeenTimestamp = 0L
             )
             addLocalFriend(newFriend)
 

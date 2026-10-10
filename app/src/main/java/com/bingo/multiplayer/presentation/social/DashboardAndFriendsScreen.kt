@@ -368,6 +368,7 @@ private fun DashboardTabContent(
     matchHistory: List<MatchRecord>
 ) {
     val tokens = BingoTheme.colors
+    var visibleMatchCount by remember { mutableStateOf(10) }
 
     Column(
         modifier = Modifier
@@ -400,7 +401,7 @@ private fun DashboardTabContent(
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     PlayerAvatar(
-                        avatarPathOrUri = user.avatarUrl,
+                        avatarPathOrUri = user.avatarBase64?.takeIf { it.isNotBlank() } ?: user.avatarUrl,
                         displayName = user.displayName,
                         size = 64.dp,
                         borderWidth = 2.dp,
@@ -577,9 +578,45 @@ private fun DashboardTabContent(
                 }
             }
         } else {
+            val visibleMatches = matchHistory.take(visibleMatchCount)
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                matchHistory.take(50).forEach { record ->
+                visibleMatches.forEach { record ->
                     MatchRecordCard(record = record)
+                }
+
+                if (matchHistory.size > visibleMatchCount) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { visibleMatchCount += 50 },
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (tokens.isDark) Color(0xFF1E1E1E) else tokens.accentBrand.copy(alpha = 0.08f),
+                        border = BorderStroke(1.dp, tokens.accentBrand.copy(alpha = 0.35f))
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 12.dp, horizontal = 16.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ExpandMore,
+                                contentDescription = null,
+                                tint = tokens.accentBrand,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Show More Matches (${visibleMatches.size} of ${matchHistory.size})",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = tokens.accentBrand
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -957,8 +994,14 @@ private fun FriendsTabContent(
             val onlineCount = friends.count {
                 val cleanF = it.username.trim().lowercase().removePrefix("@")
                 val livePres = presenceMap[cleanF]
-                val effectiveTs = livePres?.timestamp?.takeIf { ts -> ts > 0L } ?: it.lastSeenTimestamp
-                val status = PresenceManager.getDisplayStatus(cleanF, effectiveTs)
+                val effectiveTs = livePres?.timestamp?.takeIf { ts -> ts > 0L } ?: it.lastSeenTimestamp.takeIf { ts -> ts > 0L }
+                val status = if (livePres != null) {
+                    PresenceManager.getDisplayStatus(cleanF, effectiveTs)
+                } else if (it.lastSeenTimestamp > 0L && (System.currentTimeMillis() - it.lastSeenTimestamp) >= 60_000L) {
+                    PresenceManager.getDisplayStatus(cleanF, it.lastSeenTimestamp)
+                } else {
+                    "offline"
+                }
                 PresenceManager.isStatusOnline(status)
             }
             if (onlineCount > 0) {
@@ -1034,8 +1077,15 @@ private fun FriendCard(
     if (ticker >= 0L) Unit
     val cleanFriend = friend.username.trim().lowercase().removePrefix("@")
     val livePres = presenceMap[cleanFriend]
-    val effectiveTs = livePres?.timestamp?.takeIf { it > 0L } ?: friend.lastSeenTimestamp
-    val statusText = PresenceManager.getDisplayStatus(cleanFriend, effectiveTs)
+    val effectiveTs = livePres?.timestamp?.takeIf { it > 0L } ?: friend.lastSeenTimestamp.takeIf { it > 0L }
+    val now = System.currentTimeMillis()
+    val statusText = if (livePres != null) {
+        PresenceManager.getDisplayStatus(cleanFriend, effectiveTs)
+    } else if (friend.lastSeenTimestamp > 0L && (now - friend.lastSeenTimestamp) >= 60_000L) {
+        PresenceManager.getDisplayStatus(cleanFriend, friend.lastSeenTimestamp)
+    } else {
+        "offline"
+    }
     val displayStatus = statusText
     val statusColor = PresenceManager.getStatusColor(statusText)
 

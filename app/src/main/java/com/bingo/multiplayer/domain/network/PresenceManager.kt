@@ -104,7 +104,7 @@ object PresenceManager {
         val clean = currentActiveUsername ?: return
         val now = System.currentTimeMillis()
         presenceMap[clean] = PlayerPresence(clean, state.name, now)
-        _presenceFlow.value = HashMap(presenceMap)
+        updatePresenceFlow()
 
         scope.launch {
             publishStatus(clean, state.name)
@@ -116,6 +116,21 @@ object PresenceManager {
     private val _presenceFlow = MutableStateFlow<Map<String, PlayerPresence>>(emptyMap())
     val presenceFlow: StateFlow<Map<String, PlayerPresence>> = _presenceFlow.asStateFlow()
 
+    private var persistJob: Job? = null
+    private fun updatePresenceFlow() {
+        _presenceFlow.value = HashMap(presenceMap)
+        persistJob?.cancel()
+        persistJob = scope.launch {
+            delay(1000L)
+            try {
+                val p = prefs ?: return@launch
+                val snapshot = HashMap(presenceMap)
+                val raw = json.encodeToString(snapshot)
+                p.edit().putString("cached_presence_map", raw).apply()
+            } catch (_: Exception) {}
+        }
+    }
+
     private var watcherClient: MqttAsyncClient? = null
 
     /**
@@ -125,6 +140,18 @@ object PresenceManager {
         appContext = context.applicationContext
         val p = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs = p
+
+        // Restore presence from persistent disk cache immediately on app launch
+        try {
+            val raw = p.getString("cached_presence_map", null)
+            if (!raw.isNullOrBlank()) {
+                val map = json.decodeFromString<Map<String, PlayerPresence>>(raw)
+                presenceMap.putAll(map)
+                _presenceFlow.value = HashMap(presenceMap)
+                Log.d(TAG, "Restored ${map.size} presence records from persistent cache on startup")
+            }
+        } catch (_: Exception) {}
+
         var saved = p.getString(KEY_ACTIVE_USER, null)
         if (saved.isNullOrBlank()) {
             val authPrefs = context.getSharedPreferences("bingo_auth_prefs", Context.MODE_PRIVATE)
@@ -247,7 +274,7 @@ object PresenceManager {
                 val vCode = parts.getOrNull(3)?.toIntOrNull() ?: NetworkConfig.APP_VERSION_CODE
                 val p = PlayerPresence(clean, status, ts, appVersion = vName, appVersionCode = vCode)
                 presenceMap[clean] = p
-                _presenceFlow.value = HashMap(presenceMap)
+                updatePresenceFlow()
                 p
             }
         } catch (_: Exception) {
@@ -287,7 +314,7 @@ object PresenceManager {
 
         val now = System.currentTimeMillis()
         presenceMap[clean] = PlayerPresence(clean, currentStatus, now)
-        _presenceFlow.value = HashMap(presenceMap)
+        updatePresenceFlow()
 
         // Write initial status to cloud immediately, sync FCM token, and alert friends
         scope.launch {
@@ -426,7 +453,7 @@ object PresenceManager {
 
             // Update local map as well
             presenceMap[cleanUsername] = PlayerPresence(cleanUsername, status, now)
-            _presenceFlow.value = HashMap(presenceMap)
+            updatePresenceFlow()
         } catch (e: Exception) {
             Log.w(TAG, "Error publishing status $status: ${e.message}")
         }
@@ -450,7 +477,7 @@ object PresenceManager {
         heartbeatJob = null
         val now = System.currentTimeMillis()
         presenceMap[clean] = PlayerPresence(clean, "OFFLINE", now)
-        _presenceFlow.value = HashMap(presenceMap)
+        updatePresenceFlow()
 
         publishOffline(clean)
         setCloudPresenceAsync(clean, "OFFLINE", now)
@@ -465,7 +492,7 @@ object PresenceManager {
         Log.d(TAG, "App foregrounded — publishing $currentStatus for @$clean")
         val now = System.currentTimeMillis()
         presenceMap[clean] = PlayerPresence(clean, currentStatus, now)
-        _presenceFlow.value = HashMap(presenceMap)
+        updatePresenceFlow()
 
         scope.launch {
             publishStatus(clean, currentStatus)
@@ -486,7 +513,7 @@ object PresenceManager {
         if (clean != null) {
             val now = System.currentTimeMillis()
             presenceMap[clean] = PlayerPresence(clean, "OFFLINE", now)
-            _presenceFlow.value = HashMap(presenceMap)
+            updatePresenceFlow()
             scope.launch(Dispatchers.IO) {
                 setCloudPresence(clean, "OFFLINE", now)
             }
@@ -598,7 +625,7 @@ object PresenceManager {
                 presence.timestamp
             }
             presenceMap[cleanUser] = presence.copy(username = cleanUser, timestamp = effectiveTimestamp)
-            _presenceFlow.value = HashMap(presenceMap)
+            updatePresenceFlow()
 
             // RULE 1: Friend Online Status Notification
             val isNowOnline = presence.status.equals("ONLINE", ignoreCase = true) ||
