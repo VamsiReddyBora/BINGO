@@ -266,7 +266,7 @@ class AuthRepository(
 
                 // 3. Start realtime profile listener
                 firestoreSync.startRealtimeProfileListener(user.uid) { _, remoteSettings ->
-                    updateSettings(remoteSettings)
+                    updateSettings(remoteSettings, syncToCloud = false)
                 }
             }
         }
@@ -707,7 +707,10 @@ class AuthRepository(
         )
     }
 
-    fun updateSettings(settings: com.bingo.multiplayer.domain.model.UserSettings) {
+    fun updateSettings(settings: com.bingo.multiplayer.domain.model.UserSettings, syncToCloud: Boolean = true) {
+        val current = getSettings()
+        if (current == settings) return
+
         prefs.edit()
             .putBoolean("settings_sound", settings.soundEnabled)
             .putBoolean("settings_haptics", settings.hapticsEnabled)
@@ -725,18 +728,24 @@ class AuthRepository(
             com.bingo.multiplayer.core.designsystem.ThemePreferences.setCellBorderEnabled(ctx, settings.cellBorderEnabled)
             com.bingo.multiplayer.core.designsystem.ThemePreferences.setCellBorderColor(ctx, settings.cellBorderColorHex)
             com.bingo.multiplayer.core.designsystem.ThemePreferences.setLiquidMetalTheme(ctx, settings.isLiquidMetalTheme)
-            com.bingo.multiplayer.core.designsystem.NotificationPreferences.setSystemNotificationsEnabled(ctx, settings.systemNotificationsEnabled)
-            com.bingo.multiplayer.core.designsystem.NotificationPreferences.setPlayerOnlineNotificationsEnabled(ctx, settings.playerOnlineNotificationsEnabled)
-            com.bingo.multiplayer.core.designsystem.NotificationPreferences.setPlayerInvitesNotificationsEnabled(ctx, settings.playerInvitesNotificationsEnabled)
-            com.bingo.multiplayer.core.designsystem.NotificationPreferences.setInAppNotificationsEnabled(ctx, settings.inAppNotificationsEnabled)
-            com.bingo.multiplayer.core.designsystem.NotificationPreferences.setInAppPlayerOnlineEnabled(ctx, settings.inAppPlayerOnlineEnabled)
-            com.bingo.multiplayer.core.designsystem.NotificationPreferences.setInAppPlayerInvitesEnabled(ctx, settings.inAppPlayerInvitesEnabled)
+            com.bingo.multiplayer.core.designsystem.NotificationPreferences.applySettings(
+                systemNotifs = settings.systemNotificationsEnabled,
+                playerOnlineNotifs = settings.playerOnlineNotificationsEnabled,
+                playerInvitesNotifs = settings.playerInvitesNotificationsEnabled,
+                inAppNotifs = settings.inAppNotificationsEnabled,
+                inAppOnline = settings.inAppPlayerOnlineEnabled,
+                inAppInvites = settings.inAppPlayerInvitesEnabled,
+                context = ctx,
+                syncToCloud = false
+            )
         }
-        val user = (_authState.value as? AuthState.Authenticated)?.user ?: getPersistedUserSync()
-        if (context != null && user != null && user.uid.isNotBlank()) {
-            com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(context).syncUserProfile(user, settings)
+        if (syncToCloud) {
+            val user = (_authState.value as? AuthState.Authenticated)?.user ?: getPersistedUserSync()
+            if (context != null && user != null && user.uid.isNotBlank()) {
+                com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(context).syncUserProfile(user, settings)
+            }
+            backupUserDataToCloud()
         }
-        backupUserDataToCloud()
     }
 
     fun getMatchHistory(): List<com.bingo.multiplayer.domain.model.MatchRecord> {

@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -171,6 +172,7 @@ fun SettingsScreen(
     var isAppearanceExpanded by remember { mutableStateOf(false) }
     var isEmojisExpanded by remember { mutableStateOf(false) }
     var isQuickChatExpanded by remember { mutableStateOf(false) }
+    var isNotificationsExpanded by remember { mutableStateOf(false) }
 
     var selectedProfilePlayer by remember { mutableStateOf<PlayerProfileData?>(null) }
 
@@ -870,7 +872,7 @@ fun SettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 20.dp)
+                .padding(horizontal = 22.dp, vertical = 18.dp)
         ) {
             // ── Top Bar ──
             Row(
@@ -1096,7 +1098,7 @@ fun SettingsScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             // ── Section 2: Account Details ──
             Surface(
@@ -1170,7 +1172,7 @@ fun SettingsScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             // ── Section 3: Player Dashboard & Friends Social Hub ──
             Surface(
@@ -1238,7 +1240,7 @@ fun SettingsScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             // ── Section 4: Appearance & AMOLED Dark Theme + Curated Color Palette ──
             Surface(
@@ -1952,7 +1954,7 @@ fun SettingsScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             // ── Section 5: Favourite In-Game Emojis ──
             Surface(
@@ -2075,7 +2077,7 @@ fun SettingsScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             // ── Section 6: In-Game Quick Chat Phrases ──
             Surface(
@@ -2232,9 +2234,34 @@ fun SettingsScreen(
                 }
             }
 
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // ── Section 7: Notifications Card (Collapsible, placed right above Sign Out) ──
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                color = tokens.surface,
+                border = BorderStroke(1.dp, tokens.surfaceBorder),
+                shadowElevation = 1.dp
+            ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    SettingsCardHeader(
+                        title = "NOTIFICATIONS",
+                        subtitle = "Push and in-app alerts",
+                        icon = Icons.Default.NotificationsActive,
+                        isExpanded = isNotificationsExpanded,
+                        onToggle = { isNotificationsExpanded = !isNotificationsExpanded }
+                    )
+
+                    AnimatedVisibility(visible = isNotificationsExpanded) {
+                        NotificationSettingsContent(context = context)
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(16.dp))
 
-            // ── Section 7: Sign Out ──
+            // ── Section 8: Sign Out ──
             OutlinedButton(
                 onClick = { showSignOutDialog = true },
                 modifier = Modifier
@@ -2261,13 +2288,13 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // ── App Version & In-App Updates ──
+            // ── App Version & In-App Updates (Always Last on Settings Page) ──
             val appVersionName = remember {
                 try {
                     val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-                    pInfo.versionName ?: "1.3"
+                    pInfo.versionName ?: "1.4"
                 } catch (e: Exception) {
-                    "1.3"
+                    "1.4"
                 }
             }
             val updateState by AppUpdateManager.updateState.collectAsState()
@@ -2324,12 +2351,6 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(6.dp))
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // ── Notification Diagnostics & Testing ──
-            // ── Notification Preferences ──
-            NotificationSettingsCard(context = context)
-
             Spacer(modifier = Modifier.height(84.dp))
         }
 
@@ -2346,7 +2367,7 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun NotificationSettingsCard(
+private fun NotificationSettingsContent(
     context: Context
 ) {
     val tokens = BingoTheme.colors
@@ -2360,172 +2381,116 @@ private fun NotificationSettingsCard(
 
     val areOsNotificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
 
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        color = tokens.surface.copy(alpha = 0.5f),
-        border = BorderStroke(1.dp, tokens.cellNeutralBorder.copy(alpha = 0.35f))
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 14.dp, end = 14.dp, bottom = 14.dp)
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
-            // Header
-            Row(
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = Icons.Default.NotificationsActive,
-                    contentDescription = null,
-                    tint = tokens.accentBrand,
-                    modifier = Modifier.size(20.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "Notification Settings",
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = tokens.cellNeutralText
-                )
-            }
-
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = "Customize system notifications and in-app alerts for players and invitations.",
-                fontSize = 12.sp,
-                color = tokens.textMuted,
-                lineHeight = 16.sp
-            )
-
-            if (!areOsNotificationsEnabled) {
-                Spacer(modifier = Modifier.height(10.dp))
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            val intent = Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                                putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
-                            }
-                            try {
-                                context.startActivity(intent)
-                            } catch (_: Exception) {}
+        if (!areOsNotificationsEnabled) {
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = Color(0xFFEF4444).copy(alpha = 0.12f),
+                border = BorderStroke(0.5.dp, Color(0xFFEF4444).copy(alpha = 0.3f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        val intent = Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                            putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
                         }
-                        .padding(vertical = 4.dp),
+                        try { context.startActivity(intent) } catch (_: Exception) {}
+                    }
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "⚠️ System Notifications are disabled in Android settings (Tap to enable)",
+                        text = "⚠️ Notifications disabled in Android Settings. Tap to enable.",
                         fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        fontWeight = FontWeight.Medium,
                         color = Color(0xFFEF4444)
                     )
                 }
             }
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // ══════════════════════════════════════════
-            // SECTION 1: SYSTEM NOTIFICATIONS (Push / Device)
-            // ══════════════════════════════════════════
-            Text(
-                text = "SYSTEM NOTIFICATIONS (DEVICE)",
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                color = tokens.accentBrand,
-                letterSpacing = 0.8.sp
-            )
             Spacer(modifier = Modifier.height(8.dp))
-
-            // Master Toggle 1: All Notifications ON/OFF
-            NotificationToggleRow(
-                title = "All Notifications",
-                description = "Enable or disable all system status bar notifications",
-                checked = systemEnabled,
-                onCheckedChange = { NotificationPreferences.setSystemNotificationsEnabled(context, it) }
-            )
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            // Sub Toggle 1A: Players Online Notifications
-            NotificationToggleRow(
-                title = "Players Online Notifications",
-                description = "Alert when friends come online to play",
-                checked = onlineSystemEnabled && systemEnabled,
-                enabled = systemEnabled,
-                isChild = true,
-                onCheckedChange = { NotificationPreferences.setPlayerOnlineNotificationsEnabled(context, it) }
-            )
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            // Sub Toggle 1B: Player Invites Notifications
-            NotificationToggleRow(
-                title = "Player Invites Notifications",
-                description = "Receive heads-up alerts when someone invites you to a match",
-                checked = invitesSystemEnabled && systemEnabled,
-                enabled = systemEnabled,
-                isChild = true,
-                onCheckedChange = { NotificationPreferences.setPlayerInvitesNotificationsEnabled(context, it) }
-            )
-
-            Spacer(modifier = Modifier.height(14.dp))
-            HorizontalDivider(
-                modifier = Modifier.fillMaxWidth(),
-                thickness = 0.5.dp,
-                color = tokens.cellNeutralBorder.copy(alpha = 0.25f)
-            )
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // ══════════════════════════════════════════
-            // SECTION 2: IN-APP NOTIFICATIONS (In-Game Banners)
-            // ══════════════════════════════════════════
-            Text(
-                text = "IN-APP NOTIFICATIONS (ALERTS)",
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                color = tokens.accentBrand,
-                letterSpacing = 0.8.sp
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Master Toggle 2: All In-App Notifications ON/OFF
-            NotificationToggleRow(
-                title = "All In-App Notifications",
-                description = "Show popup alerts and banners while inside the app",
-                checked = inAppEnabled,
-                onCheckedChange = { NotificationPreferences.setInAppNotificationsEnabled(context, it) }
-            )
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            // Sub Toggle 2A: Players Online In-App Alerts
-            NotificationToggleRow(
-                title = "Players Online In-App Alerts",
-                description = "Display in-game toast banner when a friend joins",
-                checked = onlineInAppEnabled && inAppEnabled,
-                enabled = inAppEnabled,
-                isChild = true,
-                onCheckedChange = { NotificationPreferences.setInAppPlayerOnlineEnabled(context, it) }
-            )
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            // Sub Toggle 2B: Player Invites In-App Alerts
-            NotificationToggleRow(
-                title = "Player Invites In-App Alerts",
-                description = "Show interactive match invite modal dialog in lobby & menus",
-                checked = invitesInAppEnabled && inAppEnabled,
-                enabled = inAppEnabled,
-                isChild = true,
-                onCheckedChange = { NotificationPreferences.setInAppPlayerInvitesEnabled(context, it) }
-            )
         }
+
+        // Section 1: System Push Notifications
+        Text(
+            text = "SYSTEM PUSH NOTIFICATIONS",
+            fontSize = 10.5.sp,
+            fontWeight = FontWeight.Bold,
+            color = tokens.accentBrand,
+            letterSpacing = 0.8.sp
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+
+        SlimToggleRow(
+            title = "All Notifications",
+            checked = systemEnabled,
+            onCheckedChange = { NotificationPreferences.setSystemNotificationsEnabled(context, it) }
+        )
+
+        SlimToggleRow(
+            title = "Players Online",
+            checked = onlineSystemEnabled && systemEnabled,
+            enabled = systemEnabled,
+            isChild = true,
+            onCheckedChange = { NotificationPreferences.setPlayerOnlineNotificationsEnabled(context, it) }
+        )
+
+        SlimToggleRow(
+            title = "Player Invites",
+            checked = invitesSystemEnabled && systemEnabled,
+            enabled = systemEnabled,
+            isChild = true,
+            onCheckedChange = { NotificationPreferences.setPlayerInvitesNotificationsEnabled(context, it) }
+        )
+
+        Spacer(modifier = Modifier.height(6.dp))
+        HorizontalDivider(
+            thickness = 0.5.dp,
+            color = tokens.surfaceBorder
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+
+        // Section 2: In-App Notifications
+        Text(
+            text = "IN-APP NOTIFICATIONS",
+            fontSize = 10.5.sp,
+            fontWeight = FontWeight.Bold,
+            color = tokens.accentBrand,
+            letterSpacing = 0.8.sp
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+
+        SlimToggleRow(
+            title = "All In-App Notifications",
+            checked = inAppEnabled,
+            onCheckedChange = { NotificationPreferences.setInAppNotificationsEnabled(context, it) }
+        )
+
+        SlimToggleRow(
+            title = "Players Online Alerts",
+            checked = onlineInAppEnabled && inAppEnabled,
+            enabled = inAppEnabled,
+            isChild = true,
+            onCheckedChange = { NotificationPreferences.setInAppPlayerOnlineEnabled(context, it) }
+        )
+
+        SlimToggleRow(
+            title = "Player Invites Popups",
+            checked = invitesInAppEnabled && inAppEnabled,
+            enabled = inAppEnabled,
+            isChild = true,
+            onCheckedChange = { NotificationPreferences.setInAppPlayerInvitesEnabled(context, it) }
+        )
     }
 }
 
 @Composable
-private fun NotificationToggleRow(
+private fun SlimToggleRow(
     title: String,
-    description: String,
     checked: Boolean,
     enabled: Boolean = true,
     isChild: Boolean = false,
@@ -2535,35 +2500,30 @@ private fun NotificationToggleRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = if (isChild) 12.dp else 0.dp, top = 2.dp, bottom = 2.dp),
+            .heightIn(min = 38.dp)
+            .padding(start = if (isChild) 12.dp else 0.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(
-            modifier = Modifier.weight(1f)
-        ) {
-            Text(
-                text = title,
-                fontSize = 13.sp,
-                fontWeight = if (isChild) FontWeight.Medium else FontWeight.SemiBold,
-                color = if (enabled) tokens.cellNeutralText else tokens.cellNeutralText.copy(alpha = 0.4f)
-            )
-            Text(
-                text = description,
-                fontSize = 11.sp,
-                color = if (enabled) tokens.textMuted else tokens.textMuted.copy(alpha = 0.4f),
-                lineHeight = 14.sp
-            )
-        }
-        Spacer(modifier = Modifier.width(10.dp))
+        Text(
+            text = title,
+            fontSize = 13.sp,
+            fontWeight = if (isChild) FontWeight.Normal else FontWeight.SemiBold,
+            color = if (enabled) tokens.cellNeutralText else tokens.cellNeutralText.copy(alpha = 0.35f)
+        )
         androidx.compose.material3.Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,
             enabled = enabled,
+            modifier = Modifier.graphicsLayer {
+                scaleX = 0.82f
+                scaleY = 0.82f
+            },
             colors = androidx.compose.material3.SwitchDefaults.colors(
                 checkedThumbColor = Color.White,
                 checkedTrackColor = tokens.accentBrand,
                 uncheckedThumbColor = tokens.textMuted,
-                uncheckedTrackColor = tokens.cellNeutralBorder.copy(alpha = 0.3f)
+                uncheckedTrackColor = tokens.cellNeutralBorder.copy(alpha = 0.25f)
             )
         )
     }
@@ -2691,7 +2651,7 @@ private fun SettingsCardHeader(
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
             .clickable(onClick = onToggle)
-            .padding(16.dp),
+            .padding(horizontal = 14.dp, vertical = 11.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -2702,7 +2662,7 @@ private fun SettingsCardHeader(
             if (icon != null) {
                 Box(
                     modifier = Modifier
-                        .size(34.dp)
+                        .size(32.dp)
                         .clip(RoundedCornerShape(8.dp))
                         .background(if (tokens.isDark) Color(0xFF1E1E1E) else tokens.accentBrand.copy(alpha = 0.12f)),
                     contentAlignment = Alignment.Center
@@ -2711,10 +2671,10 @@ private fun SettingsCardHeader(
                         imageVector = icon,
                         contentDescription = null,
                         tint = if (tokens.isDark) Color.White else tokens.accentBrand,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(17.dp)
                     )
                 }
-                Spacer(modifier = Modifier.width(12.dp))
+                Spacer(modifier = Modifier.width(10.dp))
             }
             Column {
                 Text(

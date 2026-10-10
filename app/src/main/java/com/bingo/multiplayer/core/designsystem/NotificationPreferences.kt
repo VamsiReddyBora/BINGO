@@ -2,9 +2,15 @@ package com.bingo.multiplayer.core.designsystem
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.Log
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import com.bingo.multiplayer.domain.repository.AuthRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * Enterprise-grade preferences manager for application notification settings.
@@ -21,6 +27,7 @@ import com.bingo.multiplayer.domain.repository.AuthRepository
  * Persisted in SharedPreferences and synchronized bidirectionally with Cloud Firestore.
  */
 object NotificationPreferences {
+    private const val TAG = "NotificationPreferences"
     private const val PREFS_NAME = "bingo_notification_prefs"
 
     // System Push Notification Keys
@@ -42,7 +49,11 @@ object NotificationPreferences {
     val inAppPlayerOnlineEnabled: MutableState<Boolean> = mutableStateOf(true)
     val inAppPlayerInvitesEnabled: MutableState<Boolean> = mutableStateOf(true)
 
+    @Volatile
     private var isInitialized = false
+
+    private val syncScope = CoroutineScope(Dispatchers.IO)
+    private var syncJob: Job? = null
 
     @Synchronized
     fun init(context: Context) {
@@ -63,42 +74,92 @@ object NotificationPreferences {
     private fun getPrefs(context: Context): SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    // ── Mutators with automatic persistence and Cloud sync ──
+    // ── Mutators with automatic persistence and debounced Cloud sync ──
 
-    fun setSystemNotificationsEnabled(context: Context, enabled: Boolean) {
+    fun setSystemNotificationsEnabled(context: Context, enabled: Boolean, syncToCloud: Boolean = true) {
+        if (systemNotificationsEnabled.value == enabled) return
         systemNotificationsEnabled.value = enabled
         getPrefs(context).edit().putBoolean(KEY_SYSTEM_NOTIFS, enabled).apply()
-        triggerCloudSync(context)
+        if (syncToCloud) triggerCloudSync(context)
     }
 
-    fun setPlayerOnlineNotificationsEnabled(context: Context, enabled: Boolean) {
+    fun setPlayerOnlineNotificationsEnabled(context: Context, enabled: Boolean, syncToCloud: Boolean = true) {
+        if (playerOnlineNotificationsEnabled.value == enabled) return
         playerOnlineNotificationsEnabled.value = enabled
         getPrefs(context).edit().putBoolean(KEY_PLAYER_ONLINE_NOTIFS, enabled).apply()
-        triggerCloudSync(context)
+        if (syncToCloud) triggerCloudSync(context)
     }
 
-    fun setPlayerInvitesNotificationsEnabled(context: Context, enabled: Boolean) {
+    fun setPlayerInvitesNotificationsEnabled(context: Context, enabled: Boolean, syncToCloud: Boolean = true) {
+        if (playerInvitesNotificationsEnabled.value == enabled) return
         playerInvitesNotificationsEnabled.value = enabled
         getPrefs(context).edit().putBoolean(KEY_PLAYER_INVITES_NOTIFS, enabled).apply()
-        triggerCloudSync(context)
+        if (syncToCloud) triggerCloudSync(context)
     }
 
-    fun setInAppNotificationsEnabled(context: Context, enabled: Boolean) {
+    fun setInAppNotificationsEnabled(context: Context, enabled: Boolean, syncToCloud: Boolean = true) {
+        if (inAppNotificationsEnabled.value == enabled) return
         inAppNotificationsEnabled.value = enabled
         getPrefs(context).edit().putBoolean(KEY_IN_APP_NOTIFS, enabled).apply()
-        triggerCloudSync(context)
+        if (syncToCloud) triggerCloudSync(context)
     }
 
-    fun setInAppPlayerOnlineEnabled(context: Context, enabled: Boolean) {
+    fun setInAppPlayerOnlineEnabled(context: Context, enabled: Boolean, syncToCloud: Boolean = true) {
+        if (inAppPlayerOnlineEnabled.value == enabled) return
         inAppPlayerOnlineEnabled.value = enabled
         getPrefs(context).edit().putBoolean(KEY_IN_APP_ONLINE, enabled).apply()
-        triggerCloudSync(context)
+        if (syncToCloud) triggerCloudSync(context)
     }
 
-    fun setInAppPlayerInvitesEnabled(context: Context, enabled: Boolean) {
+    fun setInAppPlayerInvitesEnabled(context: Context, enabled: Boolean, syncToCloud: Boolean = true) {
+        if (inAppPlayerInvitesEnabled.value == enabled) return
         inAppPlayerInvitesEnabled.value = enabled
         getPrefs(context).edit().putBoolean(KEY_IN_APP_INVITES, enabled).apply()
-        triggerCloudSync(context)
+        if (syncToCloud) triggerCloudSync(context)
+    }
+
+    /**
+     * Batch-applies notification settings without triggering individual cloud write loops.
+     */
+    fun applySettings(
+        systemNotifs: Boolean,
+        playerOnlineNotifs: Boolean,
+        playerInvitesNotifs: Boolean,
+        inAppNotifs: Boolean,
+        inAppOnline: Boolean,
+        inAppInvites: Boolean,
+        context: Context,
+        syncToCloud: Boolean = false
+    ) {
+        init(context)
+        val hasChanged = systemNotificationsEnabled.value != systemNotifs ||
+                playerOnlineNotificationsEnabled.value != playerOnlineNotifs ||
+                playerInvitesNotificationsEnabled.value != playerInvitesNotifs ||
+                inAppNotificationsEnabled.value != inAppNotifs ||
+                inAppPlayerOnlineEnabled.value != inAppOnline ||
+                inAppPlayerInvitesEnabled.value != inAppInvites
+
+        if (!hasChanged) return
+
+        systemNotificationsEnabled.value = systemNotifs
+        playerOnlineNotificationsEnabled.value = playerOnlineNotifs
+        playerInvitesNotificationsEnabled.value = playerInvitesNotifs
+        inAppNotificationsEnabled.value = inAppNotifs
+        inAppPlayerOnlineEnabled.value = inAppOnline
+        inAppPlayerInvitesEnabled.value = inAppInvites
+
+        getPrefs(context).edit()
+            .putBoolean(KEY_SYSTEM_NOTIFS, systemNotifs)
+            .putBoolean(KEY_PLAYER_ONLINE_NOTIFS, playerOnlineNotifs)
+            .putBoolean(KEY_PLAYER_INVITES_NOTIFS, playerInvitesNotifs)
+            .putBoolean(KEY_IN_APP_NOTIFS, inAppNotifs)
+            .putBoolean(KEY_IN_APP_ONLINE, inAppOnline)
+            .putBoolean(KEY_IN_APP_INVITES, inAppInvites)
+            .apply()
+
+        if (syncToCloud) {
+            triggerCloudSync(context)
+        }
     }
 
     // ── Evaluators for dispatch logic ──
@@ -136,12 +197,20 @@ object NotificationPreferences {
     }
 
     private fun triggerCloudSync(context: Context) {
-        AuthRepository.activeInstance?.let { repo ->
-            val user = repo.getPersistedUserSync()
-            if (user != null && user.uid.isNotBlank()) {
-                val currentSettings = repo.getSettings()
-                com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(context)
-                    .syncUserProfile(user, currentSettings)
+        syncJob?.cancel()
+        syncJob = syncScope.launch {
+            delay(500) // Debounce rapid toggle clicks to avoid Firestore write storms
+            try {
+                AuthRepository.activeInstance?.let { repo ->
+                    val user = repo.getPersistedUserSync()
+                    if (user != null && user.uid.isNotBlank()) {
+                        val currentSettings = repo.getSettings()
+                        com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(context)
+                            .syncUserProfile(user, currentSettings)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Debounced cloud sync error: ${e.message}")
             }
         }
     }

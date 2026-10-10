@@ -645,9 +645,11 @@ fun RootNavGraph(
 
     LaunchedEffect(Unit) {
         com.bingo.multiplayer.domain.network.PresenceManager.friendOnlineAlertFlow.collect { friendName ->
-            if (com.bingo.multiplayer.core.designsystem.NotificationPreferences.canShowInAppPlayerOnline(context)) {
-                android.widget.Toast.makeText(context, "🟢 $friendName is online", android.widget.Toast.LENGTH_SHORT).show()
-            }
+            try {
+                if (com.bingo.multiplayer.core.designsystem.NotificationPreferences.canShowInAppPlayerOnline(context)) {
+                    android.widget.Toast.makeText(context.applicationContext, "🟢 $friendName is online", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            } catch (_: Exception) {}
         }
     }
 

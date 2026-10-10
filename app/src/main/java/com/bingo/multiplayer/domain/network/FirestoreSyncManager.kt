@@ -148,6 +148,10 @@ class FirestoreSyncManager(
                 }
 
                 if (snapshot != null && snapshot.exists()) {
+                    if (snapshot.metadata.hasPendingWrites()) {
+                        // Local write confirmation pending; ignore to prevent echo feedback loop
+                        return@addSnapshotListener
+                    }
                     try {
                         val username = snapshot.getString("username") ?: ""
                         val displayName = snapshot.getString("displayName") ?: "Player"
