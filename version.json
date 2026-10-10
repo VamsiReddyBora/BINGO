@@ -1,8 +1,8 @@
 {
-  "versionCode": 40,
-  "versionName": "1.4",
-  "tag_name": "v1.4",
-  "downloadUrl": "https://github.com/VamsiReddyBora/BINGO/releases/download/v1.4/Bingo.apk",
-  "releaseNotes": "• Major Update v1.4: Push Notifications & Nearby Network Revolution\n• High-reliability FCM background notifications for invites, turns, and game events\n• Enhanced Nearby Network with resilient UDP/TCP socket binding, genuine RTT ping, and cross-subnet hotspot discovery\n• Fixed winner announcement edge cases, player ID normalization, and reconnection playback\n• Visual contrast overhaul: amber-gold AMOLED recent picks, gold-bordered completed lines, and enhanced button accessibility",
-  "apkSize": 6741797
+  "versionCode": 41,
+  "versionName": "1.4.1",
+  "tag_name": "v1.4.1",
+  "downloadUrl": "https://vamsireddybora.github.io/BINGO/Bingo.apk",
+  "releaseNotes": "• v1.4.1: Unified Theme Launch & Instant Startup\n• Seamless Theme Match: System splash screen, window decor, and status/nav bars now accurately match active theme (Clean Light / AMOLED Black) from the very first frame\n• Instant Startup: Eliminated redundant secondary launch screen delay for immediate access to main menu\n• Direct high-speed CDN distribution on GitHub Pages",
+  "apkSize": 6741805
 }
