@@ -2531,8 +2531,7 @@ fun RootNavGraph(
         composable(
             route = Screen.AuthGate.route,
             exitTransition = {
-                androidx.compose.animation.fadeOut(animationSpec = androidx.compose.animation.core.tween(350)) +
-                androidx.compose.animation.scaleOut(targetScale = 1.25f, animationSpec = androidx.compose.animation.core.tween(350, easing = androidx.compose.animation.core.FastOutSlowInEasing))
+                androidx.compose.animation.fadeOut(animationSpec = androidx.compose.animation.core.tween(150))
             }
         ) {
             AuthGateScreen(

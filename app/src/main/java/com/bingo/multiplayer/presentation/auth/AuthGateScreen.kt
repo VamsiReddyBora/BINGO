@@ -48,8 +48,8 @@ fun AuthGateScreen(
     val iconAlpha = remember { Animatable(1.0f) }
 
     LaunchedEffect(Unit) {
-        // 1. Background ongoing match refresh & cleanup
-        val refreshJob = launch(Dispatchers.IO) {
+        // 1. Background ongoing match refresh & cleanup in background
+        launch(Dispatchers.IO) {
             try {
                 val ongoing = OngoingMatchStore.getOngoingMatch(context)
                 if (ongoing != null) {
@@ -61,30 +61,14 @@ fun AuthGateScreen(
             } catch (_: Exception) {}
         }
 
-        // 3. Keep launch icon visible during opening (~900ms)
-        delay(950L)
-        refreshJob.join()
-
-        // 4. Ensure auth state is resolved
+        // 2. Ensure auth state is resolved (retrieved from local cache)
         var currentAuth = authRepository.authState.value
         var waitIterations = 0
-        while (currentAuth is AuthState.Loading && waitIterations < 10) {
-            delay(100L)
+        while (currentAuth is AuthState.Loading && waitIterations < 5) {
+            delay(40L)
             currentAuth = authRepository.authState.value
             waitIterations++
         }
-
-        // 5. Smooth cinematic zoom-in transition on app opening exit
-        launch {
-            iconScale.animateTo(
-                targetValue = 1.35f,
-                animationSpec = tween(durationMillis = 380, easing = FastOutSlowInEasing)
-            )
-        }
-        iconAlpha.animateTo(
-            targetValue = 0f,
-            animationSpec = tween(durationMillis = 350, easing = LinearEasing)
-        )
 
         withContext(Dispatchers.Main) {
             when (currentAuth) {
