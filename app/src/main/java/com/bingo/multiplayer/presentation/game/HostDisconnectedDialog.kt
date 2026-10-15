@@ -26,14 +26,14 @@ internal object HostDisconnectedDialogSpec {
 
 /** Visibility remains owned by synchronized match state; this card has no dismissal action. */
 @Composable
-internal fun HostDisconnectedDialog(hostName: String, avatarUrl: String?) {
+internal fun HostDisconnectedDialog(hostName: String, avatarUrl: String?, username: String?) {
     val tokens = BingoTheme.colors
     AlertDialog(
         onDismissRequest = {},
         properties = HostDisconnectedDialogSpec.properties,
         containerColor = tokens.surface,
         shape = RoundedCornerShape(28.dp),
-        icon = { MatchConnectionAvatar(hostName, avatarUrl, MatchNoticeTone.DISCONNECTED) },
+        icon = { MatchConnectionAvatar(hostName, avatarUrl, username, MatchNoticeTone.DISCONNECTED) },
         title = { Text(HostDisconnectedDialogSpec.title, color = MatchNoticeTone.DISCONNECTED.color(tokens.isDark),
             fontSize = 21.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) },
         text = {

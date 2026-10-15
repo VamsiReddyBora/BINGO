@@ -13,8 +13,8 @@ android {
         applicationId "com.bingo.multiplayer"
         minSdk 24
         targetSdk 34
-        versionCode 41
-        versionName "1.4.1"
+        versionCode 42
+        versionName "1.4.2"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -78,8 +78,8 @@ android {
                     // Do not overwrite rootDir/Bingo.apk or workspace/Bingo.apk to protect baselines
                     copy {
                         from "${layout.buildDirectory.get()}/outputs/apk/release/Bingo.apk"
-                        into "${rootDir}/artifacts/disconnection-ui-polish/"
-                        rename { "Bingo-disconnection-ui-polish.apk" }
+                        into "${rootDir}/artifacts/release-preparation/"
+                        rename { "Bingo-release-candidate.apk" }
                     }
                 }
             }

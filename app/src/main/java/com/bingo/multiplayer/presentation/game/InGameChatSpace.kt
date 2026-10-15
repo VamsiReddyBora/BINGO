@@ -176,29 +176,20 @@ private fun InGameChatBubble(
             modifier = Modifier.fillMaxWidth(),
             contentAlignment = Alignment.Center
         ) {
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = if (notice.tone == MatchNoticeTone.NEUTRAL) {
-                    if (tokens.isDark) Color(0xFF23272A).copy(alpha = 0.85f) else Color(0xFFE2E8F0).copy(alpha = 0.90f)
-                } else noticeColor.copy(alpha = if (tokens.isDark) 0.13f else 0.08f),
-                border = BorderStroke(1.dp, noticeColor.copy(alpha = 0.15f)),
-                shadowElevation = 0.dp,
+            Text(
+                text = notice.text,
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
+                color = noticeColor,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                 modifier = Modifier
                     .graphicsLayer {
                         scaleX = bounceScale.value
                         scaleY = bounceScale.value
                     }
                     .padding(vertical = 2.dp)
-            ) {
-                Text(
-                    text = notice.text,
-                    fontSize = 12.sp,
-                    lineHeight = 17.sp,
-                    color = noticeColor,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                )
-            }
+            )
         }
     } else if (message.isSelf) {
         // Self message: aligned to the right (WhatsApp style soft green/mint or soft lavender)

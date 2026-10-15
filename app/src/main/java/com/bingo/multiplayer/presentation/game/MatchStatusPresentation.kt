@@ -9,7 +9,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -66,8 +65,8 @@ internal fun MatchStatusChip(text: String, tone: MatchNoticeTone, modifier: Modi
 }
 
 @Composable
-internal fun MatchConnectionAvatar(name: String, avatarUrl: String?, tone: MatchNoticeTone) {
+internal fun MatchConnectionAvatar(name: String, avatarUrl: String?, username: String?, tone: MatchNoticeTone) {
     val color by animateColorAsState(tone.color(BingoTheme.colors.isDark), tween(220), label = "connectionAvatarRing")
-    PlayerAvatar(avatarPathOrUri = avatarUrl, displayName = name, size = 72.dp,
+    PlayerAvatar(avatarPathOrUri = avatarUrl, displayName = name, username = username, size = 72.dp,
         borderColor = color, borderWidth = 3.dp)
 }

@@ -4618,7 +4618,8 @@ fun RootNavGraph(
                 GameMode.NEARBY_NETWORK -> opponentPlayer?.displayName ?: "Nearby Peer"
             }
             val opponentAvatarUrl = opponentPlayer?.avatarUrl
-            val opponentUsername = opponentPlayer?.username?.ifBlank { opponentPlayer.displayName } ?: opponentPlayer?.displayName
+            // Avatar lookup uses account identity; display names need not be unique usernames.
+            val opponentUsername = opponentPlayer?.username?.takeIf { it.isNotBlank() }
             val myAvatarUrl = getPlayerAvatarUrl()
             val myUsername = currentAuthUser?.username
             val myDisplayName = getPlayerDisplayName()

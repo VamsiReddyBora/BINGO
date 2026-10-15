@@ -31,6 +31,7 @@ internal fun InterruptionDecisionDialog(
     prompt: InterruptionPromptState,
     opponentName: String,
     opponentAvatarUrl: String?,
+    opponentUsername: String?,
     opponentUnreachable: Boolean,
     connectionStatus: String,
     pauseEnabled: Boolean,
@@ -69,7 +70,7 @@ internal fun InterruptionDecisionDialog(
         properties = MatchDecisionDialogSpec.properties,
         containerColor = tokens.surface,
         shape = RoundedCornerShape(28.dp),
-        icon = { MatchConnectionAvatar(opponentName, opponentAvatarUrl, status.tone) },
+        icon = { MatchConnectionAvatar(opponentName, opponentAvatarUrl, opponentUsername, status.tone) },
         title = { Text(if (confirmingClaim && claimEligible) "🏆 Claim victory?" else status.text,
             color = titleColor, fontSize = 21.sp, fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) },
@@ -84,7 +85,7 @@ internal fun InterruptionDecisionDialog(
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("⏳ Auto-continue in ${remaining}s", color = warningColor,
                         fontSize = 13.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
-                    LinearProgressIndicator(progress = barProgress, color = warningColor,
+                    LinearProgressIndicator(progress = { barProgress }, color = warningColor,
                         trackColor = warningColor.copy(alpha = 0.12f), modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(50)))
                 }
             }

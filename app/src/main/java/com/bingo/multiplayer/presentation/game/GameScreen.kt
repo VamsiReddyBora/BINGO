@@ -483,7 +483,9 @@ fun GameScreen(
         (canControlPause && interruptionPrompt.episodeId.isNotBlank() && !interruptionPrompt.decided))) {}
 
     if (hostDisconnected && !isGameOver) HostDisconnectedDialog(
-        hostName = hostName, avatarUrl = players.firstOrNull { it.isHost }?.avatarUrl ?: opponentAvatarUrl)
+        hostName = hostName,
+        avatarUrl = players.firstOrNull { it.isHost }?.avatarUrl?.takeIf { it.isNotBlank() } ?: opponentAvatarUrl,
+        username = players.firstOrNull { it.isHost }?.username?.takeIf { it.isNotBlank() } ?: opponentUsername)
 
     if (showSurrenderDialog && !hostDisconnected) {
         val isMultiplayerLobbyGame = (onReturnToLobby != null)
@@ -612,6 +614,7 @@ fun GameScreen(
             prompt = interruptionPrompt,
             opponentName = opponentName,
             opponentAvatarUrl = opponentAvatarUrl,
+            opponentUsername = opponentUsername,
             opponentUnreachable = isOpponentUnreachable,
             connectionStatus = opponentConnectionStatus,
             pauseEnabled = !gameplaySuspended,
