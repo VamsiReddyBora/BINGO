@@ -543,7 +543,7 @@ fun GameScreen(
         )
     }
 
-    if (isGamePaused) {
+    if (isGamePaused && !hostDisconnected) {
         AlertDialog(
             onDismissRequest = { /* Modal */ },
             shape = RoundedCornerShape(20.dp),
