@@ -370,11 +370,7 @@ object LobbyLifecycleEngine {
         if (currentMatchSeed == 0L) {
             return false
         }
-        if (packetSeed == null || packetSeed == 0L) {
-            // Backward compatibility for legacy packets without seed
-            return true
-        }
-        return packetSeed == currentMatchSeed
+        return packetSeed != null && packetSeed != 0L && packetSeed == currentMatchSeed
     }
 
     /**

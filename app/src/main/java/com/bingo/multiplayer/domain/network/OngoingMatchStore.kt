@@ -9,6 +9,7 @@ import com.bingo.multiplayer.domain.model.Player
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import java.io.File
 
 @Keep
 @Serializable
@@ -58,6 +59,61 @@ data class MatchResultTombstone(
     val accountUid: String = ""
 )
 
+interface SharedMatchResultAdapter {
+    fun recordResult(seed: Long, tombstone: MatchResultTombstone): Boolean
+    fun getResult(seed: Long): MatchResultTombstone?
+    fun clearResult(seed: Long)
+}
+
+class FileSharedMatchResultAdapter(private val directoryProvider: () -> File) : SharedMatchResultAdapter {
+    private val json = Json { ignoreUnknownKeys = true; isLenient = true; encodeDefaults = true }
+
+    override fun recordResult(seed: Long, tombstone: MatchResultTombstone): Boolean {
+        return try {
+            val dir = directoryProvider()
+            if (!dir.exists()) dir.mkdirs()
+            val file = File(dir, "tombstone_$seed.json")
+            if (file.exists()) {
+                val existing = getResult(seed)
+                if (existing != null) {
+                    if (existing.winnerUid == tombstone.winnerUid && existing.winReason == tombstone.winReason) {
+                        return true
+                    }
+                    return false
+                }
+            }
+            val serialized = json.encodeToString(tombstone)
+            file.writeText(serialized)
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    override fun getResult(seed: Long): MatchResultTombstone? {
+        return try {
+            val dir = directoryProvider()
+            val file = File(dir, "tombstone_$seed.json")
+            if (file.exists()) {
+                val text = file.readText()
+                json.decodeFromString<MatchResultTombstone>(text)
+            } else {
+                null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    override fun clearResult(seed: Long) {
+        try {
+            val dir = directoryProvider()
+            val file = File(dir, "tombstone_$seed.json")
+            if (file.exists()) file.delete()
+        } catch (_: Exception) {}
+    }
+}
+
 /**
  * Persists active online room match metadata so a player who temporarily exited,
  * switched apps, or experienced a connection drop can effortlessly rejoin the same
@@ -80,11 +136,16 @@ object OngoingMatchStore {
         set(value) {
             field = value
             if (value == null) {
-                sharedMatchResults.clear()
+                try {
+                    val dir = File(System.getProperty("java.io.tmpdir", "/tmp"), "bingo_shared_results")
+                    dir.deleteRecursively()
+                } catch (_: Exception) {}
             }
         }
 
-    private val sharedMatchResults = java.util.concurrent.ConcurrentHashMap<Long, MatchResultTombstone>()
+    var sharedResultAdapter: SharedMatchResultAdapter = FileSharedMatchResultAdapter {
+        File(System.getProperty("java.io.tmpdir", "/tmp"), "bingo_shared_results")
+    }
 
     private fun getPrefs(context: Context?): SharedPreferences {
         return customPrefs ?: context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -179,14 +240,6 @@ object OngoingMatchStore {
         val scopedKey = getMatchKey(accountUid)
         var serialized = prefs.getString(scopedKey, null)
 
-        if (serialized == null && scopedKey == KEY_MATCH_DATA) {
-            // Unscoped read fallback: check if there is an active scoped match key
-            val anyKey = prefs.all.keys.firstOrNull { it.startsWith("active_match_data_") }
-            if (anyKey != null) {
-                serialized = prefs.getString(anyKey, null)
-            }
-        }
-
         // Legacy migration: if scoped record is absent, check global legacy record
         if (serialized == null && scopedKey != KEY_MATCH_DATA) {
             val legacy = prefs.getString(KEY_MATCH_DATA, null)
@@ -253,13 +306,11 @@ object OngoingMatchStore {
     fun clearOngoingMatch(context: Context? = null, accountUid: String? = null): Boolean {
         return try {
             val prefs = getPrefs(context)
-            val editor = prefs.edit().remove(KEY_MATCH_DATA)
+            val editor = prefs.edit()
             if (!accountUid.isNullOrBlank()) {
                 editor.remove(getMatchKey(accountUid))
             } else {
-                prefs.all.keys.filter { it.startsWith("active_match_data") }.forEach {
-                    editor.remove(it)
-                }
+                editor.remove(KEY_MATCH_DATA)
             }
             editor.commit()
         } catch (_: Exception) {
@@ -299,9 +350,13 @@ object OngoingMatchStore {
                 episodeCount = episodeCount,
                 accountUid = accountUid ?: ""
             )
-            sharedMatchResults[matchSeed] = tombstone
             val serialized = json.encodeToString(tombstone)
-            getPrefs(context).edit().putString(getTombstoneKey(matchSeed), serialized).commit()
+            val committed = getPrefs(context).edit().putString(getTombstoneKey(matchSeed), serialized).commit()
+            if (!committed) {
+                return false
+            }
+            sharedResultAdapter.recordResult(matchSeed, tombstone)
+            true
         } catch (_: Exception) {
             false
         }
@@ -319,10 +374,9 @@ object OngoingMatchStore {
             null
         }
         if (local != null) {
-            sharedMatchResults.putIfAbsent(matchSeed, local)
             return local
         }
-        val shared = sharedMatchResults[matchSeed]
+        val shared = sharedResultAdapter.getResult(matchSeed)
         if (shared != null) {
             try {
                 val serialized = json.encodeToString(shared)

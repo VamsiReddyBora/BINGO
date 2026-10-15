@@ -348,9 +348,9 @@ class LobbyLifecycleEngineTest {
             LobbyLifecycleEngine.isPacketForActiveMatch(match1Seed, match2Seed)
         )
 
-        // Backward compatibility: unseeded legacy packets (0L or null) accepted
-        assertTrue(LobbyLifecycleEngine.isPacketForActiveMatch(0L, match2Seed))
-        assertTrue(LobbyLifecycleEngine.isPacketForActiveMatch(null, match2Seed))
+        // Nonzero active match rejects missing or zero packet seed
+        assertFalse(LobbyLifecycleEngine.isPacketForActiveMatch(0L, match2Seed))
+        assertFalse(LobbyLifecycleEngine.isPacketForActiveMatch(null, match2Seed))
     }
 
     @Test

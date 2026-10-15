@@ -174,6 +174,7 @@ fun RootNavGraph(
     var interruptionEpisodeCount by remember { mutableIntStateOf(0) }
     var isClaimVictoryEligible by remember { mutableStateOf(false) }
     var frozenRemainingTurnSeconds by remember { mutableStateOf<Int?>(null) }
+    var frozenRemainingTurnMillis by remember { mutableStateOf<Long?>(null) }
 
     fun getEffectiveUser(): com.bingo.multiplayer.domain.model.UserProfile? {
         val state = authRepository.authState.value
@@ -363,7 +364,7 @@ fun RootNavGraph(
                     com.bingo.multiplayer.domain.network.OnlineRoomRegistry.closeRoom(roomCode)
                 }
             }
-            com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
+            com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context, getLocalUid())
             disconnectRoom()
             lanDiscovery.stopBroadcasting()
             lanDiscovery.stopDiscovering()
@@ -672,7 +673,10 @@ fun RootNavGraph(
 
     fun handlePauseAction(pause: Boolean) {
         if (pause && !isGamePaused) {
-            frozenRemainingTurnSeconds = turnTimer
+            val remMs = frozenRemainingTurnMillis ?: (turnTimer * 1000L)
+            frozenRemainingTurnMillis = remMs
+            val remSec = ((remMs + 999L) / 1000L).toInt()
+            frozenRemainingTurnSeconds = remSec
             isGamePaused = true
             pausedByPlayerName = getPlayerDisplayName()
             if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
@@ -681,29 +685,34 @@ fun RootNavGraph(
                         type = "GAME_PAUSED",
                         playerId = getLocalUid(),
                         displayName = getPlayerDisplayName(),
-                        remainingTurnMillis = (frozenRemainingTurnSeconds ?: turnTimer) * 1000L,
+                        remainingTurnMillis = remMs,
                         isPaused = true,
                         pauseOwnerId = getLocalUid()
                     )
                 )
             }
         } else if (!pause && isGamePaused) {
+            val remMs = frozenRemainingTurnMillis ?: (turnTimer * 1000L)
+            val remSec = ((remMs + 999L) / 1000L).toInt()
             isGamePaused = false
             pausedByPlayerName = ""
-            val remainingMillis = (frozenRemainingTurnSeconds ?: turnTimer) * 1000L
+            turnTimer = remSec
+            frozenRemainingTurnMillis = null
+            frozenRemainingTurnSeconds = null
             if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
                 broadcastPacket(
                     RoomMessagePacket(
                         type = "GAME_RESUMED",
                         playerId = getLocalUid(),
                         displayName = getPlayerDisplayName(),
-                        remainingTurnMillis = remainingMillis,
+                        remainingTurnMillis = remMs,
                         isPaused = false
                     )
                 )
             }
         }
         if (currentGameMode == GameMode.ONLINE_ROOM && roomCode.isNotBlank()) {
+            val remMs = frozenRemainingTurnMillis ?: (turnTimer * 1000L)
             com.bingo.multiplayer.domain.network.OngoingMatchStore.updateMatchGameState(
                 context = context,
                 playerBoard = playerBoard,
@@ -716,7 +725,7 @@ fun RootNavGraph(
                 currentTurnPlayerId = currentTurnPlayerId,
                 chatMessages = matchChatHistory,
                 isPaused = isGamePaused,
-                remainingTurnMillis = (frozenRemainingTurnSeconds ?: turnTimer) * 1000L,
+                remainingTurnMillis = remMs,
                 pauseOwnerId = pausedByPlayerName,
                 committedEpisodeCount = interruptionEpisodeCount,
                 accountUid = getLocalUid()
@@ -801,7 +810,7 @@ fun RootNavGraph(
             finalBoardNumbers = playerBoard.cells.map { it.number },
             markedNumbers = playerBoard.cells.filter { it.isMarked }.map { it.number }
         )
-        com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
+        com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context, getLocalUid())
         if (currentMatchSeed != 0L) {
             onlineRoomSync.recordCompletedSeed(currentMatchSeed)
         }
@@ -1129,6 +1138,7 @@ fun RootNavGraph(
         consecutiveMissedTurns.clear()
         pickedNumbersHistory.clear()
         pickedByPlayerHistory.clear()
+        pickedTurnIdsHistory.clear()
         matchChatHistory = emptyList()
         latestIncomingChatMessage = null
         isProcessingTurn = false
@@ -1144,6 +1154,8 @@ fun RootNavGraph(
         interruptionEpisodeCount = 0
         isClaimVictoryEligible = false
         frozenRemainingTurnSeconds = null
+        frozenRemainingTurnMillis = null
+        isReconcilingMatch = false
         onlineRoomSync.stopMatchHeartbeat()
 
         val activePlayersList = matchParticipants.ifEmpty { realTimePlayers }
@@ -1690,11 +1702,15 @@ fun RootNavGraph(
                         turnNumber = turnNumber,
                         pickedHistory = pickedNumbersHistory.toList(),
                         pickedByHistory = pickedByPlayerHistory.toList(),
+                        turnIds = pickedTurnIdsHistory.toList(),
                         boardHash = engine.computeBoardHash(playerBoard),
                         currentTurnPlayerId = currentTurnPlayerId,
                         playerId = getLocalUid(),
                         seed = currentMatchSeed,
-                        senderInstanceId = onlineRoomSync.instanceId
+                        senderInstanceId = onlineRoomSync.instanceId,
+                        isPaused = isGamePaused,
+                        pauseOwnerId = pausedByPlayerName,
+                        remainingTurnMillis = frozenRemainingTurnMillis ?: (turnTimer * 1000L)
                     )
                 )
             }
@@ -1743,6 +1759,8 @@ fun RootNavGraph(
                     onlineRoomSync.recordStartedSeed(packet.seed)
                     pickedNumbersHistory.clear()
                     pickedByPlayerHistory.clear()
+                    pickedTurnIdsHistory.clear()
+                    isReconcilingMatch = false
                     lanDiscovery.stopBroadcasting()
                     lanDiscovery.stopDiscovering()
                     if (currentGameMode == GameMode.ONLINE_ROOM) {
@@ -1770,6 +1788,8 @@ fun RootNavGraph(
                         firstTurnPlayerName = ""
                         pickedNumbersHistory.clear()
                         pickedByPlayerHistory.clear()
+                        pickedTurnIdsHistory.clear()
+                        isReconcilingMatch = false
                         isProcessingTurn = false
                         turnNumber = 1
                         currentTurnPlayerId = ""
@@ -1837,6 +1857,8 @@ fun RootNavGraph(
                     onlineRoomSync.recordStartedSeed(packet.seed)
                     pickedNumbersHistory.clear()
                     pickedByPlayerHistory.clear()
+                    pickedTurnIdsHistory.clear()
+                    isReconcilingMatch = false
                     val activeList = (if (packet.players.isNotEmpty()) packet.players else realTimePlayers)
                         .filter { it.id.isNotBlank() }
                         .distinctBy { it.id }
@@ -1857,6 +1879,8 @@ fun RootNavGraph(
                         firstTurnPlayerName = ""
                         pickedNumbersHistory.clear()
                         pickedByPlayerHistory.clear()
+                        pickedTurnIdsHistory.clear()
+                        isReconcilingMatch = false
                         isProcessingTurn = false
                         turnNumber = 1
                         currentTurnPlayerId = ""
@@ -2226,7 +2250,8 @@ fun RootNavGraph(
                             pickedByPlayers = pickedByPlayerHistory.toList(),
                             turnNumber = turnNumber,
                             currentTurnPlayerId = currentTurnPlayerId,
-                            chatMessages = matchChatHistory
+                            chatMessages = matchChatHistory,
+                            accountUid = myUid
                         )
                     }
                 }
@@ -2279,10 +2304,14 @@ fun RootNavGraph(
                                 turnNumber = turnNumber,
                                 pickedHistory = pickedNumbersHistory.toList(),
                                 pickedByHistory = pickedByPlayerHistory.toList(),
+                                turnIds = pickedTurnIdsHistory.toList(),
                                 currentTurnPlayerId = currentTurnPlayerId,
                                 boardHash = engine.computeBoardHash(playerBoard),
                                 seed = currentMatchSeed,
                                 playerId = myUid,
+                                isPaused = isGamePaused,
+                                pauseOwnerId = pausedByPlayerName,
+                                remainingTurnMillis = frozenRemainingTurnMillis ?: (turnTimer * 1000L),
                                 winnerPlayerId = if (isGameOver) winnerPlayerId else "",
                                 winReason = if (isGameOver) activeWinReason else "",
                                 runnerPlayerIds = if (isGameOver) activeRunnerPlayerIds else emptyList()
@@ -2359,9 +2388,22 @@ fun RootNavGraph(
                     if (packet.isPaused) {
                         isGamePaused = true
                         pausedByPlayerName = packet.pauseOwnerId.ifBlank { "Opponent" }
-                        val remSec = if (packet.remainingTurnMillis > 0L) ((packet.remainingTurnMillis + 999L) / 1000L).toInt() else turnTimer
+                        val remMs = packet.remainingTurnMillis
+                        val remSec = if (remMs > 0L) ((remMs + 999L) / 1000L).toInt() else turnTimer
+                        frozenRemainingTurnMillis = if (remMs > 0L) remMs else (turnTimer * 1000L)
                         frozenRemainingTurnSeconds = remSec
                         turnTimer = remSec
+                    } else {
+                        if (isGamePaused) {
+                            isGamePaused = false
+                            pausedByPlayerName = ""
+                            frozenRemainingTurnMillis = null
+                            frozenRemainingTurnSeconds = null
+                        }
+                        if (packet.remainingTurnMillis > 0L) {
+                            val remSec = ((packet.remainingTurnMillis + 999L) / 1000L).toInt()
+                            turnTimer = remSec
+                        }
                     }
 
                     // 2. Evaluate win conditions (only if game is not already concluded)
@@ -2449,7 +2491,9 @@ fun RootNavGraph(
                 pausedByPlayerName = packet.displayName.ifBlank { "Opponent" }
                 val remainderMs = if (packet.remainingTurnMillis > 0L) packet.remainingTurnMillis else (turnTimer * 1000L)
                 val remainderSec = ((remainderMs + 999L) / 1000L).toInt()
+                frozenRemainingTurnMillis = remainderMs
                 frozenRemainingTurnSeconds = remainderSec
+                turnTimer = remainderSec
                 if (currentGameMode == GameMode.ONLINE_ROOM && roomCode.isNotBlank()) {
                     com.bingo.multiplayer.domain.network.OngoingMatchStore.updateMatchGameState(
                         context = context,
@@ -2464,9 +2508,10 @@ fun RootNavGraph(
             "GAME_RESUMED" -> {
                 isGamePaused = false
                 pausedByPlayerName = ""
-                val remainderMs = if (packet.remainingTurnMillis > 0L) packet.remainingTurnMillis else ((frozenRemainingTurnSeconds ?: turnTimer) * 1000L)
+                val remainderMs = if (packet.remainingTurnMillis > 0L) packet.remainingTurnMillis else (frozenRemainingTurnMillis ?: ((frozenRemainingTurnSeconds ?: turnTimer) * 1000L))
                 val remainderSec = ((remainderMs + 999L) / 1000L).toInt()
-                frozenRemainingTurnSeconds = remainderSec
+                frozenRemainingTurnMillis = null
+                frozenRemainingTurnSeconds = null
                 turnTimer = remainderSec
                 if (currentGameMode == GameMode.ONLINE_ROOM && roomCode.isNotBlank()) {
                     com.bingo.multiplayer.domain.network.OngoingMatchStore.updateMatchGameState(
@@ -2598,7 +2643,7 @@ fun RootNavGraph(
                                 } else if (outcome.isRunner) listOf(myUid) else emptyList()
                             }
                             recordFinishedMatch(won = outcome.didPlayerWin, isDraw = outcome.isDraw, isRunner = outcome.isRunner)
-                            com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
+                            com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context, myUid)
                         }
                     }
                 }
@@ -2626,7 +2671,7 @@ fun RootNavGraph(
                         activeWinReason = "Opponent Surrendered"
                         activeRunnerPlayerIds = emptyList()
                         recordFinishedMatch(won)
-                        com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
+                        com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context, myUid)
                         opponentSurrenderMessage = "$surrenderName surrendered the match! You win!"
                     } else {
                         // Group match continues among remaining active participants!
@@ -2708,7 +2753,7 @@ fun RootNavGraph(
                                 activeWinReason = "Opponent Disconnected"
                                 activeRunnerPlayerIds = emptyList()
                                 recordFinishedMatch(wonByForfeit)
-                                com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
+                                com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context, myUid)
                                 opponentDisconnectMessage = "Opponent disconnected. You win by forfeit!"
                             } else {
                                 val nextId = calculateNextTurnPlayerId(packet.playerId)
@@ -2782,7 +2827,7 @@ fun RootNavGraph(
                             activeWinReason = if (isUsingP2p) "Host Disconnected" else "Opponent Left"
                             activeRunnerPlayerIds = emptyList()
                             recordFinishedMatch(wonByForfeit)
-                            com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
+                            com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context, myUid)
                             opponentDisconnectMessage = if (isUsingP2p) "Host disconnected. You win by forfeit!" else "All opponents left the game."
                         } else {
                             // Host left, but 2+ players remain! Match continues!
@@ -2848,7 +2893,7 @@ fun RootNavGraph(
                         activeWinReason = "Opponent Left"
                         activeRunnerPlayerIds = emptyList()
                         recordFinishedMatch(wonByForfeit)
-                        com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
+                        com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context, myUid)
                         opponentDisconnectMessage = "Opponent left the match. You win by forfeit!"
                     } else {
                         val hostUid = participants.find { it.isHost }?.id ?: ""
@@ -2977,7 +3022,7 @@ fun RootNavGraph(
                 val targetId = packet.targetPlayerId.ifBlank { packet.playerId }
                 if (targetId == myUid) {
                     Toast.makeText(context, "You were removed from the lobby by the host.", Toast.LENGTH_LONG).show()
-                    com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
+                    com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context, myUid)
                     disconnectRoom()
                     isHosting = false
                     navController.navigate(Screen.MainMenu.route) {
@@ -3672,6 +3717,9 @@ fun RootNavGraph(
                         countdownSeconds = -1
                         firstTurnPlayerName = ""
                         pickedNumbersHistory.clear()
+                        pickedByPlayerHistory.clear()
+                        pickedTurnIdsHistory.clear()
+                        isReconcilingMatch = false
                         isProcessingTurn = false
                         turnNumber = 1
                         currentTurnPlayerId = ""
@@ -4033,6 +4081,9 @@ fun RootNavGraph(
                     currentMatchSeed = 0L
                     pickedNumbersHistory.clear()
                     pickedByPlayerHistory.clear()
+                    pickedTurnIdsHistory.clear()
+                    isReconcilingMatch = false
+                    frozenRemainingTurnMillis = null
                     isProcessingTurn = false
                     isMyTurn = false
                     turnNumber = 1
@@ -4452,7 +4503,8 @@ fun RootNavGraph(
                             pickedByPlayers = pickedByPlayerHistory.toList(),
                             turnNumber = turnNumber,
                             currentTurnPlayerId = currentTurnPlayerId,
-                            chatMessages = matchChatHistory
+                            chatMessages = matchChatHistory,
+                            accountUid = getLocalUid()
                         )
                     }
                     if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
@@ -4495,7 +4547,7 @@ fun RootNavGraph(
                     latestIncomingEmoteTimestamp = 0L
                     recordFinishedMatch(false)
                     disconnectRoom()
-                    com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
+                    com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context, getLocalUid())
                     navController.navigate(Screen.MainMenu.route) {
                         popUpTo(Screen.MainMenu.route) { inclusive = true }
                     }
@@ -4582,6 +4634,10 @@ fun RootNavGraph(
                                 countdownSeconds = -1
                                 firstTurnPlayerName = ""
                                 pickedNumbersHistory.clear()
+                                pickedByPlayerHistory.clear()
+                                pickedTurnIdsHistory.clear()
+                                isReconcilingMatch = false
+                                frozenRemainingTurnMillis = null
                                 isProcessingTurn = false
                                 turnNumber = 1
                                 currentTurnPlayerId = ""
@@ -4623,7 +4679,7 @@ fun RootNavGraph(
                 onBackToMenu = {
                     val wasOver = isGameOver
                     if (wasOver) {
-                        com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
+                        com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context, getLocalUid())
                         if (isHosting && (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK)) {
                             broadcastPacket(
                                 RoomMessagePacket(
@@ -4652,7 +4708,8 @@ fun RootNavGraph(
                                 pickedByPlayers = pickedByPlayerHistory.toList(),
                                 turnNumber = turnNumber,
                                 currentTurnPlayerId = currentTurnPlayerId,
-                                chatMessages = matchChatHistory
+                                chatMessages = matchChatHistory,
+                                accountUid = getLocalUid()
                             )
                             broadcastPacket(
                                 RoomMessagePacket(
@@ -4675,6 +4732,10 @@ fun RootNavGraph(
                     currentMatchSeed = 0L
                     allPlayerBoards = emptyMap()
                     pickedNumbersHistory.clear()
+                    pickedByPlayerHistory.clear()
+                    pickedTurnIdsHistory.clear()
+                    isReconcilingMatch = false
+                    frozenRemainingTurnMillis = null
                     disconnectedPlayerIds.clear()
                     isProcessingTurn = false
                     isMyTurn = false
@@ -4707,7 +4768,7 @@ fun RootNavGraph(
                     {
                         val wasOver = isGameOver
                         if (wasOver) {
-                            com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
+                            com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context, getLocalUid())
                             if (currentMatchSeed != 0L) {
                                 onlineRoomSync.recordCompletedSeed(currentMatchSeed)
                             }
@@ -4725,7 +4786,8 @@ fun RootNavGraph(
                                     pickedByPlayers = pickedByPlayerHistory.toList(),
                                     turnNumber = turnNumber,
                                     currentTurnPlayerId = currentTurnPlayerId,
-                                    chatMessages = matchChatHistory
+                                    chatMessages = matchChatHistory,
+                                    accountUid = getLocalUid()
                                 )
                                 broadcastPacket(
                                     RoomMessagePacket(
@@ -4748,6 +4810,9 @@ fun RootNavGraph(
                         currentMatchSeed = 0L
                         pickedNumbersHistory.clear()
                         pickedByPlayerHistory.clear()
+                        pickedTurnIdsHistory.clear()
+                        isReconcilingMatch = false
+                        frozenRemainingTurnMillis = null
                         isProcessingTurn = false
                         isMyTurn = false
                         turnTimer = 30
@@ -5038,7 +5103,7 @@ fun RootNavGraph(
                                 )
                             }
                         }
-                        com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context)
+                        com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context, getLocalUid())
                         isGameOver = false
                         didPlayerWin = false
                         isLocalBoardReady = false

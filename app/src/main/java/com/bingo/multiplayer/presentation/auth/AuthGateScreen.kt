@@ -51,11 +51,14 @@ fun AuthGateScreen(
         // 1. Background ongoing match refresh & cleanup
         val refreshJob = launch(Dispatchers.IO) {
             try {
-                val ongoing = OngoingMatchStore.getOngoingMatch(context)
-                if (ongoing != null) {
-                    val session = OnlineRoomRegistry.getRoom(ongoing.roomCode)
-                    if (session != null && session.status == "CLOSED") {
-                        OngoingMatchStore.clearOngoingMatch(context)
+                val currentUid = authRepository.getPersistedUserSync()?.uid
+                if (!currentUid.isNullOrBlank()) {
+                    val ongoing = OngoingMatchStore.getOngoingMatch(context, currentUid)
+                    if (ongoing != null) {
+                        val session = OnlineRoomRegistry.getRoom(ongoing.roomCode)
+                        if (session != null && session.status == "CLOSED") {
+                            OngoingMatchStore.clearOngoingMatch(context, currentUid)
+                        }
                     }
                 }
             } catch (_: Exception) {}

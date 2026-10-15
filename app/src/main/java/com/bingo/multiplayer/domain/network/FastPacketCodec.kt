@@ -35,14 +35,18 @@ object FastPacketCodec {
                 }
             }
             "TURN_TIMEOUT" -> {
-                val historyStr = packet.pickedHistory.joinToString(",")
-                val pickedByStr = packet.pickedByHistory.joinToString(",")
-                if (packet.senderInstanceId.isNotBlank() || packet.pickedByHistory.isNotEmpty()) {
-                    "T|${packet.playerId}|${packet.turnNumber}|${packet.currentTurnPlayerId}|$historyStr|${packet.seed}|${packet.senderInstanceId}|$pickedByStr"
-                } else if (packet.seed != 0L) {
-                    "T|${packet.playerId}|${packet.turnNumber}|${packet.currentTurnPlayerId}|$historyStr|${packet.seed}"
+                if (packet.turnIds.isNotEmpty()) {
+                    json.encodeToString(packet)
                 } else {
-                    "T|${packet.playerId}|${packet.turnNumber}|${packet.currentTurnPlayerId}|$historyStr"
+                    val historyStr = packet.pickedHistory.joinToString(",")
+                    val pickedByStr = packet.pickedByHistory.joinToString(",")
+                    if (packet.senderInstanceId.isNotBlank() || packet.pickedByHistory.isNotEmpty()) {
+                        "T|${packet.playerId}|${packet.turnNumber}|${packet.currentTurnPlayerId}|$historyStr|${packet.seed}|${packet.senderInstanceId}|$pickedByStr"
+                    } else if (packet.seed != 0L) {
+                        "T|${packet.playerId}|${packet.turnNumber}|${packet.currentTurnPlayerId}|$historyStr|${packet.seed}"
+                    } else {
+                        "T|${packet.playerId}|${packet.turnNumber}|${packet.currentTurnPlayerId}|$historyStr"
+                    }
                 }
             }
             "BOARD_READY" -> {

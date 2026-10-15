@@ -379,11 +379,15 @@ class OnlineMatchHeartbeatPolicy(
      * Marks that state synchronization with the peer has completed.
      */
     fun onStateSynchronized(now: Long = clock.elapsedRealtime()): HeartbeatDecision {
+        val wasSynchronized = isStateSynchronized
         isStateSynchronized = true
         if (state == PeerAvailabilityState.RECOVERING) {
             // Start the required 10-second stable window after current state synchronization completes.
             // ACKs received before that point cannot be credited as post-sync stability.
-            recoveryStartedAt = now
+            // Duplicate/repeated sync callbacks while already synchronized must not restart stability.
+            if (!wasSynchronized || recoveryStartedAt == null) {
+                recoveryStartedAt = now
+            }
             return completeRecoveryIfEligible(now)
         }
         return HeartbeatDecision.NoOp

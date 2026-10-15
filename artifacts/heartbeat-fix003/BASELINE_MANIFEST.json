@@ -12,5 +12,8 @@
   "fix003_worktree_dir": "/home/bob/workspace/bingo_heartbeat_fix003",
   "starting_head": "326231022f1bdf305e715b31f9c6625c55fca61b",
   "target_apk": "artifacts/heartbeat-fix003/Bingo-fix003.apk",
-  "apk_signing_cert_sha256": "39a428942c3c2629ff3490c944b8b82c7625b22d660b7a2cdf682456d81f60a4"
+  "fix003_candidate_apk_sha256": "d31167e2d1d0ab6f490cbd93d0b4552ab43c572e25f7db6b3922f2b508077888",
+  "fix003_candidate_apk_size_bytes": 7014503,
+  "apk_signing_cert_sha256": "39a428942c3c2629ff3490c944b8b82c7625b22d660b7a2cdf682456d81f60a4",
+  "overall_readiness": "NOT READY"
 }

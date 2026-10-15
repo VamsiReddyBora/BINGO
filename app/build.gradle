@@ -75,13 +75,11 @@ android {
         if (variant.name == "release") {
             variant.assembleProvider.configure {
                 doLast {
+                    // Do not overwrite rootDir/Bingo.apk or workspace/Bingo.apk to protect baselines
                     copy {
                         from "${layout.buildDirectory.get()}/outputs/apk/release/Bingo.apk"
-                        into "${rootDir}/"
-                    }
-                    copy {
-                        from "${layout.buildDirectory.get()}/outputs/apk/release/Bingo.apk"
-                        into "${rootDir}/../"
+                        into "${rootDir}/artifacts/heartbeat-fix003/"
+                        rename { "Bingo-fix003.apk" }
                     }
                 }
             }

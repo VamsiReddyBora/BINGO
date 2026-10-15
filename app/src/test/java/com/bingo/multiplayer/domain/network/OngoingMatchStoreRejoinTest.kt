@@ -259,7 +259,8 @@ class OngoingMatchStoreRejoinTest {
             currentTurnPlayerId = "user_peer",
             isPaused = true,
             remainingTurnMillis = 22_000L,
-            committedEpisodeCount = 1
+            committedEpisodeCount = 1,
+            accountUid = "user_me"
         )
         assertTrue(updated)
 
@@ -298,7 +299,8 @@ class OngoingMatchStoreRejoinTest {
             pickedNumbers = listOf(12),
             pickedByPlayers = listOf("user_bob"),
             turnNumber = 2,
-            currentTurnPlayerId = "user_peer"
+            currentTurnPlayerId = "user_peer",
+            accountUid = "user_bob"
         )
 
         val loaded = OngoingMatchStore.getOngoingMatch(context = null, accountUid = "user_bob")
@@ -321,7 +323,12 @@ class OngoingMatchStoreRejoinTest {
         OngoingMatchStore.saveOngoingMatch(context = null, matchData = initialMatch)
         assertNotNull(OngoingMatchStore.getOngoingMatch(context = null, accountUid = "user_temp"))
 
-        val cleared = OngoingMatchStore.clearOngoingMatch(context = null)
+        // Unscoped clear preserves scoped account save
+        OngoingMatchStore.clearOngoingMatch(context = null, accountUid = null)
+        assertNotNull(OngoingMatchStore.getOngoingMatch(context = null, accountUid = "user_temp"))
+
+        // Scoped clear removes the specified account
+        val cleared = OngoingMatchStore.clearOngoingMatch(context = null, accountUid = "user_temp")
         assertTrue(cleared)
         assertNull(OngoingMatchStore.getOngoingMatch(context = null, accountUid = "user_temp"))
     }
