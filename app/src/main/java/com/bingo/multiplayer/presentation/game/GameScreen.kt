@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PauseCircle
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -161,7 +162,13 @@ fun GameScreen(
     currentTurnPlayerId: String = "",
     disconnectedPlayerIds: List<String> = emptyList(),
     typingPlayerName: String? = null,
-    onSetTyping: (Boolean) -> Unit = {}
+    onSetTyping: (Boolean) -> Unit = {},
+    isOpponentUnreachable: Boolean = false,
+    interruptionEpisodeCount: Int = 0,
+    isClaimVictoryEligible: Boolean = false,
+    onPauseGame: () -> Unit = {},
+    onResumeGame: () -> Unit = {},
+    onClaimVictory: () -> Unit = {}
 ) {
     val tokens = BingoTheme.colors
     val haptic = LocalHapticFeedback.current
@@ -578,6 +585,150 @@ fun GameScreen(
         )
     }
 
+    var showInterruptionDialog by remember { mutableStateOf(false) }
+    var showClaimConfirmationDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isOpponentUnreachable, interruptionEpisodeCount) {
+        if (isOpponentUnreachable && interruptionEpisodeCount > 0) {
+            showInterruptionDialog = true
+        } else if (!isOpponentUnreachable) {
+            showInterruptionDialog = false
+            showClaimConfirmationDialog = false
+        }
+    }
+
+    if (showInterruptionDialog && isOpponentUnreachable && !isGameOver) {
+        AlertDialog(
+            onDismissRequest = { showInterruptionDialog = false },
+            shape = RoundedCornerShape(20.dp),
+            containerColor = tokens.surface,
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = Color(0xFFF59E0B),
+                    modifier = Modifier.size(44.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = "Opponent not responding",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    color = tokens.textPrimary,
+                    textAlign = TextAlign.Center
+                )
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "No heartbeat received for 15 seconds. Interruption $interruptionEpisodeCount in this match.",
+                        fontSize = 14.sp,
+                        color = tokens.textSecondary,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            },
+            confirmButton = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (!isGamePaused) {
+                        Button(
+                            onClick = {
+                                onPauseGame()
+                                showInterruptionDialog = false
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = tokens.primaryButtonBg,
+                                contentColor = tokens.primaryButtonText
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Pause game", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    Button(
+                        onClick = { showInterruptionDialog = false },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = tokens.backgroundSecondary,
+                            contentColor = tokens.textPrimary
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Continue countdown", fontWeight = FontWeight.SemiBold)
+                    }
+                    if (isClaimVictoryEligible) {
+                        Button(
+                            onClick = {
+                                showClaimConfirmationDialog = true
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (tokens.isDark) Color(0xFFEF4444) else tokens.accentOpponent,
+                                contentColor = Color.White
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Claim victory", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            },
+            dismissButton = {}
+        )
+    }
+
+    if (showClaimConfirmationDialog && isClaimVictoryEligible && !isGameOver) {
+        AlertDialog(
+            onDismissRequest = { showClaimConfirmationDialog = false },
+            shape = RoundedCornerShape(20.dp),
+            containerColor = tokens.surface,
+            title = {
+                Text(
+                    text = "Claim Victory?",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    color = tokens.textPrimary
+                )
+            },
+            text = {
+                Text(
+                    text = "Your opponent has been unreachable for 3 or more interruptions in this match. Do you want to claim victory now?",
+                    fontSize = 14.sp,
+                    color = tokens.textSecondary
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showClaimConfirmationDialog = false
+                        showInterruptionDialog = false
+                        onClaimVictory()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (tokens.isDark) Color(0xFFEF4444) else tokens.accentOpponent,
+                        contentColor = Color.White
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Confirm Claim", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClaimConfirmationDialog = false }) {
+                    Text("Cancel", color = tokens.textMuted)
+                }
+            }
+        )
+    }
+
     Scaffold(
         containerColor = tokens.background,
         topBar = {
@@ -587,6 +738,31 @@ fun GameScreen(
                     .padding(top = 10.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                if (isOpponentUnreachable && !isGameOver) {
+                    Surface(
+                        onClick = { showInterruptionDialog = true },
+                        color = Color(0xFFFEF3C7),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 2.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(Icons.Default.Warning, contentDescription = null, tint = Color(0xFFD97706), modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Opponent not responding (Interruption $interruptionEpisodeCount) • Tap for options",
+                                fontSize = 12.sp,
+                                color = Color(0xFF92400E),
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                }
                 // Modern Aesthetic Top Bar (Items 1, 2, 3)
                 Box(
                     modifier = Modifier

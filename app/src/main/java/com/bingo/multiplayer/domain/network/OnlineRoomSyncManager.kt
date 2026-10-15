@@ -176,7 +176,11 @@ class OnlineRoomSyncManager(
     fun startMatchHeartbeat(
         matchId: String,
         peerUid: String,
-        policy: com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicy
+        policy: com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicy = com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicy(
+            matchId = matchId,
+            peerUid = peerUid,
+            connectionGeneration = activeMatchConnectionGeneration
+        )
     ) {
         stopMatchHeartbeat()
         is1v1MatchActive = true
@@ -234,6 +238,15 @@ class OnlineRoomSyncManager(
         is1v1MatchActive = false
         matchHeartbeatPolicy = null
         outstandingChallenges.clear()
+    }
+
+    fun claimMatchVictory(localUid: String = localPlayer?.id ?: "local_player"): com.bingo.multiplayer.domain.engine.ClaimResult? {
+        val policy = matchHeartbeatPolicy ?: return null
+        val result = policy.claimVictory(actorUid = localUid)
+        if (result is com.bingo.multiplayer.domain.engine.ClaimResult.Accepted) {
+            stopMatchHeartbeat()
+        }
+        return result
     }
 
     private fun checkMatchWatchdog() {
@@ -1148,6 +1161,20 @@ class OnlineRoomSyncManager(
 
             "PONG" -> {
                 // Legacy PONG handling ignored to prevent multi-device ping jitter
+            }
+        }
+
+        val activePolicy = matchHeartbeatPolicy
+        if (activePolicy != null && (packet.playerId == activePolicy.peerUid || com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(packet.playerId, activePolicy.peerUid))) {
+            if (packet.type != "MATCH_HEARTBEAT" && packet.type != "LEAVE" && packet.type != "PLAYER_DISCONNECTED") {
+                val nowMonotonic = android.os.SystemClock.elapsedRealtime()
+                val decision = activePolicy.onFreshPeerResponse(nowMonotonic)
+                if (decision !is com.bingo.multiplayer.domain.engine.HeartbeatDecision.NoOp) {
+                    _matchHeartbeatDecisions.tryEmit(decision)
+                }
+                if (packet.type == "GAME_SYNC") {
+                    activePolicy.onStateSynchronized()
+                }
             }
         }
 

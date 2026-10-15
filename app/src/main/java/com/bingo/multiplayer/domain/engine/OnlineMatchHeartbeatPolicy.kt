@@ -100,6 +100,7 @@ sealed class ClaimResult {
 class OnlineMatchHeartbeatPolicy(
     val matchId: String,
     val peerUid: String,
+    connectionGeneration: String = "",
     private val clock: Clock = SystemMonotonicClock
 ) {
     companion object {
@@ -111,8 +112,12 @@ class OnlineMatchHeartbeatPolicy(
         const val NORMAL_TURN_DURATION_MS = 30000L
     }
 
-    var connectionGeneration: String = ""
+    var connectionGeneration: String = connectionGeneration
         private set
+
+    fun updateConnectionGeneration(newGen: String) {
+        connectionGeneration = newGen
+    }
 
     var state: PeerAvailabilityState = PeerAvailabilityState.SYNCING
         private set
@@ -404,6 +409,20 @@ class OnlineMatchHeartbeatPolicy(
             episodeId = currentEpisodeId!!,
             episodeCount = committedEpisodeCount
         )
+    }
+
+    /**
+     * Helper to test if a claim victory action would currently succeed.
+     */
+    fun canClaimVictory(actorUid: String = "local_player"): Boolean {
+        return evaluateClaimVictory(actorUid, false) is ClaimResult.Accepted
+    }
+
+    /**
+     * Executes claim victory evaluation with sensible defaults.
+     */
+    fun claimVictory(actorUid: String = "local_player", matchAlreadyFinished: Boolean = false): ClaimResult {
+        return evaluateClaimVictory(actorUid, matchAlreadyFinished)
     }
 
     /**

@@ -18,21 +18,21 @@
 | **H12** | Heartbeat | Local device loses network / broker stops responding (local recovery; no penalty on peer) | PASS | Verified in `OnlineMatchHeartbeatPolicyTest` |
 | **H13** | Heartbeat | Broker-wide outage and return (restore one shared checkpoint before resuming) | PENDING | To be verified in Chunk 2/3 |
 | **H14** | Heartbeat | Slow cloud request taking > 15s (independent MQTT probe remains scheduled) | PASS | Verified in `OnlineRoomSyncManager` decoupled coroutine jobs |
-| **H15** | Heartbeat | Repeat outage cases with host and guest swapped (symmetric rules/takeover safe) | PENDING | To be verified in Chunk 3 |
-| **T01** | Turns | Disconnect 10s into 30s turn (original deadline remains; no 15/30s reset) | PENDING | To be verified in Chunk 3 |
-| **T02** | Turns | Disconnect with < 15s remaining (turn expires at own deadline once) | PENDING | To be verified in Chunk 3 |
-| **T03** | Turns | Several unavailable turns (every turn 30s; 1 skip per expiry; neither removed) | PENDING | To be verified in Chunk 3 |
-| **T04** | Turns | Pick and timeout arrive at same boundary (one accepted transition) | PENDING | To be verified in Chunk 3 |
-| **T05** | Turns | Delayed/duplicate timeout after next turn begins (no effect on new turn) | PENDING | To be verified in Chunk 3 |
-| **T06** | Turns | Skipped turns followed by picks and rejoin (restore actual turn IDs, marks, picker UID) | PENDING | To be verified in Chunk 3/4 |
-| **P01** | Pause | Pause with exactly 12,000 ms left (both freeze at 12,000; resume uses remainder) | PENDING | To be verified in Chunk 3 |
-| **P02** | Pause | Open/dismiss popup or select Continue (no deadline reset or silent pause) | PENDING | To be verified in Chunk 3 |
-| **P03** | Pause | Return while deliberately paused (remains paused; counts/board preserved) | PENDING | To be verified in Chunk 3 |
-| **P04** | Pause | Duplicate/stale pause/resume requests (one accepted action; no stale state applied) | PENDING | To be verified in Chunk 3 |
-| **C01** | Claim | Claim on incidents 1 or 2, including forged/stale UI request (rejected) | PASS | Verified in `OnlineMatchHeartbeatPolicyTest` |
-| **C02** | Claim | Eligible third-incident claim confirmed once (one final result & stats update) | PASS | Verified in `OnlineMatchHeartbeatPolicyTest` |
-| **C03** | Claim | Fresh recovery races with claim confirmation (ordered acceptance decides) | PASS | Verified in `OnlineMatchHeartbeatPolicyTest` |
-| **C04** | Claim | Claim races with Bingo/surrender; duplicate delivery/restart (one final result) | PENDING | To be verified in Chunk 3 |
+| **H15** | Heartbeat | Repeat outage cases with host and guest swapped (symmetric rules/takeover safe) | PASS | Verified in `MatchCoordinatorAndPauseTest` |
+| **T01** | Turns | Disconnect 10s into 30s turn (original deadline remains; no 15/30s reset) | PASS | Verified in `MatchCoordinatorAndPauseTest` |
+| **T02** | Turns | Disconnect with < 15s remaining (turn expires at own deadline once) | PASS | Verified in `MatchCoordinatorAndPauseTest` |
+| **T03** | Turns | Several unavailable turns (every turn 30s; 1 skip per expiry; neither removed) | PASS | Verified in `MatchCoordinatorAndPauseTest` |
+| **T04** | Turns | Pick and timeout arrive at same boundary (one accepted transition) | PASS | Verified in `MatchCoordinatorAndPauseTest` |
+| **T05** | Turns | Delayed/duplicate timeout after next turn begins (no effect on new turn) | PASS | Verified in `MatchCoordinatorAndPauseTest` |
+| **T06** | Turns | Skipped turns followed by picks and rejoin (restore actual turn IDs, marks, picker UID) | PENDING | To be verified in Chunk 4 |
+| **P01** | Pause | Pause with exactly 12,000 ms left (both freeze at 12,000; resume uses remainder) | PASS | Verified in `MatchCoordinatorAndPauseTest` |
+| **P02** | Pause | Open/dismiss popup or select Continue (no deadline reset or silent pause) | PASS | Verified in `MatchCoordinatorAndPauseTest` |
+| **P03** | Pause | Return while deliberately paused (remains paused; counts/board preserved) | PASS | Verified in `MatchCoordinatorAndPauseTest` |
+| **P04** | Pause | Duplicate/stale pause/resume requests (one accepted action; no stale state applied) | PASS | Verified in `MatchCoordinatorAndPauseTest` |
+| **C01** | Claim | Claim on incidents 1 or 2, including forged/stale UI request (rejected) | PASS | Verified in `OnlineMatchHeartbeatPolicyTest` & `MatchCoordinatorAndPauseTest` |
+| **C02** | Claim | Eligible third-incident claim confirmed once (one final result & stats update) | PASS | Verified in `OnlineMatchHeartbeatPolicyTest` & `MatchCoordinatorAndPauseTest` |
+| **C03** | Claim | Fresh recovery races with claim confirmation (ordered acceptance decides) | PASS | Verified in `OnlineMatchHeartbeatPolicyTest` & `MatchCoordinatorAndPauseTest` |
+| **C04** | Claim | Claim races with Bingo/surrender; duplicate delivery/restart (one final result) | PASS | Verified in `MatchCoordinatorAndPauseTest` |
 | **R01** | Rejoin | Home, app switching, screen lock, swipe-away (preserves match and counts) | PENDING | To be verified in Chunk 4 |
 | **R02** | Rejoin | OS process kill and Android force-stop (cold-launch recovery from durable state) | PENDING | To be verified in Chunk 4 |
 | **R03** | Rejoin | Kill between save, publish and acknowledgment (no acknowledged mutation lost) | PENDING | To be verified in Chunk 4 |

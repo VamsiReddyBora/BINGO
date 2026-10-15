@@ -70,7 +70,25 @@
 - Storage / packet changes: Backward-compatible additions to `RoomMessagePacket` with safe default values; compact `MHB|` micro-payload encoding in `FastPacketCodec` with JSON fallback.
 - Validation: Full JVM suite passed (324 unit tests, 0 failures, 0 errors, 32 suites). Direct unit tests in `MatchHeartbeatPacketCodecTest` verifying H10, H11, H14, challenge-reply round-trips, generation isolation, and codec serialization.
 - Remaining concern: Integration with `RootNavGraph` coordinator and game screen UI dialog in Chunk 3.
-- Rollback: `git checkout f0bdb6e -- app/src/main/java/com/bingo/multiplayer/domain/network/OnlineRoomSyncManager.kt app/src/main/java/com/bingo/multiplayer/domain/network/FastPacketCodec.kt`
+---
+
+### Change 003 — Coordinator, Pause/Resume with Frozen Seconds, Dialogs & Turn Rules
+- Started / completed: Started 2026-10-15 10:05 IST / Completed 2026-10-15 10:22 IST
+- Checkpoint before edit: c5fba42
+- Files and symbols:
+  - `app/src/main/java/com/bingo/multiplayer/presentation/navigation/RootNavGraph.kt` (`isOpponentUnreachable`, `interruptionEpisodeCount`, `isClaimVictoryEligible`, `frozenRemainingTurnSeconds`, `executeClaimVictory`, `handlePauseAction`, match heartbeat integration, turn order preservation, removal of 1v1 auto-forfeits)
+  - `app/src/main/java/com/bingo/multiplayer/presentation/game/GameScreen.kt` ("Opponent not responding" dialog, Interruption count body, "Pause game", "Continue countdown", "Claim victory", status banner, confirmation dialog)
+  - `app/src/main/java/com/bingo/multiplayer/domain/network/OnlineRoomSyncManager.kt` (`claimMatchVictory`, `startMatchHeartbeat` default policy, peer packet fresh response reporting)
+  - `app/src/main/java/com/bingo/multiplayer/domain/engine/OnlineMatchHeartbeatPolicy.kt` (`canClaimVictory`, `claimVictory`, `updateConnectionGeneration`, `connectionGeneration` in constructor)
+  - `app/src/test/java/com/bingo/multiplayer/domain/network/MatchCoordinatorAndPauseTest.kt` (13 unit tests validating T01, T02, T03, T04, T05, P01, P02, P03, P04, C01, C02, C03, C04)
+- Previous behavior: 1v1 matches forfeited players after 3 consecutive missed turns, had 2s/15s fast-skips on disconnect, lacked structured pause freezing of milliseconds, and lacked interruption popups.
+- New behavior: 1v1 matches preserve both immutable players in turn order without forfeit. Normal 30s countdown runs cleanly. Pause freezes exact remainder and resumes that remainder. Interruption popup presents "Opponent not responding" with "Pause game", "Continue countdown", and "Claim victory" (on episode 3+ while unreachable).
+- Scope guard: Multi-player group matches (3+ players) and AI matches continue using their respective rules. All changes are strictly gated to 2-player online matches.
+- Storage / packet changes: Handled `CLAIM_VICTORY`, `GAME_PAUSED`, `GAME_RESUMED` packets with `remainingTurnMillis`.
+- Validation: Unit test suite `MatchCoordinatorAndPauseTest` covering T01–T05, P01–P04, C01–C04, and full JVM test suite (337 tests, 0 failures, 0 errors, 33 suites).
+- Remaining concern: Durable persistence and rejoin checkpointing in Chunk 4.
+- Rollback: `git checkout c5fba42 -- app/src/main/java/com/bingo/multiplayer/presentation/navigation/RootNavGraph.kt app/src/main/java/com/bingo/multiplayer/presentation/game/GameScreen.kt app/src/main/java/com/bingo/multiplayer/domain/network/OnlineRoomSyncManager.kt app/src/main/java/com/bingo/multiplayer/domain/engine/OnlineMatchHeartbeatPolicy.kt`
+
 
 
 
