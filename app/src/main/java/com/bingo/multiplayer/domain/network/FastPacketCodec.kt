@@ -2,6 +2,9 @@ package com.bingo.multiplayer.domain.network
 
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 
 /**
  * High-speed Micro-Payload Codec for multiplayer Bingo moves:
@@ -13,6 +16,13 @@ object FastPacketCodec {
         ignoreUnknownKeys = true
         isLenient = true
         encodeDefaults = true
+    }
+    private val compactJson = Json { encodeDefaults = false }
+    private fun encodeCompact(packet: RoomMessagePacket): String {
+        val fields = compactJson.encodeToJsonElement(RoomMessagePacket.serializer(), packet).jsonObject.toMutableMap()
+        // A dynamic constructor default must never replace the original send time on decode.
+        fields["timestamp"] = JsonPrimitive(packet.timestamp)
+        return JsonObject(fields).toString()
     }
 
     fun encode(packet: RoomMessagePacket): String {
@@ -60,7 +70,13 @@ object FastPacketCodec {
             "PING" -> "G|${packet.playerId}|${packet.pingTimestamp}"
             "PONG" -> "O|${packet.playerId}|${packet.pingTimestamp}"
             "READY_STATUS" -> {
-                if (packet.senderInstanceId.isNotBlank()) {
+                if (packet.reliablePolicyVersion != 0) {
+                    if (listOf(packet.playerId, packet.username, packet.displayName, packet.senderInstanceId).any { '|' in it }) {
+                        encodeCompact(packet.copy(avatarUrl = null))
+                    } else {
+                        "R|${packet.playerId}|${packet.readyStatus}|${packet.username}|${packet.displayName}|${packet.readyVersion}|${packet.senderInstanceId}|${packet.reliablePolicyVersion}|${packet.hostWaitVersion}|${packet.protocolVersion}"
+                    }
+                } else if (packet.senderInstanceId.isNotBlank()) {
                     "R|${packet.playerId}|${packet.readyStatus}|${packet.username}|${packet.displayName}|${packet.readyVersion}|${packet.senderInstanceId}"
                 } else if (packet.readyVersion > 0L) {
                     "R|${packet.playerId}|${packet.readyStatus}|${packet.username}|${packet.displayName}|${packet.readyVersion}"
@@ -74,7 +90,9 @@ object FastPacketCodec {
             "START_GAME" -> json.encodeToString(packet)
             "PLAY_AGAIN" -> json.encodeToString(packet)
             "HEARTBEAT" -> {
-                if (packet.players.isNotEmpty()) {
+                if (packet.reliablePolicyVersion != 0 && listOf(packet.playerId, packet.displayName, packet.username, packet.avatarUrl.orEmpty()).any { '|' in it }) {
+                    encodeCompact(packet)
+                } else if (packet.players.isNotEmpty()) {
                     json.encodeToString(packet)
                 } else if (packet.reliablePolicyVersion != 0) {
                     "H|${packet.playerId}|${packet.displayName}|${if (packet.isHost) "1" else "0"}|${packet.timestamp}|${packet.username}|${packet.avatarUrl ?: ""}|${packet.readyStatus}|${packet.readyVersion}|${packet.reliablePolicyVersion}"
@@ -87,6 +105,7 @@ object FastPacketCodec {
             "MATCH_HEARTBEAT" -> {
                 "MHB|${packet.protocolVersion}|${packet.matchId}|${packet.heartbeatAction}|${packet.playerId}|${packet.peerUid}|${packet.connectionGeneration}|${packet.sequence}|${packet.challengeId}|${packet.timestamp}"
             }
+            "LOBBY_CAPS_REQUEST", "LOBBY_CAPS_RESPONSE" -> encodeCompact(packet)
             else -> json.encodeToString(packet)
         }
     }
@@ -205,7 +224,10 @@ object FastPacketCodec {
                         username = parts.getOrNull(3) ?: "",
                         displayName = parts.getOrNull(4) ?: "",
                         readyVersion = parts.getOrNull(5)?.toLongOrNull() ?: 0L,
-                        senderInstanceId = senderInstanceId
+                        senderInstanceId = senderInstanceId,
+                        reliablePolicyVersion = parts.getOrNull(7)?.toIntOrNull() ?: 0,
+                        hostWaitVersion = parts.getOrNull(8)?.toIntOrNull() ?: 0,
+                        protocolVersion = parts.getOrNull(9)?.toIntOrNull() ?: 0
                     )
                 }
 

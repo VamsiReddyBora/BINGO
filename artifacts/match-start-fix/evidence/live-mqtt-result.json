@@ -1,0 +1,9 @@
+{
+  "exit_code": 124,
+  "code": "CODEXSTART_4F01ABA7B9CA4BA0",
+  "real_mqtt": true,
+  "production_lobby_managers": 2,
+  "production_match_clients": 2,
+  "cloud_registry": "no-op test adapter",
+  "android_health": "headless connected transport substitute"
+}

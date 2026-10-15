@@ -1,0 +1,32 @@
+PASS both production lobby managers connect
+PASS same build confirms lobby compatibility in both directions
+PASS START_GAME reaches guest with required versions
+PASS both production match clients finish negotiation
+PASS accepted pick 1 reaches both players
+PASS accepted pick 2 reaches both players
+PASS accepted pick 3 reaches both players
+PASS accepted pick 4 reaches both players
+PASS accepted pick 5 reaches both players
+PASS accepted pick 6 reaches both players
+PASS accepted pick 7 reaches both players
+PASS accepted pick 8 reaches both players
+PASS accepted pick 9 reaches both players
+PASS accepted pick 10 reaches both players
+PASS accepted pick 11 reaches both players
+PASS accepted pick 12 reaches both players
+PASS accepted pick 13 reaches both players
+PASS accepted pick 14 reaches both players
+PASS accepted pick 15 reaches both players
+PASS accepted pick 16 reaches both players
+PASS accepted pick 17 reaches both players
+PASS accepted pick 18 reaches both players
+PASS accepted pick 19 reaches both players
+PASS accepted pick 20 reaches both players
+PASS accepted pick 21 reaches both players
+PASS legitimate Bingo result is identical on both clients
+RESULT picks=21 outcome=BINGO; no HTTP registry writes; headless Android health replaced by connected transport
+PASS unique retained test state removed
+Oct 15, 2026 9:20:46 PM org.eclipse.paho.client.mqttv3.internal.ClientState checkForActivity
+SEVERE: bingo_google_111111111111111111111_24f71f: Timed out as no activity, keepAlive=30,000,000,000 lastOutboundActivity=49,733,539,806,259 lastInboundActivity=49,703,534,476,395 time=49,763,539,920,026 lastPing=49,733,539,817,089
+Oct 15, 2026 9:20:46 PM org.eclipse.paho.client.mqttv3.internal.ClientState checkForActivity
+SEVERE: bingo_google_222222222222222222222_5c8c63: Timed out as no activity, keepAlive=30,000,000,000 lastOutboundActivity=49,733,631,310,943 lastInboundActivity=49,703,627,560,979 time=49,763,631,430,201 lastPing=49,733,631,317,576

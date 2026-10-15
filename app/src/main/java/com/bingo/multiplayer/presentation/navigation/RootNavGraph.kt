@@ -95,6 +95,7 @@ fun RootNavGraph(
     val lanP2pSync = remember { com.bingo.multiplayer.domain.network.LanP2pSessionManager() }
     var isUsingP2p by remember { androidx.compose.runtime.mutableStateOf(false) }
     val lanDiscovery = remember { LanDiscoveryManager(context) }
+    var isCheckingMatchCompatibility by remember { mutableStateOf(false) }
     var isManualBoard by remember { mutableStateOf(false) }
     var isDynamicBoard by remember { mutableStateOf(false) }
     var selectedDynamicGridSize by remember { mutableIntStateOf(5) }
@@ -3771,111 +3772,137 @@ fun RootNavGraph(
                         )
                     )
                 },
+                isCheckingCompatibility = isCheckingMatchCompatibility,
                 onStartGame = start@{
-                    if (currentGameMode == GameMode.ONLINE_ROOM && realTimePlayers.size == 2 &&
-                        !onlineRoomSync.canStartReliableMatch(realTimePlayers.map { it.id }, getLocalUid())) {
-                        Toast.makeText(context, "Waiting for the opponent's updated multiplayer app.", Toast.LENGTH_LONG).show()
-                        return@start
-                    }
-                    val targetSize = com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.resolveBoardSize(isDynamicBoard, selectedDynamicGridSize, realTimePlayers.size)
-                    val seed = Random.nextLong().let { if (it == 0L) 1L else it }
-                    val myId = getLocalUid()
-                    val manualMode = isManualBoard
-
-                    if (currentGameMode == GameMode.ONLINE_ROOM) {
-                        coroutineScope.launch {
-                            com.bingo.multiplayer.domain.network.OnlineRoomRegistry.updateRoomStatus(
-                                roomCode = roomCode,
-                                status = "PLAYING",
-                                seed = seed,
-                                isManualBoard = manualMode,
-                                boardSize = targetSize,
-                                isDynamicBoard = isDynamicBoard
-                            )
-                        }
-                        onlineRoomSync.updateLocalReadyStatus("IN_GAME")
-                    } else if (currentGameMode == GameMode.NEARBY_NETWORK) {
-                        lanP2pSync.updateLocalReadyStatus("IN_GAME")
-                        lanDiscovery.stopBroadcasting()
-                        lanDiscovery.stopDiscovering()
-                    }
-
-                    val activeList = realTimePlayers.filter { it.id.isNotBlank() }
-                        .distinctBy { it.username.trim().lowercase().removePrefix("@").takeIf { u -> u.isNotBlank() } ?: it.id.trim().lowercase() }
-                        .sortedWith(
-                            compareByDescending<Player> { it.isHost }
-                                .thenBy { it.username.trim().lowercase().removePrefix("@").takeIf { u -> u.isNotBlank() } ?: it.id.trim().lowercase() }
-                        )
-                    val sanitizedList = activeList.map { it.copy(avatarUrl = null) }
-                    matchParticipants = sanitizedList
-                    val allUids = sanitizedList.map { it.id }.filter { it.isNotBlank() }.distinct().sorted()
-                    val candidateUids = if (allUids.isNotEmpty()) allUids else listOf(myId)
-                    val chosenFirstTurnUid = ManualBoardEngine.determineRandomFirstTurn(seed, candidateUids)
-
-                    val isTwoPlayer = (currentGameMode == GameMode.ONLINE_ROOM && sanitizedList.size == 2)
-                    val startPacket = RoomMessagePacket(
-                        type = "START_GAME",
-                        boardSize = targetSize,
-                        seed = seed,
-                        matchId = seed.toString(),
-                        protocolVersion = if (isTwoPlayer) 2 else 0,
-                        playerId = myId,
-                        currentTurnPlayerId = chosenFirstTurnUid,
-                        isManualBoard = manualMode,
-                        isDynamicBoard = isDynamicBoard,
-                        players = sanitizedList
-                    )
-                    broadcastPacket(startPacket)
+                    if (isCheckingMatchCompatibility) return@start
+                    val expectedRoom = roomCode
+                    val expectedUid = getLocalUid()
+                    val expectedMode = currentGameMode
+                    val expectedPlayers = realTimePlayers.map { it.id }.sorted()
+                    isCheckingMatchCompatibility = true
                     coroutineScope.launch {
-                        delay(150L)
-                        broadcastPacket(startPacket)
-                        delay(250L)
-                        broadcastPacket(startPacket)
-                    }
+                        try {
+                            if (expectedMode == GameMode.ONLINE_ROOM && expectedPlayers.size == 2 &&
+                                !onlineRoomSync.awaitReliableCompatibility(expectedPlayers, expectedUid)) {
+                                if (roomCode != expectedRoom || getLocalUid() != expectedUid ||
+                                    navController.currentDestination?.route != Screen.Lobby.route) return@launch
+                                val message = when (onlineRoomSync.reliableCompatibilityStatus(expectedPlayers, expectedUid)) {
+                                    com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.Status.INCOMPATIBLE ->
+                                        "Both players need the updated multiplayer app."
+                                    com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.Status.INVALID_PARTICIPANTS ->
+                                        "The lobby changed. Please leave and rejoin the room."
+                                    else -> "Waiting for the opponent's connection. Please try Start Match again."
+                                }
+                                Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                                return@launch
+                            }
+                            if (roomCode != expectedRoom || getLocalUid() != expectedUid || currentGameMode != expectedMode ||
+                                realTimePlayers.map { it.id }.sorted() != expectedPlayers ||
+                                navController.currentDestination?.route != Screen.Lobby.route ||
+                                !com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.canStartMatch(realTimePlayers)) return@launch
+                            val targetSize = com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.resolveBoardSize(isDynamicBoard, selectedDynamicGridSize, realTimePlayers.size)
+                            val seed = Random.nextLong().let { if (it == 0L) 1L else it }
+                            val myId = getLocalUid()
+                            val manualMode = isManualBoard
 
-                    if (manualMode) {
-                        boardSize = targetSize
-                        currentMatchSeed = seed
-                        allPlayerBoards = emptyMap()
-                        isLocalBoardReady = false
-                        isOpponentBoardReady = false
-                        countdownSeconds = -1
-                        firstTurnPlayerName = ""
-                        pickedNumbersHistory.clear()
-                        pickedByPlayerHistory.clear()
-                        pickedTurnIdsHistory.clear()
-                        isReconcilingMatch = false
-                        isProcessingTurn = false
-                        turnNumber = 1
-                        currentTurnPlayerId = ""
-                        isMyTurn = false
-                        turnTimer = 30
-                        isGamePaused = false
-                        pausedByPlayerName = ""
-                        recentPick = null
-                        isGameOver = false
-                        didPlayerWin = false
-                        isDrawMatch = false
-                        isRunnerMatch = false
-                        winnerPlayerId = ""
-                        activeWinReason = ""
-                        activeRunnerPlayerIds = emptyList()
-                        wantsToPlayAgainPlayerName = null
-                        opponentDisconnectMessage = null
-                        opponentSurrenderMessage = null
-                        matchChatHistory = emptyList()
-                        latestIncomingChatMessage = null
-                        navController.navigate(Screen.ManualBoardDesign.route)
-                    } else {
-                        boardSize = targetSize
-                        startNewGame(
-                            mode = if (isUsingP2p) GameMode.NEARBY_NETWORK else GameMode.ONLINE_ROOM,
-                            difficulty = AiDifficulty.EASY,
-                            size = targetSize,
-                            firstTurnPlayerId = chosenFirstTurnUid,
-                            hostSeed = seed,
-                            incomingPlayersList = sanitizedList
-                        )
+                            if (currentGameMode == GameMode.ONLINE_ROOM) {
+                                coroutineScope.launch {
+                                    com.bingo.multiplayer.domain.network.OnlineRoomRegistry.updateRoomStatus(
+                                        roomCode = roomCode,
+                                        status = "PLAYING",
+                                        seed = seed,
+                                        isManualBoard = manualMode,
+                                        boardSize = targetSize,
+                                        isDynamicBoard = isDynamicBoard
+                                    )
+                                }
+                                onlineRoomSync.updateLocalReadyStatus("IN_GAME")
+                            } else if (currentGameMode == GameMode.NEARBY_NETWORK) {
+                                lanP2pSync.updateLocalReadyStatus("IN_GAME")
+                                lanDiscovery.stopBroadcasting()
+                                lanDiscovery.stopDiscovering()
+                            }
+
+                            val activeList = realTimePlayers.filter { it.id.isNotBlank() }
+                                .distinctBy { it.username.trim().lowercase().removePrefix("@").takeIf { u -> u.isNotBlank() } ?: it.id.trim().lowercase() }
+                                .sortedWith(
+                                    compareByDescending<Player> { it.isHost }
+                                        .thenBy { it.username.trim().lowercase().removePrefix("@").takeIf { u -> u.isNotBlank() } ?: it.id.trim().lowercase() }
+                                )
+                            val sanitizedList = activeList.map { it.copy(avatarUrl = null) }
+                            matchParticipants = sanitizedList
+                            val allUids = sanitizedList.map { it.id }.filter { it.isNotBlank() }.distinct().sorted()
+                            val candidateUids = if (allUids.isNotEmpty()) allUids else listOf(myId)
+                            val chosenFirstTurnUid = ManualBoardEngine.determineRandomFirstTurn(seed, candidateUids)
+
+                            val isTwoPlayer = (currentGameMode == GameMode.ONLINE_ROOM && sanitizedList.size == 2)
+                            val startPacket = RoomMessagePacket(
+                                type = "START_GAME",
+                                boardSize = targetSize,
+                                seed = seed,
+                                matchId = seed.toString(),
+                                protocolVersion = if (isTwoPlayer) 2 else 0,
+                                playerId = myId,
+                                currentTurnPlayerId = chosenFirstTurnUid,
+                                isManualBoard = manualMode,
+                                isDynamicBoard = isDynamicBoard,
+                                players = sanitizedList
+                            )
+                            broadcastPacket(startPacket)
+                            coroutineScope.launch {
+                                delay(150L)
+                                broadcastPacket(startPacket)
+                                delay(250L)
+                                broadcastPacket(startPacket)
+                            }
+
+                            if (manualMode) {
+                                boardSize = targetSize
+                                currentMatchSeed = seed
+                                allPlayerBoards = emptyMap()
+                                isLocalBoardReady = false
+                                isOpponentBoardReady = false
+                                countdownSeconds = -1
+                                firstTurnPlayerName = ""
+                                pickedNumbersHistory.clear()
+                                pickedByPlayerHistory.clear()
+                                pickedTurnIdsHistory.clear()
+                                isReconcilingMatch = false
+                                isProcessingTurn = false
+                                turnNumber = 1
+                                currentTurnPlayerId = ""
+                                isMyTurn = false
+                                turnTimer = 30
+                                isGamePaused = false
+                                pausedByPlayerName = ""
+                                recentPick = null
+                                isGameOver = false
+                                didPlayerWin = false
+                                isDrawMatch = false
+                                isRunnerMatch = false
+                                winnerPlayerId = ""
+                                activeWinReason = ""
+                                activeRunnerPlayerIds = emptyList()
+                                wantsToPlayAgainPlayerName = null
+                                opponentDisconnectMessage = null
+                                opponentSurrenderMessage = null
+                                matchChatHistory = emptyList()
+                                latestIncomingChatMessage = null
+                                navController.navigate(Screen.ManualBoardDesign.route)
+                            } else {
+                                boardSize = targetSize
+                                startNewGame(
+                                    mode = if (isUsingP2p) GameMode.NEARBY_NETWORK else GameMode.ONLINE_ROOM,
+                                    difficulty = AiDifficulty.EASY,
+                                    size = targetSize,
+                                    firstTurnPlayerId = chosenFirstTurnUid,
+                                    hostSeed = seed,
+                                    incomingPlayersList = sanitizedList
+                                )
+                            }
+                        } finally {
+                            isCheckingMatchCompatibility = false
+                        }
                     }
                 },
                 onBack = {

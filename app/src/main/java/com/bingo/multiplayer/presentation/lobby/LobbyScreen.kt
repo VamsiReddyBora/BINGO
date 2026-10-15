@@ -85,6 +85,7 @@ fun LobbyScreen(
     onDynamicGridSizeChange: ((Int) -> Unit)? = null,
     isNearbyNetwork: Boolean = false,
     hasActiveMatch: Boolean = false,
+    isCheckingCompatibility: Boolean = false,
     onRejoinMatch: () -> Unit = {},
     onStartGame: () -> Unit,
     onBack: () -> Unit
@@ -1417,7 +1418,7 @@ fun LobbyScreen(
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         onStartGame()
                     },
-                    enabled = allReady,
+                    enabled = allReady && !isCheckingCompatibility,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(50.dp),
@@ -1438,6 +1439,7 @@ fun LobbyScreen(
                     val activePlayerCount = effectivePlayers.count { it.lobbyReadyStatus != LobbyLifecycleEngine.STATUS_LEFT_LOBBY }
                     Text(
                         text = when {
+                            isCheckingCompatibility -> "Checking connection…"
                             activePlayerCount < 2 -> "Need at least 2 Players"
                             !allReady -> "Waiting for Players to be Ready ($readyCount/$activePlayerCount)"
                             else -> "Start Match (${boardSize}×${boardSize})"
