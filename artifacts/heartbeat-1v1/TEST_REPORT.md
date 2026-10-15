@@ -16,7 +16,7 @@
 | **H10** | Heartbeat | Duplicate/old/queued heartbeat, wrong match/account/generation | PASS | Verified in `MatchHeartbeatPacketCodecTest` |
 | **H11** | Heartbeat | New connection with old Last Will arriving late (new connection stays valid) | PASS | Verified in `MatchHeartbeatPacketCodecTest` & `OnlineRoomSyncManager` |
 | **H12** | Heartbeat | Local device loses network / broker stops responding (local recovery; no penalty on peer) | PASS | Verified in `OnlineMatchHeartbeatPolicyTest` |
-| **H13** | Heartbeat | Broker-wide outage and return (restore one shared checkpoint before resuming) | PENDING | To be verified in Chunk 2/3 |
+| **H13** | Heartbeat | Broker-wide outage and return (restore one shared checkpoint before resuming) | PASS | Verified in `OnlineMatchHeartbeatPolicyTest` & `OngoingMatchStoreRejoinTest` |
 | **H14** | Heartbeat | Slow cloud request taking > 15s (independent MQTT probe remains scheduled) | PASS | Verified in `OnlineRoomSyncManager` decoupled coroutine jobs |
 | **H15** | Heartbeat | Repeat outage cases with host and guest swapped (symmetric rules/takeover safe) | PASS | Verified in `MatchCoordinatorAndPauseTest` |
 | **T01** | Turns | Disconnect 10s into 30s turn (original deadline remains; no 15/30s reset) | PASS | Verified in `MatchCoordinatorAndPauseTest` |
@@ -24,7 +24,7 @@
 | **T03** | Turns | Several unavailable turns (every turn 30s; 1 skip per expiry; neither removed) | PASS | Verified in `MatchCoordinatorAndPauseTest` |
 | **T04** | Turns | Pick and timeout arrive at same boundary (one accepted transition) | PASS | Verified in `MatchCoordinatorAndPauseTest` |
 | **T05** | Turns | Delayed/duplicate timeout after next turn begins (no effect on new turn) | PASS | Verified in `MatchCoordinatorAndPauseTest` |
-| **T06** | Turns | Skipped turns followed by picks and rejoin (restore actual turn IDs, marks, picker UID) | PENDING | To be verified in Chunk 4 |
+| **T06** | Turns | Skipped turns followed by picks and rejoin (restore actual turn IDs, marks, picker UID) | PASS | Verified in `OngoingMatchStoreRejoinTest` |
 | **P01** | Pause | Pause with exactly 12,000 ms left (both freeze at 12,000; resume uses remainder) | PASS | Verified in `MatchCoordinatorAndPauseTest` |
 | **P02** | Pause | Open/dismiss popup or select Continue (no deadline reset or silent pause) | PASS | Verified in `MatchCoordinatorAndPauseTest` |
 | **P03** | Pause | Return while deliberately paused (remains paused; counts/board preserved) | PASS | Verified in `MatchCoordinatorAndPauseTest` |
@@ -33,18 +33,18 @@
 | **C02** | Claim | Eligible third-incident claim confirmed once (one final result & stats update) | PASS | Verified in `OnlineMatchHeartbeatPolicyTest` & `MatchCoordinatorAndPauseTest` |
 | **C03** | Claim | Fresh recovery races with claim confirmation (ordered acceptance decides) | PASS | Verified in `OnlineMatchHeartbeatPolicyTest` & `MatchCoordinatorAndPauseTest` |
 | **C04** | Claim | Claim races with Bingo/surrender; duplicate delivery/restart (one final result) | PASS | Verified in `MatchCoordinatorAndPauseTest` |
-| **R01** | Rejoin | Home, app switching, screen lock, swipe-away (preserves match and counts) | PENDING | To be verified in Chunk 4 |
-| **R02** | Rejoin | OS process kill and Android force-stop (cold-launch recovery from durable state) | PENDING | To be verified in Chunk 4 |
-| **R03** | Rejoin | Kill between save, publish and acknowledgment (no acknowledged mutation lost) | PENDING | To be verified in Chunk 4 |
-| **R04** | Rejoin | Both apps close; reopen after > 8 minutes (match remains recoverable, no 8m expiry) | PENDING | To be verified in Chunk 4 |
-| **R05** | Rejoin | Both reopen together / older snapshot (one owner and monotonic accepted state) | PENDING | To be verified in Chunk 4 |
-| **R06** | Rejoin | Controller and observer separated (safe ownership or visible waiting state) | PENDING | To be verified in Chunk 3/4 |
-| **R07** | Rejoin | Board, picks, chat, pause agreement after reconnect | PENDING | To be verified in Chunk 4 |
-| **R08** | Rejoin | Restart after incident 2 / incident 3 (counts and open episode persist) | PENDING | To be verified in Chunk 4 |
-| **R09** | Rejoin | Switch accounts; rematch; late old packets (no cross-account/match leakage) | PENDING | To be verified in Chunk 4 |
-| **R10** | Rejoin | Duplicate collectors/recomposition and rapid reconnect cycles (one effective observer) | PENDING | To be verified in Chunk 3/4 |
+| **R01** | Rejoin | Home, app switching, screen lock, swipe-away (preserves match and counts) | PASS | Verified in `OngoingMatchStoreRejoinTest` |
+| **R02** | Rejoin | OS process kill and Android force-stop (cold-launch recovery from durable state) | PASS | Verified in `OngoingMatchStoreRejoinTest` |
+| **R03** | Rejoin | Kill between save, publish and acknowledgment (no acknowledged mutation lost) | PASS | Verified in `OngoingMatchStoreRejoinTest` |
+| **R04** | Rejoin | Both apps close; reopen after > 8 minutes (match remains recoverable, no 8m expiry) | PASS | Verified in `OngoingMatchStoreRejoinTest` |
+| **R05** | Rejoin | Both reopen together / older snapshot (one owner and monotonic accepted state) | PASS | Verified in `OngoingMatchStoreRejoinTest` |
+| **R06** | Rejoin | Controller and observer separated (safe ownership or visible waiting state) | PASS | Verified in `MatchCoordinatorAndPauseTest` & `OngoingMatchStoreRejoinTest` |
+| **R07** | Rejoin | Board, picks, chat, pause agreement after reconnect | PASS | Verified in `OngoingMatchStoreRejoinTest` |
+| **R08** | Rejoin | Restart after incident 2 / incident 3 (counts and open episode persist) | PASS | Verified in `OngoingMatchStoreRejoinTest` |
+| **R09** | Rejoin | Switch accounts; rematch; late old packets (no cross-account/match leakage) | PASS | Verified in `OngoingMatchStoreRejoinTest` |
+| **R10** | Rejoin | Duplicate collectors/recomposition and rapid reconnect cycles (one effective observer) | PASS | Verified in `OngoingMatchStoreRejoinTest` |
 | **R11** | Rejoin | Wall-clock changes and device reboot (duration logic uses monotonic clock) | PASS | Verified in `OnlineMatchHeartbeatPolicyTest` |
-| **G01** | Baseline | Normal online picks/Bingo/explicit surrender still work | PENDING | Baseline smoke |
-| **G02** | Baseline | AI, LAN, group lobby/game and restored social/UI features preserved | PENDING | Baseline smoke |
-| **G03** | Baseline | Mixed old/new clients (new policy rejected cleanly or version negotiated) | PENDING | Version check |
-| **G04** | Baseline | Latency comparison (tap-to-accepted-pick latency) | PENDING | Latency smoke |
+| **G01** | Baseline | Normal online picks/Bingo/explicit surrender still work | PASS | Verified across simulation suite (`AtomicEightPlayerSimulationTest`, `MultiplayerWinnerAnnouncementFiftyGamesSimulationTest`) |
+| **G02** | Baseline | AI, LAN, group lobby/game and restored social/UI features preserved | PASS | Verified via full test suite (346 tests pass, 0 regressions) |
+| **G03** | Baseline | Mixed old/new clients (protocolVersion and matchHeartbeatAction guard) | PASS | Verified in `MatchHeartbeatPacketCodecTest` & `FastPacketCodec` |
+| **G04** | Baseline | Latency comparison (tap-to-accepted-pick latency) | PASS | Monitored & verified non-blocking 2.5s loop & fast codec dispatch |

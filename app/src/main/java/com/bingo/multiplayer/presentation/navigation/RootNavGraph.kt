@@ -701,6 +701,23 @@ fun RootNavGraph(
                 )
             }
         }
+        if (currentGameMode == GameMode.ONLINE_ROOM && roomCode.isNotBlank()) {
+            com.bingo.multiplayer.domain.network.OngoingMatchStore.updateMatchGameState(
+                context = context,
+                playerBoard = playerBoard,
+                opponentBoard = opponentBoard,
+                allPlayerBoards = allPlayerBoards,
+                pickedNumbers = pickedNumbersHistory.toList(),
+                pickedByPlayers = pickedByPlayerHistory.toList(),
+                turnNumber = turnNumber,
+                currentTurnPlayerId = currentTurnPlayerId,
+                chatMessages = matchChatHistory,
+                isPaused = isGamePaused,
+                remainingTurnMillis = (frozenRemainingTurnSeconds ?: turnTimer) * 1000L,
+                pauseOwnerId = pausedByPlayerName,
+                committedEpisodeCount = interruptionEpisodeCount
+            )
+        }
     }
 
     fun togglePause() {
@@ -1258,7 +1275,9 @@ fun RootNavGraph(
                             turnNumber = 1,
                             currentTurnPlayerId = currentTurnPlayerId,
                             randomizedTurnOrder = generatedOrder,
-                            chatMessages = emptyList()
+                            chatMessages = emptyList(),
+                            is1v1Match = (matchParticipants.size == 2),
+                            accountUid = getLocalUid()
                         )
                     )
                 }
@@ -2190,7 +2209,7 @@ fun RootNavGraph(
             "GAME_PAUSED" -> {
                 isGamePaused = true
                 pausedByPlayerName = packet.displayName.ifBlank { "Opponent" }
-                if (packet.remainingTurnMillis != null && packet.remainingTurnMillis > 0L) {
+                if (packet.remainingTurnMillis > 0L) {
                     frozenRemainingTurnSeconds = ((packet.remainingTurnMillis + 999L) / 1000L).toInt()
                 } else {
                     frozenRemainingTurnSeconds = turnTimer
@@ -2200,7 +2219,7 @@ fun RootNavGraph(
             "GAME_RESUMED" -> {
                 isGamePaused = false
                 pausedByPlayerName = ""
-                if (packet.remainingTurnMillis != null && packet.remainingTurnMillis > 0L) {
+                if (packet.remainingTurnMillis > 0L) {
                     turnTimer = ((packet.remainingTurnMillis + 999L) / 1000L).toInt()
                 } else if (frozenRemainingTurnSeconds != null) {
                     turnTimer = frozenRemainingTurnSeconds!!
@@ -3256,7 +3275,21 @@ fun RootNavGraph(
                                     turnNumber = matchData.turnNumber
                                     currentTurnPlayerId = matchData.currentTurnPlayerId
                                     isMyTurn = (currentTurnPlayerId == getLocalUid())
-                                    turnTimer = 30
+                                    isGamePaused = matchData.isPaused
+                                    pausedByPlayerName = if (matchData.isPaused) (matchData.pauseOwnerId ?: "Opponent") else ""
+                                    if (matchData.isPaused && matchData.remainingTurnMillis != null && matchData.remainingTurnMillis > 0L) {
+                                        frozenRemainingTurnSeconds = ((matchData.remainingTurnMillis + 999L) / 1000L).toInt()
+                                        turnTimer = frozenRemainingTurnSeconds ?: 30
+                                    } else {
+                                        turnTimer = 30
+                                    }
+                                    interruptionEpisodeCount = matchData.committedEpisodeCount
+                                    if (matchData.is1v1Match || matchData.participants.size == 2) {
+                                        val peerUid = matchData.participants.firstOrNull { it.id != getLocalUid() }?.id ?: ""
+                                        if (peerUid.isNotBlank()) {
+                                            onlineRoomSync.startMatchHeartbeat(matchData.matchSeed.toString(), peerUid)
+                                        }
+                                    }
                                     isGameOver = false
                                     didPlayerWin = false
                                     isDrawMatch = false
@@ -3426,6 +3459,21 @@ fun RootNavGraph(
                     turnNumber = data.turnNumber
                     currentTurnPlayerId = data.currentTurnPlayerId
                     isMyTurn = (currentTurnPlayerId == myUid)
+                    isGamePaused = data.isPaused
+                    pausedByPlayerName = if (data.isPaused) (data.pauseOwnerId ?: "Opponent") else ""
+                    if (data.isPaused && data.remainingTurnMillis != null && data.remainingTurnMillis > 0L) {
+                        frozenRemainingTurnSeconds = ((data.remainingTurnMillis + 999L) / 1000L).toInt()
+                        turnTimer = frozenRemainingTurnSeconds ?: 30
+                    } else {
+                        turnTimer = 30
+                    }
+                    interruptionEpisodeCount = data.committedEpisodeCount
+                    if (data.is1v1Match || data.participants.size == 2) {
+                        val peerUid = (data.participants.ifEmpty { matchParticipants }).firstOrNull { it.id != myUid }?.id ?: ""
+                        if (peerUid.isNotBlank()) {
+                            onlineRoomSync.startMatchHeartbeat(data.matchSeed.toString(), peerUid)
+                        }
+                    }
                     currentMatchSeed = data.matchSeed
                     boardSize = data.boardSize
                     matchParticipants = data.participants

@@ -89,6 +89,23 @@
 - Remaining concern: Durable persistence and rejoin checkpointing in Chunk 4.
 - Rollback: `git checkout c5fba42 -- app/src/main/java/com/bingo/multiplayer/presentation/navigation/RootNavGraph.kt app/src/main/java/com/bingo/multiplayer/presentation/game/GameScreen.kt app/src/main/java/com/bingo/multiplayer/domain/network/OnlineRoomSyncManager.kt app/src/main/java/com/bingo/multiplayer/domain/engine/OnlineMatchHeartbeatPolicy.kt`
 
+---
+
+### Change 004 — Durable Persistence, Account Scoping, & Non-Expiring 1v1 Rejoin
+- Started / completed: Started 2026-10-15 10:24 IST / Completed 2026-10-15 10:29 IST
+- Checkpoint before edit: 4fadac6
+- Files and symbols:
+  - `app/src/main/java/com/bingo/multiplayer/domain/network/OngoingMatchStore.kt` (`OngoingMatchData` with `turnIds`, `is1v1Match`, `accountUid`, `protocolVersion`, `controllerEpoch`, `matchRevision`, `isPaused`, `remainingTurnMillis`, `pauseOwnerId`, `committedEpisodeCount`, `currentEpisodeId`, `isEpisodeOpen`, `peerAvailabilityState`, atomic `.commit()`, non-expiring 1v1 matches bypassing 8m TTL, account-scoped isolation via `accountUid`, `customPrefs` test injection hook)
+  - `app/src/main/java/com/bingo/multiplayer/presentation/navigation/RootNavGraph.kt` (checkpoint updates on pause/resume, saving `is1v1Match` and `accountUid` on initial start, restoring `isGamePaused`, `frozenRemainingTurnSeconds`, `interruptionEpisodeCount`, and starting `startMatchHeartbeat` on rejoin)
+  - `app/src/test/java/com/bingo/multiplayer/domain/network/OngoingMatchStoreRejoinTest.kt` (9 unit tests validating R01, R02, R03, R04, R04b, R05, R06, R08, R10)
+- Previous behavior: `OngoingMatchStore` wrote asynchronously with `.apply()`, had a hard 8-minute TTL that silently discarded matches on long pauses or outages, lacked turnIds, pause remaining millis, episode tracking, and lacked account scoping.
+- New behavior: Atomic synchronous persistence using `.commit()`, 1v1 online matches bypass 8m TTL and persist indefinitely until game over or explicit surrender, account-scoped isolation prevents cross-account match leakage, backward compatibility with legacy snapshots, full preservation of pause state, turn remainder, and incident history across app switches, restarts, and process kills.
+- Scope guard: 1v1 bypass applies strictly when `is1v1Match || participants.size == 2`. Group matches (3+ players) retain their 8-minute TTL.
+- Storage / packet changes: Added optional fields to `OngoingMatchData` with backward-compatible defaults.
+- Validation: All 346 JVM tests passed (34 suites, 0 failures, 0 errors).
+- Rollback: `git checkout 4fadac6 -- app/src/main/java/com/bingo/multiplayer/domain/network/OngoingMatchStore.kt app/src/main/java/com/bingo/multiplayer/presentation/navigation/RootNavGraph.kt`
+
+
 
 
 
