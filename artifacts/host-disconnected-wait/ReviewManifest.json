@@ -1,0 +1,57 @@
+{
+  "prepared_at": "2026-10-15T18:49:35+05:30",
+  "scope": "User-approved temporary host-disconnection hold; controller transfer/referee deferred",
+  "branch": "fix/host-disconnected-wait",
+  "worktree": "/home/bob/workspace/bingo_host_wait",
+  "starting_commit": "100325391c23ab306f0c40b56e7cea30d5fb8f17",
+  "application_commits": [
+    "e3c1eb32368bb8ce21061842948922ef3a29825b",
+    "f74da6e34e9a4982b8009711760a153fe7f0b5c9"
+  ],
+  "unit_tests": {
+    "tests": 419,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "suites": 40,
+    "additional_tests": 21
+  },
+  "lint": {
+    "errors": 0,
+    "fatal": 0,
+    "warnings": 34
+  },
+  "apk": {
+    "path": "/home/bob/workspace/bingo_host_wait/artifacts/host-disconnected-wait/Bingo-host-wait.apk",
+    "bytes": 7063659,
+    "sha256": "9db6b81303c28c6d1e66b55b0ffd9f47af758f0c343dd27ca7eb2e7fc2bb0eba",
+    "certificate_sha256": "39a428942c3c2629ff3490c944b8b82c7625b22d660b7a2cdf682456d81f60a4",
+    "signature_verified": true
+  },
+  "protected_baseline": {
+    "commit": "a13d39edb0ff6a67d272cac187f1ed9fb294f9e9",
+    "source_fingerprints_checked": 159,
+    "changed_files": []
+  },
+  "protected_apks": {
+    "/home/bob/workspace/bingo_multiplayer/Bingo.apk": "6c5e014b4a8a699e1506393e79bb6bb3959ccb72e2d6fa85cc425f1118005ccc",
+    "/home/bob/workspace/Bingo.apk": "6c8b8616727cc9e0b709edbc4ff5878722cbe3a1bd517deebdb52e7e13500631",
+    "/home/bob/workspace/bingo_heartbeat_codex/artifacts/heartbeat-codex/Bingo-codex.apk": "262ef4c547941e975a854c5c17825e6495c0fa281aad983a9055afd5443b8e8c"
+  },
+  "live_mqtt": {
+    "host_absence_hold_and_return": true,
+    "eight_picks": true,
+    "separate_jvm_final_recovery": true,
+    "cleanup": true,
+    "latency": {
+      "samples": 8,
+      "median_ms": 334.0,
+      "p95_ms": 405,
+      "resolution_ms": 50,
+      "physical_baseline_comparison": false
+    }
+  },
+  "android_ui": "NOT RUN: no connected Android devices; /dev/kvm unavailable",
+  "deployed_or_pushed": false,
+  "note": "Later evidence-only commit is intentionally not self-referenced."
+}

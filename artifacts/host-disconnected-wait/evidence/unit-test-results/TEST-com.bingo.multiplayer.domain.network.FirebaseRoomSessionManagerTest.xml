@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.bingo.multiplayer.domain.network.FirebaseRoomSessionManagerTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-10-15T13:14:51" hostname="VR" time="0.045">
+  <properties/>
+  <testcase name="testCreateRoom_initializesValidFirestoreSnapshot" classname="com.bingo.multiplayer.domain.network.FirebaseRoomSessionManagerTest" time="0.018"/>
+  <testcase name="testHeartbeat_updatesPlayerTimestamp" classname="com.bingo.multiplayer.domain.network.FirebaseRoomSessionManagerTest" time="0.013"/>
+  <testcase name="testConcurrentNumberSelection_raceConditionsHandledGracefully" classname="com.bingo.multiplayer.domain.network.FirebaseRoomSessionManagerTest" time="0.005"/>
+  <testcase name="testHostDisconnect_cleansUpRoomInFirestore" classname="com.bingo.multiplayer.domain.network.FirebaseRoomSessionManagerTest" time="0.002"/>
+  <testcase name="testStartGame_onlyHostCanStart" classname="com.bingo.multiplayer.domain.network.FirebaseRoomSessionManagerTest" time="0.002"/>
+  <testcase name="testSelectNumber_outOfBoundsRejected" classname="com.bingo.multiplayer.domain.network.FirebaseRoomSessionManagerTest" time="0.003"/>
+  <testcase name="testJoinRoom_addsPlayersToSnapshot" classname="com.bingo.multiplayer.domain.network.FirebaseRoomSessionManagerTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

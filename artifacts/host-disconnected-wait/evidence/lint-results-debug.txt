@@ -1,0 +1,270 @@
+/home/bob/.gradle/caches/transforms-3/77b839210a06c93a9d8c60fcddbb9337/transformed/runtime-release/jars/lint.jar: Warning: Library lint checks reference invalid APIs; these checks will be skipped!
+
+Lint found an issue registry (androidx.compose.runtime.lint.RuntimeIssueRegistry)
+which contains some references to invalid API:
+org.jetbrains.kotlin.analysis.api.session.KtAnalysisSessionProvider: org.jetbrains.kotlin.analysis.api.lifetime.KtLifetimeTokenFactory getTokenFactory()
+(Referenced from androidx/compose/runtime/lint/AutoboxingStateCreationDetector.class)
+
+Therefore, this lint check library is not included
+in analysis. This affects the following lint checks:
+AutoboxingStateValueProperty
+AutoboxingStateCreation
+CoroutineCreationDuringComposition
+FlowOperatorInvokedInComposition
+ComposableLambdaParameterNaming
+ComposableLambdaParameterPosition
+ComposableNaming
+StateFlowValueCalledInComposition
+CompositionLocalNaming
+MutableCollectionMutableState
+ProduceStateDoesNotAssignValue
+RememberReturnType
+OpaqueUnitKey
+UnrememberedMutableState
+
+To use this lint check, upgrade to a more recent version
+of the library. [ObsoleteLintCustomCheck]
+
+   Explanation for issues of type "ObsoleteLintCustomCheck":
+   Lint can be extended with "custom checks": additional checks implemented by
+   developers and libraries to for example enforce specific API usages
+   required by a library or a company coding style guideline.
+
+   The Lint APIs are not yet stable, so these checks may either cause a
+   performance degradation, or stop working, or provide wrong results.
+
+   This warning flags custom lint checks that are found to be using obsolete
+   APIs and will need to be updated to run in the current lint environment.
+
+   It may also flag issues found to be using a newer version of the API,
+   meaning that you need to use a newer version of lint (or Android Studio or
+   Gradle plugin etc) to work with these checks.
+
+/home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/domain/repository/AuthRepository.kt:686: Warning: Consider using apply() instead; commit writes its data to persistent storage immediately, whereas apply will handle it in the background [ApplySharedPref]
+                    .putInt(KEY_XP, current.xp).putInt(KEY_LEVEL, current.level).remove(receiptKey).commit()
+                                                                                                    ~~~~~~~~
+/home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/domain/network/OngoingMatchStore.kt:112: Warning: Consider using apply() instead; commit writes its data to persistent storage immediately, whereas apply will handle it in the background [ApplySharedPref]
+            editor.commit()
+                   ~~~~~~~~
+/home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/domain/network/OngoingMatchStore.kt:285: Warning: Consider using apply() instead; commit writes its data to persistent storage immediately, whereas apply will handle it in the background [ApplySharedPref]
+            editor.commit()
+                   ~~~~~~~~
+
+   Explanation for issues of type "ApplySharedPref":
+   Consider using apply() instead of commit on shared preferences. Whereas
+   commit blocks and writes its data to persistent storage immediately, apply
+   will handle it in the background.
+
+/home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/domain/network/HotspotAndWifiManager.kt:153: Warning: Field requires API level 25 (current min is 24): android.provider.Settings.Global#DEVICE_NAME [InlinedApi]
+            val devName = Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME)
+                                                                             ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/presentation/settings/SettingsScreen.kt:2417: Warning: Field requires API level 26 (current min is 24): android.provider.Settings#ACTION_APP_NOTIFICATION_SETTINGS [InlinedApi]
+                        val intent = Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/presentation/settings/SettingsScreen.kt:2418: Warning: Field requires API level 26 (current min is 24): android.provider.Settings#EXTRA_APP_PACKAGE [InlinedApi]
+                            putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+   Explanation for issues of type "InlinedApi":
+   This check scans through all the Android API field references in the
+   application and flags certain constants, such as static final integers and
+   Strings, which were introduced in later versions. These will actually be
+   copied into the class files rather than being referenced, which means that
+   the value is available even when running on older devices. In some cases
+   that's fine, and in other cases it can result in a runtime crash or
+   incorrect behavior. It depends on the context, so consider the code
+   carefully and decide whether it's safe and can be suppressed or whether the
+   code needs to be guarded.
+
+   If you really want to use this API and don't need to support older devices
+   just set the minSdkVersion in your build.gradle or AndroidManifest.xml
+   files.
+
+   If your code is deliberately accessing newer APIs, and you have ensured
+   (e.g. with conditional execution) that this code will only ever be called
+   on a supported platform, then you can annotate your class or method with
+   the @TargetApi annotation specifying the local minimum SDK to apply, such
+   as @TargetApi(11), such that this check considers 11 rather than your
+   manifest file's minimum SDK as the required API level.
+
+/home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/domain/network/AccountSessionManager.kt:90: Warning: Do not hardcode "/sdcard/"; use Environment.getExternalStorageDirectory().getPath() instead [SdCardPath]
+        path.contains("/sdcard/") ||
+                       ~~~~~~~~
+/home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/presentation/common/PlayerAvatar.kt:164: Warning: Do not hardcode "/sdcard/"; use Environment.getExternalStorageDirectory().getPath() instead [SdCardPath]
+        path.contains("/sdcard/") ||
+                       ~~~~~~~~
+
+   Explanation for issues of type "SdCardPath":
+   Your code should not reference the /sdcard path directly; instead use
+   Environment.getExternalStorageDirectory().getPath().
+
+   Similarly, do not reference the /data/data/ path directly; it can vary in
+   multi-user scenarios. Instead, use Context.getFilesDir().getPath().
+
+   https://developer.android.com/training/data-storage#filesExternal
+
+/home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/domain/network/AppUpdateManager.kt:431: Warning: Consider adding a <queries> declaration to your manifest when calling this method; see https://g.co/dev/packagevisibility for details [QueryPermissionsNeeded]
+            val resolvedActivities = context.packageManager.queryIntentActivities(installIntent, 0)
+                                                            ~~~~~~~~~~~~~~~~~~~~~
+
+   Explanation for issues of type "QueryPermissionsNeeded":
+   Apps that target Android 11 cannot query or interact with other installed
+   apps by default. If you need to query or interact with other installed
+   apps, you may need to add a <queries> declaration in your manifest.
+
+   As a corollary, the methods PackageManager#getInstalledPackages and
+   PackageManager#getInstalledApplications will no longer return information
+   about all installed apps. To query specific apps or types of apps, you can
+   use methods like PackageManager#getPackageInfo or
+   PackageManager#queryIntentActivities.
+
+   https://g.co/dev/packagevisibility
+
+/home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/MainActivity.kt:37: Warning: You should not lock orientation of your activities, so that you can support a good user experience for any device or orientation [SourceLockedOrientationActivity]
+        requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+   Explanation for issues of type "SourceLockedOrientationActivity":
+   The Activity should not be locked to a portrait orientation so that users
+   can take advantage of the multi-window environments and larger
+   landscape-first screens that Android runs on such as ChromeOS, tablets, and
+   foldables. To fix the issue, consider calling setRequestedOrientation with
+   the ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR or
+   ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED options or removing the call
+   all together.
+
+   https://developer.android.com/guide/topics/large-screens/large-screen-cookbook#restricted_app_orientation
+
+/home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/presentation/social/DashboardAndFriendsScreen.kt:410: Warning: Modifier parameter should be the first optional parameter [ModifierParameter from androidx.compose.ui]
+    modifier: Modifier = Modifier,
+    ~~~~~~~~
+/home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/presentation/common/GoogleGLogo.kt:18: Warning: Modifier parameter should be the first optional parameter [ModifierParameter from androidx.compose.ui]
+    modifier: Modifier = Modifier
+    ~~~~~~~~
+/home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/presentation/game/InGameChatSpace.kt:74: Warning: Modifier parameter should be the first optional parameter [ModifierParameter from androidx.compose.ui]
+    modifier: Modifier = Modifier
+    ~~~~~~~~
+
+   Explanation for issues of type "ModifierParameter":
+   The first (or only) Modifier parameter in a Composable function should
+   follow the following rules:
+   - Be named modifier
+   - Have a type of Modifier
+   - Either have no default value, or have a default value of Modifier
+   - If optional, be the first optional parameter in the parameter list
+
+   Vendor: Jetpack Compose
+   Identifier: androidx.compose.ui
+   Feedback: https://issuetracker.google.com/issues/new?component=612128
+
+/home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/domain/repository/AuthRepository.kt:918: Warning: Do not place Android context classes in static fields (static reference to AuthRepository which has field context pointing to Context); this is a memory leak [StaticFieldLeak]
+        @Volatile var activeInstance: AuthRepository? = null
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/domain/network/FirestoreSyncManager.kt:545: Warning: Do not place Android context classes in static fields (static reference to FirestoreSyncManager which has field context pointing to Context); this is a memory leak [StaticFieldLeak]
+        @Volatile
+        ^
+/home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/domain/repository/FriendsRepository.kt:416: Warning: Do not place Android context classes in static fields (static reference to FriendsRepository which has field context pointing to Context); this is a memory leak [StaticFieldLeak]
+        @Volatile var activeInstance: FriendsRepository? = null
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+   Explanation for issues of type "StaticFieldLeak":
+   A static field will leak contexts.
+
+   Non-static inner classes have an implicit reference to their outer class.
+   If that outer class is for example a Fragment or Activity, then this
+   reference means that the long-running handler/loader/task will hold a
+   reference to the activity which prevents it from getting garbage
+   collected.
+
+   Similarly, direct field references to activities and fragments from these
+   longer running instances can cause leaks.
+
+   ViewModel classes should never point to Views or non-application Contexts.
+
+/home/bob/workspace/bingo_host_wait/app/src/main/res/mipmap-hdpi/ic_launcher.png: Warning: Launcher icons should not fill every pixel of their square region; see the design guide for details [IconLauncherShape]
+/home/bob/workspace/bingo_host_wait/app/src/main/res/mipmap-mdpi/ic_launcher.png: Warning: Launcher icons should not fill every pixel of their square region; see the design guide for details [IconLauncherShape]
+/home/bob/workspace/bingo_host_wait/app/src/main/res/mipmap-xhdpi/ic_launcher.png: Warning: Launcher icons should not fill every pixel of their square region; see the design guide for details [IconLauncherShape]
+/home/bob/workspace/bingo_host_wait/app/src/main/res/mipmap-xxhdpi/ic_launcher.png: Warning: Launcher icons should not fill every pixel of their square region; see the design guide for details [IconLauncherShape]
+/home/bob/workspace/bingo_host_wait/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png: Warning: Launcher icons should not fill every pixel of their square region; see the design guide for details [IconLauncherShape]
+
+   Explanation for issues of type "IconLauncherShape":
+   According to the Android Design Guide
+   (https://d.android.com/r/studio-ui/designer/material/iconography) your
+   launcher icons should "use a distinct silhouette", a "three-dimensional,
+   front view, with a slight perspective as if viewed from above, so that
+   users perceive some depth."
+
+   The unique silhouette implies that your launcher icon should not be a
+   filled square.
+
+/home/bob/workspace/bingo_host_wait/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml:2: Warning: The application adaptive icon is missing a monochrome tag [MonochromeLauncherIcon]
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+^
+/home/bob/workspace/bingo_host_wait/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml:2: Warning: The application adaptive roundIcon is missing a monochrome tag [MonochromeLauncherIcon]
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+^
+
+   Explanation for issues of type "MonochromeLauncherIcon":
+   If android:roundIcon and android:icon are both in your manifest, you must
+   either remove the reference to android:roundIcon if it is not needed; or,
+   supply the monochrome icon in the drawable defined by the android:roundIcon
+   and android:icon attribute.
+
+   For example, if android:roundIcon and android:icon are both in the
+   manifest, a launcher might choose to use android:roundIcon over
+   android:icon to display the adaptive app icon. Therefore, your themed
+   application iconwill not show if your monochrome attribute is not also
+   specified in android:roundIcon.
+
+/home/bob/workspace/bingo_host_wait/app/src/main/res/drawable/ic_bingo_logo.png: Warning: Found bitmap drawable res/drawable/ic_bingo_logo.png in densityless folder [IconLocation]
+/home/bob/workspace/bingo_host_wait/app/src/main/res/drawable/ic_splash_logo.png: Warning: Found bitmap drawable res/drawable/ic_splash_logo.png in densityless folder [IconLocation]
+
+   Explanation for issues of type "IconLocation":
+   The res/drawable folder is intended for density-independent graphics such
+   as shapes defined in XML. For bitmaps, move it to drawable-mdpi and
+   consider providing higher and lower resolution versions in drawable-ldpi,
+   drawable-hdpi and drawable-xhdpi. If the icon really is density independent
+   (for example a solid color) you can place it in drawable-nodpi.
+
+   https://developer.android.com/guide/practices/screens_support.html
+
+/home/bob/workspace/bingo_host_wait/app/src/main/res/layout/notification_invite_collapsed.xml:16: Warning: Hardcoded string "🎮 Match Invitation", should use @string resource [HardcodedText]
+        android:text="🎮 Match Invitation"
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/bob/workspace/bingo_host_wait/app/src/main/res/layout/notification_invite_collapsed.xml:27: Warning: Hardcoded string "Invited you to play Bingo", should use @string resource [HardcodedText]
+        android:text="Invited you to play Bingo"
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/bob/workspace/bingo_host_wait/app/src/main/res/layout/notification_invite_collapsed.xml:46: Warning: Hardcoded string "✅ Accept", should use @string resource [HardcodedText]
+            android:text="✅ Accept"
+            ~~~~~~~~~~~~~~~~~~~~~~~
+/home/bob/workspace/bingo_host_wait/app/src/main/res/layout/notification_invite_collapsed.xml:61: Warning: Hardcoded string "❌ Decline", should use @string resource [HardcodedText]
+            android:text="❌ Decline"
+            ~~~~~~~~~~~~~~~~~~~~~~~~
+/home/bob/workspace/bingo_host_wait/app/src/main/res/layout/notification_invite_expanded.xml:16: Warning: Hardcoded string "🎮 Match Invitation", should use @string resource [HardcodedText]
+        android:text="🎮 Match Invitation"
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/bob/workspace/bingo_host_wait/app/src/main/res/layout/notification_invite_expanded.xml:26: Warning: Hardcoded string "Your friend invited you to play a real-time Bingo match!", should use @string resource [HardcodedText]
+        android:text="Your friend invited you to play a real-time Bingo match!"
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/bob/workspace/bingo_host_wait/app/src/main/res/layout/notification_invite_expanded.xml:45: Warning: Hardcoded string "✅ Accept & Play", should use @string resource [HardcodedText]
+            android:text="✅ Accept &amp; Play"
+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/bob/workspace/bingo_host_wait/app/src/main/res/layout/notification_invite_expanded.xml:60: Warning: Hardcoded string "❌ Decline", should use @string resource [HardcodedText]
+            android:text="❌ Decline"
+            ~~~~~~~~~~~~~~~~~~~~~~~~
+
+   Explanation for issues of type "HardcodedText":
+   Hardcoding text attributes directly in layout files is bad for several
+   reasons:
+
+   * When creating configuration variations (for example for landscape or
+   portrait) you have to repeat the actual text (and keep it up to date when
+   making changes)
+
+   * The application cannot be translated to other languages by just adding
+   new translations for existing string resources.
+
+   There are quickfixes to automatically extract this hardcoded string into a
+   resource lookup.
+
+0 errors, 34 warnings

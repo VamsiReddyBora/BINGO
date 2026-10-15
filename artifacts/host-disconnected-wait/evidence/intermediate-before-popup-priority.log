@@ -1,0 +1,178 @@
+> Task :app:checkKotlinGradlePluginConfigurationErrors
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:generateDebugResValues
+> Task :app:processDebugGoogleServices
+> Task :app:checkDebugAarMetadata
+> Task :app:mapDebugSourceSetPaths
+> Task :app:generateDebugResources
+> Task :app:packageDebugResources
+> Task :app:mergeDebugResources
+> Task :app:createDebugCompatibleScreenManifests
+> Task :app:extractDeepLinksDebug
+> Task :app:parseDebugLocalResources
+> Task :app:processDebugMainManifest
+> Task :app:processDebugManifest
+> Task :app:javaPreCompileDebug
+> Task :app:processDebugManifestForPackage
+> Task :app:preDebugUnitTestBuild UP-TO-DATE
+> Task :app:javaPreCompileDebugUnitTest
+> Task :app:extractProguardFiles
+> Task :app:preDebugAndroidTestBuild SKIPPED
+> Task :app:generateDebugAndroidTestResValues
+> Task :app:buildKotlinToolingMetadata
+> Task :app:preReleaseBuild UP-TO-DATE
+> Task :app:checkReleaseAarMetadata
+> Task :app:generateReleaseResValues
+> Task :app:processReleaseGoogleServices
+> Task :app:mapReleaseSourceSetPaths
+> Task :app:generateReleaseResources
+> Task :app:processDebugResources
+> Task :app:mergeReleaseResources
+> Task :app:packageReleaseResources
+> Task :app:parseReleaseLocalResources
+> Task :app:createReleaseCompatibleScreenManifests
+> Task :app:extractDeepLinksRelease
+> Task :app:processReleaseMainManifest
+> Task :app:processReleaseManifest
+> Task :app:processReleaseManifestForPackage
+> Task :app:processReleaseResources
+> Task :app:compileDebugKotlin
+> Task :app:compileReleaseKotlin
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/core/designsystem/BingoTheme.kt:187:27 Parameter 'palette' is never used
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/domain/network/FriendRequestManager.kt:380:31 Unnecessary safe call on a non-null receiver of type MqttAsyncClient?
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/domain/network/GameInviteManager.kt:286:31 Unnecessary safe call on a non-null receiver of type MqttAsyncClient?
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/domain/network/HotspotAndWifiManager.kt:6:25 'WifiConfiguration' is deprecated. Deprecated in Java
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/domain/network/HotspotAndWifiManager.kt:51:37 'setWifiEnabled(Boolean): Boolean' is deprecated. Deprecated in Java
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/domain/network/HotspotAndWifiManager.kt:163:51 'WifiConfiguration' is deprecated. Deprecated in Java
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/domain/network/HotspotAndWifiManager.kt:164:36 'SSID: String!' is deprecated. Deprecated in Java
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/domain/network/HotspotAndWifiManager.kt:208:30 'getter for dhcpInfo: DhcpInfo!' is deprecated. Deprecated in Java
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/domain/network/HotspotAndWifiManager.kt:240:30 'getter for connectionInfo: WifiInfo!' is deprecated. Deprecated in Java
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/presentation/common/PlayerAvatar.kt:266:38 Variable 'nativeBmp' initializer is redundant
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/presentation/game/GameOverCelebration.kt:90:25 'DRAW' is deprecated. Draws are decommissioned; only WON, RUNNER, LOST, OFFLINE apply
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/presentation/game/GameScreen.kt:174:5 Parameter 'onResumeGame' is never used
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/presentation/lobby/LobbyScreen.kt:1084:65 Condition 'onSearchPlayer != null' is always 'true'
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/presentation/lobby/LobbyScreen.kt:1598:33 Condition 't != null' is always 'true'
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/presentation/settings/SettingsScreen.kt:249:77 'create(MediaType?, String): RequestBody' is deprecated. Moved to extension function. Put the 'content' argument first to fix Java
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/presentation/settings/SettingsScreen.kt:2271:46 'VolumeUp: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.VolumeUp
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/presentation/settings/SettingsScreen.kt:2663:57 'VolumeUp: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.VolumeUp
+
+> Task :app:compileDebugKotlin
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/core/designsystem/BingoTheme.kt:187:27 Parameter 'palette' is never used
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/domain/network/FriendRequestManager.kt:380:31 Unnecessary safe call on a non-null receiver of type MqttAsyncClient?
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/domain/network/GameInviteManager.kt:286:31 Unnecessary safe call on a non-null receiver of type MqttAsyncClient?
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/domain/network/HotspotAndWifiManager.kt:6:25 'WifiConfiguration' is deprecated. Deprecated in Java
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/domain/network/HotspotAndWifiManager.kt:51:37 'setWifiEnabled(Boolean): Boolean' is deprecated. Deprecated in Java
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/domain/network/HotspotAndWifiManager.kt:163:51 'WifiConfiguration' is deprecated. Deprecated in Java
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/domain/network/HotspotAndWifiManager.kt:164:36 'SSID: String!' is deprecated. Deprecated in Java
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/domain/network/HotspotAndWifiManager.kt:208:30 'getter for dhcpInfo: DhcpInfo!' is deprecated. Deprecated in Java
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/domain/network/HotspotAndWifiManager.kt:240:30 'getter for connectionInfo: WifiInfo!' is deprecated. Deprecated in Java
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/presentation/common/PlayerAvatar.kt:266:38 Variable 'nativeBmp' initializer is redundant
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/presentation/game/GameOverCelebration.kt:90:25 'DRAW' is deprecated. Draws are decommissioned; only WON, RUNNER, LOST, OFFLINE apply
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/presentation/game/GameScreen.kt:174:5 Parameter 'onResumeGame' is never used
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/presentation/lobby/LobbyScreen.kt:1084:65 Condition 'onSearchPlayer != null' is always 'true'
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/presentation/lobby/LobbyScreen.kt:1598:33 Condition 't != null' is always 'true'
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/presentation/settings/SettingsScreen.kt:249:77 'create(MediaType?, String): RequestBody' is deprecated. Moved to extension function. Put the 'content' argument first to fix Java
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/presentation/settings/SettingsScreen.kt:2271:46 'VolumeUp: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.VolumeUp
+w: file:///home/bob/workspace/bingo_host_wait/app/src/main/java/com/bingo/multiplayer/presentation/settings/SettingsScreen.kt:2663:57 'VolumeUp: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.VolumeUp
+
+> Task :app:compileDebugJavaWithJavac NO-SOURCE
+> Task :app:bundleDebugClassesToRuntimeJar
+> Task :app:bundleDebugClassesToCompileJar
+> Task :app:processDebugJavaRes
+> Task :app:generateDebugLintReportModel
+
+> Task :app:compileDebugUnitTestKotlin
+w: file:///home/bob/workspace/bingo_host_wait/app/src/test/java/com/bingo/multiplayer/domain/network/AtomicEightPlayerSimulationTest.kt:329:33 Condition 'ongoingMatchData != null' is always 'true'
+w: file:///home/bob/workspace/bingo_host_wait/app/src/test/java/com/bingo/multiplayer/domain/network/AtomicEightPlayerSimulationTest.kt:333:44 Unnecessary non-null assertion (!!) on a non-null receiver of type OngoingMatchData
+w: file:///home/bob/workspace/bingo_host_wait/app/src/test/java/com/bingo/multiplayer/domain/network/AtomicEightPlayerSimulationTest.kt:364:13 Variable 'pickerId' is never used
+w: file:///home/bob/workspace/bingo_host_wait/app/src/test/java/com/bingo/multiplayer/domain/network/GameScreenLayoutAndSimulationTest.kt:474:83 'DRAW' is deprecated. Draws are decommissioned; only WON, RUNNER, LOST, OFFLINE apply
+w: file:///home/bob/workspace/bingo_host_wait/app/src/test/java/com/bingo/multiplayer/domain/network/GameScreenLayoutAndSimulationTest.kt:494:78 'DRAW' is deprecated. Draws are decommissioned; only WON, RUNNER, LOST, OFFLINE apply
+w: file:///home/bob/workspace/bingo_host_wait/app/src/test/java/com/bingo/multiplayer/domain/network/GameScreenLayoutAndSimulationTest.kt:495:78 'DRAW' is deprecated. Draws are decommissioned; only WON, RUNNER, LOST, OFFLINE apply
+w: file:///home/bob/workspace/bingo_host_wait/app/src/test/java/com/bingo/multiplayer/domain/network/GroupMatchAdvancedEdgeCasesSimulationTest.kt:49:17 Variable 'surrenderName' is never used
+w: file:///home/bob/workspace/bingo_host_wait/app/src/test/java/com/bingo/multiplayer/domain/network/HostRejoinAndLobbyLifecycleTest.kt:57:36 Variable 'guest1IsHostLeftGame' initializer is redundant
+w: file:///home/bob/workspace/bingo_host_wait/app/src/test/java/com/bingo/multiplayer/domain/network/HostRejoinAndLobbyLifecycleTest.kt:342:30 Variable 'isHostLeftGame' initializer is redundant
+w: file:///home/bob/workspace/bingo_host_wait/app/src/test/java/com/bingo/multiplayer/domain/network/HostRejoinAndLobbyLifecycleTest.kt:347:9 The value 'true' assigned to 'var isHostLeftGame: Boolean defined in com.bingo.multiplayer.domain.network.HostRejoinAndLobbyLifecycleTest.`test host rejoin on host turn triggers senior active guest GAME_SYNC response`' is never used
+w: file:///home/bob/workspace/bingo_host_wait/app/src/test/java/com/bingo/multiplayer/domain/network/MatchCoordinatorAndPauseTest.kt:146:48 Variable 'frozenRemainingTurnSeconds' initializer is redundant
+w: file:///home/bob/workspace/bingo_host_wait/app/src/test/java/com/bingo/multiplayer/domain/network/MatchCoordinatorAndPauseTest.kt:155:25 Variable 'turnTimer' initializer is redundant
+w: file:///home/bob/workspace/bingo_host_wait/app/src/test/java/com/bingo/multiplayer/domain/network/MatchCoordinatorAndPauseTest.kt:169:13 Condition 'frozenRemainingTurnSeconds != null' is always 'false'
+w: file:///home/bob/workspace/bingo_host_wait/app/src/test/java/com/bingo/multiplayer/domain/network/MatchCoordinatorAndPauseTest.kt:170:13 Unreachable code
+w: file:///home/bob/workspace/bingo_host_wait/app/src/test/java/com/bingo/multiplayer/domain/network/MatchCoordinatorAndPauseTest.kt:171:13 Unreachable code
+w: file:///home/bob/workspace/bingo_host_wait/app/src/test/java/com/bingo/multiplayer/domain/network/MatchHeartbeatPacketCodecTest.kt:211:13 Variable 'activeGen' is never used
+w: file:///home/bob/workspace/bingo_host_wait/app/src/test/java/com/bingo/multiplayer/domain/network/MultiplayerWinLogicAndSimulationTest.kt:606:31 Variable 'allPlayerBoards' initializer is redundant
+w: file:///home/bob/workspace/bingo_host_wait/app/src/test/java/com/bingo/multiplayer/domain/network/MultiplayerWinLogicAndSimulationTest.kt:896:35 Variable 'guestIsDynamicBoard' initializer is redundant
+w: file:///home/bob/workspace/bingo_host_wait/app/src/test/java/com/bingo/multiplayer/domain/network/MultiplayerWinLogicAndSimulationTest.kt:1131:13 Variable 'participants' is never used
+w: file:///home/bob/workspace/bingo_host_wait/app/src/test/java/com/bingo/multiplayer/domain/network/TurnRotationAndCodecTest.kt:512:17 Variable 'now' is never used
+w: file:///home/bob/workspace/bingo_host_wait/app/src/test/java/com/bingo/multiplayer/domain/network/TurnRotationAndCodecTest.kt:657:13 Variable 'host' is never used
+w: file:///home/bob/workspace/bingo_host_wait/app/src/test/java/com/bingo/multiplayer/domain/network/TwoPlayerMatchSimulationTest.kt:678:17 Variable 'initialSwitchCountHost' is never used
+w: file:///home/bob/workspace/bingo_host_wait/app/src/test/java/com/bingo/multiplayer/domain/network/TwoPlayerMatchSimulationTest.kt:679:17 Variable 'initialSwitchCountGuest' is never used
+w: file:///home/bob/workspace/bingo_host_wait/app/src/test/java/com/bingo/multiplayer/domain/network/TwoPlayerMatchSimulationTest.kt:1473:56 Parameter 'letter' is never used, could be renamed to _
+w: file:///home/bob/workspace/bingo_host_wait/app/src/test/java/com/bingo/multiplayer/domain/network/V12ReliabilityAndSimulationTest.kt:773:36 Variable 'sampledDisplayedPing' initializer is redundant
+w: file:///home/bob/workspace/bingo_host_wait/app/src/test/java/com/bingo/multiplayer/domain/network/V12ReliabilityAndSimulationTest.kt:898:13 Variable 'myUid' is never used
+w: file:///home/bob/workspace/bingo_host_wait/app/src/test/java/com/bingo/multiplayer/domain/network/V12ReliabilityAndSimulationTest.kt:942:39 Variable 'navigatedRoute' initializer is redundant
+w: file:///home/bob/workspace/bingo_host_wait/app/src/test/java/com/bingo/multiplayer/domain/network/V12ReliabilityAndSimulationTest.kt:1247:33 Variable 'isAppInForeground' initializer is redundant
+w: file:///home/bob/workspace/bingo_host_wait/app/src/test/java/com/bingo/multiplayer/domain/network/V12ReliabilityAndSimulationTest.kt:1248:45 Variable 'lastForegroundResumeTimestamp' initializer is redundant
+w: file:///home/bob/workspace/bingo_host_wait/app/src/test/java/com/bingo/multiplayer/domain/network/V12ReliabilityAndSimulationTest.kt:1249:13 Variable 'disconnectedPlayerIds' is never used
+w: file:///home/bob/workspace/bingo_host_wait/app/src/test/java/com/bingo/multiplayer/domain/repository/AuthRepositoryTest.kt:249:115 Unchecked cast: Any? to MutableSet<String>
+
+> Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processDebugUnitTestJavaRes
+> Task :app:lintAnalyzeDebug
+> Task :app:testDebugUnitTest
+> Task :app:javaPreCompileRelease
+> Task :app:compileReleaseJavaWithJavac NO-SOURCE
+> Task :app:generateReleaseLintVitalReportModel
+> Task :app:lintVitalAnalyzeRelease
+> Task :app:lintVitalReportRelease
+> Task :app:lintVitalRelease
+> Task :app:mergeReleaseJniLibFolders
+> Task :app:mergeReleaseNativeLibs
+
+> Task :app:stripReleaseDebugSymbols
+Unable to strip the following libraries, packaging them as they are: libimage_processing_util_jni.so.
+
+> Task :app:extractReleaseNativeSymbolTables
+> Task :app:mergeReleaseNativeDebugMetadata NO-SOURCE
+> Task :app:checkReleaseDuplicateClasses
+> Task :app:mergeReleaseArtProfile
+> Task :app:expandReleaseArtProfileWildcards
+> Task :app:mergeReleaseGeneratedProguardFiles
+> Task :app:processReleaseJavaRes
+> Task :app:mergeReleaseJavaResource
+> Task :app:minifyReleaseWithR8
+
+The Daemon will expire after the build after running out of JVM heap space.
+The project memory settings are likely not configured or are configured to an insufficient value.
+The daemon will restart for the next build, which may increase subsequent build times.
+These settings can be adjusted by setting 'org.gradle.jvmargs' in 'gradle.properties'.
+The currently configured max heap space is '1.3 GiB' and the configured max metaspace is '512 MiB'.
+For more information on how to set these values, please refer to https://docs.gradle.org/8.5/userguide/build_environment.html#sec:configuring_jvm_memory in the Gradle documentation.
+To disable this warning, set 'org.gradle.daemon.performance.disable-logging=true'.
+Daemon will be stopped at the end of the build after running out of JVM heap space
+
+> Task :app:lintReportDebug
+Wrote HTML report to file:///home/bob/workspace/bingo_host_wait/app/build/reports/lint-results-debug.html
+
+> Task :app:lintDebug
+> Task :app:mergeReleaseShaders
+> Task :app:compileReleaseShaders NO-SOURCE
+> Task :app:generateReleaseAssets UP-TO-DATE
+> Task :app:mergeReleaseAssets
+> Task :app:compressReleaseAssets
+> Task :app:processApplicationManifestReleaseForBundle
+> Task :app:bundleReleaseResources
+> Task :app:collectReleaseDependencies
+> Task :app:sdkReleaseDependencyData
+> Task :app:validateSigningRelease
+> Task :app:writeReleaseAppMetadata
+> Task :app:writeReleaseSigningConfigVersions
+> Task :app:exportHostWaitVerificationClasspath
+> Task :app:compileReleaseArtProfile
+> Task :app:shrinkReleaseRes
+> Task :app:optimizeReleaseResources
+> Task :app:packageRelease
+> Task :app:createReleaseApkListingFileRedirect
+> Task :app:assembleRelease
+
+BUILD SUCCESSFUL in 5m 28s
+77 actionable tasks: 77 executed

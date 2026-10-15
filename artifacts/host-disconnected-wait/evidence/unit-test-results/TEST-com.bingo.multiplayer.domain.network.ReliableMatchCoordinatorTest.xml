@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.bingo.multiplayer.domain.network.ReliableMatchCoordinatorTest" tests="15" skipped="0" failures="0" errors="0" timestamp="2026-10-15T13:14:58" hostname="VR" time="0.007">
+  <properties/>
+  <testcase name="existingTenByTenBoardOptionRemainsSupported" classname="com.bingo.multiplayer.domain.network.ReliableMatchCoordinatorTest" time="0.001"/>
+  <testcase name="failedRequiredCommitBlocksFurtherMutationAndLeavesAcceptedState" classname="com.bingo.multiplayer.domain.network.ReliableMatchCoordinatorTest" time="0.001"/>
+  <testcase name="restartedOwnerSuspendsInsteadOfReplayingTimeoutBacklog" classname="com.bingo.multiplayer.domain.network.ReliableMatchCoordinatorTest" time="0.0"/>
+  <testcase name="duplicateTimeoutNeverAdvancesTheNextTurn" classname="com.bingo.multiplayer.domain.network.ReliableMatchCoordinatorTest" time="0.0"/>
+  <testcase name="claimRequiresTheActualCurrentThirdOpenEpisodeAndHealthyOwner" classname="com.bingo.multiplayer.domain.network.ReliableMatchCoordinatorTest" time="0.001"/>
+  <testcase name="chatDisplayIdsDoNotUseCollidingThirtyTwoBitStringHashes" classname="com.bingo.multiplayer.domain.network.ReliableMatchCoordinatorTest" time="0.0"/>
+  <testcase name="fullHistoryKeepsRealTurnsAndRejectsMissingBoardOrStalePause" classname="com.bingo.multiplayer.domain.network.ReliableMatchCoordinatorTest" time="0.001"/>
+  <testcase name="completeLegitimateBingoMatchUsesTheAcceptedWinningPickAndCannotRestart" classname="com.bingo.multiplayer.domain.network.ReliableMatchCoordinatorTest" time="0.001"/>
+  <testcase name="unavailablePlayerKeepsItsNormalTurnsWithoutAutomaticDefeat" classname="com.bingo.multiplayer.domain.network.ReliableMatchCoordinatorTest" time="0.0"/>
+  <testcase name="surrenderAndConflictingTerminalActionsProduceOneResult" classname="com.bingo.multiplayer.domain.network.ReliableMatchCoordinatorTest" time="0.001"/>
+  <testcase name="pauseResumePreserves14250MillisAndNextTurnIsExactly30000" classname="com.bingo.multiplayer.domain.network.ReliableMatchCoordinatorTest" time="0.0"/>
+  <testcase name="recoveryHoldRejectsActionsAndWrongResumeAndKeepsExactRemainder" classname="com.bingo.multiplayer.domain.network.ReliableMatchCoordinatorTest" time="0.0"/>
+  <testcase name="oldFrozenPositionCannotRewindAnAcceptedPickDuringRecovery" classname="com.bingo.multiplayer.domain.network.ReliableMatchCoordinatorTest" time="0.001"/>
+  <testcase name="pickTimeoutRaceHasOneAcceptedOutcomeInBothOrders" classname="com.bingo.multiplayer.domain.network.ReliableMatchCoordinatorTest" time="0.0"/>
+  <testcase name="guestCannotBecomeOwnerOrAdvanceAHostTimeout" classname="com.bingo.multiplayer.domain.network.ReliableMatchCoordinatorTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

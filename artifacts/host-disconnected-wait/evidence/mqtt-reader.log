@@ -1,0 +1,2 @@
+PASS independent returning JVM recovers final result after winner JVM exited
+PASS returned match stays final; no unfinished-match resurrection

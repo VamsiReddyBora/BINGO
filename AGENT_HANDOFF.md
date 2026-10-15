@@ -1,61 +1,23 @@
-# Bingo heartbeat repair — current handoff
+# Bingo — temporary host-disconnection hold
 
-Updated **2026-10-15, Asia/Kolkata**. Active worktree: `/home/bob/workspace/bingo_heartbeat_codex`; local branch: `fix/heartbeat-codex`.
+Updated **2026-10-15T18:49:35+05:30**. Current worktree `/home/bob/workspace/bingo_host_wait`, branch `fix/host-disconnected-wait`.
 
-**NOT READY for the full intended behavior.** Independent code repairs are implemented, built and tested. The guest still waits when the original host is unavailable: guest gameplay, claim and confirmed surrender require an enforceable MQTT authority/ownership solution. Full Android paired-device and baseline latency verification also remain outstanding. Do not report “all fixed except hardware.”
+The user explicitly deferred control transfer/referee and approved this temporary policy: when Kevin (fixed host/controller) is unreachable, freeze Stuart's game behind a non-dismissible **Host Disconnected** popup until complete recovery. Do not implement the earlier uninterrupted guest-play proposal without a new user plan.
 
-## Read first
+Application commits: `e3c1eb32368bb8ce21061842948922ef3a29825b` and `f74da6e34e9a4982b8009711760a153fe7f0b5c9`. Starting checkpoint `100325391c23ab306f0c40b56e7cea30d5fb8f17` remains intact in `/home/bob/workspace/bingo_heartbeat_codex`.
 
-- [Repair and self-review](artifacts/heartbeat-codex/RepairReview.md): F001–F008, actual changes and remaining limits.
-- [Verification report](artifacts/heartbeat-codex/TEST_REPORT.md): 398 tests, precise evidence layers, all original 44 + additional 35 planned cases.
-- [Exact new test names](artifacts/heartbeat-codex/evidence/RegressionTestIndex.md): 36 newly added test methods.
-- [Ownership/storage boundary](artifacts/heartbeat-codex/OWNERSHIP_AND_STORAGE.md): original single host; retained broker recovery; missing guest availability.
-- [Review manifest](artifacts/heartbeat-codex/ReviewManifest.json), [journal](artifacts/heartbeat-codex/CHANGELOG.md), [source hashes](artifacts/heartbeat-codex/SOURCE_FINGERPRINTS.json).
-- Original requirements/plans in `docs/`; latest independent review: `/home/bob/workspace/HeartbeatImplementationFix003Review.md`.
+Read [implementation](artifacts/host-disconnected-wait/IMPLEMENTATION.md), [test/review report](artifacts/host-disconnected-wait/TEST_REPORT.md), [journal](artifacts/host-disconnected-wait/CHANGELOG.md), [manifest](artifacts/host-disconnected-wait/ReviewManifest.json), and [exact new tests](artifacts/host-disconnected-wait/evidence/RegressionTestIndex.md).
 
-## Checkpoints
+- Final unit run: **419 tests / 40 suites**, 0 failures/errors/skips; 21 additional tests.
+- Lint: 0 errors/fatal, 34 warnings; signed release build passed.
+- Live MQTT: 8 alternating picks, actual 15-second silence, blocked/frozen guest, recreated host recovery, and separate-JVM final-result recovery pass. Stores are independent; verification topics cleaned up. Third-incident terminal claim is a prepared fixture.
+- Dialog's actual dismissal properties/message are tested. Android taps, Back, lifecycle/force-stop, dialog layering and physical latency remain **NOT RUN** because no device is connected and KVM is unavailable. Do not call these device tests passed.
+- Both phones require this APK (explicit lobby capability 3 and hostWaitVersion=1 runtime negotiation). AI/LAN/groups retain their existing paths.
+- Active duration and turn timing freeze; manual pause survives recovery; zero expires once after recovery. Host returning alone observes 15 seconds before continuing the preserved match under existing guest-absence rules. No offline timeout backlog.
+- No controller transfer, new backend, broker-rule change or per-move HTTP. Existing original-single-installation/honest-client limits remain.
 
-1. Protected restored baseline `a13d39edb0ff6a67d272cac187f1ed9fb294f9e9`, branch `1.4.1`, checkout `/home/bob/workspace/bingo_multiplayer`. All 159 fingerprinted files and protected APK unchanged. Tag `v1.4.1` is the older release; do not move it.
-2. Starting Fix003 `600a2591da5efcf2135f3c8d3e1570aac059bac0`. Its “all code fixed” reports were inaccurate; historical files now carry superseded notices.
-3. Application implementation `d4abaac26a06004b97b97a26fb936907ef782126`.
-4. Additional heartbeat boundary tests `194b34b186f7d18af29b1d9e1dc9365593ae6930`. Application source is identical to the APK build checkpoint.
-5. Later local evidence/handoff commit: see `git log fix/heartbeat-codex`; manifests intentionally avoid a self-referential hash.
+APK: `artifacts/host-disconnected-wait/Bingo-host-wait.apk`, 7,063,659 bytes, SHA256 `9db6b81303c28c6d1e66b55b0ffd9f47af758f0c343dd27ca7eb2e7fc2bb0eba`. Signing certificate SHA256 `39a428942c3c2629ff3490c944b8b82c7625b22d660b7a2cdf682456d81f60a4` matches baseline. Build/verify commands are in the test report. SDK configuration is local/ignored; do not expose credentials.
 
-## Actual implementation
+Protected restored baseline: branch 1.4.1, commit a13d39edb0ff6a67d272cac187f1ed9fb294f9e9, checkout `/home/bob/workspace/bingo_multiplayer`. All 159 fingerprints and protected/shared/prior-candidate APKs unchanged. No push/merge/release/deployment. Preserve ongoing-save data and evidence when checking out rollback commits separately.
 
-`ReliableMatchCoordinator` accepts all online 1v1 actions through one serialized path. `ReliableMatchClient` runs the production protocol; RootNavGraph submits requests and renders accepted snapshots. All complete board layouts, real pick/turn identities, accepted chat, exact timing/pause, host-observed episodes and canonical final results are synchronized. Legacy gameplay packets/timers cannot mutate a new 1v1 match. AI/LAN/groups retain legacy paths.
-
-The original host installation is the only writer; no takeover is inferred from silence. Local pending/accepted state is distinct. Actual retained QoS1 MQTT state is on `bingo/v4/match/{room}/{seed}/state`; requests use the room topic. Initial/final Android publications verify exact retained read-back. No per-move HTTP or new deployed backend. Statistics/history receipts are durable, atomic and account-bound. Ownerless legacy data is preserved without adoption; late old-match writes are rejected.
-
-## Verified
-
-- Final full unit run: **398 tests / 39 suites**, zero failures, errors or skips.
-- Full application build/release/lint: success, **0 lint errors/fatal, 34 warnings**. It also ran 396 tests before the two test-only boundary additions.
-- Real MQTT: actual production clients negotiate and accept eight alternating picks; independent returning JVM recovers a retained final after writer JVM exit. Test device stores are separate. Third episode is a prepared fixture. Unique test topics cleaned up.
-- MQTT request-to-both-accepted metric: eight samples, median 503ms / p95 554ms, 50ms sampling resolution. This is not physical tap latency or a baseline comparison.
-- Two existing AVDs attempted without KVM; no usable boot-complete screenshots. No candidate installed, no data wiped, no invitations sent. Android gameplay **NOT RUN**. Both launched VMs stopped.
-
-## Build and artifacts
-
-Candidate: `artifacts/heartbeat-codex/Bingo-codex.apk`, **7,055,459 bytes**.
-
-SHA256: `262ef4c547941e975a854c5c17825e6495c0fa281aad983a9055afd5443b8e8c`.
-
-Verified signing certificate SHA256: `39a428942c3c2629ff3490c944b8b82c7625b22d660b7a2cdf682456d81f60a4`, matching baseline.
-
-```bash
-./gradlew testDebugUnitTest lintDebug assembleRelease :app:exportCodexVerificationClasspath \
-  -I artifacts/heartbeat-codex/verify-classpath.init.gradle \
-  --rerun-tasks --offline --console=plain --max-workers=2
-python3 artifacts/heartbeat-codex/run_live_mqtt.py
-```
-
-Preserve existing live-probe evidence before rerunning. SDK configured locally in ignored `local.properties`. Do not expose broker credentials, Firebase secrets or signing configuration.
-
-## Continue safely
-
-The user asked to fix all findings. Continue that objective when the missing authority/hosting configuration is supplied. A separate MQTT authority must have one enforceable writer and durable state; inventing another app-side “host” or a retained owner flag does not close the gap. User was asked where it could run, and asked for an explanation; explained Kevin-host-offline/Stuart-waiting. No hosting location has been supplied yet.
-
-Complete the 79-case/device matrix, especially both roles, app lifecycle/network faults, timer labels, manual board/chat preservation, result UI, statistics and the baseline latency comparison. Do not infer device PASS from unit tests or screen previews. Retention quota/acknowledged-final cleanup also needs a rollout policy.
-
-No push, merge, release or deployment was performed. Never overwrite `/home/bob/workspace/bingo_multiplayer/Bingo.apk` or shared `/home/bob/workspace/Bingo.apk`; their hashes are in the manifest. Roll back through a separate checkout at a preserved commit; retain new-schema saves and evidence rather than resetting/deleting user data.
+The prior full-disconnection plans/reviews are historical context. Current delivery scope is this temporary host hold. Remaining work: execute paired Android validation and a physical baseline/candidate latency comparison; record both screens and accepted turn/remainder. Never infer Android success from pure/component tests.

@@ -22,3 +22,12 @@ User-approved temporary policy: host absence freezes guest gameplay behind a non
 - Review hardened cold start: unpublished local candidates reconcile against real broker truth; missing shared proof remains blocked; stale retained samples cannot undo a known accepted pause; an accepted final result overrides leftover wait metadata. Added regressions for each.
 - Review hardened UI wiring: immediate blocking even if diagnostic writes fail, cancelled-start generation guards, serialized host installation identity, and local guest observation metadata preservation.
 - Final screen review found the existing manual-pause dialog could cover the new host popup. Suppressed the manual-pause dialog while host-disconnected; retained its underlying pause state for recovery. The preceding build is intermediate; a new final build will include this UI correction.
+
+## Final verification and delivery
+
+- Final application commits: e3c1eb32368bb8ce21061842948922ef3a29825b and f74da6e34e9a4982b8009711760a153fe7f0b5c9. No application changes after the final build.
+- Final full unit run: 419 tests / 40 suites, zero failures/errors/skips. Twenty-one additional production regressions; exact XML names indexed. Android lint: 0 errors/fatal, 34 warnings. Release build succeeds.
+- Real MQTT final run: eight alternating picks, actual 15-second host silence, frozen guest at 14,678ms, recreated host recovery retaining board/picks/turn. Independent returning JVM recovers accepted final after writer exit; verification topic cleaned up. Third-incident result uses a prepared fixture. Median request-to-both-accepted 334ms / p95 405ms across eight headless samples, 50ms polling resolution; no physical baseline comparison.
+- Signed APK: 7,063,659 bytes; SHA256 9db6b81303c28c6d1e66b55b0ffd9f47af758f0c343dd27ca7eb2e7fc2bb0eba. Certificate matches baseline.
+- Reverified 159/159 baseline fingerprints and protected/shared/prior-candidate APK hashes unchanged. No push/merge/release/deployment.
+- Android device interactions and lifecycle/physical latency remain NOT RUN: no connected device, /dev/kvm unavailable. The current report and handoff identify these limits; no device PASS is claimed.
