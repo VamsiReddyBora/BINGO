@@ -58,24 +58,19 @@ object OnlineRoomRegistry {
     private const val TAG = "OnlineRoomRegistry"
 
     private fun safeBase64Encode(bytes: ByteArray): String {
-        val result = try {
-            Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_WRAP)?.trim()
-        } catch (_: Throwable) { null }
-        return result ?: java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(bytes).trim()
+        return Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_WRAP).trim()
     }
 
     private fun safeBase64Decode(clean: String): ByteArray {
         val padded = clean + "=".repeat((4 - clean.length % 4) % 4)
-        val result = try {
+        return try {
             Base64.decode(padded, Base64.URL_SAFE or Base64.NO_WRAP)
-        } catch (_: Throwable) { null }
-        return result ?: try {
-            java.util.Base64.getUrlDecoder().decode(padded)
-        } catch (_: Throwable) { null }
-        ?: try {
-            java.util.Base64.getDecoder().decode(padded)
-        } catch (_: Throwable) {
-            clean.toByteArray(StandardCharsets.UTF_8)
+        } catch (_: IllegalArgumentException) {
+            try {
+                Base64.decode(padded, Base64.DEFAULT)
+            } catch (_: IllegalArgumentException) {
+                clean.toByteArray(StandardCharsets.UTF_8)
+            }
         }
     }
 

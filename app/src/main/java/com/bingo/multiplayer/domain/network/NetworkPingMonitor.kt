@@ -21,7 +21,7 @@ import java.net.Socket
  */
 object NetworkPingMonitor {
 
-    private val _pingMs = MutableStateFlow<Long>(32L) // Plausible initial ping
+    private val _pingMs = MutableStateFlow<Long>(0L) // Unknown until a probe succeeds.
     val pingMs: StateFlow<Long> = _pingMs.asStateFlow()
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -55,6 +55,10 @@ object NetworkPingMonitor {
     }
 
     private fun updateSmoothedPing(newRtt: Long) {
+        if (newRtt <= 0L) {
+            _pingMs.value = 0L
+            return
+        }
         val cur = _pingMs.value
         val clamped = newRtt.coerceIn(1L, 9999L)
         _pingMs.value = if (cur <= 0L) {
@@ -98,9 +102,9 @@ object NetworkPingMonitor {
             }
         } catch (_: Exception) {
             // Complete network unreachable / timeout
-            return 999L
+            return 0L
         }
 
-        return 999L
+        return 0L
     }
 }

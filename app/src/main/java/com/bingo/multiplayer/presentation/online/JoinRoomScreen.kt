@@ -1,5 +1,8 @@
 package com.bingo.multiplayer.presentation.online
 
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -15,17 +18,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
@@ -42,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -51,6 +56,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bingo.multiplayer.core.designsystem.BingoTheme
+import com.bingo.multiplayer.domain.network.QrCodeHelper
 
 /**
  * Simple screen for a player to enter a room code and join a host's lobby.
@@ -60,12 +66,42 @@ fun JoinRoomScreen(
     onJoinRoom: suspend (roomCode: String) -> String?,
     onBack: () -> Unit
 ) {
+    val context = LocalContext.current
     val tokens = BingoTheme.colors
     val haptic = LocalHapticFeedback.current
     val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
     var roomCode by remember { mutableStateOf("") }
     var isValidating by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var showQrScannerDialog by remember { mutableStateOf(false) }
+
+    fun triggerJoin(codeToJoin: String) {
+        val clean = codeToJoin.trim().uppercase()
+        if (!isValidating && clean.length == 6) {
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            isValidating = true
+            errorMessage = null
+            coroutineScope.launch {
+                val err = onJoinRoom(clean)
+                if (err != null) {
+                    errorMessage = err
+                    isValidating = false
+                }
+            }
+        }
+    }
+
+    if (showQrScannerDialog) {
+        RoomQrScannerDialog(
+            onDismiss = { showQrScannerDialog = false },
+            onRoomScanned = { scannedCode ->
+                showQrScannerDialog = false
+                roomCode = scannedCode
+                errorMessage = null
+                triggerJoin(scannedCode)
+            }
+        )
+    }
 
     Box(
         modifier = Modifier
@@ -133,7 +169,7 @@ fun JoinRoomScreen(
                     Spacer(modifier = Modifier.height(14.dp))
 
                     Text(
-                        text = "Ask the host for the 6-character room code to join their game.",
+                        text = "Ask the host for the 6-character room code to join their game, or scan their room QR code.",
                         fontSize = 12.sp,
                         lineHeight = 16.sp,
                         color = tokens.cellNeutralText.copy(alpha = 0.55f),
@@ -144,10 +180,12 @@ fun JoinRoomScreen(
 
                     OutlinedTextField(
                         value = roomCode,
-                        onValueChange = {
-                            if (it.length <= 6) {
-                                roomCode = it.uppercase()
-                                errorMessage = null
+                        onValueChange = { input ->
+                            val clean = input.filter { it.isLetterOrDigit() }.take(6).uppercase()
+                            roomCode = clean
+                            errorMessage = null
+                            if (clean.length == 6 && !isValidating) {
+                                triggerJoin(clean)
                             }
                         },
                         placeholder = {
@@ -179,22 +217,71 @@ fun JoinRoomScreen(
                         ),
                         keyboardActions = KeyboardActions(
                             onGo = {
-                                if (!isValidating && roomCode.length == 6) {
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    isValidating = true
-                                    errorMessage = null
-                                    coroutineScope.launch {
-                                        val err = onJoinRoom(roomCode)
-                                        if (err != null) {
-                                            errorMessage = err
-                                            isValidating = false
-                                        }
-                                    }
+                                if (roomCode.length == 6) {
+                                    triggerJoin(roomCode)
                                 }
                             }
                         ),
                         modifier = Modifier.fillMaxWidth()
                     )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Quick Helpers: Paste from Clipboard & Scan QR Code
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                val clipText = if ((clipboard?.primaryClip?.itemCount ?: 0) > 0) {
+                                    clipboard?.primaryClip?.getItemAt(0)?.text?.toString() ?: ""
+                                } else ""
+                                val extracted = QrCodeHelper.extractRoomCode(clipText)
+                                if (!extracted.isNullOrBlank() && extracted.length == 6) {
+                                    roomCode = extracted
+                                    errorMessage = null
+                                    Toast.makeText(context, "Pasted code $extracted!", Toast.LENGTH_SHORT).show()
+                                    triggerJoin(extracted)
+                                } else {
+                                    Toast.makeText(context, "No 6-character room code in clipboard", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, if (tokens.isDark) Color(0xFF383838) else tokens.surfaceBorder),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = tokens.cellNeutralText)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ContentPaste,
+                                contentDescription = null,
+                                modifier = Modifier.size(15.dp),
+                                tint = tokens.cellNeutralText
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Paste", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = tokens.cellNeutralText)
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                showQrScannerDialog = true
+                            },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, if (tokens.isDark) Color(0xFF383838) else tokens.surfaceBorder),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = tokens.cellNeutralText)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.QrCodeScanner,
+                                contentDescription = null,
+                                modifier = Modifier.size(15.dp),
+                                tint = if (tokens.isDark) Color.White else tokens.accentBrand
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Scan QR", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = tokens.cellNeutralText)
+                        }
+                    }
 
                     if (errorMessage != null) {
                         Spacer(modifier = Modifier.height(12.dp))
@@ -217,36 +304,28 @@ fun JoinRoomScreen(
 
                     Spacer(modifier = Modifier.height(18.dp))
 
+                    val isJoinEnabled = roomCode.length == 6 && !isValidating
                     Button(
                         onClick = {
-                            if (!isValidating && roomCode.length == 6) {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                isValidating = true
-                                errorMessage = null
-                                coroutineScope.launch {
-                                    val err = onJoinRoom(roomCode)
-                                    if (err != null) {
-                                        errorMessage = err
-                                        isValidating = false
-                                    }
-                                }
+                            if (roomCode.length == 6) {
+                                triggerJoin(roomCode)
                             }
                         },
-                        enabled = roomCode.length == 6 && !isValidating,
+                        enabled = isJoinEnabled,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(46.dp),
                         shape = RoundedCornerShape(12.dp),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = tokens.accentOpponent,
-                            contentColor = Color.White,
+                            containerColor = tokens.primaryButtonBg,
+                            contentColor = tokens.primaryButtonText,
                             disabledContainerColor = if (tokens.isDark) Color(0xFF27272A) else Color(0xFFE2E8F0),
                             disabledContentColor = tokens.textMuted
                         )
                     ) {
                         if (isValidating) {
                             androidx.compose.material3.CircularProgressIndicator(
-                                color = Color.White,
+                                color = tokens.primaryButtonText,
                                 modifier = Modifier.size(18.dp),
                                 strokeWidth = 2.dp
                             )
@@ -255,7 +334,8 @@ fun JoinRoomScreen(
                         Text(
                             text = if (isValidating) "Validating Room…" else "Join Room",
                             fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp
+                            fontSize = 14.sp,
+                            color = if (isJoinEnabled) tokens.primaryButtonText else tokens.textMuted
                         )
                     }
                 }

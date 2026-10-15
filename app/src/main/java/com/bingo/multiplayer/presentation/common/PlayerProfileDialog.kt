@@ -3,6 +3,8 @@ package com.bingo.multiplayer.presentation.common
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -21,8 +23,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.bingo.multiplayer.core.designsystem.BingoTheme
+import com.bingo.multiplayer.domain.engine.HeadToHeadCalculator
+import com.bingo.multiplayer.domain.model.Friend
+import com.bingo.multiplayer.domain.model.MatchRecord
 import com.bingo.multiplayer.domain.model.Player
-import com.bingo.multiplayer.domain.model.PlayerOnlineStatus
 import com.bingo.multiplayer.domain.model.UserProfile
 import com.bingo.multiplayer.domain.network.PlayerRegistryEntry
 import com.bingo.multiplayer.domain.repository.FriendsRepository
@@ -80,7 +84,7 @@ data class PlayerProfileData(
                     com.bingo.multiplayer.domain.network.AppActivityState.ONLINE -> "online"
                 }
             } else {
-                com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(cleanUser, p.lastSeenTimestamp)
+                com.bingo.multiplayer.domain.network.PresenceManager.getRichDisplayStatus(cleanUser, p.lastSeenTimestamp)
             }
             val isOnline = com.bingo.multiplayer.domain.network.PresenceManager.isStatusOnline(statusText)
             val cached = if (!isMe) com.bingo.multiplayer.domain.network.AccountSessionManager.getCachedPlayer(cleanUser) else null
@@ -91,7 +95,9 @@ data class PlayerProfileData(
                 avatarUrl = effAvatar,
                 gamesPlayed = if (isMe && currentUser != null) currentUser.gamesPlayed else (if (p.gamesPlayed > 0) p.gamesPlayed else (cached?.gamesPlayed ?: 0)),
                 gamesWon = if (isMe && currentUser != null) currentUser.gamesWon else (if (p.gamesWon > 0) p.gamesWon else (cached?.gamesWon ?: 0)),
-                currentStreak = if (isMe && currentUser != null) currentUser.currentStreak else (if (p.currentStreak > 0) p.currentStreak else (cached?.currentStreak ?: 0)),
+                currentStreak = if (isMe && currentUser != null) currentUser.currentStreak else
+                    if (cached == null || (p.gamesPlayed >= cached.gamesPlayed && p.gamesWon >= cached.gamesWon))
+                        p.currentStreak.coerceAtLeast(0) else cached.currentStreak.coerceAtLeast(0),
                 bestStreak = if (isMe && currentUser != null) currentUser.bestStreak else (if (p.bestStreak > 0) p.bestStreak else (cached?.bestStreak ?: 0)),
                 level = if (isMe && currentUser != null) currentUser.level else (if (p.level > 1) p.level else (cached?.level?.coerceAtLeast(1) ?: 1)),
                 isOnline = isOnline,
@@ -102,7 +108,7 @@ data class PlayerProfileData(
 
         fun fromRegistryEntry(entry: PlayerRegistryEntry): PlayerProfileData {
             val cleanUser = entry.username.trim().lowercase().removePrefix("@")
-            val statusText = com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(cleanUser, entry.lastSeenTimestamp)
+            val statusText = com.bingo.multiplayer.domain.network.PresenceManager.getRichDisplayStatus(cleanUser, entry.lastSeenTimestamp)
             val isOnline = com.bingo.multiplayer.domain.network.PresenceManager.isStatusOnline(statusText)
             return PlayerProfileData(
                 playerId = entry.uid,
@@ -124,40 +130,33 @@ data class PlayerProfileData(
             val cleanUser = friend.username.ifBlank {
                 friend.displayName.filter { it.isLetterOrDigit() }.lowercase().ifEmpty { friend.uid.take(8) }
             }.trim().lowercase().removePrefix("@")
-            val statusText = com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(cleanUser, friend.lastSeenTimestamp)
+            val statusText = com.bingo.multiplayer.domain.network.PresenceManager.getRichDisplayStatus(cleanUser, friend.lastSeenTimestamp)
             val isOnline = com.bingo.multiplayer.domain.network.PresenceManager.isStatusOnline(statusText)
             val cached = com.bingo.multiplayer.domain.network.AccountSessionManager.getCachedPlayer(cleanUser)
-            return if (cached != null) {
-                PlayerProfileData(
-                    playerId = cached.uid.ifBlank { friend.uid },
-                    username = cleanUser,
-                    displayName = cached.displayName.ifBlank { friend.displayName },
-                    avatarUrl = cached.avatarUrl?.takeIf { it.isNotBlank() } ?: friend.avatarUrl,
-                    gamesPlayed = cached.gamesPlayed,
-                    gamesWon = cached.gamesWon,
-                    currentStreak = cached.currentStreak,
-                    bestStreak = cached.bestStreak,
-                    level = cached.level.coerceAtLeast(1),
-                    isOnline = isOnline,
-                    lastSeenDisplay = statusText,
-                    lastSeenTimestamp = friend.lastSeenTimestamp
-                )
-            } else {
-                PlayerProfileData(
-                    playerId = friend.uid,
-                    username = cleanUser,
-                    displayName = friend.displayName,
-                    avatarUrl = friend.avatarUrl,
-                    gamesPlayed = 0,
-                    gamesWon = 0,
-                    currentStreak = 0,
-                    bestStreak = 0,
-                    level = 1,
-                    isOnline = isOnline,
-                    lastSeenDisplay = statusText,
-                    lastSeenTimestamp = friend.lastSeenTimestamp
-                )
-            }
+            val won = maxOf(cached?.gamesWon ?: 0, friend.gamesWon)
+            val played = maxOf(cached?.gamesPlayed ?: 0, friend.gamesPlayed)
+            val streak = cached?.let {
+                com.bingo.multiplayer.domain.engine.FriendCareerStats.merge(friend, it).currentStreak
+            } ?: friend.currentStreak
+            val best = maxOf(cached?.bestStreak ?: 0, cached?.currentStreak ?: 0, friend.currentStreak)
+            val lvl = maxOf(cached?.level ?: 1, friend.level.coerceAtLeast(1))
+            val avatar = cached?.avatarUrl?.takeIf { it.isNotBlank() } ?: friend.avatarUrl
+            val dName = cached?.displayName?.takeIf { it.isNotBlank() } ?: friend.displayName
+            val pId = cached?.uid?.takeIf { it.isNotBlank() } ?: friend.uid
+            return PlayerProfileData(
+                playerId = pId,
+                username = cleanUser,
+                displayName = dName,
+                avatarUrl = avatar,
+                gamesPlayed = played,
+                gamesWon = won,
+                currentStreak = streak,
+                bestStreak = best,
+                level = lvl,
+                isOnline = isOnline,
+                lastSeenDisplay = statusText,
+                lastSeenTimestamp = friend.lastSeenTimestamp
+            )
         }
     }
 }
@@ -171,6 +170,8 @@ fun PlayerProfileDialog(
     playerData: PlayerProfileData,
     currentUser: UserProfile?,
     friendsRepository: FriendsRepository?,
+    matchHistory: List<MatchRecord> = emptyList(),
+    onChallengeFriend: ((Friend) -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -181,6 +182,17 @@ fun PlayerProfileDialog(
     val targetUsername = playerData.username.trim().lowercase().removePrefix("@")
     val isSelf = myUsername.isNotBlank() && myUsername == targetUsername ||
             (currentUser?.uid != null && currentUser.uid == playerData.playerId)
+
+    val h2hStats = remember(playerData.username, playerData.playerId, matchHistory) {
+        if (!isSelf) {
+            HeadToHeadCalculator.calculate(
+                matchHistory = matchHistory,
+                targetUid = playerData.playerId,
+                targetUsername = playerData.username,
+                targetDisplayName = playerData.displayName
+            )
+        } else null
+    }
 
     val isAlreadyFriend = remember(playerData.username, playerData.playerId) {
         friendsRepository?.isFriend(playerData.username) == true ||
@@ -211,11 +223,12 @@ fun PlayerProfileDialog(
                 effectiveData = effectiveData.copy(
                     displayName = cached.displayName.ifBlank { effectiveData.displayName },
                     avatarUrl = cached.avatarUrl?.takeIf { it.isNotBlank() } ?: effectiveData.avatarUrl,
-                    gamesPlayed = cached.gamesPlayed,
-                    gamesWon = cached.gamesWon,
-                    currentStreak = cached.currentStreak,
-                    bestStreak = cached.bestStreak,
-                    level = cached.level.coerceAtLeast(1)
+                    gamesPlayed = maxOf(cached.gamesPlayed, effectiveData.gamesPlayed),
+                    gamesWon = maxOf(cached.gamesWon, effectiveData.gamesWon),
+                    currentStreak = if (cached.gamesPlayed >= effectiveData.gamesPlayed && cached.gamesWon >= effectiveData.gamesWon)
+                        cached.currentStreak.coerceAtLeast(0) else effectiveData.currentStreak,
+                    bestStreak = maxOf(cached.bestStreak, effectiveData.bestStreak),
+                    level = maxOf(cached.level, effectiveData.level).coerceAtLeast(1)
                 )
             }
             try {
@@ -225,11 +238,12 @@ fun PlayerProfileDialog(
                     effectiveData = effectiveData.copy(
                         displayName = entry.displayName.ifBlank { effectiveData.displayName },
                         avatarUrl = entry.avatarUrl?.takeIf { it.isNotBlank() } ?: effectiveData.avatarUrl,
-                        gamesPlayed = entry.gamesPlayed,
-                        gamesWon = entry.gamesWon,
-                        currentStreak = entry.currentStreak,
-                        bestStreak = entry.bestStreak,
-                        level = entry.level.coerceAtLeast(1)
+                        gamesPlayed = maxOf(entry.gamesPlayed, effectiveData.gamesPlayed),
+                        gamesWon = maxOf(entry.gamesWon, effectiveData.gamesWon),
+                        currentStreak = if (entry.gamesPlayed >= effectiveData.gamesPlayed && entry.gamesWon >= effectiveData.gamesWon)
+                            entry.currentStreak.coerceAtLeast(0) else effectiveData.currentStreak,
+                        bestStreak = maxOf(entry.bestStreak, effectiveData.bestStreak),
+                        level = maxOf(entry.level, effectiveData.level).coerceAtLeast(1)
                     )
                 }
             } catch (_: Exception) {}
@@ -377,7 +391,7 @@ fun PlayerProfileDialog(
                             com.bingo.multiplayer.domain.network.AppActivityState.ONLINE -> "online"
                         }
                     } else {
-                        com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(targetUsername, effectiveTs)
+                        com.bingo.multiplayer.domain.network.PresenceManager.getRichDisplayStatus(targetUsername, effectiveTs)
                     }
                     val statusColor = com.bingo.multiplayer.domain.network.PresenceManager.getStatusColor(displayStatus)
 
@@ -463,9 +477,86 @@ fun PlayerProfileDialog(
                     Spacer(modifier = Modifier.weight(1f))
                 }
 
+                // ── Head-to-Head Rivalry Card ──
+                if (!isSelf && h2hStats != null) {
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Text(
+                        text = "HEAD-TO-HEAD RIVALRY",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp,
+                        color = tokens.textMuted,
+                        modifier = Modifier.align(Alignment.Start)
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = tokens.backgroundSecondary,
+                        border = BorderStroke(1.dp, tokens.surfaceBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            if (h2hStats.hasHistory) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column {
+                                        Text(
+                                            text = "Record: ${h2hStats.wins}W - ${h2hStats.losses}L - ${h2hStats.draws}D",
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = tokens.cellNeutralText
+                                        )
+                                        Text(
+                                            text = "${h2hStats.winRatePercentage}% Win Rate • ${h2hStats.streakDisplay}",
+                                            fontSize = 10.5.sp,
+                                            color = tokens.textMuted
+                                        )
+                                    }
+
+                                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        h2hStats.recentOutcomes.forEach { outcome ->
+                                            val c = when (outcome) {
+                                                'W' -> Color(0xFF16A34A)
+                                                'D' -> Color(0xFFEAB308)
+                                                else -> Color(0xFFDC2626)
+                                            }
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(20.dp)
+                                                    .clip(CircleShape)
+                                                    .background(c.copy(alpha = 0.2f))
+                                                    .border(1.dp, c, CircleShape),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    text = "$outcome",
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = c
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                Text(
+                                    text = "No direct matches yet • Challenge them to start a rivalry!",
+                                    fontSize = 11.5.sp,
+                                    color = tokens.textMuted,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(20.dp))
 
-                // ── Action / Add Friend Button ──
+                // ── Action / Challenge / Add Friend Buttons ──
                 if (isSelf) {
                     Surface(
                         shape = RoundedCornerShape(12.dp),
@@ -485,112 +576,162 @@ fun PlayerProfileDialog(
                             )
                         }
                     }
-                } else if (isAlreadyFriend) {
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = tokens.badgeSurface,
-                        border = BorderStroke(1.dp, tokens.badgeOutline),
-                        modifier = Modifier.fillMaxWidth()
+                } else {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Row(
-                            modifier = Modifier.padding(vertical = 10.dp),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Check,
-                                contentDescription = null,
-                                tint = tokens.badgeContent,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Friends",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = tokens.badgeContent
-                            )
-                        }
-                    }
-                } else if (requestSentLocally) {
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = tokens.backgroundSecondary,
-                        border = BorderStroke(1.dp, tokens.surfaceBorder),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(vertical = 10.dp),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.HourglassTop,
-                                contentDescription = null,
-                                tint = tokens.cellNeutralText.copy(alpha = 0.7f),
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Friend Request Sent",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = tokens.cellNeutralText.copy(alpha = 0.7f)
-                            )
-                        }
-                    }
-                    val isOnCooldown = com.bingo.multiplayer.domain.network.ActionCooldownManager.isFriendRequestOnCooldown(effectiveData.username)
-                    Button(
-                        onClick = {
-                            if (currentUser == null) {
-                                Toast.makeText(context, "Sign in to add friends", Toast.LENGTH_SHORT).show()
-                                return@Button
+                        // Challenge / Play Now Button
+                        if (onChallengeFriend != null) {
+                            val isInviteCooldown = com.bingo.multiplayer.domain.network.ActionCooldownManager.isInviteOnCooldown(effectiveData.username)
+                            val challengeContentColor = if (isInviteCooldown) tokens.textMuted else tokens.primaryButtonText
+                            Button(
+                                onClick = {
+                                    com.bingo.multiplayer.domain.network.ActionCooldownManager.startInviteCooldown(effectiveData.username)
+                                    onDismiss()
+                                    onChallengeFriend(
+                                        Friend(
+                                            uid = effectiveData.playerId,
+                                            username = effectiveData.username,
+                                            displayName = effectiveData.displayName,
+                                            avatarUrl = effectiveData.avatarUrl
+                                        )
+                                    )
+                                },
+                                enabled = !isInviteCooldown,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = tokens.primaryButtonBg,
+                                    contentColor = tokens.primaryButtonText,
+                                    disabledContainerColor = if (tokens.isDark) Color(0xFF222222) else Color(0xFFE2E8F0),
+                                    disabledContentColor = tokens.textMuted
+                                ),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.SportsEsports,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(17.dp),
+                                    tint = challengeContentColor
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = if (isInviteCooldown) "Challenge Sent ⚔️" else "Challenge to Match ⚔️",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = challengeContentColor
+                                )
                             }
-                            com.bingo.multiplayer.domain.network.ActionCooldownManager.startFriendRequestCooldown(effectiveData.username)
-                            isSendingRequest = true
-                            coroutineScope.launch {
-                                val success = friendsRepository?.sendFriendRequest(
-                                    targetUsername = effectiveData.username,
-                                    targetDisplayName = effectiveData.displayName,
-                                    targetUid = effectiveData.playerId,
-                                    currentUser = currentUser
-                                ) ?: false
-                                isSendingRequest = false
-                                if (success) {
-                                    requestSentLocally = true
-                                    Toast.makeText(context, "Friend request sent to @${effectiveData.username}!", Toast.LENGTH_SHORT).show()
-                                } else {
-                                    Toast.makeText(context, "Could not send friend request. Try again.", Toast.LENGTH_SHORT).show()
+                        }
+
+                        // Friend Status / Add Friend
+                        if (isAlreadyFriend) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = tokens.badgeSurface,
+                                border = BorderStroke(1.dp, tokens.badgeOutline),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = null,
+                                        tint = tokens.badgeContent,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "In Your Friends List",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = tokens.badgeContent
+                                    )
                                 }
                             }
-                        },
-                        enabled = !isSendingRequest && !isOnCooldown,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (isOnCooldown) (if (tokens.isDark) Color(0xFF222222) else Color(0xFFE2E8F0)) else tokens.primaryButtonBg,
-                            contentColor = if (isOnCooldown) tokens.textMuted else tokens.primaryButtonText,
-                            disabledContainerColor = if (tokens.isDark) Color(0xFF222222) else Color(0xFFE2E8F0),
-                            disabledContentColor = tokens.textMuted
-                        ),
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        if (isSendingRequest) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(16.dp),
-                                color = tokens.primaryButtonText,
-                                strokeWidth = 2.dp
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Sending Request...", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = tokens.primaryButtonText)
+                        } else if (requestSentLocally) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = tokens.backgroundSecondary,
+                                border = BorderStroke(1.dp, tokens.surfaceBorder),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.HourglassTop,
+                                        contentDescription = null,
+                                        tint = tokens.cellNeutralText.copy(alpha = 0.7f),
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Friend Request Pending",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = tokens.cellNeutralText.copy(alpha = 0.7f)
+                                    )
+                                }
+                            }
                         } else {
-                            Icon(
-                                imageVector = Icons.Default.PersonAdd,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                                tint = tokens.primaryButtonText
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Add Friend", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = tokens.primaryButtonText)
+                            val isOnCooldown = com.bingo.multiplayer.domain.network.ActionCooldownManager.isFriendRequestOnCooldown(effectiveData.username)
+                            OutlinedButton(
+                                onClick = {
+                                    if (currentUser == null) {
+                                        Toast.makeText(context, "Sign in to add friends", Toast.LENGTH_SHORT).show()
+                                        return@OutlinedButton
+                                    }
+                                    com.bingo.multiplayer.domain.network.ActionCooldownManager.startFriendRequestCooldown(effectiveData.username)
+                                    isSendingRequest = true
+                                    coroutineScope.launch {
+                                        val success = friendsRepository?.sendFriendRequest(
+                                            targetUsername = effectiveData.username,
+                                            currentUser = currentUser
+                                        ) ?: false
+                                        isSendingRequest = false
+                                        if (success) {
+                                            requestSentLocally = true
+                                            Toast.makeText(context, "Friend request sent to @${effectiveData.username}!", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            Toast.makeText(context, "Could not send friend request. Try again.", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                },
+                                enabled = !isSendingRequest && !isOnCooldown,
+                                shape = RoundedCornerShape(12.dp),
+                                border = BorderStroke(1.dp, if (tokens.isDark) Color(0xFF383838) else tokens.surfaceBorder),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = tokens.cellNeutralText,
+                                    disabledContentColor = tokens.textMuted
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                if (isSendingRequest) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(15.dp),
+                                        strokeWidth = 2.dp,
+                                        color = tokens.cellNeutralText
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Sending...", fontSize = 12.sp, color = tokens.cellNeutralText)
+                                } else {
+                                    val addIconTint = if (isOnCooldown) tokens.textMuted else tokens.cellNeutralText
+                                    Icon(
+                                        imageVector = Icons.Default.PersonAdd,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp),
+                                        tint = addIconTint
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Add as Friend", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = addIconTint)
+                                }
+                            }
                         }
                     }
                 }

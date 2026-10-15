@@ -17,18 +17,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -49,7 +44,6 @@ fun BingoBoardView(
     onCellClicked: (Int) -> Unit,
     modifier: Modifier = Modifier,
     isWinningBoard: Boolean = false,
-    turnGlowIntensity: Float = 0f,
     onBoardWidthMeasured: ((Dp) -> Unit)? = null
 ) {
     val tokens = BingoTheme.colors
@@ -164,72 +158,6 @@ fun BingoBoardView(
                                 )
                             }
                         }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/**
- * Clean plain-text B-I-N-G-O progression tracker in black with realistic extended horizontal strike-through.
- * When a line is completed, a horizontal strike-off line draws smoothly across the letter extending
- * beyond the character boundaries for an authentic pen cross-out feel.
- */
-@Composable
-fun BingoHeaderTracker(
-    completedLines: Int,
-    targetLines: Int = 5,
-    modifier: Modifier = Modifier
-) {
-    val tokens = BingoTheme.colors
-    val extraOs = if (targetLines > 5) List(targetLines - 5) { 'O' } else emptyList()
-    val displayLetters = (BINGO_LETTERS.take(targetLines) + extraOs).take(targetLines)
-
-    Row(
-        modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        displayLetters.forEachIndexed { index, letter ->
-            val isUnlocked = index < completedLines
-
-            val strikeProgress by animateFloatAsState(
-                targetValue = if (isUnlocked) 1f else 0f,
-                animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing),
-                label = "strikeProgress_$index"
-            )
-
-            Box(
-                modifier = Modifier
-                    .wrapContentSize()
-                    .padding(horizontal = 6.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = letter.toString(),
-                    fontSize = 25.sp,
-                    fontWeight = FontWeight.Black,
-                    color = tokens.cellNeutralText
-                )
-
-                if (strikeProgress > 0f) {
-                    Canvas(
-                        modifier = Modifier.matchParentSize()
-                    ) {
-                        val extensionPx = 6.dp.toPx()
-                        val startX = -extensionPx
-                        val totalTargetWidth = size.width + (2 * extensionPx)
-                        val currentEndX = startX + (totalTargetWidth * strikeProgress)
-                        val centerY = size.height / 2f
-
-                        drawLine(
-                            color = tokens.cellNeutralText,
-                            start = Offset(startX, centerY),
-                            end = Offset(currentEndX, centerY),
-                            strokeWidth = 3.5.dp.toPx(),
-                            cap = StrokeCap.Round
-                        )
                     }
                 }
             }

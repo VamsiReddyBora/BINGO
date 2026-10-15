@@ -1,0 +1,50 @@
+{
+  "apk": "Bingo-1.4.1-clean.apk",
+  "version_name": "1.4.1",
+  "version_code": 41,
+  "apk_bytes": 6985826,
+  "apk_sha256": "6c5e014b4a8a699e1506393e79bb6bb3959ccb72e2d6fa85cc425f1118005ccc",
+  "signing_certificate_sha256": "39a428942c3c2629ff3490c944b8b82c7625b22d660b7a2cdf682456d81f60a4",
+  "unit_tests": {
+    "tests": 304,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "unit_test_suites": 30,
+  "lint": {
+    "error": 0,
+    "warning": 47
+  },
+  "build_completed_utc": "2026-10-15T01:14:53.161456+00:00",
+  "source_metrics": {
+    "before": {
+      "kotlin_files": 94,
+      "kotlin_lines": 41667,
+      "explicit_imports": 2412
+    },
+    "after": {
+      "kotlin_files": 89,
+      "kotlin_lines": 39007,
+      "explicit_imports": 2194
+    },
+    "removed_kotlin_lines": 2660,
+    "removed_explicit_imports": 218
+  },
+  "verification_completed_utc": "2026-10-15T01:19:04.244086+00:00",
+  "device_smoke": {
+    "device": "Kevin / emulator-5554",
+    "passed": true,
+    "checks": [
+      "in-place release install",
+      "saved account and career totals",
+      "dashboard",
+      "profile QR",
+      "host room creation",
+      "HOST badge and ping",
+      "room QR",
+      "return to menu"
+    ],
+    "new_matches_played": 0
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "before_defined_classes": 9552,
+  "after_defined_classes": 9459,
+  "removed_classes_confirmed": [
+    "com/bingo/multiplayer/domain/network/FirebaseRoomSessionManager",
+    "com/bingo/multiplayer/domain/network/NearbyConnectionsSessionManager",
+    "com/bingo/multiplayer/domain/repository/DefaultFirebaseAuthProvider"
+  ],
+  "live_transports_confirmed": [
+    "com/bingo/multiplayer/domain/network/OnlineRoomSyncManager",
+    "com/bingo/multiplayer/domain/network/LanP2pSessionManager"
+  ],
+  "test_base64_class_packaged": false
+}

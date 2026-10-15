@@ -74,19 +74,6 @@ object EmojiPreferences {
         return false
     }
 
-    fun isFavoriteEmoji(context: Context, emoji: String): Boolean {
-        return getFavoriteEmojis(context).contains(emoji.trim())
-    }
-
-    fun toggleFavoriteEmoji(context: Context, emoji: String): Boolean {
-        val clean = emoji.trim()
-        return if (isFavoriteEmoji(context, clean)) {
-            removeFavoriteEmoji(context, clean)
-            false
-        } else {
-            addFavoriteEmoji(context, clean)
-        }
-    }
 
     fun getRecentEmojis(context: Context): List<String> {
         val prefs = getPrefs(context)

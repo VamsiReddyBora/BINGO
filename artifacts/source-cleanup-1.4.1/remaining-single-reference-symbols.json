@@ -1,0 +1,62 @@
+[
+  {
+    "path": "app/src/main/java/com/bingo/multiplayer/domain/engine/LobbyLifecycleEngine.kt",
+    "symbol": "onLocalToggleReady",
+    "test_mentions": 10,
+    "declaration": "fun onLocalToggleReady(player: Player, isReady: Boolean): Player {"
+  },
+  {
+    "path": "app/src/main/java/com/bingo/multiplayer/domain/network/AppLifecycleObserver.kt",
+    "symbol": "onStart",
+    "test_mentions": 0,
+    "declaration": "override fun onStart(owner: LifecycleOwner) {"
+  },
+  {
+    "path": "app/src/main/java/com/bingo/multiplayer/domain/network/LowLatencySocketFactory.kt",
+    "symbol": "getDefaultCipherSuites",
+    "test_mentions": 0,
+    "declaration": "override fun getDefaultCipherSuites(): Array<String> = delegate.defaultCipherSuites"
+  },
+  {
+    "path": "app/src/main/java/com/bingo/multiplayer/domain/network/LowLatencySocketFactory.kt",
+    "symbol": "getSupportedCipherSuites",
+    "test_mentions": 0,
+    "declaration": "override fun getSupportedCipherSuites(): Array<String> = delegate.supportedCipherSuites"
+  },
+  {
+    "path": "app/src/main/java/com/bingo/multiplayer/domain/network/UpdateCheckWorker.kt",
+    "symbol": "doWork",
+    "test_mentions": 0,
+    "declaration": "override suspend fun doWork(): Result {"
+  },
+  {
+    "path": "app/src/main/java/com/bingo/multiplayer/domain/network/ActionCooldownManager.kt",
+    "symbol": "getInviteRemainingSeconds",
+    "test_mentions": 3,
+    "declaration": "fun getInviteRemainingSeconds(username: String): Int {"
+  },
+  {
+    "path": "app/src/main/java/com/bingo/multiplayer/domain/network/ActionCooldownManager.kt",
+    "symbol": "getFriendRequestRemainingSeconds",
+    "test_mentions": 2,
+    "declaration": "fun getFriendRequestRemainingSeconds(username: String): Int {"
+  },
+  {
+    "path": "app/src/main/java/com/bingo/multiplayer/domain/network/NotificationActionReceiver.kt",
+    "symbol": "onReceive",
+    "test_mentions": 0,
+    "declaration": "override fun onReceive(context: Context, intent: Intent) {"
+  },
+  {
+    "path": "app/src/main/java/com/bingo/multiplayer/domain/network/PresenceManager.kt",
+    "symbol": "onResponse",
+    "test_mentions": 0,
+    "declaration": "override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) { response.close() }"
+  },
+  {
+    "path": "app/src/main/java/com/bingo/multiplayer/domain/network/BroadcastMessageManager.kt",
+    "symbol": "onSuccess",
+    "test_mentions": 0,
+    "declaration": "override fun onSuccess(asyncActionToken: IMqttToken?) {"
+  }
+]

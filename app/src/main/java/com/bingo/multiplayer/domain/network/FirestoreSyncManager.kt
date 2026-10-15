@@ -53,7 +53,6 @@ class FirestoreSyncManager(
     }
 
     private var profileListenerRegistration: ListenerRegistration? = null
-    private var friendsListenerRegistration: ListenerRegistration? = null
 
     // ── 1. USER PROFILE & THEME SETTINGS SYNC ──
 
@@ -241,7 +240,7 @@ class FirestoreSyncManager(
                     .collection(SUBCOLLECTION_MATCHES)
                     .document(record.id)
 
-                val payload = hashMapOf(
+                val payload = hashMapOf<String, Any?>(
                     "id" to record.id,
                     "mode" to record.mode,
                     "opponentName" to record.opponentName,
@@ -249,7 +248,13 @@ class FirestoreSyncManager(
                     "isDraw" to record.isDraw,
                     "boardSize" to record.boardSize,
                     "timestamp" to record.timestamp,
-                    "matchTitle" to record.matchTitle
+                    "matchTitle" to record.matchTitle,
+                    "opponentUid" to record.opponentUid,
+                    "turnsTaken" to record.turnsTaken,
+                    "linesCompleted" to record.linesCompleted,
+                    "durationSeconds" to record.durationSeconds,
+                    "finalBoardNumbers" to record.finalBoardNumbers,
+                    "markedNumbers" to record.markedNumbers
                 )
 
                 matchDoc.set(payload, SetOptions.merge()).await()
@@ -275,7 +280,7 @@ class FirestoreSyncManager(
 
                     chunk.forEach { record ->
                         val docRef = matchesColl.document(record.id)
-                        val payload = hashMapOf(
+                        val payload = hashMapOf<String, Any?>(
                             "id" to record.id,
                             "mode" to record.mode,
                             "opponentName" to record.opponentName,
@@ -283,7 +288,13 @@ class FirestoreSyncManager(
                             "isDraw" to record.isDraw,
                             "boardSize" to record.boardSize,
                             "timestamp" to record.timestamp,
-                            "matchTitle" to record.matchTitle
+                            "matchTitle" to record.matchTitle,
+                            "opponentUid" to record.opponentUid,
+                            "turnsTaken" to record.turnsTaken,
+                            "linesCompleted" to record.linesCompleted,
+                            "durationSeconds" to record.durationSeconds,
+                            "finalBoardNumbers" to record.finalBoardNumbers,
+                            "markedNumbers" to record.markedNumbers
                         )
                         batch.set(docRef, payload, SetOptions.merge())
                     }
@@ -320,6 +331,11 @@ class FirestoreSyncManager(
                 if (snapshot != null) {
                     val list = snapshot.documents.mapNotNull { doc ->
                         try {
+                            @Suppress("UNCHECKED_CAST")
+                            val finalBoardRaw = doc.get("finalBoardNumbers") as? List<Number>
+                            @Suppress("UNCHECKED_CAST")
+                            val markedRaw = doc.get("markedNumbers") as? List<Number>
+
                             MatchRecord(
                                 id = doc.getString("id") ?: doc.id,
                                 mode = doc.getString("mode") ?: "Online",
@@ -328,7 +344,13 @@ class FirestoreSyncManager(
                                 isDraw = doc.getBoolean("isDraw") ?: false,
                                 boardSize = doc.getLong("boardSize")?.toInt() ?: 5,
                                 timestamp = doc.getLong("timestamp") ?: System.currentTimeMillis(),
-                                matchTitle = doc.getString("matchTitle") ?: ""
+                                matchTitle = doc.getString("matchTitle") ?: "",
+                                opponentUid = doc.getString("opponentUid") ?: "",
+                                turnsTaken = doc.getLong("turnsTaken")?.toInt() ?: 0,
+                                linesCompleted = doc.getLong("linesCompleted")?.toInt() ?: 0,
+                                durationSeconds = doc.getLong("durationSeconds") ?: 0L,
+                                finalBoardNumbers = finalBoardRaw?.map { it.toInt() } ?: emptyList(),
+                                markedNumbers = markedRaw?.map { it.toInt() } ?: emptyList()
                             )
                         } catch (_: Exception) {
                             null
@@ -339,6 +361,56 @@ class FirestoreSyncManager(
             }
 
         awaitClose { listener.remove() }
+    }
+
+    /**
+     * One-time direct fetch of the player's cloud match records with a strict 3000ms timeout.
+     * Used by LeaderboardSyncManager during app boot.
+     */
+    suspend fun fetchMatchHistoryOnce(uid: String, maxLimit: Long = 250): List<MatchRecord> = withContext(Dispatchers.IO) {
+        if (uid.isBlank()) return@withContext emptyList()
+        try {
+            val snapshot = kotlinx.coroutines.withTimeoutOrNull(3000L) {
+                firestore.collection(COLLECTION_USERS)
+                    .document(uid)
+                    .collection(SUBCOLLECTION_MATCHES)
+                    .orderBy("timestamp", com.google.firebase.firestore.Query.Direction.DESCENDING)
+                    .limit(maxLimit)
+                    .get()
+                    .await()
+            } ?: return@withContext emptyList()
+
+            snapshot.documents.mapNotNull { doc ->
+                try {
+                    @Suppress("UNCHECKED_CAST")
+                    val finalBoardRaw = doc.get("finalBoardNumbers") as? List<Number>
+                    @Suppress("UNCHECKED_CAST")
+                    val markedRaw = doc.get("markedNumbers") as? List<Number>
+
+                    MatchRecord(
+                        id = doc.getString("id") ?: doc.id,
+                        mode = doc.getString("mode") ?: "Online",
+                        opponentName = doc.getString("opponentName") ?: "Opponent",
+                        didWin = doc.getBoolean("didWin") ?: false,
+                        isDraw = doc.getBoolean("isDraw") ?: false,
+                        boardSize = doc.getLong("boardSize")?.toInt() ?: 5,
+                        timestamp = doc.getLong("timestamp") ?: System.currentTimeMillis(),
+                        matchTitle = doc.getString("matchTitle") ?: "",
+                        opponentUid = doc.getString("opponentUid") ?: "",
+                        turnsTaken = doc.getLong("turnsTaken")?.toInt() ?: 0,
+                        linesCompleted = doc.getLong("linesCompleted")?.toInt() ?: 0,
+                        durationSeconds = doc.getLong("durationSeconds") ?: 0L,
+                        finalBoardNumbers = finalBoardRaw?.map { it.toInt() } ?: emptyList(),
+                        markedNumbers = markedRaw?.map { it.toInt() } ?: emptyList()
+                    )
+                } catch (_: Exception) {
+                    null
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "fetchMatchHistoryOnce error: ${e.message}")
+            emptyList()
+        }
     }
 
     // ── 3. FRIENDS LIST SYNC ──
@@ -363,7 +435,11 @@ class FirestoreSyncManager(
                             "displayName" to friend.displayName,
                             "avatarUrl" to friend.avatarUrl,
                             "isOnline" to friend.isOnline,
-                            "lastSeenTimestamp" to friend.lastSeenTimestamp
+                            "lastSeenTimestamp" to friend.lastSeenTimestamp,
+                            "gamesPlayed" to friend.gamesPlayed,
+                            "gamesWon" to friend.gamesWon,
+                            "currentStreak" to friend.currentStreak,
+                            "level" to friend.level
                         )
                         batch.set(docRef, data, SetOptions.merge())
                     }
@@ -376,45 +452,87 @@ class FirestoreSyncManager(
         }
     }
 
+
     /**
-     * Streams friends list from Firestore subcollection `users/{uid}/friends`.
+     * Retrieves a single player's career profile from Firestore by their UID.
      */
-    fun streamFriendsList(uid: String): Flow<List<Friend>> = callbackFlow {
-        if (uid.isBlank()) {
-            trySend(emptyList())
-            close()
-            return@callbackFlow
+    suspend fun fetchPlayerProfile(uid: String): PlayerRegistryEntry? = withContext(Dispatchers.IO) {
+        if (uid.isBlank()) return@withContext null
+        try {
+            val snapshot = firestore.collection(COLLECTION_USERS).document(uid).get().await()
+            if (snapshot != null && snapshot.exists()) {
+                val username = snapshot.getString("username") ?: ""
+                val displayName = snapshot.getString("displayName") ?: "Player"
+                val avatarUrl = snapshot.getString("avatarUrl")
+                val gamesPlayed = snapshot.getLong("gamesPlayed")?.toInt() ?: 0
+                val gamesWon = snapshot.getLong("gamesWon")?.toInt() ?: 0
+                val currentStreak = snapshot.getLong("currentStreak")?.toInt() ?: 0
+                val bestStreak = snapshot.getLong("bestStreak")?.toInt() ?: currentStreak
+                val level = snapshot.getLong("level")?.toInt() ?: 1
+                return@withContext PlayerRegistryEntry(
+                    username = username,
+                    uid = uid,
+                    displayName = displayName,
+                    avatarUrl = avatarUrl,
+                    gamesPlayed = gamesPlayed,
+                    gamesWon = gamesWon,
+                    currentStreak = currentStreak,
+                    bestStreak = bestStreak,
+                    level = level
+                )
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "fetchPlayerProfile error for $uid: ${e.message}")
         }
+        null
+    }
 
-        val listener = firestore.collection(COLLECTION_USERS)
-            .document(uid)
-            .collection(SUBCOLLECTION_FRIENDS)
-            .addSnapshotListener { snapshot, error ->
-                if (error != null) {
-                    Log.w(TAG, "Firestore friends listener error: ${error.message}")
-                    return@addSnapshotListener
-                }
-
-                if (snapshot != null) {
-                    val list = snapshot.documents.mapNotNull { doc ->
-                        try {
-                            Friend(
-                                uid = doc.getString("uid") ?: doc.id,
-                                username = doc.getString("username") ?: "",
-                                displayName = doc.getString("displayName") ?: "Friend",
-                                avatarUrl = doc.getString("avatarUrl"),
-                                isOnline = doc.getBoolean("isOnline") ?: false,
-                                lastSeenTimestamp = doc.getLong("lastSeenTimestamp") ?: 0L
-                            )
-                        } catch (_: Exception) {
-                            null
-                        }
+    /**
+     * Batch-retrieves multiple player career profiles in a single query from Firestore: `users` collection.
+     */
+    suspend fun fetchPlayerProfiles(uids: List<String>): Map<String, PlayerRegistryEntry> = withContext(Dispatchers.IO) {
+        val cleanUids = uids.filter { it.isNotBlank() }.distinct()
+        if (cleanUids.isEmpty()) return@withContext emptyMap()
+        val result = mutableMapOf<String, PlayerRegistryEntry>()
+        try {
+            cleanUids.chunked(30).forEach { chunk ->
+                try {
+                    val querySnapshot = kotlinx.coroutines.withTimeoutOrNull(1500L) {
+                        firestore.collection(COLLECTION_USERS)
+                            .whereIn(com.google.firebase.firestore.FieldPath.documentId(), chunk)
+                            .get()
+                            .await()
+                    } ?: return@forEach
+                    for (doc in querySnapshot.documents) {
+                        val uid = doc.id
+                        val username = doc.getString("username") ?: ""
+                        val displayName = doc.getString("displayName") ?: "Player"
+                        val avatarUrl = doc.getString("avatarUrl")
+                        val gamesPlayed = (doc.get("gamesPlayed") as? Number)?.toInt() ?: doc.getString("gamesPlayed")?.toIntOrNull() ?: doc.getLong("gamesPlayed")?.toInt() ?: 0
+                        val gamesWon = (doc.get("gamesWon") as? Number)?.toInt() ?: doc.getString("gamesWon")?.toIntOrNull() ?: doc.getLong("gamesWon")?.toInt() ?: 0
+                        val currentStreak = (doc.get("currentStreak") as? Number)?.toInt() ?: doc.getString("currentStreak")?.toIntOrNull() ?: doc.getLong("currentStreak")?.toInt() ?: 0
+                        val bestStreak = (doc.get("bestStreak") as? Number)?.toInt() ?: doc.getString("bestStreak")?.toIntOrNull() ?: doc.getLong("bestStreak")?.toInt() ?: currentStreak
+                        val level = (doc.get("level") as? Number)?.toInt() ?: doc.getString("level")?.toIntOrNull() ?: doc.getLong("level")?.toInt() ?: 1
+                        result[uid] = PlayerRegistryEntry(
+                            username = username,
+                            uid = uid,
+                            displayName = displayName,
+                            avatarUrl = avatarUrl,
+                            gamesPlayed = gamesPlayed,
+                            gamesWon = gamesWon,
+                            currentStreak = currentStreak,
+                            bestStreak = bestStreak,
+                            level = level
+                        )
                     }
-                    trySend(list)
+                } catch (e: Exception) {
+                    Log.w(TAG, "fetchPlayerProfiles chunk error: ${e.message}")
                 }
             }
-
-        awaitClose { listener.remove() }
+        } catch (e: Exception) {
+            Log.w(TAG, "fetchPlayerProfiles error: ${e.message}")
+        }
+        result
     }
 
     companion object {

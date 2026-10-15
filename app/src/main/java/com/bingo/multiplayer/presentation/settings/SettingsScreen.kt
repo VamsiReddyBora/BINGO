@@ -39,14 +39,12 @@ import androidx.compose.animation.core.tween
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Badge
-import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Mood
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.TextButton
 import androidx.compose.material.icons.filled.Email
@@ -55,7 +53,6 @@ import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Palette
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.DropdownMenu
@@ -74,9 +71,6 @@ import com.bingo.multiplayer.domain.network.EmojiPreferences
 import com.bingo.multiplayer.presentation.components.AnimatedEmoji
 import com.bingo.multiplayer.domain.network.AppUpdateManager
 import com.bingo.multiplayer.domain.network.UpdateState
-import com.bingo.multiplayer.domain.network.BingoNotificationManager
-import com.bingo.multiplayer.domain.network.BingoFcmManager
-import com.google.firebase.messaging.FirebaseMessaging
 import android.content.Intent
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.core.app.NotificationManagerCompat
@@ -97,7 +91,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -123,15 +116,12 @@ import com.bingo.multiplayer.core.designsystem.BingoTheme
 import com.bingo.multiplayer.domain.model.AuthProvider
 import com.bingo.multiplayer.domain.model.AuthState
 import com.bingo.multiplayer.domain.model.UserProfile
-import com.bingo.multiplayer.domain.network.PlayerRegistryEntry
 import com.bingo.multiplayer.domain.network.QuickChatPreferences
 import com.bingo.multiplayer.domain.repository.AuthRepository
 import com.bingo.multiplayer.domain.repository.FriendsRepository
 import com.bingo.multiplayer.presentation.common.PlayerAvatar
 import com.bingo.multiplayer.presentation.common.PlayerProfileData
 import com.bingo.multiplayer.presentation.common.PlayerProfileDialog
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 enum class ColorPickerTarget {
@@ -484,7 +474,6 @@ fun SettingsScreen(
             "✌️", "🤝", "🙏", "👀", "💃", "🕺", "🛸", "🦄", "🍀", "🌈"
         )
     }
-
 
 
     if (showAddFavoriteEmojiDialog) {
@@ -2549,7 +2538,7 @@ private fun SoundSettingsContent(
             onCheckedChange = {
                 SoundPreferences.setSoundEnabled(context, it)
                 if (it) {
-                    BingoSoundEffects.playPickSound(context, forceSound = true)
+                    BingoSoundEffects.playPickSound(forceSound = true)
                 }
             }
         )
@@ -2601,7 +2590,7 @@ private fun SoundSettingsContent(
                     .padding(vertical = 3.dp)
                     .clickable {
                         SoundPreferences.setPickSoundPresetId(context, preset.id)
-                        BingoSoundEffects.playPickSound(context, overridePresetId = preset.id, forceSound = true)
+                        BingoSoundEffects.playPickSound(overridePresetId = preset.id, forceSound = true)
                         BingoSoundEffects.playVibration(context)
                     }
             ) {
@@ -2620,7 +2609,7 @@ private fun SoundSettingsContent(
                             selected = isSelected,
                             onClick = {
                                 SoundPreferences.setPickSoundPresetId(context, preset.id)
-                                BingoSoundEffects.playPickSound(context, overridePresetId = preset.id, forceSound = true)
+                                BingoSoundEffects.playPickSound(overridePresetId = preset.id, forceSound = true)
                                 BingoSoundEffects.playVibration(context)
                             },
                             colors = RadioButtonDefaults.colors(
@@ -2665,7 +2654,7 @@ private fun SoundSettingsContent(
                     // Play / Preview Button
                     IconButton(
                         onClick = {
-                            BingoSoundEffects.playPickSound(context, overridePresetId = preset.id, forceSound = true)
+                            BingoSoundEffects.playPickSound(overridePresetId = preset.id, forceSound = true)
                             BingoSoundEffects.playVibration(context)
                         },
                         modifier = Modifier.size(32.dp)

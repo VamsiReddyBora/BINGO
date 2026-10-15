@@ -120,9 +120,6 @@ object BingoSoundEffects {
         }
     }
 
-    fun getPreset(id: String): PickSoundPreset {
-        return PRESETS.find { it.id == id } ?: PRESETS.first()
-    }
 
     /**
      * Synthesizes 16-bit PCM waveform samples for each sound preset on demand.
@@ -251,7 +248,7 @@ object BingoSoundEffects {
      * Plays the selected number pick sound preset if sounds are enabled.
      * Can also be called directly with a specific presetId for previewing in Settings.
      */
-    fun playPickSound(context: Context, overridePresetId: String? = null, forceSound: Boolean = false) {
+    fun playPickSound(overridePresetId: String? = null, forceSound: Boolean = false) {
         if (!forceSound && !SoundPreferences.soundEnabled.value) return
 
         val activePreset = overridePresetId ?: SoundPreferences.pickSoundPresetId.value

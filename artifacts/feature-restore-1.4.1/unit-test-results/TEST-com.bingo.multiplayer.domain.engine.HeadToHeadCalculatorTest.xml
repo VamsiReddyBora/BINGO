@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.bingo.multiplayer.domain.engine.HeadToHeadCalculatorTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-10-14T17:07:21" hostname="VR" time="0.003">
+  <properties/>
+  <testcase name="recent outcomes is capped to latest 5 matches in most-recent-first order" classname="com.bingo.multiplayer.domain.engine.HeadToHeadCalculatorTest" time="0.001"/>
+  <testcase name="calculates winning streak correctly" classname="com.bingo.multiplayer.domain.engine.HeadToHeadCalculatorTest" time="0.0"/>
+  <testcase name="calculates wins losses and draws accurately with win rate" classname="com.bingo.multiplayer.domain.engine.HeadToHeadCalculatorTest" time="0.0"/>
+  <testcase name="matches against other opponents are excluded" classname="com.bingo.multiplayer.domain.engine.HeadToHeadCalculatorTest" time="0.0"/>
+  <testcase name="empty history returns empty stats" classname="com.bingo.multiplayer.domain.engine.HeadToHeadCalculatorTest" time="0.0"/>
+  <testcase name="calculates losing streak correctly" classname="com.bingo.multiplayer.domain.engine.HeadToHeadCalculatorTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

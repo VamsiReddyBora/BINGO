@@ -1,20 +1,13 @@
 package com.bingo.multiplayer.presentation.social
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
@@ -26,33 +19,20 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bingo.multiplayer.core.designsystem.BingoTheme
 import com.bingo.multiplayer.domain.model.Friend
-import com.bingo.multiplayer.domain.model.FriendRequest
 import com.bingo.multiplayer.domain.model.MatchRecord
 import com.bingo.multiplayer.domain.model.UserProfile
-import com.bingo.multiplayer.domain.network.AccountSessionManager
-import com.bingo.multiplayer.domain.network.ActionCooldownManager
-import com.bingo.multiplayer.domain.network.PlayerPresence
 import com.bingo.multiplayer.domain.network.PlayerRegistryEntry
 import com.bingo.multiplayer.domain.network.PresenceManager
 import com.bingo.multiplayer.domain.repository.AuthRepository
 import com.bingo.multiplayer.domain.repository.FriendsRepository
-import com.bingo.multiplayer.presentation.common.PlayerAvatar
 import com.bingo.multiplayer.presentation.common.PlayerProfileData
 import com.bingo.multiplayer.presentation.common.PlayerProfileDialog
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 @Composable
 fun DashboardAndFriendsScreen(
@@ -69,6 +49,9 @@ fun DashboardAndFriendsScreen(
 
     var selectedTab by remember { mutableIntStateOf(0) } // 0 = Dashboard, 1 = Friends, 2 = Requests
     var selectedProfilePlayer by remember { mutableStateOf<PlayerProfileData?>(null) }
+    var showShareProfileDialog by remember { mutableStateOf(false) }
+    var selectedScorecardMatch by remember { mutableStateOf<MatchRecord?>(null) }
+    var showQrScannerDialog by remember { mutableStateOf(false) }
 
     val friends by friendsRepository.friends.collectAsState()
     val pendingRequests by friendsRepository.pendingRequests.collectAsState()
@@ -78,7 +61,22 @@ fun DashboardAndFriendsScreen(
         authRepository.streamFirestoreMatchHistory() ?: kotlinx.coroutines.flow.flowOf(emptyList())
     }.collectAsState(initial = emptyList())
     val localMatches = remember { authRepository.getMatchHistory() }
-    val matchHistory = if (firestoreMatches.isNotEmpty()) firestoreMatches else localMatches
+    val matchHistory = remember(localMatches, firestoreMatches) {
+        if (firestoreMatches.isEmpty()) {
+            localMatches
+        } else {
+            (localMatches + firestoreMatches)
+                .distinctBy { it.id }
+                .sortedByDescending { it.timestamp }
+        }
+    }
+
+    // Persist matches fetched from Firestore locally so they load in 0ms on next app open
+    LaunchedEffect(firestoreMatches) {
+        if (firestoreMatches.isNotEmpty()) {
+            authRepository.persistMatchHistory(matchHistory)
+        }
+    }
 
     // Friend search state
     var searchUsernameInput by remember { mutableStateOf("") }
@@ -86,21 +84,33 @@ fun DashboardAndFriendsScreen(
     var foundPlayer by remember { mutableStateOf<PlayerRegistryEntry?>(null) }
     var searchAttempted by remember { mutableStateOf(false) }
 
-    LaunchedEffect(user.username, foundPlayer) {
-        friendsRepository.syncFriendsAndRequests(user.username)
-        PresenceManager.startPresence(user.username)
-        while (isActive) {
-            val usersToFetch = mutableListOf<String>()
-            friendsRepository.friends.value.forEach { if (it.username.isNotBlank()) usersToFetch.add(it.username) }
-            val fp = foundPlayer
-            if (fp != null && fp.username.isNotBlank()) {
-                usersToFetch.add(fp.username)
-            }
-            val cleanList = usersToFetch.distinct()
-            if (cleanList.isNotEmpty()) {
-                PresenceManager.fetchCloudPresenceForUsers(cleanList)
-            }
-            delay(3000L)
+    // Initial sync runs ONCE per user session without being cancelled by friends list updates
+    LaunchedEffect(user.username, user.uid) {
+        if (user.username.isNotBlank()) {
+            com.bingo.multiplayer.domain.network.LeaderboardSyncManager.startBootSync(
+                context = context,
+                username = user.username,
+                uid = user.uid,
+                friendsRepository = friendsRepository,
+                authRepository = authRepository
+            )
+            friendsRepository.syncFriendsAndRequests(user.username)
+            PresenceManager.startPresence(user.username)
+            PresenceManager.startPresenceWatcher()
+        }
+    }
+
+    // Refresh presence for current friends and search results
+    LaunchedEffect(friends, foundPlayer) {
+        val usersToFetch = mutableListOf<String>()
+        friends.forEach { if (it.username.isNotBlank()) usersToFetch.add(it.username) }
+        val fp = foundPlayer
+        if (fp != null && fp.username.isNotBlank()) {
+            usersToFetch.add(fp.username)
+        }
+        val cleanList = usersToFetch.distinct()
+        if (cleanList.isNotEmpty()) {
+            PresenceManager.fetchCloudPresenceForUsers(cleanList)
         }
     }
 
@@ -221,7 +231,11 @@ fun DashboardAndFriendsScreen(
                 0 -> {
                     DashboardTabContent(
                         user = user,
-                        matchHistory = matchHistory
+                        friends = friends,
+                        matchHistory = matchHistory,
+                        onShareProfile = { showShareProfileDialog = true },
+                        onSelectScorecardMatch = { record -> selectedScorecardMatch = record },
+                        onViewProfile = { profile -> selectedProfilePlayer = profile }
                     )
                 }
                 1 -> {
@@ -246,14 +260,13 @@ fun DashboardAndFriendsScreen(
                                 }
                             }
                         },
+                        onOpenQrScanner = { showQrScannerDialog = true },
                         isAlreadyFriend = { uidOrUsername -> friendsRepository.isFriend(uidOrUsername) },
                         hasSentRequest = { username -> sentRequests.contains(username.trim().lowercase().removePrefix("@")) },
                         onSendFriendRequest = { entry ->
                             coroutineScope.launch {
                                 val success = friendsRepository.sendFriendRequest(
                                     targetUsername = entry.username,
-                                    targetDisplayName = entry.displayName,
-                                    targetUid = entry.uid,
                                     currentUser = user
                                 )
                                 if (success) {
@@ -295,12 +308,93 @@ fun DashboardAndFriendsScreen(
             }
         }
 
+        // ── Dialogs ──
+        if (showShareProfileDialog) {
+            ShareProfileDialog(
+                user = user,
+                onDismiss = { showShareProfileDialog = false }
+            )
+        }
+
+        selectedScorecardMatch?.let { scorecardRecord ->
+            MatchScorecardDialog(
+                record = scorecardRecord,
+                onDismiss = { selectedScorecardMatch = null },
+                onRematch = { opponentNameStr ->
+                    selectedScorecardMatch = null
+                    val friendMatch = friends.find {
+                        it.username.equals(opponentNameStr, ignoreCase = true) ||
+                        it.displayName.equals(opponentNameStr, ignoreCase = true) ||
+                        (scorecardRecord.opponentUid.isNotBlank() && it.uid == scorecardRecord.opponentUid)
+                    }
+                    if (friendMatch != null) {
+                        onInviteFriendToMatch(friendMatch)
+                    } else {
+                        val adHoc = Friend(
+                            uid = scorecardRecord.opponentUid.ifBlank { opponentNameStr },
+                            displayName = opponentNameStr,
+                            username = opponentNameStr
+                        )
+                        onInviteFriendToMatch(adHoc)
+                    }
+                },
+                onViewProfile = { opponentNameStr ->
+                    selectedScorecardMatch = null
+                    coroutineScope.launch {
+                        val cleanName = opponentNameStr.trim().lowercase().removePrefix("@")
+                        val found = authRepository.sessionManager.searchPlayerByUsername(cleanName, forceRefresh = false)
+                        if (found != null) {
+                            selectedProfilePlayer = PlayerProfileData.fromRegistryEntry(found)
+                        } else {
+                            selectedProfilePlayer = PlayerProfileData(
+                                playerId = scorecardRecord.opponentUid.ifBlank { opponentNameStr },
+                                username = opponentNameStr,
+                                displayName = opponentNameStr,
+                                avatarUrl = null
+                            )
+                        }
+                    }
+                }
+            )
+        }
+
+        if (showQrScannerDialog) {
+            ProfileQrScannerDialog(
+                onDismiss = { showQrScannerDialog = false },
+                onProfileScanned = { payload ->
+                    showQrScannerDialog = false
+                    searchUsernameInput = payload.username
+                    isSearching = true
+                    coroutineScope.launch {
+                        foundPlayer = authRepository.sessionManager.searchPlayerByUsername(payload.username, forceRefresh = true)
+                        isSearching = false
+                        val entry = foundPlayer
+                        if (entry != null) {
+                            selectedProfilePlayer = PlayerProfileData.fromRegistryEntry(entry)
+                        } else {
+                            selectedProfilePlayer = PlayerProfileData(
+                                playerId = payload.uid,
+                                username = payload.username,
+                                displayName = payload.displayName,
+                                avatarUrl = null
+                            )
+                        }
+                    }
+                }
+            )
+        }
+
         val profileToDisplay = selectedProfilePlayer
         if (profileToDisplay != null) {
             PlayerProfileDialog(
                 playerData = profileToDisplay,
                 currentUser = user,
                 friendsRepository = friendsRepository,
+                matchHistory = matchHistory,
+                onChallengeFriend = { friend ->
+                    selectedProfilePlayer = null
+                    onInviteFriendToMatch(friend)
+                },
                 onDismiss = { selectedProfilePlayer = null }
             )
         }
@@ -319,7 +413,10 @@ private fun TabButton(
     val tokens = BingoTheme.colors
 
     Surface(
-        modifier = modifier.clickable { onClick() },
+        modifier = modifier.clickable(
+            interactionSource = remember { MutableInteractionSource() },
+            indication = null
+        ) { onClick() },
         shape = RoundedCornerShape(9.dp),
         color = if (selected) tokens.surface else Color.Transparent,
         border = if (selected) BorderStroke(1.dp, tokens.surfaceBorder) else null
@@ -359,1041 +456,5 @@ private fun TabButton(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun DashboardTabContent(
-    user: UserProfile,
-    matchHistory: List<MatchRecord>
-) {
-    val tokens = BingoTheme.colors
-    var visibleMatchCount by remember { mutableStateOf(10) }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-    ) {
-        // ── 1. Hero Player Card ──
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(18.dp),
-            color = tokens.surface,
-            border = BorderStroke(1.dp, tokens.surfaceBorder),
-            shadowElevation = 1.dp
-        ) {
-            Column(modifier = Modifier.padding(18.dp)) {
-                // Top-right username display without @
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    Text(
-                        text = "username: ${user.username.ifBlank { user.playerId }}",
-                        fontSize = 11.5.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = tokens.textMuted
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    PlayerAvatar(
-                        avatarPathOrUri = user.avatarBase64?.takeIf { it.isNotBlank() } ?: user.avatarUrl,
-                        displayName = user.displayName,
-                        size = 64.dp,
-                        borderWidth = 2.dp,
-                        borderColor = tokens.accentBrand,
-                        username = user.username
-                    )
-
-                    Spacer(modifier = Modifier.width(14.dp))
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = user.displayName,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = tokens.cellNeutralText
-                            )
-
-                            Spacer(modifier = Modifier.width(8.dp))
-
-                            Surface(
-                                shape = RoundedCornerShape(6.dp),
-                                color = tokens.badgeSurface,
-                                border = BorderStroke(1.dp, tokens.badgeOutline)
-                            ) {
-                                Text(
-                                    text = user.rankTitle,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = tokens.badgeContent,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        Text(
-                            text = "Level ${user.level} • ${user.xp} XP",
-                            fontSize = 11.sp,
-                            color = tokens.textMuted
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // XP Progress to next level
-                val currentLevelProgress = (user.xp % 400) / 400f
-                LinearProgressIndicator(
-                    progress = { currentLevelProgress },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(6.dp)
-                        .clip(RoundedCornerShape(3.dp)),
-                    color = if (tokens.isDark) Color.White else tokens.accentBrand,
-                    trackColor = if (tokens.isDark) Color(0xFF222222) else tokens.backgroundSecondary,
-                )
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(text = "Rank: Level ${user.level}", fontSize = 10.sp, color = tokens.textMuted)
-                    Text(text = "${(currentLevelProgress * 100).toInt()}% to Level ${user.level + 1}", fontSize = 10.sp, color = if (tokens.isDark) Color.White else tokens.accentBrand, fontWeight = FontWeight.SemiBold)
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // ── 2. Career Statistics Grid (2x2) ──
-        Text(
-            text = "CAREER PERFORMANCE",
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 1.sp,
-            color = tokens.textMuted
-        )
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            StatCard(
-                title = "Total Matches",
-                value = "${user.gamesPlayed}",
-                icon = Icons.Default.SportsEsports,
-                color = tokens.accentBrand,
-                modifier = Modifier.weight(1f)
-            )
-
-            StatCard(
-                title = "Victories",
-                value = "${user.gamesWon}",
-                icon = Icons.Default.EmojiEvents,
-                color = Color(0xFF16A34A),
-                modifier = Modifier.weight(1f)
-            )
-        }
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            StatCard(
-                title = "Active Streak",
-                value = "${user.currentStreak} 🔥",
-                icon = Icons.Default.LocalFireDepartment,
-                color = tokens.accentOrange,
-                modifier = Modifier.weight(1f)
-            )
-
-            StatCard(
-                title = "Best Streak",
-                value = "${user.bestStreak} 🏆",
-                icon = Icons.Default.EmojiEvents,
-                color = Color(0xFFEAB308),
-                modifier = Modifier.weight(1f)
-            )
-        }
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            StatCard(
-                title = "Win Rate",
-                value = "${user.winRatePercentage}%",
-                icon = Icons.Default.PieChart,
-                color = tokens.accentOpponent,
-                modifier = Modifier.weight(1f)
-            )
-
-            Spacer(modifier = Modifier.weight(1f))
-        }
-
-        Spacer(modifier = Modifier.height(20.dp))
-
-        // ── 3. Recent Match History ──
-        Text(
-            text = "RECENT MATCH HISTORY",
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 1.sp,
-            color = tokens.cellNeutralText.copy(alpha = 0.5f)
-        )
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        if (matchHistory.isEmpty()) {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
-                color = tokens.surface,
-                border = BorderStroke(1.dp, tokens.surfaceBorder)
-            ) {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Icon(imageVector = Icons.Default.History, contentDescription = null, tint = tokens.cellNeutralText.copy(alpha = 0.35f), modifier = Modifier.size(32.dp))
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(text = "No matches recorded yet", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = tokens.cellNeutralText)
-                    Text(text = "Play games against AI or friends to see your match history!", fontSize = 11.5.sp, color = tokens.cellNeutralText.copy(alpha = 0.5f))
-                }
-            }
-        } else {
-            val visibleMatches = matchHistory.take(visibleMatchCount)
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                visibleMatches.forEach { record ->
-                    MatchRecordCard(record = record)
-                }
-
-                if (matchHistory.size > visibleMatchCount) {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .clickable { visibleMatchCount += 50 },
-                        shape = RoundedCornerShape(12.dp),
-                        color = if (tokens.isDark) Color(0xFF1E1E1E) else tokens.accentBrand.copy(alpha = 0.08f),
-                        border = BorderStroke(1.dp, tokens.accentBrand.copy(alpha = 0.35f))
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 12.dp, horizontal = 16.dp),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.ExpandMore,
-                                contentDescription = null,
-                                tint = tokens.accentBrand,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "Show More Matches (${visibleMatches.size} of ${matchHistory.size})",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = tokens.accentBrand
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(84.dp))
-    }
-}
-
-@Composable
-private fun StatCard(
-    title: String,
-    value: String,
-    icon: ImageVector,
-    color: Color,
-    modifier: Modifier = Modifier
-) {
-    val tokens = BingoTheme.colors
-
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(14.dp),
-        color = tokens.surface,
-        border = BorderStroke(1.dp, tokens.surfaceBorder),
-        shadowElevation = 1.dp
-    ) {
-        Row(
-            modifier = Modifier.padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(38.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(if (tokens.isDark) Color(0xFF1E1E1E) else color.copy(alpha = 0.12f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = if (tokens.isDark) Color.White else color,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-
-            Spacer(modifier = Modifier.width(10.dp))
-
-            Column {
-                Text(text = title, fontSize = 10.5.sp, color = tokens.textMuted, fontWeight = FontWeight.Medium)
-                Text(text = value, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = tokens.cellNeutralText)
-            }
-        }
-    }
-}
-
-@Composable
-private fun MatchRecordCard(record: MatchRecord) {
-    val tokens = BingoTheme.colors
-    val dateFormat = remember { SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault()) }
-
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        color = tokens.surface,
-        border = BorderStroke(1.dp, tokens.surfaceBorder)
-    ) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                val badgeBg = if (tokens.isDark) {
-                    Color(0xFF222222)
-                } else {
-                    when {
-                        record.isDraw -> Color(0xFFEAB308).copy(alpha = 0.15f)
-                        record.didWin -> Color(0xFF16A34A).copy(alpha = 0.15f)
-                        else -> Color(0xFFDC2626).copy(alpha = 0.15f)
-                    }
-                }
-                val badgeColor = if (tokens.isDark) {
-                    Color.White
-                } else {
-                    when {
-                        record.isDraw -> Color(0xFFEAB308)
-                        record.didWin -> Color(0xFF16A34A)
-                        else -> Color(0xFFDC2626)
-                    }
-                }
-                val badgeLetter = when {
-                    record.isDraw -> "D"
-                    record.didWin -> "W"
-                    else -> "L"
-                }
-
-                Box(
-                    modifier = Modifier
-                        .size(34.dp)
-                        .clip(RoundedCornerShape(17.dp))
-                        .background(badgeBg)
-                        .then(
-                            if (tokens.isDark) Modifier.border(1.dp, Color(0xFF383838), RoundedCornerShape(17.dp))
-                            else Modifier
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = badgeLetter,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp,
-                        color = badgeColor
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(10.dp))
-
-                Column {
-                    val displayTitle = if (record.matchTitle.isNotBlank()) {
-                        record.matchTitle
-                    } else if (record.isDraw) {
-                        "${record.opponentName} Draw 🤝"
-                    } else if (record.didWin) {
-                        "Victory vs ${record.opponentName} 🏆"
-                    } else {
-                        "Defeat vs ${record.opponentName} 😑"
-                    }
-                    Text(
-                        text = displayTitle,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = tokens.cellNeutralText
-                    )
-                    Text(
-                        text = "${record.mode} • ${record.boardSize}×${record.boardSize} Grid",
-                        fontSize = 11.sp,
-                        color = tokens.cellNeutralText.copy(alpha = 0.5f)
-                    )
-                }
-            }
-
-            Text(
-                text = dateFormat.format(Date(record.timestamp)),
-                fontSize = 10.5.sp,
-                color = tokens.cellNeutralText.copy(alpha = 0.45f)
-            )
-        }
-    }
-}
-
-@Composable
-private fun FriendsTabContent(
-    friends: List<Friend>,
-    searchUsernameInput: String,
-    onSearchUsernameChanged: (String) -> Unit,
-    isSearching: Boolean,
-    foundPlayer: PlayerRegistryEntry?,
-    searchAttempted: Boolean,
-    onSearch: () -> Unit,
-    isAlreadyFriend: (String) -> Boolean,
-    hasSentRequest: (String) -> Boolean,
-    onSendFriendRequest: (PlayerRegistryEntry) -> Unit,
-    onInviteFriend: (Friend) -> Unit,
-    onRequestRemoveFriend: (Friend) -> Unit,
-    presenceMap: Map<String, PlayerPresence>,
-    onViewProfile: (PlayerProfileData) -> Unit
-) {
-    val tokens = BingoTheme.colors
-
-    // Live ticker to automatically re-evaluate elapsed last-seen strings every 5 seconds
-    var ticker by remember { mutableStateOf(0L) }
-    LaunchedEffect(Unit) {
-        while (isActive) {
-            delay(5000L)
-            ticker = System.currentTimeMillis()
-        }
-    }
-
-    // Prefetch friends career records in background so profile dialogs open with zero delay
-    LaunchedEffect(friends) {
-        friends.forEach { friend ->
-            if (friend.username.isNotBlank()) {
-                AccountSessionManager.prefetchPlayer(friend.username, this)
-            }
-        }
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-    ) {
-        // ── 1. Search & Add Friend Card ──
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            color = tokens.surface,
-            border = BorderStroke(1.dp, tokens.surfaceBorder),
-            shadowElevation = 1.dp
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text(
-                    text = "SEARCH PLAYER TO ADD FRIEND",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.sp,
-                    color = tokens.cellNeutralText.copy(alpha = 0.5f)
-                )
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    OutlinedTextField(
-                        value = searchUsernameInput,
-                        onValueChange = onSearchUsernameChanged,
-                        placeholder = {
-                            Text("Enter player's @username", fontSize = 13.sp, color = tokens.cellNeutralText.copy(alpha = 0.4f))
-                        },
-                        singleLine = true,
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.weight(1f),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = tokens.accentBrand,
-                            unfocusedBorderColor = tokens.surfaceBorder
-                        )
-                    )
-
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    val keyboardController = LocalSoftwareKeyboardController.current
-                    Button(
-                        onClick = {
-                            keyboardController?.hide()
-                            onSearch()
-                        },
-                        shape = RoundedCornerShape(10.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = tokens.primaryButtonBg,
-                            contentColor = tokens.primaryButtonText
-                        ),
-                        enabled = !isSearching && searchUsernameInput.isNotBlank()
-                    ) {
-                        if (isSearching) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = tokens.primaryButtonText)
-                        } else {
-                            Icon(imageVector = Icons.Default.Search, contentDescription = "Search", modifier = Modifier.size(16.dp), tint = tokens.primaryButtonText)
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Search", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = tokens.primaryButtonText)
-                        }
-                    }
-                }
-
-                if (foundPlayer != null) {
-                    val player = foundPlayer
-                    val cleanFoundUser = player.username.trim().lowercase().removePrefix("@")
-                    val already = isAlreadyFriend(cleanFoundUser)
-                    val requested = hasSentRequest(cleanFoundUser)
-                    if (ticker >= 0L) Unit
-                    val livePresence = presenceMap[cleanFoundUser]
-                    val effectiveLastSeen = livePresence?.timestamp?.takeIf { it > 0L } ?: player.lastSeenTimestamp
-                    val statusText = PresenceManager.getDisplayStatus(cleanFoundUser, effectiveLastSeen)
-                    val displayStatus = statusText
-                    val statusColor = PresenceManager.getStatusColor(statusText)
-
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = tokens.backgroundSecondary,
-                        border = BorderStroke(1.dp, tokens.surfaceBorder),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .clickable {
-                                        val freshPlayer = player.copy(lastSeenTimestamp = effectiveLastSeen)
-                                        onViewProfile(PlayerProfileData.fromRegistryEntry(freshPlayer))
-                                    }
-                                    .padding(vertical = 2.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                PlayerAvatar(
-                                    avatarPathOrUri = player.avatarUrl,
-                                    displayName = player.displayName,
-                                    size = 40.dp,
-                                    username = player.username
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = player.displayName,
-                                    fontSize = 13.5.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = tokens.cellNeutralText,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f, fill = false)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = displayStatus,
-                                    fontSize = 10.5.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = statusColor,
-                                    maxLines = 1,
-                                    softWrap = false
-                                )
-                            }
-
-                            when {
-                                already -> {
-                                    // If already friends, no need to display anything
-                                }
-                                else -> {
-                                    val isOnCooldown = ActionCooldownManager.isFriendRequestOnCooldown(cleanFoundUser)
-                                    IconButton(
-                                        onClick = {
-                                            ActionCooldownManager.startFriendRequestCooldown(cleanFoundUser)
-                                            onSendFriendRequest(player)
-                                        },
-                                        enabled = !isOnCooldown,
-                                        modifier = Modifier.size(36.dp)
-                                    ) {
-                                        val iconTint = if (isOnCooldown) {
-                                            tokens.textMuted
-                                        } else {
-                                            if (tokens.isDark) Color.White else tokens.accentBrand
-                                        }
-                                        Icon(
-                                            imageVector = Icons.Default.PersonAdd,
-                                            contentDescription = "Add Friend",
-                                            tint = iconTint,
-                                            modifier = Modifier.size(24.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } else if (searchAttempted && !isSearching) {
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Text(
-                        text = "No player found with username \"$searchUsernameInput\"",
-                        fontSize = 12.sp,
-                        color = tokens.cellNeutralText.copy(alpha = 0.6f),
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(20.dp))
-
-        // ── 2. Friends List Header ──
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "MY FRIENDS (${friends.size})",
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 1.sp,
-                color = tokens.textMuted
-            )
-
-            val onlineCount = friends.count {
-                val cleanF = it.username.trim().lowercase().removePrefix("@")
-                val livePres = presenceMap[cleanF]
-                val effectiveTs = livePres?.timestamp?.takeIf { ts -> ts > 0L } ?: it.lastSeenTimestamp.takeIf { ts -> ts > 0L }
-                val status = if (livePres != null) {
-                    PresenceManager.getDisplayStatus(cleanF, effectiveTs)
-                } else if (it.lastSeenTimestamp > 0L && (System.currentTimeMillis() - it.lastSeenTimestamp) >= 60_000L) {
-                    PresenceManager.getDisplayStatus(cleanF, it.lastSeenTimestamp)
-                } else {
-                    "offline"
-                }
-                PresenceManager.isStatusOnline(status)
-            }
-            if (onlineCount > 0) {
-                Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = tokens.badgeSurface,
-                    border = BorderStroke(1.dp, tokens.badgeOutline)
-                ) {
-                    Text(
-                        text = "$onlineCount online",
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = tokens.badgeContent,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        if (friends.isEmpty()) {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
-                color = tokens.surface,
-                border = BorderStroke(1.dp, tokens.surfaceBorder)
-            ) {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(28.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Icon(imageVector = Icons.Default.GroupAdd, contentDescription = null, tint = tokens.cellNeutralText.copy(alpha = 0.35f), modifier = Modifier.size(36.dp))
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Text(text = "No friends added yet", fontSize = 13.5.sp, fontWeight = FontWeight.Bold, color = tokens.cellNeutralText)
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(text = "Search a player by @username above and send a friend request to connect!", fontSize = 11.5.sp, textAlign = TextAlign.Center, color = tokens.cellNeutralText.copy(alpha = 0.5f))
-                }
-            }
-        } else {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                friends.forEach { friend ->
-                    FriendCard(
-                        friend = friend,
-                        onInvite = { onInviteFriend(friend) },
-                        onRemove = { onRequestRemoveFriend(friend) },
-                        onClickProfile = { onViewProfile(PlayerProfileData.fromFriend(friend)) }
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(84.dp))
-    }
-}
-
-@Composable
-private fun FriendCard(
-    friend: Friend,
-    onInvite: () -> Unit,
-    onRemove: () -> Unit,
-    onClickProfile: () -> Unit
-) {
-    val tokens = BingoTheme.colors
-    val presenceMap by PresenceManager.presenceFlow.collectAsState()
-    var ticker by remember { mutableStateOf(0L) }
-    LaunchedEffect(Unit) {
-        while (isActive) {
-            delay(2000L)
-            ticker = System.currentTimeMillis()
-        }
-    }
-    if (ticker >= 0L) Unit
-    val cleanFriend = friend.username.trim().lowercase().removePrefix("@")
-    val livePres = presenceMap[cleanFriend]
-    val effectiveTs = livePres?.timestamp?.takeIf { it > 0L } ?: friend.lastSeenTimestamp.takeIf { it > 0L }
-    val now = System.currentTimeMillis()
-    val statusText = if (livePres != null) {
-        PresenceManager.getDisplayStatus(cleanFriend, effectiveTs)
-    } else if (friend.lastSeenTimestamp > 0L && (now - friend.lastSeenTimestamp) >= 60_000L) {
-        PresenceManager.getDisplayStatus(cleanFriend, friend.lastSeenTimestamp)
-    } else {
-        "offline"
-    }
-    val displayStatus = statusText
-    val statusColor = PresenceManager.getStatusColor(statusText)
-
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        color = tokens.surface,
-        border = BorderStroke(1.dp, tokens.surfaceBorder),
-        shadowElevation = 1.dp
-    ) {
-        Row(
-            modifier = Modifier.padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable(onClick = onClickProfile)
-                    .padding(vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                PlayerAvatar(
-                    avatarPathOrUri = friend.avatarUrl,
-                    displayName = friend.displayName,
-                    size = 42.dp,
-                    borderColor = tokens.accentBrand,
-                    username = friend.username
-                )
-
-                Spacer(modifier = Modifier.width(8.dp))
-
-                Text(
-                    text = friend.displayName,
-                    fontSize = 13.5.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = tokens.cellNeutralText,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false)
-                )
-
-                Spacer(modifier = Modifier.width(6.dp))
-
-                Text(
-                    text = displayStatus,
-                    fontSize = 10.5.sp,
-                    color = statusColor,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    softWrap = false
-                )
-            }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                val isInviteCooldown = ActionCooldownManager.isInviteOnCooldown(cleanFriend)
-                Button(
-                    onClick = {
-                        ActionCooldownManager.startInviteCooldown(cleanFriend)
-                        onInvite()
-                    },
-                    enabled = !isInviteCooldown,
-                    shape = RoundedCornerShape(8.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isInviteCooldown) (if (tokens.isDark) Color(0xFF222222) else Color(0xFFE2E8F0)) else tokens.primaryButtonBg,
-                        contentColor = if (isInviteCooldown) tokens.textMuted else tokens.primaryButtonText,
-                        disabledContainerColor = if (tokens.isDark) Color(0xFF222222) else Color(0xFFE2E8F0),
-                        disabledContentColor = tokens.textMuted
-                    ),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.SportsEsports,
-                        contentDescription = null,
-                        modifier = Modifier.size(13.dp),
-                        tint = if (isInviteCooldown) tokens.textMuted else tokens.primaryButtonText
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = if (isInviteCooldown) "Invited" else "Invite",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = if (isInviteCooldown) tokens.textMuted else tokens.primaryButtonText
-                    )
-                }
-
-                IconButton(
-                    onClick = onRemove,
-                    modifier = Modifier.size(28.dp)
-                ) {
-                    Icon(imageVector = Icons.Default.Close, contentDescription = "Remove", tint = tokens.cellNeutralText.copy(alpha = 0.4f), modifier = Modifier.size(16.dp))
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun RequestsTabContent(
-    user: UserProfile,
-    pendingRequests: List<FriendRequest>,
-    onAcceptFriendRequest: (FriendRequest) -> Unit,
-    onDeclineFriendRequest: (FriendRequest) -> Unit,
-    onAcceptInvite: ((com.bingo.multiplayer.domain.network.GameInvite) -> Unit)? = null
-) {
-    val tokens = BingoTheme.colors
-    val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
-    var invites by remember { mutableStateOf<List<com.bingo.multiplayer.domain.network.GameInvite>>(emptyList()) }
-    var loadingInvites by remember { mutableStateOf(true) }
-
-    LaunchedEffect(user.username) {
-        while (isActive) {
-            val fetched = com.bingo.multiplayer.domain.network.GameInviteManager.fetchInvitesForUser(user.username)
-            invites = fetched
-            loadingInvites = false
-            kotlinx.coroutines.delay(3000L)
-        }
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-    ) {
-        // ── 1. FRIEND REQUESTS SECTION ──
-        Text(
-            text = "PENDING FRIEND REQUESTS (${pendingRequests.size})",
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 1.sp,
-            color = tokens.cellNeutralText.copy(alpha = 0.5f),
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
-
-        if (pendingRequests.isEmpty()) {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                color = tokens.cellNeutralBg
-            ) {
-                Text(
-                    text = "No pending friend requests.",
-                    modifier = Modifier.padding(18.dp),
-                    textAlign = TextAlign.Center,
-                    color = tokens.cellNeutralText.copy(alpha = 0.6f),
-                    fontSize = 13.sp
-                )
-            }
-        } else {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                pendingRequests.forEach { req ->
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                        color = tokens.surface,
-                        border = BorderStroke(1.dp, tokens.surfaceBorder)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            PlayerAvatar(
-                                avatarPathOrUri = req.fromAvatarUrl,
-                                displayName = req.fromDisplayName,
-                                size = 42.dp,
-                                username = req.fromUsername
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = req.fromDisplayName,
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = tokens.cellNeutralText
-                                )
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    text = "wants to be your friend",
-                                    fontSize = 11.5.sp,
-                                    color = tokens.cellNeutralText.copy(alpha = 0.6f)
-                                )
-                            }
-
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Button(
-                                    onClick = { onAcceptFriendRequest(req) },
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = tokens.primaryButtonBg,
-                                        contentColor = tokens.primaryButtonText
-                                    ),
-                                    shape = RoundedCornerShape(8.dp),
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
-                                ) {
-                                    Text("Accept", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = tokens.primaryButtonText)
-                                }
-
-                                OutlinedButton(
-                                    onClick = { onDeclineFriendRequest(req) },
-                                    shape = RoundedCornerShape(8.dp),
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
-                                ) {
-                                    Text("Ignore", fontSize = 12.sp, color = tokens.cellNeutralText)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        // ── 2. MATCH INVITATIONS SECTION ──
-        Text(
-            text = "MATCH INVITATIONS (${invites.size})",
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 1.sp,
-            color = tokens.cellNeutralText.copy(alpha = 0.5f),
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
-
-        if (loadingInvites) {
-            Box(modifier = Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = tokens.accentBrand, modifier = Modifier.size(24.dp))
-            }
-        } else if (invites.isEmpty()) {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                color = tokens.cellNeutralBg
-            ) {
-                Text(
-                    text = "No pending game invites.",
-                    modifier = Modifier.padding(18.dp),
-                    textAlign = TextAlign.Center,
-                    color = tokens.cellNeutralText.copy(alpha = 0.6f),
-                    fontSize = 13.sp
-                )
-            }
-        } else {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                invites.forEach { invite ->
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                        color = tokens.surface,
-                        border = BorderStroke(1.dp, tokens.surfaceBorder)
-                    ) {
-                        Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Invite from ${invite.fromDisplayName}",
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = tokens.cellNeutralText
-                                )
-                                Text(
-                                    text = "@${invite.fromUsername} invited you to room: #${invite.roomCode}",
-                                    fontSize = 12.sp,
-                                    color = tokens.cellNeutralText.copy(alpha = 0.7f)
-                                )
-                            }
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                OutlinedButton(
-                                    onClick = {
-                                        coroutineScope.launch {
-                                            com.bingo.multiplayer.domain.network.GameInviteManager.removeInvite(user.username, invite.roomCode)
-                                        }
-                                        invites = invites.filter { it.roomCode != invite.roomCode }
-                                    },
-                                    shape = RoundedCornerShape(8.dp),
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                                    modifier = Modifier.padding(end = 6.dp)
-                                ) {
-                                    Text("Decline", fontSize = 11.sp, color = tokens.cellNeutralText)
-                                }
-                                Button(
-                                    onClick = {
-                                        coroutineScope.launch {
-                                            com.bingo.multiplayer.domain.network.GameInviteManager.removeInvite(user.username, invite.roomCode)
-                                        }
-                                        invites = invites.filter { it.roomCode != invite.roomCode }
-                                        if (onAcceptInvite != null) {
-                                            onAcceptInvite(invite)
-                                        } else {
-                                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                            clipboard.setPrimaryClip(ClipData.newPlainText("Bingo Room Code", invite.roomCode))
-                                            Toast.makeText(context, "Room Code ${invite.roomCode} copied! Join Online Room.", Toast.LENGTH_LONG).show()
-                                        }
-                                    },
-                                    shape = RoundedCornerShape(8.dp),
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = tokens.primaryButtonBg,
-                                        contentColor = tokens.primaryButtonText
-                                    ),
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
-                                ) {
-                                    Text("Accept & Play", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = tokens.primaryButtonText)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(84.dp))
     }
 }

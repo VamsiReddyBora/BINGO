@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.bingo.multiplayer.domain.network.AppUpdateManagerTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-14T17:07:21" hostname="VR" time="0.016">
+  <properties/>
+  <testcase name="testParseUpdatePayload_VersionJsonFormat" classname="com.bingo.multiplayer.domain.network.AppUpdateManagerTest" time="0.012"/>
+  <testcase name="testParseUpdatePayload_GitHubReleaseFormat" classname="com.bingo.multiplayer.domain.network.AppUpdateManagerTest" time="0.003"/>
+  <testcase name="testVersionComparison_EqualOrLowerRemoteVersion" classname="com.bingo.multiplayer.domain.network.AppUpdateManagerTest" time="0.0"/>
+  <testcase name="testVersionComparison_HandlesPrefixesAndWhitespace" classname="com.bingo.multiplayer.domain.network.AppUpdateManagerTest" time="0.0"/>
+  <testcase name="testVersionComparison_HigherRemoteVersion" classname="com.bingo.multiplayer.domain.network.AppUpdateManagerTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

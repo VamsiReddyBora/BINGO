@@ -1,10 +1,7 @@
 package com.bingo.multiplayer.domain.network
 
-import com.bingo.multiplayer.presentation.components.ALL_REACTION_EMOJIS
-import com.bingo.multiplayer.presentation.components.EmojiParticleConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -18,30 +15,6 @@ import org.junit.Test
  */
 class EmojiParticleSystemAndPreferencesTest {
 
-    @Test
-    fun testDefaultEmojiParticleConfig() {
-        val config = EmojiParticleConfig()
-        assertNotNull(config.emojiList)
-        assertEquals(12, config.emojiList.size)
-
-        val expectedEmojis = listOf("❤️", "😂", "🔥", "😍", "😎", "🎉", "🤯", "💀", "👀", "✨", "🚀", "💯")
-        assertEquals(expectedEmojis, config.emojiList)
-
-        // Burst size (8 to 15 particles)
-        assertTrue("Particle count is within burst range", config.particleCount in 8..15)
-
-        // Sizes: small background (18sp) to large visual emphasis (48sp)
-        assertTrue("Min size is at least 18sp", config.minSize >= 18f)
-        assertTrue("Max size is up to 48sp", config.maxSize <= 50f)
-        assertTrue("Min size < Max size", config.minSize < config.maxSize)
-
-        // Speeds and lifecycles
-        assertTrue("Min speed < Max speed", config.minSpeed < config.maxSpeed)
-        assertTrue("Particle lifetime is >= 2.5s", config.particleLifetime >= 2500L)
-        assertTrue("Scale in duration is positive", config.scaleDuration > 0L)
-        assertTrue("Fade out duration is positive", config.fadeDuration > 0L)
-        assertTrue("Max active particles <= 120", config.maxActiveParticles <= 120)
-    }
 
     @Test
     fun testDepthTierDistributionLogic() {

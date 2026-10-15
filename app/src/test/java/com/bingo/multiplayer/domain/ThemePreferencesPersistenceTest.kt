@@ -1,7 +1,6 @@
 package com.bingo.multiplayer.domain
 
 import com.bingo.multiplayer.core.designsystem.ThemePreferences
-import com.bingo.multiplayer.domain.model.UserSettings
 import com.bingo.multiplayer.domain.repository.AuthRepository
 import com.bingo.multiplayer.domain.repository.AuthRepositoryTest
 import org.junit.Assert.*

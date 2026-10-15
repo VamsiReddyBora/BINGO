@@ -347,4 +347,3 @@ fun MultiplayerTurnSpotlightBar(
         }
     }
 }
-

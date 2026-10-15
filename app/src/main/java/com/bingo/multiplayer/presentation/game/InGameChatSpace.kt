@@ -1,29 +1,44 @@
 package com.bingo.multiplayer.presentation.game
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.keyframes
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
@@ -32,6 +47,7 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bingo.multiplayer.core.designsystem.BingoColors
@@ -48,21 +64,24 @@ import com.bingo.multiplayer.presentation.components.AnimatedEmoji
  * - Displays light grey "Double tap to chat" hint when empty or idle.
  * - Double tapping triggers the full-length text box & software keyboard.
  * - Messages animate and bounce into position (Self on right, Opponent on left).
+ * - Real-time typing indicator with player name & 3 rhythmic bouncing dots (WhatsApp / Messenger style).
  */
 @Composable
 fun InGameChatSpace(
     messages: List<InGameChatMessage>,
+    typingPlayerName: String? = null,
     onDoubleTapToChat: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val tokens = BingoTheme.colors
     val listState = rememberLazyListState()
 
-    // Auto-scroll to latest message whenever a new message arrives
-    LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) {
+    // Auto-scroll to latest message or active typing indicator
+    LaunchedEffect(messages.size, typingPlayerName) {
+        val totalCount = messages.size + if (typingPlayerName != null) 1 else 0
+        if (totalCount > 0) {
             try {
-                listState.animateScrollToItem(messages.size - 1)
+                listState.animateScrollToItem(totalCount - 1)
             } catch (_: Exception) {}
         }
     }
@@ -78,7 +97,7 @@ fun InGameChatSpace(
             },
         contentAlignment = Alignment.Center
     ) {
-        if (messages.isEmpty()) {
+        if (messages.isEmpty() && typingPlayerName == null) {
             // Subtle hint displayed on the plain space: double tap to chat
             Text(
                 text = "💬 Double tap to chat",
@@ -114,6 +133,14 @@ fun InGameChatSpace(
                 ) {
                     items(messages, key = { it.id }) { msg ->
                         InGameChatBubble(message = msg, tokens = tokens)
+                    }
+                    if (typingPlayerName != null) {
+                        item(key = "chat_typing_indicator") {
+                            TypingIndicatorBubble(
+                                playerName = typingPlayerName,
+                                tokens = tokens
+                            )
+                        }
                     }
                 }
             }
@@ -253,6 +280,140 @@ private fun InGameChatBubble(
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * WhatsApp / Instagram / Messenger style in-game typing bubble:
+ * Displays player's name alongside 3 synchronized animated bouncing dots.
+ */
+@Composable
+fun TypingIndicatorBubble(
+    playerName: String,
+    tokens: BingoColors
+) {
+    val bounceScale = remember { Animatable(0.4f) }
+    LaunchedEffect(playerName) {
+        bounceScale.animateTo(
+            targetValue = 1f,
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioMediumBouncy,
+                stiffness = Spring.StiffnessMediumLow
+            )
+        )
+    }
+
+    Box(
+        modifier = Modifier.fillMaxWidth(),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        Surface(
+            shape = RoundedCornerShape(topStart = 3.dp, topEnd = 14.dp, bottomStart = 14.dp, bottomEnd = 14.dp),
+            color = if (tokens.isDark) Color(0xFF181818) else tokens.surface,
+            border = BorderStroke(0.5.dp, tokens.surfaceBorder),
+            shadowElevation = 1.dp,
+            modifier = Modifier
+                .graphicsLayer {
+                    scaleX = bounceScale.value
+                    scaleY = bounceScale.value
+                }
+                .widthIn(max = 240.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp)
+            ) {
+                Text(
+                    text = "$playerName is typing",
+                    fontSize = 11.sp,
+                    lineHeight = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (tokens.isDark) tokens.textSecondary else tokens.accentOpponent
+                )
+                BouncingDotsIndicator(
+                    color = if (tokens.isDark) tokens.primaryButtonBg else tokens.accentOpponent
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 3 Rhythmic animated bouncing dots mimicking the wave animation in WhatsApp, Messenger, and Instagram.
+ */
+@Composable
+fun BouncingDotsIndicator(
+    color: Color,
+    modifier: Modifier = Modifier,
+    dotSize: Dp = 4.5.dp,
+    bounceHeight: Dp = 4.dp
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "BouncingDots")
+
+    // Staggered sine-wave like bounce offsets: 0ms, 160ms, 320ms out of 1000ms cycle
+    val bounce0 by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 0f,
+        animationSpec = infiniteRepeatable(
+            animation = keyframes {
+                durationMillis = 1000
+                0f at 0 using FastOutSlowInEasing
+                -1f at 200 using FastOutSlowInEasing
+                0f at 400 using FastOutSlowInEasing
+                0f at 1000 using LinearEasing
+            },
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "dot0"
+    )
+
+    val bounce1 by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 0f,
+        animationSpec = infiniteRepeatable(
+            animation = keyframes {
+                durationMillis = 1000
+                0f at 160 using FastOutSlowInEasing
+                -1f at 360 using FastOutSlowInEasing
+                0f at 560 using FastOutSlowInEasing
+                0f at 1000 using LinearEasing
+            },
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "dot1"
+    )
+
+    val bounce2 by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 0f,
+        animationSpec = infiniteRepeatable(
+            animation = keyframes {
+                durationMillis = 1000
+                0f at 320 using FastOutSlowInEasing
+                -1f at 520 using FastOutSlowInEasing
+                0f at 720 using FastOutSlowInEasing
+                0f at 1000 using LinearEasing
+            },
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "dot2"
+    )
+
+    Row(
+        modifier = modifier.height(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        listOf(bounce0, bounce1, bounce2).forEach { offsetFraction ->
+            Box(
+                modifier = Modifier
+                    .offset(y = bounceHeight * offsetFraction)
+                    .size(dotSize)
+                    .clip(CircleShape)
+                    .background(color)
+            )
         }
     }
 }

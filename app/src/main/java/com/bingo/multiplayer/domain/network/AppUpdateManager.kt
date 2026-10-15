@@ -11,7 +11,6 @@ import android.util.Log
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -20,7 +19,6 @@ import kotlinx.coroutines.withContext
 import okhttp3.Request
 import org.json.JSONObject
 import java.io.File
-import java.io.FileInputStream
 import java.io.FileOutputStream
 
 data class AppUpdateInfo(
@@ -307,33 +305,6 @@ object AppUpdateManager {
                     targetFile.delete()
                 }
 
-                if (downloadUrl == "test://self_install") {
-                    // Test Simulation: safely test the OTA installer pipeline using this build's APK (matching versionCode 34 and signature)
-                    val sourceApk = File(context.applicationInfo.sourceDir)
-                    val totalBytes = if (sourceApk.exists()) sourceApk.length() else 1L
-                    var totalCopied = 0L
-
-                    FileInputStream(sourceApk).use { input ->
-                        FileOutputStream(targetFile).use { output ->
-                            val buffer = ByteArray(65536)
-                            var read: Int
-                            while (input.read(buffer).also { read = it } != -1) {
-                                output.write(buffer, 0, read)
-                                totalCopied += read
-                                val progress = (totalCopied.toFloat() / totalBytes).coerceIn(0f, 1f)
-                                _updateState.value = UpdateState.Downloading(progress, totalCopied, totalBytes)
-                                delay(25) // Smooth UI progress animation simulation
-                            }
-                            output.flush()
-                        }
-                    }
-
-                    Log.i(TAG, "Test simulation prepared APK: ${targetFile.absolutePath} (${targetFile.length()} bytes)")
-                    _updateState.value = UpdateState.ReadyToInstall(targetFile)
-                    onComplete?.invoke(targetFile)
-                    return@launch
-                }
-
                 // Prepare redundant download candidate URLs in case one CDN node is blocked
                 val downloadCandidates = mutableListOf(downloadUrl)
                 if (!downloadUrl.contains("vamsireddybora.github.io")) {
@@ -501,24 +472,4 @@ object AppUpdateManager {
         _updateState.value = UpdateState.Idle
     }
 
-    /**
-     * Test verification trigger: Simulates an update flow by testing
-     * the download UI and native package installer without triggering a downgrade rejection.
-     */
-    fun triggerVerificationTest(context: Context) {
-        scope.launch {
-            _updateState.value = UpdateState.Checking
-            val appFile = File(context.applicationInfo.sourceDir)
-            val size = if (appFile.exists()) appFile.length() else 5500000L
-            val testInfo = AppUpdateInfo(
-                hasUpdate = true,
-                latestVersionTag = "v1.3",
-                latestVersionName = "1.3 (Test Simulation)",
-                downloadUrl = "test://self_install",
-                releaseNotes = "• Test verification of In-App OTA Update Engine\n• Verifies Android PackageInstaller & FileProvider on this device\n• Re-installs/updates current build preserving all settings",
-                apkSize = size
-            )
-            _updateState.value = UpdateState.UpdateAvailable(testInfo)
-        }
-    }
 }

@@ -3,7 +3,6 @@ package com.bingo.multiplayer.domain.repository
 import android.content.Context
 import android.content.SharedPreferences
 import android.net.Uri
-import androidx.annotation.Keep
 import com.bingo.multiplayer.domain.model.AuthProvider
 import com.bingo.multiplayer.domain.model.AuthState
 import com.bingo.multiplayer.domain.model.UserProfile
@@ -22,76 +21,12 @@ import androidx.compose.ui.graphics.asImageBitmap
 import java.io.File
 import java.util.UUID
 
-@Keep
-data class FirebaseUserResult(
-    val uid: String,
-    val displayName: String,
-    val email: String? = null,
-    val avatarUrl: String? = null,
-    val token: String = "",
-    val provider: AuthProvider = AuthProvider.GOOGLE
-)
-
-@Keep
-interface FirebaseAuthProvider {
-    suspend fun signInWithGoogle(idToken: String): FirebaseUserResult
-    suspend fun signInWithPlayGames(authCode: String): FirebaseUserResult
-    suspend fun signInAnonymously(): FirebaseUserResult
-    suspend fun refreshToken(currentToken: String?): String?
-    suspend fun fetchUserProfile(uid: String): UserProfile?
-}
-
-@Keep
-class DefaultFirebaseAuthProvider : FirebaseAuthProvider {
-    override suspend fun signInWithGoogle(idToken: String): FirebaseUserResult {
-        return FirebaseUserResult(
-            uid = "google_${idToken.hashCode()}",
-            displayName = "Google Player",
-            email = "player@gmail.com",
-            token = "fb_tok_${System.currentTimeMillis()}",
-            provider = AuthProvider.GOOGLE
-        )
-    }
-
-    override suspend fun signInWithPlayGames(authCode: String): FirebaseUserResult {
-        return FirebaseUserResult(
-            uid = "pg_${authCode.hashCode()}",
-            displayName = "PlayGames Player",
-            token = "pg_tok_${System.currentTimeMillis()}",
-            provider = AuthProvider.PLAY_GAMES
-        )
-    }
-
-    override suspend fun signInAnonymously(): FirebaseUserResult {
-        return FirebaseUserResult(
-            uid = "guest_${System.currentTimeMillis()}",
-            displayName = "Guest",
-            token = "anon_tok_${System.currentTimeMillis()}",
-            provider = AuthProvider.GUEST
-        )
-    }
-
-    override suspend fun refreshToken(currentToken: String?): String? {
-        return if (currentToken != null) "refreshed_tok_${System.currentTimeMillis()}" else null
-    }
-
-    override suspend fun fetchUserProfile(uid: String): UserProfile? {
-        return UserProfile(
-            uid = uid,
-            displayName = "Player",
-            provider = if (uid.startsWith("pg_")) AuthProvider.PLAY_GAMES else AuthProvider.GOOGLE
-        )
-    }
-}
-
 /**
  * Authentication Gatekeeper Repository.
- * Handles persisting user sessions obtained from Google Sign-In,
- * Play Games Services, Firebase Auth, or Guest login.
+ * Persists Google Sign-In sessions, saved player profiles, statistics and settings.
  */
 class AuthRepository(
     private val context: Context? = null,
-    private val firebaseAuthProvider: FirebaseAuthProvider = DefaultFirebaseAuthProvider(),
     private val customPrefs: SharedPreferences? = null
 ) {
 
@@ -281,111 +216,6 @@ class AuthRepository(
             }
         }
         state
-    }
-
-    /**
-     * Authenticates via Firebase Auth provider.
-     */
-    suspend fun loginWithFirebase(provider: AuthProvider, credentialToken: String): Result<UserProfile> =
-        withContext(Dispatchers.IO) {
-            try {
-                val result = when (provider) {
-                    AuthProvider.GOOGLE -> firebaseAuthProvider.signInWithGoogle(credentialToken)
-                    AuthProvider.PLAY_GAMES -> firebaseAuthProvider.signInWithPlayGames(credentialToken)
-                    AuthProvider.GUEST -> firebaseAuthProvider.signInAnonymously()
-                }
-
-                val existing = loadExistingStats()
-                val username = prefs.getString(KEY_USERNAME, null)
-                    ?: result.displayName.filter { it.isLetterOrDigit() }.lowercase().ifEmpty { result.uid.take(8) }
-                val profile = UserProfile(
-                    uid = result.uid,
-                    username = username,
-                    displayName = result.displayName.ifEmpty { "Player" },
-                    email = result.email,
-                    avatarUrl = result.avatarUrl ?: existing.avatarUrl,
-                    provider = result.provider,
-                    gamesPlayed = existing.gamesPlayed,
-                    gamesWon = existing.gamesWon,
-                    currentStreak = existing.currentStreak,
-                    bestStreak = existing.bestStreak,
-                    level = existing.level,
-                    xp = existing.xp
-                )
-
-                persistUser(profile, result.token)
-                _authState.value = AuthState.Authenticated(profile)
-                Result.success(profile)
-            } catch (e: Exception) {
-                Result.failure(e)
-            }
-        }
-
-    /**
-     * Refreshes Firebase session token.
-     */
-    suspend fun refreshToken(): Result<String> = withContext(Dispatchers.IO) {
-        try {
-            val currentToken = prefs.getString(KEY_AUTH_TOKEN, null)
-            val newToken = firebaseAuthProvider.refreshToken(currentToken)
-            if (newToken != null) {
-                prefs.edit().putString(KEY_AUTH_TOKEN, newToken).apply()
-                Result.success(newToken)
-            } else {
-                signOut()
-                Result.failure(IllegalStateException("Token refresh failed: session expired"))
-            }
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
-
-    /**
-     * Fetches user profile from backend / provider.
-     */
-    suspend fun fetchUserProfile(uid: String): Result<UserProfile> = withContext(Dispatchers.IO) {
-        try {
-            val fetched = firebaseAuthProvider.fetchUserProfile(uid)
-            if (fetched != null) {
-                val current = (_authState.value as? AuthState.Authenticated)?.user
-                val merged = fetched.copy(
-                    gamesPlayed = current?.gamesPlayed ?: fetched.gamesPlayed,
-                    gamesWon = current?.gamesWon ?: fetched.gamesWon,
-                    currentStreak = current?.currentStreak ?: fetched.currentStreak,
-                    bestStreak = maxOf(current?.bestStreak ?: 0, fetched.bestStreak),
-                    level = current?.level ?: fetched.level,
-                    xp = current?.xp ?: fetched.xp
-                )
-                persistUser(merged, prefs.getString(KEY_AUTH_TOKEN, ""))
-                _authState.value = AuthState.Authenticated(merged)
-                Result.success(merged)
-            } else {
-                Result.failure(NoSuchElementException("User profile not found for uid $uid"))
-            }
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
-
-    /**
-     * Called after a successful real Google Play Games sign-in.
-     */
-    fun onPlayGamesSignInSuccess(playerId: String, displayName: String) {
-        val existing = loadExistingStats()
-        val profile = UserProfile(
-            uid = "pg_$playerId",
-            displayName = displayName,
-            email = null,
-            avatarUrl = existing.avatarUrl,
-            provider = AuthProvider.PLAY_GAMES,
-            gamesPlayed = existing.gamesPlayed,
-            gamesWon = existing.gamesWon,
-            currentStreak = existing.currentStreak,
-            level = existing.level,
-            xp = existing.xp
-        )
-        persistUser(profile, "pg_token_$playerId")
-        _authState.value = AuthState.Authenticated(profile)
     }
 
     /**
@@ -776,6 +606,14 @@ class AuthRepository(
         }
     }
 
+    @Synchronized
+    fun persistMatchHistory(matches: List<com.bingo.multiplayer.domain.model.MatchRecord>) {
+        if (matches.isEmpty()) return
+        val merged = (getMatchHistory() + matches).distinctBy { it.id }
+            .sortedByDescending { it.timestamp }.take(1000)
+        prefs.edit().putString("match_history", kotlinx.serialization.json.Json.encodeToString(merged)).apply()
+    }
+
     fun streamFirestoreMatchHistory(): kotlinx.coroutines.flow.Flow<List<com.bingo.multiplayer.domain.model.MatchRecord>>? {
         val uid = (_authState.value as? AuthState.Authenticated)?.user?.uid ?: prefs.getString(KEY_UID, "") ?: ""
         return if (context != null && uid.isNotBlank()) {
@@ -783,13 +621,20 @@ class AuthRepository(
         } else null
     }
 
+    @Synchronized
     fun recordMatch(
         mode: String,
         opponentName: String,
         didWin: Boolean,
         boardSize: Int,
         matchTitle: String = "",
-        isDraw: Boolean = false
+        isDraw: Boolean = false,
+        opponentUid: String = "",
+        turnsTaken: Int = 0,
+        linesCompleted: Int = 0,
+        durationSeconds: Long = 0L,
+        finalBoardNumbers: List<Int> = emptyList(),
+        markedNumbers: List<Int> = emptyList()
     ) {
         val currentHistory = getMatchHistory().toMutableList()
         val record = com.bingo.multiplayer.domain.model.MatchRecord(
@@ -800,7 +645,13 @@ class AuthRepository(
             boardSize = boardSize,
             timestamp = System.currentTimeMillis(),
             matchTitle = matchTitle,
-            isDraw = isDraw
+            isDraw = isDraw,
+            opponentUid = opponentUid,
+            turnsTaken = turnsTaken,
+            linesCompleted = linesCompleted,
+            durationSeconds = durationSeconds,
+            finalBoardNumbers = finalBoardNumbers,
+            markedNumbers = markedNumbers
         )
         currentHistory.add(0, record)
         val trimmed = if (currentHistory.size > 1000) currentHistory.take(1000) else currentHistory
@@ -840,6 +691,10 @@ class AuthRepository(
         persistUser(updated, prefs.getString(KEY_AUTH_TOKEN, ""))
         _authState.value = AuthState.Authenticated(updated)
         backupUserDataToCloud()
+        if (context != null && updated.uid.isNotBlank()) {
+            com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(context)
+                .syncUserProfile(updated, getSettings())
+        }
         val googleId = if (updated.uid.startsWith("google_")) updated.uid.removePrefix("google_") else null
         sessionManager.claimUsername(
             com.bingo.multiplayer.domain.network.PlayerRegistryEntry(
@@ -926,6 +781,7 @@ class AuthRepository(
     }
 
     fun signOut() {
+        com.bingo.multiplayer.domain.network.LeaderboardSyncManager.reset()
         val current = (_authState.value as? AuthState.Authenticated)?.user
         if (current != null) {
             val googleId = if (current.provider == AuthProvider.GOOGLE && current.uid.startsWith("google_")) {
@@ -959,7 +815,6 @@ class AuthRepository(
         _authState.value = AuthState.Unauthenticated
     }
 
-    fun getAuthToken(): String? = prefs.getString(KEY_AUTH_TOKEN, null)
 
     private fun loadExistingStats(): UserProfile {
         val streak = prefs.getInt(KEY_STREAK, 0)

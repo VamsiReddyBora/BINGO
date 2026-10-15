@@ -1,5 +1,7 @@
 # BINGO Multiplayer
 
+For the current **1.4.1 backup source**, completed restoration/cleanup, validation and remaining work, start with [AGENT_HANDOFF.md](AGENT_HANDOFF.md).
+
 > Fast, aesthetic, real-time multiplayer Bingo with friends — online or offline over Wi-Fi / Hotspot!
 
 [![Download APK](https://img.shields.io/badge/Download-Android%20APK-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/VamsiReddyBora/BINGO/releases/download/v1.3/Bingo.apk)

@@ -11,7 +11,6 @@ import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
 import com.bingo.multiplayer.MainActivity
 import com.bingo.multiplayer.R
-import kotlinx.coroutines.launch
 
 object BingoNotificationManager {
     private const val TAG = "BingoNotificationMgr"
@@ -43,8 +42,6 @@ object BingoNotificationManager {
     const val ACTION_VIEW_FRIENDS = "action_view_friends"
 
     private const val PREFS_NAME = "bingo_notification_prefs"
-    private const val ABSENCE_GATE_MS = 120_000L // 2 minutes absence gate
-    private const val COOLDOWN_GATE_MS = 120_000L // 2 minutes cooldown gate
 
     val pendingJoinRoomCode = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
     val pendingInviteFriendUsername = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
@@ -83,18 +80,6 @@ object BingoNotificationManager {
             regex.find(stored)?.groupValues?.getOrNull(1) ?: username
         } catch (_: Exception) {
             username
-        }
-    }
-
-    fun getFriendLastSeen(context: Context, username: String): Long {
-        return try {
-            val prefs = context.getSharedPreferences("bingo_friends_prefs", Context.MODE_PRIVATE)
-            val stored = prefs.getString("friends_list", null) ?: return 0L
-            val clean = username.trim().lowercase().removePrefix("@")
-            val regex = "\"username\"\\s*:\\s*\"$clean\"[^{}]*?\"lastSeenTimestamp\"\\s*:\\s*(\\d+)".toRegex()
-            regex.find(stored)?.groupValues?.getOrNull(1)?.toLongOrNull() ?: 0L
-        } catch (_: Exception) {
-            0L
         }
     }
 
@@ -168,26 +153,19 @@ object BingoNotificationManager {
     // ─────────────────────────────────────────────────────────────
     /**
      * Notifies user that a friend is online.
-     * Enforces:
-     * 1. Foreground suppression: Do NOT notify if app is in foreground.
-     * 2. Absence gate: Only notify if the friend was away (lastSeen) for > 1 hour.
-     * 3. Cooldown gate: Never notify more than once per hour per friend.
-     *
-     * @param bypassGates If true, bypasses foreground, absence, and cooldown gates (for developer testing).
+     * Respects notification preferences and suppresses system alerts in the foreground.
      */
     fun notifyFriendOnline(
         context: Context,
         friendUsername: String,
-        friendDisplayName: String,
-        lastSeenTimestamp: Long,
-        bypassGates: Boolean = false
+        friendDisplayName: String
     ) {
         init(context)
-        if (!bypassGates && !com.bingo.multiplayer.core.designsystem.NotificationPreferences.canShowSystemPlayerOnlineNotification(context)) {
+        if (!com.bingo.multiplayer.core.designsystem.NotificationPreferences.canShowSystemPlayerOnlineNotification(context)) {
             Log.d(TAG, "Friend online notification suppressed by NotificationPreferences")
             return
         }
-        if (!bypassGates && AppLifecycleObserver.isAppInForeground.value) {
+        if (AppLifecycleObserver.isAppInForeground.value) {
             Log.d(TAG, "Friend online status suppressed: app in foreground")
             return
         }
@@ -226,28 +204,6 @@ object BingoNotificationManager {
         }
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // FRIEND REQUEST NOTIFICATIONS
-    // ─────────────────────────────────────────────────────────────
-    fun showFriendRequestNotification(
-        context: Context,
-        fromUsername: String,
-        fromDisplayName: String,
-        forceShow: Boolean = false
-    ) {
-        // Suppressed: focusing strictly on Game Invites
-        Log.d(TAG, "showFriendRequestNotification suppressed (focusing on game invites)")
-    }
-
-    fun showFriendAcceptedNotification(
-        context: Context,
-        friendUsername: String,
-        friendDisplayName: String,
-        forceShow: Boolean = false
-    ) {
-        // Suppressed: focusing strictly on Game Invites
-        Log.d(TAG, "showFriendAcceptedNotification suppressed (focusing on game invites)")
-    }
 
     // ─────────────────────────────────────────────────────────────
     // RULE 2 & 3: Game Invitation Notification
@@ -258,17 +214,17 @@ object BingoNotificationManager {
      * Tapping "✅ Accept" opens app and joins room directly (Rule 3A).
      * Tapping "❌ Decline" dismisses notification and removes invite.
      */
-    fun showInviteNotification(context: Context, invite: GameInvite, forceShow: Boolean = false) {
+    fun showInviteNotification(context: Context, invite: GameInvite) {
         init(context)
 
         // 1. Check user notification settings
-        if (!forceShow && !com.bingo.multiplayer.core.designsystem.NotificationPreferences.canShowSystemInviteNotification(context)) {
+        if (!com.bingo.multiplayer.core.designsystem.NotificationPreferences.canShowSystemInviteNotification(context)) {
             Log.d(TAG, "Invite notification suppressed from status bar: disabled in NotificationPreferences")
             return
         }
 
         // 2. Foreground suppression: If user is inside app, in-app modal takes priority (Rule 1)
-        if (!forceShow && AppLifecycleObserver.isAppInForeground.value) {
+        if (AppLifecycleObserver.isAppInForeground.value) {
             Log.d(TAG, "Invite notification suppressed from status bar: app is in foreground")
             return
         }
@@ -382,13 +338,6 @@ object BingoNotificationManager {
         } catch (_: Exception) {}
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // RULE 3: Broadcast & Direct Message Notifications
-    // ─────────────────────────────────────────────────────────────
-    fun showBroadcastNotification(context: Context, broadcast: BroadcastMessage, forceShow: Boolean = false) {
-        // Suppressed: focusing strictly on Game Invites
-        Log.d(TAG, "showBroadcastNotification suppressed (focusing on game invites)")
-    }
 
     fun cancelBroadcastNotification(context: Context) {
         try {
@@ -397,13 +346,6 @@ object BingoNotificationManager {
         } catch (_: Exception) {}
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // RULE 4: App Update Background Notification (Suppressed)
-    // ─────────────────────────────────────────────────────────────
-    fun showUpdateNotification(context: Context, info: AppUpdateInfo, forceShow: Boolean = false) {
-        // Suppressed: focusing strictly on Game Invites
-        Log.d(TAG, "showUpdateNotification suppressed (focusing on game invites)")
-    }
 
     fun cancelUpdateNotification(context: Context) {
         try {
@@ -422,41 +364,5 @@ object BingoNotificationManager {
         cancelUpdateNotification(context)
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // TEST & DIAGNOSTICS TRIGGERS (Immediate UI Verification)
-    // ─────────────────────────────────────────────────────────────
-    fun testInviteNotification(context: Context) {
-        init(context)
-        val dummyInvite = GameInvite(
-            fromUsername = "FriendBob",
-            fromDisplayName = "Bob the Champion",
-            roomCode = "BINGO7",
-            timestamp = System.currentTimeMillis()
-        )
-        showInviteNotification(context, dummyInvite, forceShow = true)
-    }
 
-    fun testFriendOnlineNotification(context: Context) {
-        init(context)
-        notifyFriendOnline(
-            context = context,
-            friendUsername = "AliceOnline",
-            friendDisplayName = "Alice Gamer",
-            lastSeenTimestamp = 0L,
-            bypassGates = true
-        )
-    }
-
-    fun testBroadcastNotification(context: Context) {
-        init(context)
-        val dummyBroadcast = BroadcastMessage(
-            id = "test_${System.currentTimeMillis()}",
-            title = "Notification System Test",
-            message = "All 4 notification channels & vector icons are working perfectly!",
-            type = "INFO",
-            author = "Bingo System",
-            active = true
-        )
-        showBroadcastNotification(context, dummyBroadcast, forceShow = true)
-    }
 }

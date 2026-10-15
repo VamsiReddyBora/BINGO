@@ -1,5 +1,7 @@
 package com.bingo.multiplayer.domain.network
 
+// Test-only simulation model. Production uses OnlineRoomSyncManager and LanP2pSessionManager.
+
 import androidx.annotation.Keep
 import com.bingo.multiplayer.domain.model.GameStatus
 import com.bingo.multiplayer.domain.model.Player

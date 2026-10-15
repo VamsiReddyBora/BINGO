@@ -1,0 +1,14 @@
+{
+  "before": {
+    "kotlin_files": 94,
+    "kotlin_lines": 41667,
+    "explicit_imports": 2412
+  },
+  "after": {
+    "kotlin_files": 89,
+    "kotlin_lines": 39007,
+    "explicit_imports": 2194
+  },
+  "removed_kotlin_lines": 2660,
+  "removed_explicit_imports": 218
+}

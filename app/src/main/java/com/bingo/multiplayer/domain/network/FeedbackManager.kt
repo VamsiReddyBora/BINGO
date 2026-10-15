@@ -3,7 +3,6 @@ package com.bingo.multiplayer.domain.network
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -73,7 +72,6 @@ object FeedbackManager {
      * 2. Cloud Key-Value backup storage
      */
     suspend fun transmitFeedback(
-        context: Context,
         username: String,
         displayName: String,
         message: String

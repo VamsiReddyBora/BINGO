@@ -1,12 +1,7 @@
 package com.bingo.multiplayer.presentation.game
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -34,9 +29,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.EmojiEvents
-import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PauseCircle
 import androidx.compose.material.icons.filled.PlayArrow
@@ -71,7 +63,6 @@ import kotlinx.coroutines.launch
 import com.bingo.multiplayer.domain.model.InGameChatMessage
 
 import android.app.Activity
-import android.content.Context
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -80,7 +71,6 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -91,7 +81,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -104,11 +93,6 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.animation.core.Animatable
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.ui.graphics.graphicsLayer
@@ -121,13 +105,9 @@ import com.bingo.multiplayer.domain.model.RecentPick
 import com.bingo.multiplayer.domain.network.QuickChatPreferences
 import com.bingo.multiplayer.presentation.common.PlayerAvatar
 import com.bingo.multiplayer.presentation.components.BingoBoardView
-import com.bingo.multiplayer.presentation.components.BingoHeaderTracker
-import com.bingo.multiplayer.presentation.components.BottomTurnProfileVsProfile
 import com.bingo.multiplayer.presentation.components.EmojiReactionStripWithChat
-import com.bingo.multiplayer.presentation.components.FloatingEmoteBar
 import com.bingo.multiplayer.presentation.components.FloatingEmoteItem
 import com.bingo.multiplayer.presentation.components.FloatingEmotesOverlay
-import com.bingo.multiplayer.presentation.components.HeadToHeadScorecard
 import com.bingo.multiplayer.presentation.components.MultiplayerTurnSpotlightBar
 import com.bingo.multiplayer.presentation.components.RecentPicksQueuePill
 
@@ -149,7 +129,6 @@ fun GameScreen(
     opponentName: String,
     isGameOver: Boolean,
     didPlayerWin: Boolean,
-    isDraw: Boolean = false,
     isRunner: Boolean = false,
     winnerPlayerId: String = "",
     onCellPicked: (Int) -> Unit,
@@ -180,7 +159,9 @@ fun GameScreen(
     players: List<Player> = emptyList(),
     allPlayerBoards: Map<String, Board> = emptyMap(),
     currentTurnPlayerId: String = "",
-    disconnectedPlayerIds: List<String> = emptyList()
+    disconnectedPlayerIds: List<String> = emptyList(),
+    typingPlayerName: String? = null,
+    onSetTyping: (Boolean) -> Unit = {}
 ) {
     val tokens = BingoTheme.colors
     val haptic = LocalHapticFeedback.current
@@ -200,10 +181,17 @@ fun GameScreen(
     var boardWidthDp by remember { mutableStateOf<androidx.compose.ui.unit.Dp?>(null) }
     val chatFocusRequester = remember { FocusRequester() }
     val coroutineScope = rememberCoroutineScope()
+    var lastTypingSentTime by remember { mutableLongStateOf(0L) }
+    var localAiTypingName by remember { mutableStateOf<String?>(null) }
+    DisposableEffect(Unit) {
+        onDispose { onSetTyping(false) }
+    }
 
     fun submitCustomChatMessage() {
         val trimmed = customChatInput.trim().take(100)
         if (trimmed.isNotBlank()) {
+            onSetTyping(false)
+            lastTypingSentTime = 0L
             chatMessages = chatMessages + InGameChatMessage(
                 text = trimmed,
                 isSelf = true
@@ -220,7 +208,9 @@ fun GameScreen(
 
             if (opponentIsAi) {
                 coroutineScope.launch {
+                    localAiTypingName = opponentName
                     delay((1200..2400).random().toLong())
+                    localAiTypingName = null
                     val aiReplies = listOf(
                         "Nice one! 🎯",
                         "Good move! 🍀",
@@ -1067,6 +1057,7 @@ fun GameScreen(
                 // Width matches exact board width so the left & right edges align pixel-perfect with cell 22 and cell 17
                 InGameChatSpace(
                     messages = chatMessages,
+                    typingPlayerName = if (isGameOver) null else (typingPlayerName ?: localAiTypingName),
                     onDoubleTapToChat = {
                         isFullLengthChatActive = true
                     },
@@ -1106,17 +1097,11 @@ fun GameScreen(
 
             // ── Fullscreen Winning Celebration Overlay (Only triggers on victory) ──
             if (isEmojiBurstActive && didPlayerWin && !isExitingMatch) {
-                GameOverEmojiProjectileBurst(
-                    resultType = StampResultType.WON,
-                    modifier = Modifier.fillMaxSize(),
-                    onApexReached = {
-                        showStampBadge = true
-                        animateStampDrop = true
-                    },
-                    onBurstFinished = {
-                        isEmojiBurstActive = false
-                    }
-                )
+                LaunchedEffect(Unit) {
+                    showStampBadge = true
+                    animateStampDrop = true
+                    isEmojiBurstActive = false
+                }
             }
 
             // Item 4: Quick Chat Floating Toast Layer
@@ -1244,6 +1229,7 @@ fun GameScreen(
                             indication = null
                         ) {
                             isFullLengthChatActive = false
+                            onSetTyping(false)
                         }
                 )
 
@@ -1264,7 +1250,17 @@ fun GameScreen(
                     ) {
                         BasicTextField(
                             value = customChatInput,
-                            onValueChange = { customChatInput = it.take(100) },
+                            onValueChange = {
+                                customChatInput = it.take(100)
+                                val now = android.os.SystemClock.elapsedRealtime()
+                                if (customChatInput.isBlank()) {
+                                    onSetTyping(false)
+                                    lastTypingSentTime = 0L
+                                } else if (lastTypingSentTime == 0L || now - lastTypingSentTime >= 2000L) {
+                                    onSetTyping(true)
+                                    lastTypingSentTime = now
+                                }
+                            },
                             textStyle = TextStyle(
                                 fontSize = 14.sp,
                                 color = tokens.cellNeutralText,

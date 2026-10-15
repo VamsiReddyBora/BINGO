@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.bingo.multiplayer.domain.SmallFeatureRestorationTest" tests="15" skipped="0" failures="0" errors="0" timestamp="2026-10-15T01:10:26" hostname="VR" time="0.165">
+  <properties/>
+  <testcase name="latestLossResetsStreakWithoutLosingCareerTotals" classname="com.bingo.multiplayer.domain.SmallFeatureRestorationTest" time="0.009"/>
+  <testcase name="missingOrInvalidScorecardSnapshotStaysUnknown" classname="com.bingo.multiplayer.domain.SmallFeatureRestorationTest" time="0.002"/>
+  <testcase name="roomQrRoundTripsWithoutChangingTheSelectedRoom" classname="com.bingo.multiplayer.domain.SmallFeatureRestorationTest" time="0.015"/>
+  <testcase name="oldFriendAndMatchRecordsRemainReadable" classname="com.bingo.multiplayer.domain.SmallFeatureRestorationTest" time="0.005"/>
+  <testcase name="headToHeadUsesExactIdentityAndAvoidsSubstringMatches" classname="com.bingo.multiplayer.domain.SmallFeatureRestorationTest" time="0.008"/>
+  <testcase name="forfeitScorecardDoesNotInventBingoLinesFromVictory" classname="com.bingo.multiplayer.domain.SmallFeatureRestorationTest" time="0.0"/>
+  <testcase name="legacyAndDetailedPresenceHaveCompatibleLabels" classname="com.bingo.multiplayer.domain.SmallFeatureRestorationTest" time="0.004"/>
+  <testcase name="scorecardCountsRealLinesForEverySupportedBoardSize" classname="com.bingo.multiplayer.domain.SmallFeatureRestorationTest" time="0.073"/>
+  <testcase name="invalidQrCannotSilentlyTruncateIntoAnotherRoom" classname="com.bingo.multiplayer.domain.SmallFeatureRestorationTest" time="0.002"/>
+  <testcase name="partialLegacyCareerDataDoesNotEraseKnownTotalsOrInventLevel" classname="com.bingo.multiplayer.domain.SmallFeatureRestorationTest" time="0.0"/>
+  <testcase name="statisticsFromAnotherAccountCannotModifyFriend" classname="com.bingo.multiplayer.domain.SmallFeatureRestorationTest" time="0.001"/>
+  <testcase name="profileAndLanQrFormatsRemainDistinct" classname="com.bingo.multiplayer.domain.SmallFeatureRestorationTest" time="0.034"/>
+  <testcase name="olderProfileCannotRestoreAStreakThatEndedWithTheLatestLoss" classname="com.bingo.multiplayer.domain.SmallFeatureRestorationTest" time="0.001"/>
+  <testcase name="chatTypingKeepsMatchIdentityAndExistingJsonPacketCompatibility" classname="com.bingo.multiplayer.domain.SmallFeatureRestorationTest" time="0.002"/>
+  <testcase name="staleOrUnknownPresenceCannotShowAnActiveGame" classname="com.bingo.multiplayer.domain.SmallFeatureRestorationTest" time="0.003"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

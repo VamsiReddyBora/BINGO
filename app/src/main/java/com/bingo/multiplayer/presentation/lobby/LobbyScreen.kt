@@ -69,6 +69,7 @@ fun LobbyScreen(
     currentUserId: String = "",
     friendsRepository: com.bingo.multiplayer.domain.repository.FriendsRepository? = null,
     isRefreshing: Boolean = false,
+    pingMs: Long? = null,
     onRefresh: () -> Unit = {},
     onSearchPlayer: (suspend (String) -> PlayerRegistryEntry?)? = null,
     onToggleReady: ((Boolean) -> Unit)? = null,
@@ -137,6 +138,25 @@ fun LobbyScreen(
     var showInactivityDialog by remember { mutableStateOf(false) }
     var countdownSecondsLeft by remember { mutableStateOf(30) }
     var showNearbyQrDialog by remember { mutableStateOf(false) }
+    var showOnlineQrDialog by remember { mutableStateOf(false) }
+    val networkPing by com.bingo.multiplayer.domain.network.NetworkPingMonitor.pingMs.collectAsState()
+    val latestPing by rememberUpdatedState(pingMs?.takeIf { it > 0L } ?: networkPing)
+    var displayedPing by remember { mutableLongStateOf(latestPing) }
+    LaunchedEffect(Unit) {
+        while (isActive) {
+            displayedPing = latestPing
+            delay(1000L)
+        }
+    }
+
+    if (showOnlineQrDialog) {
+        com.bingo.multiplayer.presentation.online.OnlineRoomQrDisplayDialog(
+            roomCode = roomCode,
+            hostName = players.firstOrNull { it.isHost }?.displayName ?: "Host",
+            boardSize = LobbyLifecycleEngine.resolveBoardSize(isDynamicBoard, selectedDynamicGridSize, players.size),
+            onDismiss = { showOnlineQrDialog = false }
+        )
+    }
 
     if (showNearbyQrDialog) {
         val hostPayload = NearbyHostQrPayload(
@@ -285,13 +305,32 @@ fun LobbyScreen(
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                // Role badge
-                Text(
-                    text = if (isHost) "Acting as a Host" else "Acting as a Player",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = tokens.cellNeutralText.copy(alpha = 0.6f)
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Wifi, contentDescription = "Ping", modifier = Modifier.size(17.dp), tint = tokens.cellNeutralText)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = when {
+                            displayedPing <= 0L -> "—"
+                            displayedPing > 999L -> "999+ms"
+                            else -> "${displayedPing}ms"
+                        },
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = when {
+                            displayedPing <= 0L -> tokens.textMuted
+                            displayedPing <= 250L -> Color(0xFF16A34A)
+                            displayedPing <= 500L -> Color(0xFFEAB308)
+                            else -> Color(0xFFDC2626)
+                        }
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Surface(shape = RoundedCornerShape(6.dp), color = tokens.badgeSurface,
+                    border = BorderStroke(1.dp, tokens.badgeOutline)) {
+                    Text(if (isHost) "HOST" else "PLAYER", fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold, color = tokens.badgeContent,
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp))
+                }
             }
 
             if (hasActiveMatch) {
@@ -431,6 +470,15 @@ fun LobbyScreen(
                                 )
                             }
                         } else {
+                            OutlinedButton(
+                                onClick = { showOnlineQrDialog = true },
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = tokens.textPrimary)
+                            ) {
+                                Icon(Icons.Default.QrCode, contentDescription = "Show QR Code", modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("QR", fontSize = 12.sp)
+                            }
                             Button(
                                 onClick = {
                                     val sendIntent = Intent().apply {
@@ -626,7 +674,7 @@ fun LobbyScreen(
                                         com.bingo.multiplayer.domain.network.AppActivityState.ONLINE -> "online"
                                     }
                                 } else {
-                                    com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(cleanUser, effectiveTs)
+                                    com.bingo.multiplayer.domain.network.PresenceManager.getRichDisplayStatus(cleanUser, effectiveTs)
                                 }
                                 val statusColor = com.bingo.multiplayer.domain.network.PresenceManager.getStatusColor(rawStatus)
 
@@ -665,8 +713,6 @@ fun LobbyScreen(
                                                     currentUser?.let { me ->
                                                         val success = friendsRepository.sendFriendRequest(
                                                             targetUsername = player.displayName,
-                                                            targetDisplayName = player.displayName,
-                                                            targetUid = player.id,
                                                             currentUser = me
                                                         )
                                                         if (success) {
@@ -706,7 +752,7 @@ fun LobbyScreen(
                                     com.bingo.multiplayer.domain.network.AppActivityState.ONLINE -> "online"
                                 }
                             } else {
-                                com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(cleanUser, effectiveTs)
+                                com.bingo.multiplayer.domain.network.PresenceManager.getRichDisplayStatus(cleanUser, effectiveTs)
                             }
 
                             val effectivePlayer = if (isMe) {
@@ -781,9 +827,9 @@ fun LobbyScreen(
                         val pres = presenceMap[cleanF]
                         val effectiveTs = pres?.timestamp?.takeIf { it > 0L } ?: f.lastSeenTimestamp.takeIf { it > 0L }
                         val status = if (pres != null) {
-                            com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(cleanF, effectiveTs)
+                            com.bingo.multiplayer.domain.network.PresenceManager.getRichDisplayStatus(cleanF, effectiveTs)
                         } else if (f.lastSeenTimestamp > 0L && (System.currentTimeMillis() - f.lastSeenTimestamp) >= 60_000L) {
-                            com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(cleanF, f.lastSeenTimestamp)
+                            com.bingo.multiplayer.domain.network.PresenceManager.getRichDisplayStatus(cleanF, f.lastSeenTimestamp)
                         } else {
                             "offline"
                         }
@@ -908,9 +954,9 @@ fun LobbyScreen(
                                         if (ticker >= 0L) Unit
                                         val now = System.currentTimeMillis()
                                         val statusText = if (livePres != null) {
-                                            com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(cleanF, effectiveTs)
+                                            com.bingo.multiplayer.domain.network.PresenceManager.getRichDisplayStatus(cleanF, effectiveTs)
                                         } else if (friend.lastSeenTimestamp > 0L && (now - friend.lastSeenTimestamp) >= 60_000L) {
-                                            com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(cleanF, friend.lastSeenTimestamp)
+                                            com.bingo.multiplayer.domain.network.PresenceManager.getRichDisplayStatus(cleanF, friend.lastSeenTimestamp)
                                         } else {
                                             "offline"
                                         }
@@ -1127,7 +1173,7 @@ fun LobbyScreen(
                                     val livePres = presenceMap[cleanFound]
                                     val effectiveTs = livePres?.timestamp?.takeIf { it > 0L } ?: result.lastSeenTimestamp
                                     if (ticker >= 0L) Unit
-                                    val statusText = com.bingo.multiplayer.domain.network.PresenceManager.getDisplayStatus(cleanFound, effectiveTs)
+                                    val statusText = com.bingo.multiplayer.domain.network.PresenceManager.getRichDisplayStatus(cleanFound, effectiveTs)
                                     val statusColor = com.bingo.multiplayer.domain.network.PresenceManager.getStatusColor(statusText)
                                     Text(
                                         text = statusText,
@@ -1144,7 +1190,6 @@ fun LobbyScreen(
                                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                                     if (friendsRepository != null) {
                                         val isAlready = friendsRepository.isFriend(result.username) || friendsRepository.isFriend(result.uid)
-                                        val hasSent = friendsRepository.hasSentRequest(result.username)
                                         if (!isAlready) {
                                             val isFriendCooldown = ActionCooldownManager.isFriendRequestOnCooldown(result.username)
                                             IconButton(
@@ -1154,8 +1199,6 @@ fun LobbyScreen(
                                                         currentUser?.let { me ->
                                                             val success = friendsRepository.sendFriendRequest(
                                                                 targetUsername = result.username,
-                                                                targetDisplayName = result.displayName,
-                                                                targetUid = result.uid,
                                                                 currentUser = me
                                                             )
                                                             if (success) {

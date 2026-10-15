@@ -1,7 +1,6 @@
 package com.bingo.multiplayer.domain.network
 
 import com.bingo.multiplayer.domain.engine.BingoEngine
-import com.bingo.multiplayer.domain.model.GameMode
 import com.bingo.multiplayer.domain.model.Player
 import org.junit.Assert.*
 import org.junit.Test

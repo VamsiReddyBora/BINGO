@@ -2,7 +2,6 @@ package com.bingo.multiplayer.domain.network
 
 import android.content.Context
 import android.net.wifi.WifiManager
-import android.os.Build
 import android.util.Log
 import androidx.annotation.Keep
 import com.bingo.multiplayer.domain.model.Player

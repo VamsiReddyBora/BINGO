@@ -17,7 +17,6 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.BufferedReader
@@ -103,7 +102,6 @@ class LanP2pSessionManager {
     }
 
     fun resetInGameHeartbeats(participantIds: Collection<String>) {
-        val now = System.currentTimeMillis()
         participantIds.forEach { id ->
             recordDirectHeartbeat(id)
         }

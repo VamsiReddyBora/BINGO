@@ -4,7 +4,6 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -244,7 +243,6 @@ fun DeveloperNoteScreen(
                     coroutineScope.launch {
                         // Background backup to Email and Cloud storage
                         FeedbackManager.transmitFeedback(
-                            context = context,
                             username = currentUser?.username ?: "player",
                             displayName = currentUser?.displayName ?: "Player",
                             message = clean

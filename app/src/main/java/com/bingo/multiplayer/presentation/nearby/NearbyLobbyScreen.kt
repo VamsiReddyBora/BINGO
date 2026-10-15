@@ -1,6 +1,5 @@
 package com.bingo.multiplayer.presentation.nearby
 
-import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke

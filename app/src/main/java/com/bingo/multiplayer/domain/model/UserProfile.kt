@@ -88,7 +88,13 @@ data class MatchRecord(
     val boardSize: Int = 5,
     val timestamp: Long = System.currentTimeMillis(),
     val matchTitle: String = "",
-    val isDraw: Boolean = false
+    val isDraw: Boolean = false,
+    val opponentUid: String = "",
+    val turnsTaken: Int = 0,
+    val linesCompleted: Int = 0,
+    val durationSeconds: Long = 0L,
+    val finalBoardNumbers: List<Int> = emptyList(),
+    val markedNumbers: List<Int> = emptyList()
 )
 
 @Keep
@@ -109,4 +115,3 @@ sealed interface AuthState {
     @Keep
     data class Authenticated(val user: UserProfile) : AuthState
 }
-

@@ -14,6 +14,9 @@ data class Friend(
     val displayName: String,
     val avatarUrl: String? = null,
     val isOnline: Boolean = false,
-    val lastSeenTimestamp: Long = 0L
+    val lastSeenTimestamp: Long = 0L,
+    val gamesPlayed: Int = 0,
+    val gamesWon: Int = 0,
+    val currentStreak: Int = 0,
+    val level: Int = 1
 )
-

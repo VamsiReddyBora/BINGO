@@ -51,7 +51,6 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
@@ -73,7 +72,6 @@ import com.google.android.gms.common.api.ApiException
 
 private const val TAG = "LoginScreen"
 private const val RELEASE_SHA1 = "88:99:C8:F8:7D:48:BF:7A:05:80:E2:06:87:42:87:AB:0C:2A:29:F1"
-private const val DEBUG_SHA1 = "DE:FA:9C:0D:F9:26:C9:A3:77:34:2E:54:9B:86:0B:38:85:90:B9:E5"
 
 /**
  * Aesthetic, minimal, and resilient Login Screen.

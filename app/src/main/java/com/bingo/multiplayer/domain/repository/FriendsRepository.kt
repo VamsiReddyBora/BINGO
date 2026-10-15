@@ -5,7 +5,6 @@ import android.content.SharedPreferences
 import android.util.Log
 import com.bingo.multiplayer.domain.model.Friend
 import com.bingo.multiplayer.domain.model.FriendRequest
-import com.bingo.multiplayer.domain.model.FriendRequestPacket
 import com.bingo.multiplayer.domain.model.FriendRequestStatus
 import com.bingo.multiplayer.domain.model.UserProfile
 import com.bingo.multiplayer.domain.network.FriendRequestManager
@@ -15,6 +14,14 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -80,8 +87,20 @@ class FriendsRepository(
                         true
                     }
 
-                    _friends.value = sanitized
-                    persistFriends(sanitized)
+                    // Older cloud friend records do not contain career statistics.
+                    val local = _friends.value
+                    val merged = sanitized.map { friend ->
+                        val previous = local.firstOrNull { it.uid == friend.uid ||
+                            it.username.equals(friend.username, ignoreCase = true) }
+                        friend.copy(
+                            gamesPlayed = maxOf(friend.gamesPlayed, previous?.gamesPlayed ?: 0),
+                            gamesWon = maxOf(friend.gamesWon, previous?.gamesWon ?: 0),
+                            currentStreak = previous?.currentStreak ?: friend.currentStreak,
+                            level = maxOf(friend.level, previous?.level ?: 1)
+                        )
+                    }
+                    _friends.value = merged
+                    persistFriends(merged)
 
                     // If cloud had stale, removed, or deleted database accounts, update cloud immediately
                     if (sanitized.size != cloudFriends.size) {
@@ -144,8 +163,6 @@ class FriendsRepository(
      */
     suspend fun sendFriendRequest(
         targetUsername: String,
-        targetDisplayName: String,
-        targetUid: String,
         currentUser: UserProfile
     ): Boolean {
         val cleanTarget = targetUsername.trim().lowercase().removePrefix("@")
@@ -230,7 +247,6 @@ class FriendsRepository(
      */
     fun startListeningForRequests(
         myUsername: String,
-        currentUser: UserProfile?,
         onNewRequest: (FriendRequest) -> Unit,
         onFriendAccepted: (Friend) -> Unit
     ): AutoCloseable {
@@ -312,10 +328,6 @@ class FriendsRepository(
         }
     }
 
-    /**
-     * Get friends count.
-     */
-    fun friendsCount(): Int = _friends.value.size
 
     private fun loadFriends() {
         val stored = prefs.getString(KEY_FRIENDS, null)
@@ -348,6 +360,42 @@ class FriendsRepository(
                     .syncFriendsList(user.uid, list)
             }
         }
+    }
+
+    suspend fun refreshFriendsStats(friendsList: List<Friend> = _friends.value) = withContext(Dispatchers.IO) {
+        val accountUid = AuthRepository.activeInstance?.getPersistedUserSync()?.uid
+        val targets = _friends.value.ifEmpty { friendsList }
+        if (targets.isEmpty()) return@withContext
+        val firestoreProfiles = com.bingo.multiplayer.domain.network.FirestoreSyncManager
+            .getInstance(context).fetchPlayerProfiles(targets.map { it.uid })
+        val permits = Semaphore(4)
+        val entries = coroutineScope {
+            targets.map { friend ->
+                async {
+                    permits.withPermit {
+                        firestoreProfiles[friend.uid] ?: withTimeoutOrNull(3500L) {
+                            com.bingo.multiplayer.domain.network.AccountSessionManager.searchPlayerByUsername(
+                                friend.username, timeoutMs = 2500L, forceRefresh = true
+                            )
+                        }
+                    }
+                }
+            }.awaitAll().filterNotNull()
+        }
+        if (AuthRepository.activeInstance?.getPersistedUserSync()?.uid != accountUid) return@withContext
+        entries.forEach { entry ->
+            com.bingo.multiplayer.domain.network.AccountSessionManager.cachePlayer(entry)
+            updateFriendCareerStats(entry)
+        }
+    }
+
+    fun updateFriendCareerStats(entry: com.bingo.multiplayer.domain.network.PlayerRegistryEntry) {
+        val before = _friends.value
+        _friends.update { current ->
+            current.map { com.bingo.multiplayer.domain.engine.FriendCareerStats.merge(it, entry) }
+        }
+        val updated = _friends.value
+        if (updated != before) persistFriends(updated)
     }
 
     fun onRemoteAvatarUpdated(username: String, newAvatarUrl: String?) {

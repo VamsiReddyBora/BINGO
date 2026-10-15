@@ -8,7 +8,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.eclipse.paho.client.mqttv3.MqttAsyncClient
@@ -205,24 +204,6 @@ object GameInviteManager {
         }
     }
 
-    /**
-     * Clears all pending invites for a user from cloud storage and clears retained MQTT.
-     */
-    suspend fun clearInvites(username: String) = withContext(Dispatchers.IO) {
-        val clean = username.trim().lowercase().removePrefix("@")
-        if (clean.isBlank()) return@withContext
-        try {
-            clearMqttRetainedInvite(clean)
-            val emptyB64 = encodeBase64Url("[]")
-            val encVal = java.net.URLEncoder.encode(emptyB64, "UTF-8")
-            val request = Request.Builder()
-                .url("$BASE_URL/UpdateValue/$API_KEY/inv_$clean?value=$encVal")
-                .post("".toRequestBody(null))
-                .header("Content-Length", "0")
-                .build()
-            client.newCall(request).execute().close()
-        } catch (_: Exception) {}
-    }
 
     /**
      * Clears retained MQTT invite message for a user.

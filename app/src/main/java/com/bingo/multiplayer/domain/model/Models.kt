@@ -150,12 +150,6 @@ data class Board(
 
     fun getCell(row: Int, col: Int): Cell = cells[row * size + col]
 
-    fun copyWithCellUpdated(updatedCell: Cell): Board {
-        val newCells = cells.toMutableList()
-        val index = updatedCell.row * size + updatedCell.col
-        newCells[index] = updatedCell
-        return copy(cells = newCells)
-    }
 }
 
 @Keep
@@ -194,4 +188,3 @@ data class InGameChatMessage(
     val timestamp: Long = System.currentTimeMillis(),
     val isSystemMessage: Boolean = false
 )
-

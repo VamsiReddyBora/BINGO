@@ -49,18 +49,21 @@ data class AvatarUpdatePayload(
 data class PlayerPresence(
     val username: String = "",
     val status: String = "OFFLINE", // "ONLINE", "IN_LOBBY", "PLAYING", or "OFFLINE"
-    val timestamp: Long = System.currentTimeMillis(),
+    val timestamp: Long = 0L,
     val appVersion: String = NetworkConfig.APP_VERSION_NAME,
-    val appVersionCode: Int = NetworkConfig.APP_VERSION_CODE
+    val appVersionCode: Int = NetworkConfig.APP_VERSION_CODE,
+    val activityDetail: String = "",
+    val currentRoomCode: String = ""
 ) {
     /**
      * A player is considered active in the app if their status is ONLINE, IN_LOBBY, or PLAYING,
-     * and the timestamp is within 12 seconds.
+     * and the timestamp is within 15 seconds.
      */
     val isOnline: Boolean
         get() = (status.equals("ONLINE", ignoreCase = true) ||
                  status.equals("IN_LOBBY", ignoreCase = true) ||
                  status.equals("PLAYING", ignoreCase = true)) &&
+                timestamp > 0L &&
                 (System.currentTimeMillis() - timestamp) < 15_000L
 }
 
@@ -94,20 +97,26 @@ object PresenceManager {
 
     var currentActivityState: AppActivityState = AppActivityState.ONLINE
         private set
+    var currentActivityDetail: String = ""
+        private set
+    var currentRoomCode: String = ""
+        private set
 
     /**
      * Updates local activity state and immediately publishes it via MQTT and Cloud Key-Value store.
      */
-    fun setActivityState(state: AppActivityState) {
-        if (currentActivityState == state) return
+    fun setActivityState(state: AppActivityState, detail: String = "", roomCode: String = "") {
+        if (currentActivityState == state && currentActivityDetail == detail && currentRoomCode == roomCode) return
         currentActivityState = state
+        currentActivityDetail = detail
+        currentRoomCode = roomCode
         val clean = currentActiveUsername ?: return
         val now = System.currentTimeMillis()
-        presenceMap[clean] = PlayerPresence(clean, state.name, now)
+        presenceMap[clean] = PlayerPresence(clean, state.name, now, activityDetail = detail, currentRoomCode = roomCode)
         updatePresenceFlow()
 
         scope.launch {
-            publishStatus(clean, state.name)
+            publishStatus(clean, state.name, detail, roomCode)
             setCloudPresence(clean, state.name, now)
         }
     }
@@ -181,14 +190,14 @@ object PresenceManager {
     /**
      * Writes presence asynchronously without blocking (fire-and-forget for lifecycle exit).
      */
-    fun setCloudPresenceAsync(cleanUsername: String, status: String, timestamp: Long) {
+    fun setCloudPresenceAsync(cleanUsername: String, status: String, timestamp: Long, detail: String = currentActivityDetail, roomCode: String = currentRoomCode) {
         val clean = cleanUsername.trim().lowercase().removePrefix("@")
         if (clean.isBlank()) return
         try {
             val encKey = URLEncoder.encode("pres_$clean", "UTF-8")
             val vName = NetworkConfig.APP_VERSION_NAME
             val vCode = NetworkConfig.APP_VERSION_CODE
-            val encVal = URLEncoder.encode("$status:$timestamp:$vName:$vCode", "UTF-8")
+            val encVal = URLEncoder.encode("$status:$timestamp:$vName:$vCode:$detail:$roomCode", "UTF-8")
             val url = "${NetworkConfig.KEYVALUE_API_URL}/UpdateValue/$appKey/$encKey?value=$encVal"
             val emptyBody = "".toRequestBody(null)
             val request = Request.Builder()
@@ -206,14 +215,14 @@ object PresenceManager {
     /**
      * Writes presence directly to Cloud Key-Value store.
      */
-    suspend fun setCloudPresence(cleanUsername: String, status: String, timestamp: Long): Boolean = withContext(Dispatchers.IO) {
+    suspend fun setCloudPresence(cleanUsername: String, status: String, timestamp: Long, detail: String = currentActivityDetail, roomCode: String = currentRoomCode): Boolean = withContext(Dispatchers.IO) {
         val clean = cleanUsername.trim().lowercase().removePrefix("@")
         if (clean.isBlank()) return@withContext false
         try {
             val encKey = URLEncoder.encode("pres_$clean", "UTF-8")
             val vName = NetworkConfig.APP_VERSION_NAME
             val vCode = NetworkConfig.APP_VERSION_CODE
-            val encVal = URLEncoder.encode("$status:$timestamp:$vName:$vCode", "UTF-8")
+            val encVal = URLEncoder.encode("$status:$timestamp:$vName:$vCode:$detail:$roomCode", "UTF-8")
             val url = "${NetworkConfig.KEYVALUE_API_URL}/UpdateValue/$appKey/$encKey?value=$encVal"
             val emptyBody = "".toRequestBody(null)
             val request = Request.Builder()
@@ -272,7 +281,53 @@ object PresenceManager {
                 val ts = parts.getOrNull(1)?.toLongOrNull() ?: return@withContext null
                 val vName = parts.getOrNull(2)?.ifBlank { null } ?: NetworkConfig.APP_VERSION_NAME
                 val vCode = parts.getOrNull(3)?.toIntOrNull() ?: NetworkConfig.APP_VERSION_CODE
-                val p = PlayerPresence(clean, status, ts, appVersion = vName, appVersionCode = vCode)
+                val cloudDetail = parts.getOrNull(4) ?: ""
+                val cloudRoom = parts.getOrNull(5) ?: ""
+
+                val existing = presenceMap[clean]
+                if (existing != null && existing.timestamp > ts) return@withContext existing
+                // Never wipe out active rich detail if existing presence is newer or already has detail
+                val effectiveDetail = if (cloudDetail.isNotBlank()) {
+                    cloudDetail
+                } else if (existing != null && existing.status.equals(status, ignoreCase = true) && existing.timestamp == ts) {
+                    existing.activityDetail
+                } else {
+                    ""
+                }
+                val effectiveRoom = if (cloudRoom.isNotBlank()) {
+                    cloudRoom
+                } else if (existing != null && existing.status.equals(status, ignoreCase = true) && existing.timestamp == ts) {
+                    existing.currentRoomCode
+                } else {
+                    ""
+                }
+
+                val now = System.currentTimeMillis()
+                val isCloudHeartbeatFresh = ts > 0L && (now - ts) < 15_000L
+
+                val effectiveStatus = when {
+                    isCloudHeartbeatFresh && (status.equals("ONLINE", ignoreCase = true) ||
+                            status.equals("IN_LOBBY", ignoreCase = true) ||
+                            status.equals("PLAYING", ignoreCase = true)) -> status
+                    else -> "OFFLINE"
+                }
+
+                val effectiveTimestamp = when {
+                    existing != null && existing.isOnline && existing.timestamp > ts -> existing.timestamp
+                    ts > 0L -> ts
+                    existing != null && existing.timestamp > 0L -> existing.timestamp
+                    else -> 0L
+                }
+
+                val p = PlayerPresence(
+                    username = clean,
+                    status = effectiveStatus,
+                    timestamp = effectiveTimestamp,
+                    appVersion = vName,
+                    appVersionCode = vCode,
+                    activityDetail = effectiveDetail,
+                    currentRoomCode = effectiveRoom
+                )
                 presenceMap[clean] = p
                 updatePresenceFlow()
                 p
@@ -425,14 +480,14 @@ object PresenceManager {
             while (isActive) {
                 delay(2500L)
                 val status = currentActivityState.name
-                publishStatus(cleanUsername, status)
+                publishStatus(cleanUsername, status, currentActivityDetail, currentRoomCode)
                 val now = System.currentTimeMillis()
-                setCloudPresence(cleanUsername, status, now)
+                setCloudPresence(cleanUsername, status, now, currentActivityDetail, currentRoomCode)
             }
         }
     }
 
-    private fun publishStatus(cleanUsername: String, status: String) {
+    private fun publishStatus(cleanUsername: String, status: String, detail: String = currentActivityDetail, roomCode: String = currentRoomCode) {
         val client = presenceClient ?: return
         if (!client.isConnected) return
         try {
@@ -442,7 +497,9 @@ object PresenceManager {
                 PlayerPresence(
                     username = cleanUsername,
                     status = status,
-                    timestamp = now
+                    timestamp = now,
+                    activityDetail = detail,
+                    currentRoomCode = roomCode
                 )
             )
             val message = MqttMessage(payload.toByteArray(StandardCharsets.UTF_8)).apply {
@@ -452,16 +509,13 @@ object PresenceManager {
             client.publish(topic, message)
 
             // Update local map as well
-            presenceMap[cleanUsername] = PlayerPresence(cleanUsername, status, now)
+            presenceMap[cleanUsername] = PlayerPresence(cleanUsername, status, now, activityDetail = detail, currentRoomCode = roomCode)
             updatePresenceFlow()
         } catch (e: Exception) {
             Log.w(TAG, "Error publishing status $status: ${e.message}")
         }
     }
 
-    private fun publishOnline(cleanUsername: String) {
-        publishStatus(cleanUsername, currentActivityState.name)
-    }
 
     private fun publishOffline(cleanUsername: String) {
         publishStatus(cleanUsername, "OFFLINE")
@@ -491,12 +545,12 @@ object PresenceManager {
         val currentStatus = currentActivityState.name
         Log.d(TAG, "App foregrounded — publishing $currentStatus for @$clean")
         val now = System.currentTimeMillis()
-        presenceMap[clean] = PlayerPresence(clean, currentStatus, now)
+        presenceMap[clean] = PlayerPresence(clean, currentStatus, now, activityDetail = currentActivityDetail, currentRoomCode = currentRoomCode)
         updatePresenceFlow()
 
         scope.launch {
-            publishStatus(clean, currentStatus)
-            setCloudPresence(clean, currentStatus, now)
+            publishStatus(clean, currentStatus, currentActivityDetail, currentRoomCode)
+            setCloudPresence(clean, currentStatus, now, currentActivityDetail, currentRoomCode)
         }
         startHeartbeat(clean)
         startPresenceWatcher(forceReconnect = true)
@@ -590,7 +644,20 @@ object PresenceManager {
                                     Log.w(TAG, "Error handling avatar update for $topic: ${e.message}")
                                 }
                             }
-                            client.subscribe(BroadcastMessageManager.MQTT_BROADCAST_TOPIC, 1) { topic, message ->
+                            client.subscribe("bingo/v3/registry/+", 1) { topic, message ->
+                                try {
+                                    val payload = String(message.payload, StandardCharsets.UTF_8)
+                                    val entry = json.decodeFromString<com.bingo.multiplayer.domain.network.PlayerRegistryEntry>(payload)
+                                    val clean = entry.username.ifBlank { topic.substringAfterLast("/") }.trim().lowercase().removePrefix("@")
+                                    val cleanEntry = entry.copy(username = clean)
+                                    AccountSessionManager.cachePlayer(cleanEntry)
+                                    com.bingo.multiplayer.domain.repository.FriendsRepository.activeInstance?.updateFriendCareerStats(cleanEntry)
+                                    AccountSessionManager.notifyRegistryUpdated()
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Error handling registry update for $topic: ${e.message}")
+                                }
+                            }
+                            client.subscribe(BroadcastMessageManager.MQTT_BROADCAST_TOPIC, 1) { _, message ->
                                 try {
                                     val payload = String(message.payload, StandardCharsets.UTF_8)
                                     BroadcastMessageManager.onBroadcastReceived(payload, appContext)
@@ -619,8 +686,16 @@ object PresenceManager {
         val cleanUser = presence.username.trim().lowercase().removePrefix("@")
         if (cleanUser.isNotBlank()) {
             val previous = presenceMap[cleanUser]
+            val now = System.currentTimeMillis()
             val effectiveTimestamp = if (presence.status.equals("OFFLINE", ignoreCase = true) && presence.timestamp <= 0L) {
-                System.currentTimeMillis()
+                // If previous was active and online, their last known heartbeat is their last seen time
+                if (previous != null && previous.isOnline && previous.timestamp > 0L) {
+                    previous.timestamp
+                } else if (previous != null && previous.timestamp > 0L && (now - previous.timestamp) < 86_400_000L) {
+                    previous.timestamp
+                } else {
+                    0L
+                }
             } else {
                 presence.timestamp
             }
@@ -644,10 +719,9 @@ object PresenceManager {
                 val ctx = appContext
                 if (ctx != null && BingoNotificationManager.isFriend(ctx, cleanUser)) {
                     val displayName = BingoNotificationManager.getFriendDisplayName(ctx, cleanUser)
-                    val lastSeen = previous?.timestamp ?: BingoNotificationManager.getFriendLastSeen(ctx, cleanUser)
 
                     // 1. Post system notification if app in background
-                    BingoNotificationManager.notifyFriendOnline(ctx, cleanUser, displayName, lastSeen)
+                    BingoNotificationManager.notifyFriendOnline(ctx, cleanUser, displayName)
 
                     // 2. Deliver in-app alert if app in foreground and setting is ON
                     if (com.bingo.multiplayer.domain.network.AppLifecycleObserver.isAppInForeground.value &&
@@ -704,11 +778,6 @@ object PresenceManager {
         }
     }
 
-    fun isUserOnline(username: String): Boolean {
-        val clean = username.trim().lowercase().removePrefix("@")
-        val p = presenceMap[clean] ?: return false
-        return p.isOnline
-    }
 
     /**
      * Formats player status cleanly:
@@ -782,17 +851,24 @@ object PresenceManager {
         return "offline"
     }
 
+    fun getRichDisplayStatus(username: String, fallbackLastSeen: Long? = null): String {
+        val clean = username.trim().lowercase().removePrefix("@")
+        val p = presenceMap[clean]
+        val now = System.currentTimeMillis()
+        p?.let { PresenceActivityFormatter.activeLabel(it, now) }?.let { return it }
+        return getDisplayStatus(username, fallbackLastSeen)
+    }
+
+
     fun isStatusOnline(statusText: String): Boolean {
-        return statusText.equals("online", ignoreCase = true) ||
-               statusText.equals("in-lobby", ignoreCase = true) ||
-               statusText.equals("playing", ignoreCase = true)
+        return statusText.substringBefore(" (").lowercase() in setOf("online", "in-lobby", "playing")
     }
 
     fun getStatusColor(statusText: String): Color {
         return when {
-            statusText.equals("online", ignoreCase = true) -> Color(0xFF16A34A) // Vibrant Green
-            statusText.equals("in-lobby", ignoreCase = true) -> Color(0xFFEAB308) // Amber Gold
-            statusText.equals("playing", ignoreCase = true) -> Color(0xFF8B5CF6) // Royal Violet
+            statusText.startsWith("online", ignoreCase = true) -> Color(0xFF16A34A) // Vibrant Green
+            statusText.startsWith("in-lobby", ignoreCase = true) -> Color(0xFFEAB308) // Amber Gold
+            statusText.startsWith("playing", ignoreCase = true) -> Color(0xFF8B5CF6) // Royal Violet
             else -> Color(0xFF94A3B8) // Slate Grey
         }
     }

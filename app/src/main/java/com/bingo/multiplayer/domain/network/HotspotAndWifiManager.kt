@@ -3,40 +3,22 @@ package com.bingo.multiplayer.domain.network
 import android.content.Context
 import android.content.Intent
 import android.net.ConnectivityManager
-import android.net.Network
-import android.net.NetworkCapabilities
-import android.net.NetworkRequest
 import android.net.wifi.WifiConfiguration
 import android.net.wifi.WifiManager
-import android.net.wifi.WifiNetworkSpecifier
 import android.os.Build
 import android.provider.Settings
-import android.util.Log
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 
 /**
- * Manages Wi-Fi, Hotspot states, and automated Wi-Fi connection
+ * Manages Wi-Fi and Hotspot states
  * for Nearby Network (LAN) peer-to-peer gameplay.
  */
 object HotspotAndWifiManager {
 
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-
-    private var activeNetworkCallback: ConnectivityManager.NetworkCallback? = null
-
     /**
-     * Safely unregisters any active NetworkCallback and unbinds process network socket routing.
-     * Prevents NetworkCallback exhaustion leaks and restores standard cellular/Wi-Fi routing for the app.
+     * Restores standard cellular/Wi-Fi routing when leaving Nearby Network mode.
      */
     fun disconnectFromWifi(context: Context) {
         val cm = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
-        try {
-            activeNetworkCallback?.let { cm.unregisterNetworkCallback(it) }
-        } catch (_: Exception) {}
-        activeNetworkCallback = null
         try {
             cm.bindProcessToNetwork(null)
         } catch (_: Exception) {}
@@ -248,30 +230,6 @@ object HotspotAndWifiManager {
         return "192.168.43.1"
     }
 
-    /**
-     * Scans and returns nearby Wi-Fi AP SSIDs broadcasting in the air.
-     */
-    fun getNearbyWifiAps(context: Context): List<String> {
-        return try {
-            val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
-            wifi?.scanResults
-                ?.mapNotNull { it.SSID?.trim()?.removeSurrounding("\"") }
-                ?.filter { it.isNotBlank() && !it.equals("<unknown ssid>", ignoreCase = true) }
-                ?.distinct() ?: emptyList()
-        } catch (_: Exception) {
-            emptyList()
-        }
-    }
-
-    /**
-     * Triggers a system Wi-Fi AP scan.
-     */
-    fun triggerWifiScan(context: Context) {
-        try {
-            val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
-            wifi?.startScan()
-        } catch (_: Exception) {}
-    }
 
     /**
      * Checks if the player's device is currently connected to the host's Wi-Fi / hotspot.
@@ -299,129 +257,6 @@ object HotspotAndWifiManager {
         return false
     }
 
-    /**
-     * Programmatically connects the joiner's device to the host's Wi-Fi hotspot.
-     * On Android 10+ uses WifiNetworkSpecifier with ConnectivityManager.
-     * Passes the resolved gateway/host IP into [onConnected].
-     */
-    fun connectToHostWifi(
-        context: Context,
-        ssid: String,
-        password: String,
-        onConnected: (resolvedGatewayIp: String) -> Unit,
-        onError: (String) -> Unit
-    ) {
-        val cleanSsid = ssid.trim().removeSurrounding("\"")
-        val cleanPass = password.trim().removeSurrounding("\"")
-
-        if (cleanSsid.isBlank()) {
-            onError("SSID cannot be blank")
-            return
-        }
-
-        val cm = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-        if (cm == null) {
-            onError("ConnectivityManager unavailable")
-            return
-        }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            try {
-                val specifierBuilder = WifiNetworkSpecifier.Builder()
-                    .setSsid(cleanSsid)
-
-                if (cleanPass.isNotBlank()) {
-                    specifierBuilder.setWpa2Passphrase(cleanPass)
-                }
-
-                val specifier = specifierBuilder.build()
-                val request = NetworkRequest.Builder()
-                    .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-                    .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                    .setNetworkSpecifier(specifier)
-                    .build()
-
-                disconnectFromWifi(context)
-
-                val callback = object : ConnectivityManager.NetworkCallback() {
-                    override fun onAvailable(network: Network) {
-                        super.onAvailable(network)
-                        try {
-                            cm.bindProcessToNetwork(network)
-                        } catch (_: Exception) {}
-
-                        // Allow brief moment for IP routing & DHCP to finalize
-                        scope.launch(Dispatchers.IO) {
-                            kotlinx.coroutines.delay(400L)
-                            var gateway = ""
-                            try {
-                                val lp = cm.getLinkProperties(network)
-                                gateway = lp?.routes?.firstOrNull { it.isDefaultRoute }?.gateway?.hostAddress ?: ""
-                                if (gateway.isBlank() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                                    gateway = lp?.dhcpServerAddress?.hostAddress ?: ""
-                                }
-                            } catch (_: Exception) {}
-                            if (gateway.isBlank()) {
-                                gateway = getGatewayIp(context)
-                            }
-                            val finalGateway = if (gateway.isNotBlank() && gateway != "0.0.0.0") gateway else "192.168.43.1"
-                            scope.launch(Dispatchers.Main) {
-                                onConnected(finalGateway)
-                            }
-                        }
-                    }
-
-                    override fun onLost(network: Network) {
-                        super.onLost(network)
-                        disconnectFromWifi(context)
-                    }
-
-                    override fun onUnavailable() {
-                        super.onUnavailable()
-                        disconnectFromWifi(context)
-                        scope.launch(Dispatchers.Main) {
-                            onError("Connection request cancelled or timed out")
-                        }
-                    }
-                }
-                activeNetworkCallback = callback
-                cm.requestNetwork(request, callback)
-            } catch (e: Exception) {
-                Log.w("HotspotWifi", "WifiNetworkSpecifier failed: ${e.message}")
-                onError(e.message ?: "Could not connect to network")
-            }
-        } else {
-            // Legacy Wi-Fi connection
-            try {
-                val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
-                val conf = WifiConfiguration().apply {
-                    SSID = "\"$cleanSsid\""
-                    if (cleanPass.isNotBlank()) {
-                        preSharedKey = "\"$cleanPass\""
-                    } else {
-                        allowedKeyManagement.set(WifiConfiguration.KeyMgmt.NONE)
-                    }
-                }
-                val netId = wifi?.addNetwork(conf) ?: -1
-                if (netId != -1) {
-                    wifi?.disconnect()
-                    wifi?.enableNetwork(netId, true)
-                    wifi?.reconnect()
-                    scope.launch(Dispatchers.IO) {
-                        kotlinx.coroutines.delay(800L)
-                        val gateway = getGatewayIp(context)
-                        scope.launch(Dispatchers.Main) {
-                            onConnected(gateway)
-                        }
-                    }
-                } else {
-                    onError("Failed to add Wi-Fi configuration")
-                }
-            } catch (e: Exception) {
-                onError(e.message ?: "Connection failed")
-            }
-        }
-    }
 
     /**
      * Resolves the primary local IPv4 address across Hotspot, Wi-Fi, and active network interfaces.

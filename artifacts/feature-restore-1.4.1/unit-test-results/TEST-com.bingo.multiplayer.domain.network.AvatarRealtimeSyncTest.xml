@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.bingo.multiplayer.domain.network.AvatarRealtimeSyncTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-14T17:07:21" hostname="VR" time="0.117">
+  <properties/>
+  <testcase name="testLanP2pSessionManagerAvatarUpdate" classname="com.bingo.multiplayer.domain.network.AvatarRealtimeSyncTest" time="0.022"/>
+  <testcase name="testPlayerAvatarCacheEvictionAndVersioning" classname="com.bingo.multiplayer.domain.network.AvatarRealtimeSyncTest" time="0.0"/>
+  <testcase name="testOnlineRoomSyncManagerRemoteAvatarUpdate" classname="com.bingo.multiplayer.domain.network.AvatarRealtimeSyncTest" time="0.026"/>
+  <testcase name="testAccountSessionManagerRemoteAvatarUpdate" classname="com.bingo.multiplayer.domain.network.AvatarRealtimeSyncTest" time="0.004"/>
+  <testcase name="testPresenceManagerAvatarUpdateReceived" classname="com.bingo.multiplayer.domain.network.AvatarRealtimeSyncTest" time="0.064"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

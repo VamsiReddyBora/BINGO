@@ -1,7 +1,5 @@
 package com.bingo.multiplayer
 
-import android.app.NotificationManager
-import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
@@ -76,6 +74,12 @@ class MainActivity : ComponentActivity() {
 
         authRepository = AuthRepository(applicationContext)
         friendsRepository = FriendsRepository(applicationContext)
+
+        authRepository.getPersistedUserSync()?.takeIf { it.username.isNotBlank() }?.let { user ->
+            com.bingo.multiplayer.domain.network.LeaderboardSyncManager.startBootSync(
+                applicationContext, user.username, user.uid, friendsRepository, authRepository
+            )
+        }
 
         // Process notification launch actions
         handleNotificationIntent(intent)

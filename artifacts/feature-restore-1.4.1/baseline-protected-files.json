@@ -1,0 +1,14 @@
+{
+  "app/src/main/java/com/bingo/multiplayer/domain/engine/BingoEngine.kt": true,
+  "app/src/main/java/com/bingo/multiplayer/domain/engine/LobbyLifecycleEngine.kt": true,
+  "app/src/main/java/com/bingo/multiplayer/domain/engine/ManualBoardEngine.kt": true,
+  "app/src/main/java/com/bingo/multiplayer/domain/network/FastPacketCodec.kt": true,
+  "app/src/main/java/com/bingo/multiplayer/domain/network/OnlineRoomSyncManager.kt": true,
+  "app/src/main/java/com/bingo/multiplayer/domain/network/OngoingMatchStore.kt": true,
+  "app/src/main/java/com/bingo/multiplayer/domain/network/LanP2pSessionManager.kt": true,
+  "app/build.gradle": true,
+  "build.gradle": true,
+  "settings.gradle": true,
+  "gradle.properties": true,
+  "app/src/main/AndroidManifest.xml": true
+}

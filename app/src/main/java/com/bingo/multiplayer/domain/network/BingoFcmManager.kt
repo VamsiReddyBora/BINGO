@@ -32,7 +32,7 @@ object BingoFcmManager {
                     saveToken(context, token)
                     val localUser = BroadcastMessageManager.getLocalUsername(context)
                     if (localUser.isNotBlank()) {
-                        syncTokenToCloud(context, localUser, token)
+                        syncTokenToCloud(localUser, token)
                     }
                 } else {
                     Log.w(TAG, "Failed to fetch FCM registration token: ${task.exception?.message}")
@@ -65,7 +65,7 @@ object BingoFcmManager {
      * Publishes this user's FCM device token to the Cloud Key-Value store.
      * This enables any opponent or friend to look up this device's token and send a push.
      */
-    fun syncTokenToCloud(context: Context, username: String, token: String) {
+    fun syncTokenToCloud(username: String, token: String) {
         val clean = username.trim().lowercase().removePrefix("@")
         if (clean.isBlank() || token.isBlank()) return
 
@@ -96,14 +96,14 @@ object BingoFcmManager {
         if (clean.isBlank()) return
         val saved = getSavedToken(context)
         if (!saved.isNullOrBlank()) {
-            syncTokenToCloud(context, clean, saved)
+            syncTokenToCloud(clean, saved)
         } else {
             try {
                 FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
                     if (task.isSuccessful && !task.result.isNullOrBlank()) {
                         val token = task.result
                         saveToken(context, token)
-                        syncTokenToCloud(context, clean, token)
+                        syncTokenToCloud(clean, token)
                     }
                 }
             } catch (e: Exception) {
@@ -296,40 +296,5 @@ object BingoFcmManager {
         }
     }
 
-    /**
-     * Self-test trigger: Sends an FCM push to this exact device with a delay
-     * so user can minimize/lock their phone and watch FCM wake the device.
-     */
-    fun sendSelfTestPush(context: Context, onResult: (Boolean, String) -> Unit) {
-        val token = getSavedToken(context)
-        if (token.isNullOrBlank()) {
-            FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
-                if (task.isSuccessful && !task.result.isNullOrBlank()) {
-                    val freshToken = task.result
-                    saveToken(context, freshToken)
-                    dispatchSelfTest(freshToken, onResult)
-                } else {
-                    onResult(false, "Could not fetch FCM device token: ${task.exception?.message}")
-                }
-            }
-        } else {
-            dispatchSelfTest(token, onResult)
-        }
-    }
 
-    private fun dispatchSelfTest(token: String, onResult: (Boolean, String) -> Unit) {
-        sendPushNotification(
-            targetToken = token,
-            type = "GAME_INVITE",
-            title = "🎮 Test FCM Push",
-            body = "FCM High-Priority push successfully woke your device!",
-            data = mapOf(
-                "roomCode" to "FCMTEST",
-                "fromUsername" to "fcm_test",
-                "fromDisplayName" to "FCM Cloud Diagnostics",
-                "timestamp" to System.currentTimeMillis().toString()
-            ),
-            onComplete = onResult
-        )
-    }
 }

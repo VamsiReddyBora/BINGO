@@ -1,34 +1,24 @@
 package com.bingo.multiplayer.domain.repository
 
-import android.content.ContentResolver
-import android.content.Context
 import android.content.SharedPreferences
 import com.bingo.multiplayer.domain.model.AuthProvider
 import com.bingo.multiplayer.domain.model.AuthState
-import com.bingo.multiplayer.domain.model.UserProfile
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
-import java.io.File
-import java.lang.reflect.InvocationHandler
-import java.lang.reflect.Method
-import java.lang.reflect.Proxy
 import java.util.concurrent.ConcurrentHashMap
 
 class AuthRepositoryTest {
 
     private lateinit var fakePrefs: FakeSharedPreferences
-    private lateinit var mockAuthProvider: MockFirebaseAuthProvider
     private lateinit var repository: AuthRepository
 
     @Before
     fun setUp() {
         fakePrefs = FakeSharedPreferences()
-        mockAuthProvider = MockFirebaseAuthProvider()
         repository = AuthRepository(
             context = null,
-            firebaseAuthProvider = mockAuthProvider,
             customPrefs = fakePrefs
         )
     }
@@ -45,134 +35,58 @@ class AuthRepositoryTest {
     }
 
     @Test
-    fun testLoginWithFirebase_googleSuccess_persistsProfileAndToken() = runBlocking {
-        mockAuthProvider.customGoogleResult = FirebaseUserResult(
-            uid = "google_user_123",
-            displayName = "Alice Wonder",
-            email = "alice@example.com",
-            token = "jwt_token_google_abc",
-            provider = AuthProvider.GOOGLE
-        )
-
-        val result = repository.loginWithFirebase(AuthProvider.GOOGLE, "id_token_xyz")
-        assertTrue(result.isSuccess)
-        val profile = result.getOrThrow()
-
-        assertEquals("google_user_123", profile.uid)
+    fun testGoogleSignIn_persistsProfileAndSession() = runBlocking {
+        val id = "cleanup_${System.nanoTime()}"
+        repository.onGoogleSignInSuccess(id, "Alice Wonder", "alice@example.com", customUsername = id)
+        val profile = (repository.authState.value as AuthState.Authenticated).user
+        assertEquals("google_$id", profile.uid)
         assertEquals("Alice Wonder", profile.displayName)
+        assertEquals(id, profile.username)
         assertEquals("alice@example.com", profile.email)
         assertEquals(AuthProvider.GOOGLE, profile.provider)
 
-        // Verify state is Authenticated
-        val state = repository.authState.value
-        assertTrue(state is AuthState.Authenticated)
-        assertEquals(profile, (state as AuthState.Authenticated).user)
-
-        // Verify token was persisted
-        assertEquals("jwt_token_google_abc", repository.getAuthToken())
-
-        // Verify session persistence across repo instances
-        val repo2 = AuthRepository(context = null, firebaseAuthProvider = mockAuthProvider, customPrefs = fakePrefs)
-        val persistedState = repo2.verifyPersistedSession()
-        assertTrue(persistedState is AuthState.Authenticated)
-        assertEquals("google_user_123", (persistedState as AuthState.Authenticated).user.uid)
+        val repo2 = AuthRepository(context = null, customPrefs = fakePrefs)
+        val state = repo2.verifyPersistedSession() as AuthState.Authenticated
+        assertEquals(profile, state.user)
+        repo2.sessionManager.stopSessionWatcher()
     }
 
     @Test
-    fun testLoginWithFirebase_playGamesSuccess() = runBlocking {
-        mockAuthProvider.customPlayGamesResult = FirebaseUserResult(
-            uid = "pg_gamer_456",
-            displayName = "ChampionPlayer",
-            email = null,
-            token = "pg_token_secret",
-            provider = AuthProvider.PLAY_GAMES
-        )
-
-        val result = repository.loginWithFirebase(AuthProvider.PLAY_GAMES, "pg_auth_code")
-        assertTrue(result.isSuccess)
-        val profile = result.getOrThrow()
-
+    fun testLegacyPlayGamesProfile_remainsReadable() {
+        fakePrefs.edit().putString("uid", "pg_gamer_456")
+            .putString("display_name", "ChampionPlayer")
+            .putString("provider", AuthProvider.PLAY_GAMES.name).apply()
+        val profile = repository.getPersistedUserSync()!!
         assertEquals("pg_gamer_456", profile.uid)
         assertEquals("ChampionPlayer", profile.displayName)
         assertEquals(AuthProvider.PLAY_GAMES, profile.provider)
-        assertEquals("pg_token_secret", repository.getAuthToken())
     }
 
     @Test
-    fun testTokenRefresh_success() = runBlocking {
-        // First log in
-        mockAuthProvider.customGoogleResult = FirebaseUserResult(
-            uid = "u1",
-            displayName = "User",
-            token = "old_token",
-            provider = AuthProvider.GOOGLE
-        )
-        repository.loginWithFirebase(AuthProvider.GOOGLE, "token")
-
-        mockAuthProvider.refreshSuccessToken = "new_shiny_token"
-        val refreshResult = repository.refreshToken()
-
-        assertTrue(refreshResult.isSuccess)
-        assertEquals("new_shiny_token", refreshResult.getOrThrow())
-        assertEquals("new_shiny_token", repository.getAuthToken())
+    fun testPersistedProfile_retainsCareerStatistics() {
+        fakePrefs.edit().putString("uid", "google_stats")
+            .putString("display_name", "Pro Player")
+            .putInt("games_played", 42).putInt("games_won", 30)
+            .putInt("streak", 0).putInt("best_streak", 8).apply()
+        val profile = repository.getPersistedUserSync()!!
+        assertEquals(42, profile.gamesPlayed)
+        assertEquals(30, profile.gamesWon)
+        assertEquals(0, profile.currentStreak)
+        assertEquals(8, profile.bestStreak)
     }
 
     @Test
-    fun testTokenRefresh_expired_signsOutUser() = runBlocking {
-        mockAuthProvider.customGoogleResult = FirebaseUserResult(
-            uid = "u1",
-            displayName = "User",
-            token = "old_token",
-            provider = AuthProvider.GOOGLE
-        )
-        repository.loginWithFirebase(AuthProvider.GOOGLE, "token")
-
-        // Refresh returns null (session expired / revoked)
-        mockAuthProvider.refreshSuccessToken = null
-        val refreshResult = repository.refreshToken()
-
-        assertTrue(refreshResult.isFailure)
-        assertNull(repository.getAuthToken())
-        assertTrue(repository.authState.value is AuthState.Unauthenticated)
-    }
-
-    @Test
-    fun testFetchUserProfile_flow() = runBlocking {
-        mockAuthProvider.customUserProfile = UserProfile(
-            uid = "u100",
-            displayName = "Fetched Pro Player",
-            provider = AuthProvider.GOOGLE,
-            gamesPlayed = 42,
-            gamesWon = 30
-        )
-
-        val result = repository.fetchUserProfile("u100")
-        assertTrue(result.isSuccess)
-        val fetched = result.getOrThrow()
-
-        assertEquals("Fetched Pro Player", fetched.displayName)
-        assertEquals(42, fetched.gamesPlayed)
-        assertEquals(30, fetched.gamesWon)
-        assertEquals(fetched, (repository.authState.value as AuthState.Authenticated).user)
-    }
-
-    @Test
-    fun testSignOut_clearsEverything() = runBlocking {
-        mockAuthProvider.customGoogleResult = FirebaseUserResult(
-            uid = "u1",
-            displayName = "User",
-            token = "token123",
-            provider = AuthProvider.GOOGLE
-        )
-        repository.loginWithFirebase(AuthProvider.GOOGLE, "tok")
+    fun testSignOut_clearsPersistedSession() = runBlocking {
+        val id = "cleanup_${System.nanoTime()}"
+        repository.onGoogleSignInSuccess(id, "User", "user@example.com", customUsername = id)
         assertTrue(repository.authState.value is AuthState.Authenticated)
-
         repository.signOut()
         assertEquals(AuthState.Unauthenticated, repository.authState.value)
-        assertNull(repository.getAuthToken())
-
-        val repo2 = AuthRepository(context = null, firebaseAuthProvider = mockAuthProvider, customPrefs = fakePrefs)
+        assertFalse(fakePrefs.contains("auth_token"))
+        assertNull(repository.getPersistedUserSync())
+        val repo2 = AuthRepository(context = null, customPrefs = fakePrefs)
         assertEquals(AuthState.Unauthenticated, repo2.verifyPersistedSession())
+        repo2.sessionManager.stopSessionWatcher()
     }
 
     @Test
@@ -242,7 +156,6 @@ class AuthRepositoryTest {
         val freshEmptyPrefs = FakeSharedPreferences()
         val freshRepository = AuthRepository(
             context = null,
-            firebaseAuthProvider = mockAuthProvider,
             customPrefs = freshEmptyPrefs
         )
 
@@ -328,33 +241,6 @@ class AuthRepositoryTest {
 
     // ── Test Doubles & In-Memory SharedPreferences ──
 
-    class MockFirebaseAuthProvider : FirebaseAuthProvider {
-        var customGoogleResult: FirebaseUserResult? = null
-        var customPlayGamesResult: FirebaseUserResult? = null
-        var customUserProfile: UserProfile? = null
-        var refreshSuccessToken: String? = "refreshed_mock_token"
-
-        override suspend fun signInWithGoogle(idToken: String): FirebaseUserResult {
-            return customGoogleResult ?: FirebaseUserResult("g_$idToken", "Google User", token = "tok_g")
-        }
-
-        override suspend fun signInWithPlayGames(authCode: String): FirebaseUserResult {
-            return customPlayGamesResult ?: FirebaseUserResult("pg_$authCode", "PG User", token = "tok_pg", provider = AuthProvider.PLAY_GAMES)
-        }
-
-        override suspend fun signInAnonymously(): FirebaseUserResult {
-            return FirebaseUserResult("guest_1", "Guest", token = "tok_anon", provider = AuthProvider.GUEST)
-        }
-
-        override suspend fun refreshToken(currentToken: String?): String? {
-            return refreshSuccessToken
-        }
-
-        override suspend fun fetchUserProfile(uid: String): UserProfile? {
-            return customUserProfile ?: UserProfile(uid = uid, displayName = "Mock User")
-        }
-    }
-
     class FakeSharedPreferences : SharedPreferences {
         private val data = ConcurrentHashMap<String, Any?>()
 
@@ -422,4 +308,3 @@ class AuthRepositoryTest {
         }
     }
 }
-

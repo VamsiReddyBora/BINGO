@@ -37,8 +37,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bingo.multiplayer.R
-import com.bingo.multiplayer.presentation.components.EmojiParticleConfig
-import com.bingo.multiplayer.presentation.components.MultiEmojiFloatingParticleSystem
 import kotlinx.coroutines.launch
 import kotlin.math.PI
 import kotlin.math.cos
@@ -243,22 +241,3 @@ private fun StampDustPuff(color: Color) {
         }
     }
 }
-
-/**
- * Fullscreen Winning Celebration Overlay:
- * Particle animation is intentionally deferred from the winning screen for now per user instruction.
- * A dedicated button in Settings allows testing and previewing it first.
- */
-@Composable
-fun GameOverEmojiProjectileBurst(
-    resultType: StampResultType,
-    modifier: Modifier = Modifier,
-    onApexReached: () -> Unit = {},
-    onBurstFinished: () -> Unit = {}
-) {
-    LaunchedEffect(Unit) {
-        onApexReached()
-        onBurstFinished()
-    }
-}
-

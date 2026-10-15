@@ -1,10 +1,11 @@
 package com.bingo.multiplayer.domain.network
 
+// Test-only simulation model. Production uses OnlineRoomSyncManager and LanP2pSessionManager.
+
 import androidx.annotation.Keep
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.random.Random

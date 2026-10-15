@@ -13,7 +13,7 @@ class BingoFirebaseMessagingService : FirebaseMessagingService() {
 
         val localUser = BroadcastMessageManager.getLocalUsername(applicationContext)
         if (localUser.isNotBlank()) {
-            BingoFcmManager.syncTokenToCloud(applicationContext, localUser, token)
+            BingoFcmManager.syncTokenToCloud(localUser, token)
         }
     }
 
@@ -42,17 +42,16 @@ class BingoFirebaseMessagingService : FirebaseMessagingService() {
                             roomCode = roomCode,
                             timestamp = timestamp
                         )
-                        val isSelfTest = roomCode == "FCMTEST" || fromUsername == "fcm_test"
                         val inForeground = AppLifecycleObserver.isAppInForeground.value
 
-                        if (!isSelfTest && inForeground) {
+                        if (inForeground) {
                             if (com.bingo.multiplayer.core.designsystem.NotificationPreferences.canShowInAppInvite(applicationContext)) {
                                 Log.d(TAG, "Game invite received via FCM while app in foreground — delivering in-app only")
                                 GameInviteManager.deliverForegroundInvite(invite)
                             }
                         } else {
-                            if (isSelfTest || com.bingo.multiplayer.core.designsystem.NotificationPreferences.canShowSystemInviteNotification(applicationContext)) {
-                                BingoNotificationManager.showInviteNotification(applicationContext, invite, forceShow = isSelfTest)
+                            if (com.bingo.multiplayer.core.designsystem.NotificationPreferences.canShowSystemInviteNotification(applicationContext)) {
+                                BingoNotificationManager.showInviteNotification(applicationContext, invite)
                             }
                             if (com.bingo.multiplayer.core.designsystem.NotificationPreferences.canShowInAppInvite(applicationContext)) {
                                 GameInviteManager.deliverForegroundInvite(invite)
@@ -63,9 +62,8 @@ class BingoFirebaseMessagingService : FirebaseMessagingService() {
                 "FRIEND_ONLINE" -> {
                     val username = data["username"].orEmpty()
                     val displayName = data["displayName"].orEmpty().ifBlank { username }
-                    val timestamp = data["timestamp"]?.toLongOrNull() ?: System.currentTimeMillis()
                     if (username.isNotBlank()) {
-                        BingoNotificationManager.notifyFriendOnline(applicationContext, username, displayName, timestamp)
+                        BingoNotificationManager.notifyFriendOnline(applicationContext, username, displayName)
                     }
                 }
                 else -> {

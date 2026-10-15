@@ -99,11 +99,6 @@ object BroadcastMessageManager {
     private var lastApplicationContext: Context? = null
     private val scope = CoroutineScope(Dispatchers.IO)
 
-    fun deliverForegroundBroadcast(msg: BroadcastMessage) {
-        if (!hasDismissedInSession && msg.active && msg.message.isNotBlank()) {
-            _activeBroadcast.value = msg
-        }
-    }
 
     /**
      * Checks if this message has already been viewed and dismissed in ONCE mode.
@@ -228,10 +223,6 @@ object BroadcastMessageManager {
                 if (!hasDismissedInSession) {
                     _activeBroadcast.value = msg
                     Log.i(TAG, "Live broadcast received: ${msg.title} (target=${msg.targetUsername}, mode=${msg.deliveryMode})")
-                    val effectiveCtx = context ?: lastApplicationContext
-                    if (effectiveCtx != null && !AppLifecycleObserver.isAppInForeground.value) {
-                        BingoNotificationManager.showBroadcastNotification(effectiveCtx, msg)
-                    }
                 }
             }
         } catch (e: Exception) {
@@ -306,61 +297,6 @@ object BroadcastMessageManager {
         }
     }
 
-    /**
-     * Transmits a new broadcast message from the admin page.
-     * Supports broadcasting to ALL players, or targeting a specific player (@username).
-     */
-    suspend fun publishBroadcast(
-        title: String,
-        message: String,
-        type: String = "INFO",
-        author: String = "Admin",
-        targetUsername: String = ""
-    ): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val cleanTarget = targetUsername.trim().removePrefix("@")
-            val isSpecificUser = cleanTarget.isNotBlank() && !cleanTarget.equals("ALL", ignoreCase = true)
-
-            val broadcast = BroadcastMessage(
-                id = UUID.randomUUID().toString().take(8),
-                title = title.trim(),
-                message = message.trim(),
-                type = type,
-                author = author.trim().ifBlank { "Admin" },
-                targetUsername = if (isSpecificUser) "@$cleanTarget" else "ALL",
-                timestamp = System.currentTimeMillis(),
-                active = true
-            )
-            val jsonStr = broadcast.toJsonString()
-
-            // 1. Determine KeyValue storage key
-            val storageKey = if (isSpecificUser) "user_msg_${cleanTarget.lowercase()}" else KEYVALUE_BROADCAST_KEY
-            val encKey = URLEncoder.encode(storageKey, "UTF-8")
-            val encVal = URLEncoder.encode(jsonStr, "UTF-8")
-            val url = "${NetworkConfig.KEYVALUE_API_URL}/UpdateValue/${NetworkConfig.KEYVALUE_APP_KEY}/$encKey?value=$encVal"
-            val emptyBody = "".toRequestBody(null)
-            val request = Request.Builder()
-                .url(url)
-                .post(emptyBody)
-                .header("Content-Length", "0")
-                .build()
-
-            val success = NetworkConfig.httpClient.newCall(request).execute().use { it.isSuccessful }
-
-            // 2. Publish via MQTT to notify currently online players in real-time
-            publishMqttBroadcast(jsonStr)
-
-            // 3. Reset dismissal for admin so they can preview it
-            hasDismissedInSession = false
-            _activeBroadcast.value = broadcast
-
-            Log.i(TAG, "Broadcast published: ${broadcast.title} (target=${broadcast.targetUsername})")
-            success
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to publish broadcast: ${e.message}", e)
-            false
-        }
-    }
 
     /**
      * Clears or deactivates any existing broadcast from the cloud.
@@ -405,13 +341,6 @@ object BroadcastMessageManager {
         }
     }
 
-    /**
-     * Allows previewing the active broadcast locally.
-     */
-    fun previewLocally(broadcast: BroadcastMessage) {
-        hasDismissedInSession = false
-        _activeBroadcast.value = broadcast
-    }
 
     private fun publishMqttBroadcast(jsonPayload: String) {
         scope.launch {

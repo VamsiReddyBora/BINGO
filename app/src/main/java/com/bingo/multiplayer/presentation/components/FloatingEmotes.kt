@@ -4,7 +4,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -12,7 +11,6 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -30,11 +28,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -48,14 +42,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -83,157 +74,6 @@ data class FloatingEmoteItem(
     val scaleMultiplier: Float = 1.0f
 )
 
-/**
- * Expandable Floating Emote Action Bar.
- * Allows quick one-tap emoji reactions (🔥, 😱, 😂, 🎯, 👏) during the match.
- */
-@Composable
-fun FloatingEmoteBar(
-    onEmoteSelected: (String) -> Unit,
-    customPhrases: List<String> = emptyList(),
-    onPhraseSelected: (String) -> Unit = {},
-    modifier: Modifier = Modifier
-) {
-    var isExpanded by remember { mutableStateOf(false) }
-    val tokens = BingoTheme.colors
-    val haptic = LocalHapticFeedback.current
-
-    Box(
-        modifier = modifier,
-        contentAlignment = Alignment.CenterEnd
-    ) {
-        if (isExpanded) {
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = tokens.surface,
-                border = BorderStroke(1.dp, tokens.surfaceBorder),
-                shadowElevation = 8.dp,
-                modifier = Modifier.padding(end = 4.dp)
-            ) {
-                Column(
-                    modifier = Modifier.padding(8.dp),
-                    horizontalAlignment = Alignment.End
-                ) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        QUICK_EMOTES.forEach { emoji ->
-                            var isPressed by remember { mutableStateOf(false) }
-                            val pressScale by animateFloatAsState(
-                                targetValue = if (isPressed) 0.85f else 1.0f,
-                                animationSpec = tween(durationMillis = 80),
-                                label = "emotePressScale"
-                            )
-
-                            Box(
-                                modifier = Modifier
-                                    .size(38.dp)
-                                    .scale(pressScale)
-                                    .clip(CircleShape)
-                                    .background(tokens.backgroundSecondary)
-                                    .pointerInput(Unit) {
-                                        detectTapGestures(
-                                            onPress = {
-                                                isPressed = true
-                                                tryAwaitRelease()
-                                                isPressed = false
-                                            },
-                                            onTap = {
-                                                if (com.bingo.multiplayer.core.designsystem.SoundPreferences.isHapticsAllowed()) {
-                                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                }
-                                                onEmoteSelected(emoji)
-                                                isExpanded = false
-                                            }
-                                        )
-                                    },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                AnimatedEmoji(emoji = emoji, fontSize = 20.sp)
-                            }
-                        }
-
-                        // Close Button
-                        Box(
-                            modifier = Modifier
-                                .size(32.dp)
-                                .clip(CircleShape)
-                                .background(tokens.backgroundSecondary)
-                                .clickable { isExpanded = false },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Close",
-                                tint = tokens.cellNeutralText,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-                    }
-
-                    // Optional Quick-Chat Messages inside Floating Emote Bar
-                    if (customPhrases.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Column(
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
-                            modifier = Modifier.padding(horizontal = 2.dp)
-                        ) {
-                            customPhrases.take(4).forEach { phrase ->
-                                Surface(
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = tokens.backgroundSecondary,
-                                    border = BorderStroke(0.5.dp, tokens.surfaceBorder),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable {
-                                            if (com.bingo.multiplayer.core.designsystem.SoundPreferences.isHapticsAllowed()) {
-                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                            }
-                                            onPhraseSelected(phrase)
-                                            isExpanded = false
-                                        }
-                                ) {
-                                    Text(
-                                        text = phrase,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = tokens.cellNeutralText,
-                                        maxLines = 1,
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        } else {
-            // Collapsed Floating Button (Shows a reaction emoji)
-            Surface(
-                shape = CircleShape,
-                color = tokens.surface,
-                border = BorderStroke(1.5.dp, tokens.accentBrand),
-                shadowElevation = 6.dp,
-                modifier = Modifier
-                    .size(44.dp)
-                    .clickable {
-                        if (com.bingo.multiplayer.core.designsystem.SoundPreferences.isHapticsAllowed()) {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        }
-                        isExpanded = true
-                    }
-            ) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    AnimatedEmoji(emoji = "🔥", fontSize = 22.sp)
-                }
-            }
-        }
-    }
-}
 
 val ALL_REACTION_EMOJIS = listOf(
     // 1. Smiles and Emotions

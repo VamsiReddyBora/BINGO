@@ -7,7 +7,6 @@ import androidx.annotation.Keep
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -19,7 +18,6 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken
@@ -33,7 +31,6 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
 
 @Keep
 @Serializable
@@ -1278,6 +1275,13 @@ class AccountSessionManager(
     companion object {
         private val binIdCache = ConcurrentHashMap<String, String>()
         private val registryCache = ConcurrentHashMap<String, Pair<Long, PlayerRegistryEntry>>()
+        private val _registryCacheVersion = kotlinx.coroutines.flow.MutableStateFlow(0L)
+        val registryCacheVersion: kotlinx.coroutines.flow.StateFlow<Long> = _registryCacheVersion
+
+        @Synchronized
+        fun notifyRegistryUpdated() {
+            _registryCacheVersion.value += 1L
+        }
         private val userMutexes = ConcurrentHashMap<String, Mutex>()
         private val backupMemoryCache = ConcurrentHashMap<String, com.bingo.multiplayer.domain.model.CloudUserDataBackup>()
 
@@ -1292,6 +1296,10 @@ class AccountSessionManager(
             val clean = entry.username.trim().lowercase().removePrefix("@")
             if (clean.isNotBlank()) {
                 registryCache[clean] = Pair(System.currentTimeMillis(), entry)
+                if (entry.uid.isNotBlank()) {
+                    registryCache[entry.uid.trim().lowercase()] = Pair(System.currentTimeMillis(), entry)
+                }
+                notifyRegistryUpdated()
             }
         }
 

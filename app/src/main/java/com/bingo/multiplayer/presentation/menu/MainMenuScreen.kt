@@ -11,7 +11,6 @@ import kotlinx.coroutines.isActive
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,13 +29,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.CastConnected
 import androidx.compose.material.icons.filled.DarkMode
-import androidx.compose.material.icons.filled.Group
-import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.LightMode
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.ui.platform.LocalContext
@@ -86,7 +81,6 @@ fun MainMenuScreen(
     authRepository: AuthRepository,
     friendsRepository: com.bingo.multiplayer.domain.repository.FriendsRepository? = null,
     onNavigateToSettings: () -> Unit,
-    onNavigateToDashboard: () -> Unit = {},
     onPlayAi: (difficulty: AiDifficulty) -> Unit,
     onPlayOnline: () -> Unit,
     onPlayNearbyNetwork: () -> Unit,
@@ -681,4 +675,3 @@ private fun CompactMenuCard(
         }
     }
 }
-
