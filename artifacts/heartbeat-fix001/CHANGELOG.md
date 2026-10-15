@@ -150,5 +150,33 @@
   - `python3 /home/bob/workspace/heartbeat-review-evidence/run_probe.py /home/bob/workspace/bingo_heartbeat_fix001` -> 5 of 5 checks PASS, 0 contract violations.
 - Rollback: `git checkout 8df72ba -- app/src/main/java/com/bingo/multiplayer/domain/network/OngoingMatchStore.kt app/src/main/java/com/bingo/multiplayer/presentation/menu/MainMenuScreen.kt app/src/main/java/com/bingo/multiplayer/presentation/navigation/RootNavGraph.kt app/src/test/java/com/bingo/multiplayer/domain/network/OngoingMatchStoreRejoinTest.kt`
 
+---
+
+### FIX001-006 — Verification Build, Integrity Checks & Fix001 Candidate Delivery
+- Started / completed: 2026-10-15 11:48 IST / 2026-10-15 11:54 IST
+- Checkpoint before edit: bd4c5c1
+- Review IDs: HB14
+- Files / symbols:
+  - `artifacts/heartbeat-fix001/Bingo-fix001.apk`
+  - `artifacts/heartbeat-fix001/Fix001ReviewResolution.md`
+  - `artifacts/heartbeat-fix001/TEST_REPORT.md`
+  - `artifacts/heartbeat-fix001/AGENT_HANDOFF.md`
+- Verification Commands & Results:
+  - Independent contract probe: `python3 /home/bob/workspace/heartbeat-review-evidence/run_probe.py /home/bob/workspace/bingo_heartbeat_fix001` -> 5 of 5 checks PASS, 0 contract violations.
+  - JVM unit test suite: `./gradlew testDebugUnitTest --rerun --offline --console=plain --max-workers=2` -> 355 of 355 tests PASS (0 failures, 0 errors, 0 skips).
+  - Lint check: `./gradlew lintDebug --offline --console=plain --max-workers=2` -> 0 errors.
+  - Release assemble: `./gradlew assembleRelease --offline --console=plain --max-workers=2` -> BUILD SUCCESSFUL.
+- Candidate APK Metadata:
+  - Output: `artifacts/heartbeat-fix001/Bingo-fix001.apk`
+  - Size: 7,010,405 bytes
+  - SHA-256: `6a96c7148629d777bbd203b4ac1849ee92bdb417c1802bdd6a274c267e186437`
+  - Signing Certificate SHA-256: `39a428942c3c2629ff3490c944b8b82c7625b22d660b7a2cdf682456d81f60a4` (identically matches baseline APK)
+- Protected Baseline Verification:
+  - Baseline APK: `/home/bob/workspace/bingo_multiplayer/Bingo.apk`
+  - Size: 6,985,826 bytes
+  - SHA-256: `6c5e014b4a8a699e1506393e79bb6bb3959ccb72e2d6fa85cc425f1118005ccc` (unmodified)
+- Status: Code repairs HB01–HB14 complete and fully verified under unit tests and contract probe. Device-level paired execution marked NOT RUN / BLOCKED due to headless execution environment without active adb devices. Overall readiness: NOT READY pending physical paired-device verification.
+
+
 
 
