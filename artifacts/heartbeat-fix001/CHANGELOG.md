@@ -49,3 +49,25 @@
    - Update `TEST_REPORT.md`, `AGENT_HANDOFF.md`, `CHANGELOG.md`, `Fix001ReviewResolution.md`.
    - Run full JVM test suite, `HeartbeatPolicyReviewProbe`, lint, and release build.
    - Generate candidate Fix001 APK and check SHA-256 and signing certificate.
+
+---
+
+### FIX001-001 — Pure Policy Reducer & Monotonic Observation Window Corrections
+- Started / completed: 2026-10-15 11:05 IST / 2026-10-15 11:11 IST
+- Checkpoint before edit: fa190fd
+- Review IDs: HB04, HB05
+- Files / symbols:
+  - `app/src/main/java/com/bingo/multiplayer/domain/engine/OnlineMatchHeartbeatPolicy.kt` (`canCompleteRecovery`, `completeRecoveryIfEligible`, `onTick`, `onFreshPeerResponse`, `onLocalHealthRestored`, `lastFreshPeerResponseAt`)
+  - `app/src/test/java/com/bingo/multiplayer/domain/engine/OnlineMatchHeartbeatPolicyTest.kt` (updated H06, H09, C01 with periodic heartbeats; added 3 new regressions directly mirroring probe fixtures)
+- Actual old behavior / replacement:
+  - Old: `OnlineMatchHeartbeatPolicy` in `SYNCING` state never measured silence; if peer never sent a response, policy stayed `SYNCING` forever.
+  - New: `lastFreshPeerResponseAt` defaults to observation clock start; `onTick` in `SYNCING` evaluates silence threshold (15,000 ms) and transitions to `UNREACHABLE` (HB05).
+  - Old: `onTick` checked elapsed recovery time without checking heartbeat freshness/continuity, closing episodes even when no peer heartbeats arrived; `SYNCING` response jumped straight to `RESPONSIVE` while leaving `isEpisodeOpen=true`.
+  - New: Unified recovery completion predicate `canCompleteRecovery` across `onTick`, `onFreshPeerResponse`, and `onStateSynchronized` requiring 10,000 ms continuous recovery with max 5,000 ms gap; open episodes returning from local health loss enter `RECOVERING` and properly close and re-arm on stable recovery (HB04).
+- Scope and compatibility: Pure domain class, gated to 1v1 online matches.
+- Tests:
+  - `python3 /home/bob/workspace/heartbeat-review-evidence/run_probe.py /home/bob/workspace/bingo_heartbeat_fix001` -> 5 of 5 checks PASS, 0 contract violations.
+  - `./gradlew testDebugUnitTest --tests "com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicyTest"` -> 17 of 17 tests PASS.
+- Remaining dependencies: Wire bounded observation start and transport challenge handling in Chunk 2.
+- Rollback: `git checkout fa190fd -- app/src/main/java/com/bingo/multiplayer/domain/engine/OnlineMatchHeartbeatPolicy.kt app/src/test/java/com/bingo/multiplayer/domain/engine/OnlineMatchHeartbeatPolicyTest.kt`
+

@@ -131,7 +131,7 @@ class OnlineMatchHeartbeatPolicy(
     var isEpisodeOpen: Boolean = false
         private set
 
-    var lastFreshPeerResponseAt: Long = 0L
+    var lastFreshPeerResponseAt: Long = clock.elapsedRealtime()
         private set
 
     var recoveryStartedAt: Long? = null
@@ -163,6 +163,8 @@ class OnlineMatchHeartbeatPolicy(
         isLocalHealthy = true
         isStateSynchronized = true
         isClaimVictoryEligible = false
+        recoveryStartedAt = null
+        lastRecoveryProbeAt = null
     }
 
     /**
@@ -182,6 +184,8 @@ class OnlineMatchHeartbeatPolicy(
         lastFreshPeerResponseAt = observationTime
         isLocalHealthy = true
         isStateSynchronized = true
+        recoveryStartedAt = null
+        lastRecoveryProbeAt = null
         if (isEpisodeOpen) {
             state = PeerAvailabilityState.UNREACHABLE
             isClaimVictoryEligible = (committedEpisodeCount >= 3)
@@ -189,6 +193,29 @@ class OnlineMatchHeartbeatPolicy(
             state = PeerAvailabilityState.RESPONSIVE
             isClaimVictoryEligible = false
         }
+    }
+
+    private fun canCompleteRecovery(now: Long): Boolean {
+        if (!isStateSynchronized) return false
+        val start = recoveryStartedAt ?: return false
+        val lastProbe = lastRecoveryProbeAt ?: return false
+        if (now - start < RECOVERY_STABILITY_REQUIRED_MS) return false
+        if (now - lastProbe > STABLE_HEARTBEAT_MAX_GAP_MS) return false
+        return true
+    }
+
+    private fun completeRecoveryIfEligible(now: Long): HeartbeatDecision {
+        if (canCompleteRecovery(now)) {
+            state = PeerAvailabilityState.RESPONSIVE
+            val closedCount = committedEpisodeCount
+            isEpisodeOpen = false
+            currentEpisodeId = null
+            recoveryStartedAt = null
+            lastRecoveryProbeAt = null
+            isClaimVictoryEligible = false
+            return HeartbeatDecision.RecoveryCompleted(closedEpisodeCount = closedCount)
+        }
+        return HeartbeatDecision.NoOp
     }
 
     /**
@@ -200,7 +227,8 @@ class OnlineMatchHeartbeatPolicy(
         }
 
         when (state) {
-            PeerAvailabilityState.RESPONSIVE -> {
+            PeerAvailabilityState.RESPONSIVE,
+            PeerAvailabilityState.SYNCING -> {
                 val silence = now - lastFreshPeerResponseAt
                 if (silence >= UNAVAILABLE_THRESHOLD_MS) {
                     state = PeerAvailabilityState.UNREACHABLE
@@ -235,27 +263,21 @@ class OnlineMatchHeartbeatPolicy(
                     )
                 }
 
-                // Check stability requirement
-                val recoveryStart = recoveryStartedAt ?: now
-                if (isStateSynchronized && (now - recoveryStart >= RECOVERY_STABILITY_REQUIRED_MS)) {
-                    state = PeerAvailabilityState.RESPONSIVE
-                    val closedCount = committedEpisodeCount
-                    isEpisodeOpen = false
-                    currentEpisodeId = null
-                    recoveryStartedAt = null
-                    lastRecoveryProbeAt = null
-                    isClaimVictoryEligible = false
-                    return HeartbeatDecision.RecoveryCompleted(closedEpisodeCount = closedCount)
+                // If gap between probes exceeded 5,000 ms, stability window restarts
+                val lastProbe = lastRecoveryProbeAt
+                if (lastProbe != null && (now - lastProbe > STABLE_HEARTBEAT_MAX_GAP_MS)) {
+                    recoveryStartedAt = now
+                }
+
+                val decision = completeRecoveryIfEligible(now)
+                if (decision !is HeartbeatDecision.NoOp) {
+                    return decision
                 }
             }
 
             PeerAvailabilityState.UNREACHABLE -> {
                 // Continued silence remains in UNREACHABLE without repeatedly incrementing count.
                 isClaimVictoryEligible = (committedEpisodeCount >= 3)
-            }
-
-            PeerAvailabilityState.SYNCING -> {
-                // Startup or local sync; wait for peer response or handshake.
             }
 
             PeerAvailabilityState.LOCAL_UNAVAILABLE -> {
@@ -298,23 +320,28 @@ class OnlineMatchHeartbeatPolicy(
                 lastRecoveryProbeAt = now
                 lastFreshPeerResponseAt = now
 
-                // Check if stability is now reached
-                val recoveryStart = recoveryStartedAt ?: now
-                if (isStateSynchronized && (now - recoveryStart >= RECOVERY_STABILITY_REQUIRED_MS)) {
-                    state = PeerAvailabilityState.RESPONSIVE
-                    val closedCount = committedEpisodeCount
-                    isEpisodeOpen = false
-                    currentEpisodeId = null
-                    recoveryStartedAt = null
-                    lastRecoveryProbeAt = null
+                return completeRecoveryIfEligible(now)
+            }
+
+            PeerAvailabilityState.SYNCING -> {
+                lastFreshPeerResponseAt = now
+                if (isEpisodeOpen) {
+                    // Open episode exists from before local outage! Must recover it.
+                    state = PeerAvailabilityState.RECOVERING
+                    recoveryStartedAt = now
+                    lastRecoveryProbeAt = now
                     isClaimVictoryEligible = false
-                    return HeartbeatDecision.RecoveryCompleted(closedEpisodeCount = closedCount)
+                    return HeartbeatDecision.StartedRecovering(
+                        episodeId = currentEpisodeId,
+                        episodeCount = committedEpisodeCount
+                    )
+                } else {
+                    state = PeerAvailabilityState.RESPONSIVE
+                    isClaimVictoryEligible = false
                 }
             }
 
-            PeerAvailabilityState.RESPONSIVE,
-            PeerAvailabilityState.SYNCING -> {
-                state = PeerAvailabilityState.RESPONSIVE
+            PeerAvailabilityState.RESPONSIVE -> {
                 lastFreshPeerResponseAt = now
             }
 
@@ -332,17 +359,7 @@ class OnlineMatchHeartbeatPolicy(
     fun onStateSynchronized(now: Long = clock.elapsedRealtime()): HeartbeatDecision {
         isStateSynchronized = true
         if (state == PeerAvailabilityState.RECOVERING) {
-            val recoveryStart = recoveryStartedAt ?: now
-            if (now - recoveryStart >= RECOVERY_STABILITY_REQUIRED_MS) {
-                state = PeerAvailabilityState.RESPONSIVE
-                val closedCount = committedEpisodeCount
-                isEpisodeOpen = false
-                currentEpisodeId = null
-                recoveryStartedAt = null
-                lastRecoveryProbeAt = null
-                isClaimVictoryEligible = false
-                return HeartbeatDecision.RecoveryCompleted(closedEpisodeCount = closedCount)
-            }
+            return completeRecoveryIfEligible(now)
         }
         return HeartbeatDecision.NoOp
     }

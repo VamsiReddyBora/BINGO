@@ -177,16 +177,24 @@ class OnlineMatchHeartbeatPolicyTest {
         policy.onTick()
         policy.onFreshPeerResponse()
         policy.onStateSynchronized()
-        clock.advance(10_000L)
-        policy.onTick() // closes ep 1
+        for (i in 1..4) {
+            clock.advance(2500L)
+            policy.onTick()
+            policy.onFreshPeerResponse()
+        }
+        assertEquals(1, policy.committedEpisodeCount)
+        assertFalse(policy.isEpisodeOpen)
 
         // Episode 2
         clock.advance(15_000L)
         policy.onTick()
         policy.onFreshPeerResponse()
         policy.onStateSynchronized()
-        clock.advance(10_000L)
-        policy.onTick() // closes ep 2
+        for (i in 1..4) {
+            clock.advance(2500L)
+            policy.onTick()
+            policy.onFreshPeerResponse()
+        }
 
         assertEquals(2, policy.committedEpisodeCount)
         assertFalse(policy.isEpisodeOpen)
@@ -265,17 +273,25 @@ class OnlineMatchHeartbeatPolicyTest {
         clock.advance(6000L)
         policy.onFreshPeerResponse() // T=121,000 -> gap exceeded, restarts stability window at 121,000!
 
-        // Advance 7 seconds (total 13s from start, but only 7s from restart)
-        clock.advance(7000L)
+        // Advance 7 seconds (total 13s from start, but only 7s from restart) with valid 2.5s heartbeats
+        clock.advance(2500L)
+        policy.onTick()
+        policy.onFreshPeerResponse()
+        clock.advance(2500L)
+        policy.onTick()
+        policy.onFreshPeerResponse()
+        clock.advance(2000L)
         val tickDecision = policy.onTick()
         // Must NOT be completed yet because restart was at 121,000 and now is 128,000 (7s < 10s)
         assertEquals(HeartbeatDecision.NoOp, tickDecision)
         assertEquals(PeerAvailabilityState.RECOVERING, policy.state)
 
         // Advance 3 more seconds with heartbeats (total 10s from restart)
-        clock.advance(3000L)
-        val finalTick = policy.onTick()
-        assertTrue(finalTick is HeartbeatDecision.RecoveryCompleted)
+        clock.advance(1500L)
+        policy.onFreshPeerResponse()
+        clock.advance(1500L)
+        val recoveryDecision = policy.onFreshPeerResponse()
+        assertTrue(recoveryDecision is HeartbeatDecision.RecoveryCompleted)
         assertEquals(PeerAvailabilityState.RESPONSIVE, policy.state)
         assertFalse(policy.isEpisodeOpen)
     }
@@ -294,8 +310,11 @@ class OnlineMatchHeartbeatPolicyTest {
         // Recover and trigger Incident 2
         policy.onFreshPeerResponse()
         policy.onStateSynchronized()
-        clock.advance(10_000L)
-        policy.onTick()
+        for (i in 1..4) {
+            clock.advance(2500L)
+            policy.onTick()
+            policy.onFreshPeerResponse()
+        }
 
         clock.advance(15_000L)
         policy.onTick()
@@ -369,5 +388,94 @@ class OnlineMatchHeartbeatPolicyTest {
         clock.advance(5000L)
         val tick = policy.onTick()
         assertTrue(tick is HeartbeatDecision.BecameUnreachable)
+    }
+
+    @Test
+    fun `HB05 - new policy in SYNCING state notices first peer absence after 15s`() {
+        val uninitClock = FakeClock(100_000L)
+        val freshPolicy = OnlineMatchHeartbeatPolicy(matchId, peerUid, "connection", uninitClock)
+        // Without initializeObservation called, state is SYNCING
+        assertEquals(PeerAvailabilityState.SYNCING, freshPolicy.state)
+
+        uninitClock.advance(15_000L)
+        val tick = freshPolicy.onTick()
+        assertTrue(tick is HeartbeatDecision.BecameUnreachable)
+        assertEquals(PeerAvailabilityState.UNREACHABLE, freshPolicy.state)
+        assertEquals(1, freshPolicy.committedEpisodeCount)
+        assertTrue(freshPolicy.isEpisodeOpen)
+    }
+
+    @Test
+    fun `HB04 - 10s without recovery heartbeats does not close the episode and remains in same episode`() {
+        val gapClock = FakeClock(100_000L)
+        val gapPolicy = OnlineMatchHeartbeatPolicy(matchId, peerUid, "connection", gapClock)
+        gapPolicy.initializeObservation("connection", gapClock.elapsedRealtime())
+
+        gapClock.advance(15_000L)
+        gapPolicy.onTick()
+        assertEquals(PeerAvailabilityState.UNREACHABLE, gapPolicy.state)
+        assertEquals(1, gapPolicy.committedEpisodeCount)
+
+        gapClock.advance(1000L) // 16,000ms
+        gapPolicy.onFreshPeerResponse()
+        gapPolicy.onStateSynchronized()
+        assertEquals(PeerAvailabilityState.RECOVERING, gapPolicy.state)
+
+        // 10 seconds pass with NO more heartbeats
+        gapClock.advance(10_000L) // 26,000ms
+        gapPolicy.onTick()
+
+        // Must NOT close the episode!
+        assertTrue(gapPolicy.isEpisodeOpen)
+        assertEquals(PeerAvailabilityState.RECOVERING, gapPolicy.state)
+
+        // 5 more seconds pass (total 15s silence since single response)
+        gapClock.advance(5000L) // 31,000ms
+        val reTick = gapPolicy.onTick()
+        assertTrue(reTick is HeartbeatDecision.ReopenedUnreachable)
+        assertEquals(1, gapPolicy.committedEpisodeCount) // SAME episode, not incremented!
+        assertTrue(gapPolicy.isEpisodeOpen)
+        assertEquals(PeerAvailabilityState.UNREACHABLE, gapPolicy.state)
+    }
+
+    @Test
+    fun `HB04 - stable recovery after local reconnect closes the prior episode and re-arms for next outage`() {
+        val localClock = FakeClock(100_000L)
+        val localPolicy = OnlineMatchHeartbeatPolicy(matchId, peerUid, "connection", localClock)
+        localPolicy.initializeObservation("connection", localClock.elapsedRealtime())
+
+        localClock.advance(15_000L)
+        localPolicy.onTick()
+        assertEquals(PeerAvailabilityState.UNREACHABLE, localPolicy.state)
+        assertEquals(1, localPolicy.committedEpisodeCount)
+
+        localPolicy.onLocalHealthLost()
+        assertEquals(PeerAvailabilityState.LOCAL_UNAVAILABLE, localPolicy.state)
+
+        localClock.advance(1000L)
+        localPolicy.onLocalHealthRestored()
+        assertEquals(PeerAvailabilityState.SYNCING, localPolicy.state)
+        assertTrue(localPolicy.isEpisodeOpen)
+
+        localPolicy.onStateSynchronized()
+
+        // Supply 8 fresh responses every 2.5s (total 20s)
+        for (i in 0 until 8) {
+            localClock.advance(2500L)
+            localPolicy.onFreshPeerResponse()
+            localPolicy.onTick()
+        }
+
+        // Must now be closed and RESPONSIVE
+        assertFalse(localPolicy.isEpisodeOpen)
+        assertEquals(PeerAvailabilityState.RESPONSIVE, localPolicy.state)
+        assertEquals(1, localPolicy.committedEpisodeCount)
+
+        // Next outage after stable recovery
+        localClock.advance(15_000L)
+        val secondOutage = localPolicy.onTick()
+        assertTrue(secondOutage is HeartbeatDecision.BecameUnreachable)
+        assertEquals(2, localPolicy.committedEpisodeCount) // Incremented to 2!
+        assertTrue(localPolicy.isEpisodeOpen)
     }
 }
