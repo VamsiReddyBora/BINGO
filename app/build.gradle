@@ -78,8 +78,8 @@ android {
                     // Do not overwrite rootDir/Bingo.apk or workspace/Bingo.apk to protect baselines
                     copy {
                         from "${layout.buildDirectory.get()}/outputs/apk/release/Bingo.apk"
-                        into "${rootDir}/artifacts/host-disconnected-wait/"
-                        rename { "Bingo-host-wait.apk" }
+                        into "${rootDir}/artifacts/friends-fix/"
+                        rename { "Bingo-friends-fix.apk" }
                     }
                 }
             }

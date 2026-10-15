@@ -9,6 +9,8 @@ import com.bingo.multiplayer.domain.model.Friend
 import com.bingo.multiplayer.domain.model.MatchRecord
 import com.bingo.multiplayer.domain.model.UserProfile
 import com.bingo.multiplayer.domain.model.UserSettings
+import com.bingo.multiplayer.domain.repository.FriendsBackup
+import com.bingo.multiplayer.domain.repository.friendKeys
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreSettings
@@ -452,6 +454,85 @@ class FirestoreSyncManager(
         }
     }
 
+    /** Explicit acceptance may re-establish a previously removed friendship. Await before notifying. */
+    internal suspend fun restoreFriend(uid: String, friend: Friend): Boolean {
+        val docId = friend.uid.ifBlank { friend.username.trim().lowercase().removePrefix("@") }
+        if (uid.isBlank() || docId.isBlank()) return false
+        return try {
+            val ref = firestore.collection(COLLECTION_USERS).document(uid).collection(SUBCOLLECTION_FRIENDS).document(docId)
+            firestore.runTransaction { transaction ->
+                val previous = transaction.get(ref)
+                transaction.set(ref, mapOf(
+                    "uid" to friend.uid, "username" to friend.username,
+                    "displayName" to friend.displayName, "avatarUrl" to friend.avatarUrl,
+                    "removed" to false, "restoredRemovalId" to previous.getString("removalId")
+                ), SetOptions.merge())
+                true
+            }.await()
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not restore accepted friendship backup: ${e.message}")
+            false
+        }
+    }
+
+    /** Read the existing backup before a partial KeyValue roster can replace the local cache. */
+    internal suspend fun fetchFriendsList(uid: String): FriendsBackup? = withContext(Dispatchers.IO) {
+        if (uid.isBlank()) return@withContext null
+        try {
+            val snapshot = firestore.collection(COLLECTION_USERS).document(uid)
+                .collection(SUBCOLLECTION_FRIENDS).get().await()
+            val friends = mutableListOf<Friend>()
+            val removed = mutableSetOf<String>()
+            val restoredKeys = mutableSetOf<String>()
+            val restoredIds = mutableSetOf<String>()
+            snapshot.documents.forEach { doc ->
+                val friend = Friend(
+                    uid = doc.getString("uid") ?: doc.id,
+                    username = doc.getString("username") ?: "",
+                    displayName = doc.getString("displayName") ?: doc.getString("username") ?: "Player",
+                    avatarUrl = doc.getString("avatarUrl"),
+                    isOnline = doc.getBoolean("isOnline") ?: false,
+                    lastSeenTimestamp = doc.getLong("lastSeenTimestamp") ?: 0L,
+                    gamesPlayed = doc.getLong("gamesPlayed")?.toInt() ?: 0,
+                    gamesWon = doc.getLong("gamesWon")?.toInt() ?: 0,
+                    currentStreak = doc.getLong("currentStreak")?.toInt() ?: 0,
+                    level = doc.getLong("level")?.toInt() ?: 1
+                )
+                if (doc.getBoolean("removed") == true) removed += friendKeys(friend)
+                else {
+                    friends += friend
+                    doc.getString("restoredRemovalId")?.takeIf { it.isNotBlank() }?.let {
+                        restoredIds += it
+                        restoredKeys += friendKeys(friend)
+                    }
+                }
+            }
+            FriendsBackup(friends, removed, restoredKeys, restoredIds)
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not read friends backup: ${e.message}")
+            null
+        }
+    }
+
+    /** Retain a removal marker so an older backup/HTTP response cannot resurrect this friend. */
+    fun markFriendRemoved(uid: String, friend: Friend, removalId: String) {
+        if (uid.isBlank()) return
+        val docId = friend.uid.ifBlank { friend.username.trim().lowercase().removePrefix("@") }
+        if (docId.isBlank()) return
+        try {
+            // Enqueue immediately: a later accept must observe this removal, even after an offline restart.
+            firestore.collection(COLLECTION_USERS).document(uid).collection(SUBCOLLECTION_FRIENDS)
+                .document(docId).set(mapOf(
+                    "uid" to friend.uid, "username" to friend.username,
+                    "removed" to true, "removalId" to removalId
+                ), SetOptions.merge()).addOnFailureListener {
+                    Log.w(TAG, "Could not back up friend removal: ${it.message}")
+                }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not back up friend removal: ${e.message}")
+        }
+    }
 
     /**
      * Retrieves a single player's career profile from Firestore by their UID.

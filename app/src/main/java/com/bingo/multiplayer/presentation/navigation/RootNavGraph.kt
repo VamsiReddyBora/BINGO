@@ -402,7 +402,8 @@ fun RootNavGraph(
         }
     }
 
-    DisposableEffect(currentAuthUser?.username) {
+    DisposableEffect(currentAuthUser?.uid, currentAuthUser?.username) {
+        friendsRepository.setAccount(currentAuthUser)
         val username = currentAuthUser?.username
         if (username.isNullOrBlank()) {
             onDispose {}

@@ -9,11 +9,9 @@ import com.bingo.multiplayer.domain.model.FriendRequestStatus
 import com.bingo.multiplayer.domain.model.UserProfile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import org.eclipse.paho.client.mqttv3.MqttAsyncClient
 import org.eclipse.paho.client.mqttv3.MqttConnectOptions
 import org.eclipse.paho.client.mqttv3.MqttMessage
@@ -39,291 +37,63 @@ object FriendRequestManager {
         return String(bytes, StandardCharsets.UTF_8)
     }
 
-    /**
-     * Sends a friend request to a target user.
-     * Persists to cloud storage and broadcasts via MQTT for instant real-time delivery.
-     */
-    suspend fun sendFriendRequest(request: FriendRequest): Boolean = withContext(Dispatchers.IO) {
+    private val store by lazy {
+        FriendsCloudStore(client, BASE_URL, API_KEY, ::encodeBase64Url, ::decodeBase64Url)
+    }
+    private val mutationMutex = kotlinx.coroutines.sync.Mutex()
+
+    /** Persist first; an unavailable read must never replace another player's existing requests. */
+    suspend fun sendFriendRequest(request: FriendRequest): Boolean = mutationMutex.withLock {
         val target = request.toUsername.trim().lowercase().removePrefix("@")
-        if (target.isBlank()) return@withContext false
-
-        try {
-            // 1. Fetch existing pending requests, filter duplicates
-            val existing = fetchRequestsForUser(target).toMutableList()
-            existing.removeAll { it.fromUsername.equals(request.fromUsername, ignoreCase = true) }
-            existing.add(0, request)
-
-            val jsonString = json.encodeToString(existing)
-            val b64 = encodeBase64Url(jsonString)
-            val encVal = java.net.URLEncoder.encode(b64, "UTF-8")
-
-            val httpRequest = Request.Builder()
-                .url("$BASE_URL/UpdateValue/$API_KEY/freq_$target?value=$encVal")
-                .post("".toRequestBody(null))
-                .header("Content-Length", "0")
-                .build()
-
-            val success = client.newCall(httpRequest).execute().use { it.isSuccessful }
-
-            // 2. Real-time MQTT notification dispatch
-            publishMqttPacket(target, FriendRequestPacket(type = "FRIEND_REQUEST", request = request))
-
-            // 3. High-Priority FCM Push dispatch to wake target device if app is killed or backgrounded
-            BingoFcmManager.sendFriendRequestPush(target, request)
-
-            Log.i(TAG, "Sent friend request from @${request.fromUsername} to @$target: success=$success")
-            success
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to send friend request: ${e.message}", e)
-            false
-        }
+        if (target.isBlank()) return@withLock false
+        val existing = store.fetchRequests(target)?.toMutableList() ?: return@withLock false
+        existing.removeAll { it.fromUsername.trim().removePrefix("@").equals(request.fromUsername.trim().removePrefix("@"), true) }
+        existing.add(0, request)
+        if (!store.saveRequests(target, existing)) return@withLock false
+        publishMqttPacket(target, FriendRequestPacket(type = "FRIEND_REQUEST", request = request))
+        BingoFcmManager.sendFriendRequestPush(target, request)
+        true
     }
 
-    /**
-     * Fetches pending incoming friend requests for a user.
-     */
-    suspend fun fetchRequestsForUser(username: String): List<FriendRequest> = withContext(Dispatchers.IO) {
-        val clean = username.trim().lowercase().removePrefix("@")
-        if (clean.isBlank()) return@withContext emptyList()
+    /** Nullable variant lets reconciliation retain pending requests during a network failure. */
+    suspend fun fetchRequestsForUserOrNull(username: String): List<FriendRequest>? = store.fetchRequests(username)
 
-        try {
-            val req = Request.Builder()
-                .url("$BASE_URL/GetValue/$API_KEY/freq_$clean")
-                .get()
-                .build()
-
-            val raw = client.newCall(req).execute().use { response ->
-                if (!response.isSuccessful) null
-                else response.body?.string()?.trim()?.removeSurrounding("\"")
-            }
-
-            if (!raw.isNullOrBlank() && raw != "null") {
-                val jsonStr = try {
-                    decodeBase64Url(raw)
-                } catch (_: Exception) {
-                    raw
-                }
-                if (jsonStr.startsWith("[")) {
-                    val list = json.decodeFromString<List<FriendRequest>>(jsonStr)
-                    return@withContext list.filter { it.status == FriendRequestStatus.PENDING }
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to fetch friend requests: ${e.message}")
-        }
-        emptyList()
-    }
-
-    /**
-     * Accepts a friend request.
-     * Removes request from cloud, notifies requester via MQTT, and saves mutual friendship to cloud.
-     */
-    suspend fun acceptFriendRequest(
-        request: FriendRequest,
-        myProfile: UserProfile
-    ): Boolean = withContext(Dispatchers.IO) {
+    /** Keep the request retryable until both friendships and request removal have been saved. */
+    suspend fun acceptFriendRequest(request: FriendRequest, myProfile: UserProfile): Boolean = mutationMutex.withLock {
         val target = request.toUsername.trim().lowercase().removePrefix("@")
         val sender = request.fromUsername.trim().lowercase().removePrefix("@")
-        if (target.isBlank() || sender.isBlank()) return@withContext false
-
-        try {
-            // 1. Remove from pending requests
-            val existing = fetchRequestsForUser(target).toMutableList()
-            existing.removeAll { it.id == request.id || it.fromUsername.equals(sender, ignoreCase = true) }
-            val jsonString = json.encodeToString(existing)
-            val b64 = encodeBase64Url(jsonString)
-            val encVal = java.net.URLEncoder.encode(b64, "UTF-8")
-
-            val updateReq = Request.Builder()
-                .url("$BASE_URL/UpdateValue/$API_KEY/freq_$target?value=$encVal")
-                .post("".toRequestBody(null))
-                .header("Content-Length", "0")
-                .build()
-            client.newCall(updateReq).execute().close()
-
-            // 2. Sync to cloud friends lists for both users
-            addFriendToCloudList(
-                target,
-                Friend(
-                    uid = request.fromUid,
-                    username = request.fromUsername,
-                    displayName = request.fromDisplayName,
-                    avatarUrl = request.fromAvatarUrl,
-                    isOnline = false,
-                    lastSeenTimestamp = 0L
-                )
-            )
-
-            val myEffectiveAvatar = myProfile.avatarBase64?.takeIf { it.isNotBlank() } ?: myProfile.avatarUrl
-            addFriendToCloudList(
-                sender,
-                Friend(
-                    uid = myProfile.uid,
-                    username = myProfile.username,
-                    displayName = myProfile.displayName,
-                    avatarUrl = myEffectiveAvatar,
-                    isOnline = false,
-                    lastSeenTimestamp = 0L
-                )
-            )
-
-            // 3. Dispatch real-time MQTT ACCEPT packet to sender with full acceptor profile
-            val acceptFriend = Friend(
-                uid = myProfile.uid,
-                username = myProfile.username,
-                displayName = myProfile.displayName,
-                avatarUrl = myEffectiveAvatar,
-                isOnline = false,
-                lastSeenTimestamp = 0L
-            )
-            val acceptPacket = FriendRequestPacket(
-                type = "FRIEND_ACCEPT",
-                request = request.copy(status = FriendRequestStatus.ACCEPTED),
-                acceptorFriend = acceptFriend
-            )
-            publishMqttPacket(sender, acceptPacket)
-
-            // 4. High-Priority FCM Push dispatch to notify requester even if their app is killed
-            BingoFcmManager.sendFriendAcceptedPush(sender, myProfile.username, myProfile.displayName)
-
-            Log.i(TAG, "Accepted friend request from @$sender for @$target")
-            true
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to accept friend request: ${e.message}", e)
-            false
-        }
+        if (target.isBlank() || sender.isBlank() || target != myProfile.username.trim().lowercase().removePrefix("@")) return@withLock false
+        val existing = store.fetchRequests(target)?.toMutableList() ?: return@withLock false
+        val senderFriend = Friend(request.fromUid, request.fromUsername, request.fromDisplayName, request.fromAvatarUrl)
+        val acceptor = Friend(myProfile.uid, myProfile.username, myProfile.displayName,
+            myProfile.avatarBase64?.takeIf { it.isNotBlank() } ?: myProfile.avatarUrl)
+        if (!addFriendToCloudList(target, senderFriend) || !addFriendToCloudList(sender, acceptor)) return@withLock false
+        val firestore = FirestoreSyncManager.getInstance()
+        if (!firestore.restoreFriend(myProfile.uid, senderFriend) ||
+            !firestore.restoreFriend(request.fromUid, acceptor)) return@withLock false
+        existing.removeAll { it.id == request.id || it.fromUsername.trim().removePrefix("@").equals(sender, true) }
+        if (!store.saveRequests(target, existing)) return@withLock false
+        publishMqttPacket(sender, FriendRequestPacket("FRIEND_ACCEPT",
+            request.copy(status = FriendRequestStatus.ACCEPTED), acceptor))
+        BingoFcmManager.sendFriendAcceptedPush(sender, myProfile.username, myProfile.displayName)
+        true
     }
 
-    /**
-     * Declines / Ignores a friend request.
-     */
-    suspend fun declineFriendRequest(request: FriendRequest): Boolean = withContext(Dispatchers.IO) {
+    suspend fun declineFriendRequest(request: FriendRequest): Boolean = mutationMutex.withLock {
         val target = request.toUsername.trim().lowercase().removePrefix("@")
-        val sender = request.fromUsername.trim().lowercase().removePrefix("@")
-        if (target.isBlank()) return@withContext false
-
-        try {
-            val existing = fetchRequestsForUser(target).toMutableList()
-            existing.removeAll { it.id == request.id || it.fromUsername.equals(sender, ignoreCase = true) }
-            val jsonString = json.encodeToString(existing)
-            val b64 = encodeBase64Url(jsonString)
-            val encVal = java.net.URLEncoder.encode(b64, "UTF-8")
-
-            val updateReq = Request.Builder()
-                .url("$BASE_URL/UpdateValue/$API_KEY/freq_$target?value=$encVal")
-                .post("".toRequestBody(null))
-                .header("Content-Length", "0")
-                .build()
-            client.newCall(updateReq).execute().close()
-            true
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to decline friend request: ${e.message}", e)
-            false
-        }
+        if (target.isBlank()) return@withLock false
+        val existing = store.fetchRequests(target)?.toMutableList() ?: return@withLock false
+        existing.removeAll { it.id == request.id }
+        store.saveRequests(target, existing)
     }
 
-    /**
-     * Cloud sync: fetches cloud-persisted friends list for username.
-     * Returns null on network/server failures to protect local cache when offline.
-     * Returns a valid List<Friend> (including emptyList()) when cloud responded successfully.
-     */
-    suspend fun fetchCloudFriends(username: String): List<Friend>? = withContext(Dispatchers.IO) {
-        val clean = username.trim().lowercase().removePrefix("@")
-        if (clean.isBlank()) return@withContext emptyList()
+    suspend fun fetchCloudFriends(username: String): List<Friend>? = store.fetchFriends(username)
 
-        try {
-            val req = Request.Builder()
-                .url("$BASE_URL/GetValue/$API_KEY/friends_$clean")
-                .get()
-                .build()
+    suspend fun saveCloudFriends(username: String, friends: List<Friend>): Boolean = store.saveFriends(username, friends)
 
-            val raw = client.newCall(req).execute().use { response ->
-                if (!response.isSuccessful) null
-                else response.body?.string()?.trim()?.removeSurrounding("\"")
-            }
-
-            if (raw == null) return@withContext null
-
-            if (raw.isBlank() || raw == "null") {
-                return@withContext emptyList()
-            }
-
-            val jsonStr = try {
-                decodeBase64Url(raw)
-            } catch (_: Exception) {
-                raw
-            }
-            if (jsonStr.startsWith("[")) {
-                return@withContext json.decodeFromString<List<Friend>>(jsonStr)
-            }
-            return@withContext emptyList()
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to fetch cloud friends for @$clean: ${e.message}")
-            null
-        }
-    }
-
-    /**
-     * Fetches authoritative registered user directory from database.
-     * Used to automatically prune friends whose accounts have been deleted.
-     */
-    suspend fun fetchValidUsernames(): Set<String>? = withContext(Dispatchers.IO) {
-        try {
-            val req = Request.Builder()
-                .url("$BASE_URL/GetValue/$API_KEY/user_directory")
-                .get()
-                .build()
-
-            val raw = client.newCall(req).execute().use { response ->
-                if (!response.isSuccessful) null
-                else response.body?.string()?.trim()?.removeSurrounding("\"")
-            }
-
-            if (!raw.isNullOrBlank() && raw != "null") {
-                val decoded = if (raw.contains(",")) raw else {
-                    try { decodeBase64Url(raw) } catch (_: Exception) { raw }
-                }
-                return@withContext decoded.split(",")
-                    .map { it.trim().lowercase().removePrefix("@") }
-                    .filter { it.isNotBlank() }
-                    .toSet()
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to fetch valid user directory: ${e.message}")
-        }
-        null
-    }
-
-    /**
-     * Cloud sync: saves full friends list to cloud.
-     */
-    suspend fun saveCloudFriends(username: String, friends: List<Friend>): Boolean = withContext(Dispatchers.IO) {
-        val clean = username.trim().lowercase().removePrefix("@")
-        if (clean.isBlank()) return@withContext false
-
-        try {
-            val jsonString = json.encodeToString(friends)
-            val b64 = encodeBase64Url(jsonString)
-            val encVal = java.net.URLEncoder.encode(b64, "UTF-8")
-
-            val req = Request.Builder()
-                .url("$BASE_URL/UpdateValue/$API_KEY/friends_$clean?value=$encVal")
-                .post("".toRequestBody(null))
-                .header("Content-Length", "0")
-                .build()
-
-            client.newCall(req).execute().use { it.isSuccessful }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to save cloud friends for @$clean: ${e.message}", e)
-            false
-        }
-    }
-
-    private suspend fun addFriendToCloudList(username: String, friend: Friend) {
-        val current = (fetchCloudFriends(username) ?: emptyList()).toMutableList()
-        current.removeAll { it.uid == friend.uid || it.username.equals(friend.username, ignoreCase = true) }
-        current.add(0, friend)
-        saveCloudFriends(username, current)
+    private suspend fun addFriendToCloudList(username: String, friend: Friend): Boolean {
+        // A failed GET used to become emptyList(), overwriting every friendship with this one friend.
+        return store.addFriend(username, friend)
     }
 
     private fun publishMqttPacket(targetUsername: String, packet: FriendRequestPacket) {
@@ -379,6 +149,8 @@ object FriendRequestManager {
                     try {
                         client?.subscribe(topic, 1) { _, message ->
                             try {
+                                // Old retained broker packets are not fresh friend requests.
+                                if (message.isRetained) return@subscribe
                                 val payload = String(message.payload, StandardCharsets.UTF_8)
                                 val packet = json.decodeFromString<FriendRequestPacket>(payload)
                                 onPacketReceived(packet)
