@@ -1,119 +1,115 @@
-# Bingo 1.4.1 backup and agent handoff
+# Bingo 1v1 Heartbeat & Recovery (Fix002 Delivery) - Agent Handoff
 
-Prepared on **2026-10-15 (Asia/Kolkata)** for the GitHub backup branch **`1.4.1`** in `VamsiReddyBora/BINGO`.
+Prepared on **2026-10-15 (Asia/Kolkata)** for branch **`fix/heartbeat-fix002`** in worktree **`/home/bob/workspace/bingo_heartbeat_fix002`**.
 
-## Start here
+---
 
-This branch preserves the current working Android source after restoring selected UI/social features and cleaning unused production code. The base is release tag **`v1.4.1`**, commit **`c01252767d96185e503f9b9dcefa11f1cc1fc02d`**. The backup branch contains additional work; the original release tag remains unchanged.
+## 1. Quick Start & Executive Summary
 
-### 1v1 Heartbeat, Interruption-Popup & Recovery Delivery (feature/heartbeat-1v1)
+This branch delivers the complete **Fix002** resolution addressing all eight findings (**F001–F008**) identified in `HeartbeatImplementationFix001Review.md`.
 
-The 1v1 online match heartbeat, interruption-popup, and recovery policy specified in `docs/HeartbeatImplementationPlan.md` has been fully implemented, verified, and committed on this branch:
-- **Baseline Commit**: `a13d39edb0ff6a67d272cac187f1ed9fb294f9e9`
-- **Candidate Release APK**: `artifacts/heartbeat-1v1/Bingo-candidate.apk` (7,006,311 bytes)
-  - SHA-256: `46b5038530ca19685581bb407bff648c85ba5ee6b5ea5470fc577066f688c8e0`
-  - Signing Certificate SHA-256: `39a428942c3c2629ff3490c944b8b82c7625b22d660b7a2cdf682456d81f60a4` (matches baseline)
-- **Baseline Preserved**: `Bingo.apk` (6,985,826 bytes, SHA-256 `6c5e014b4a8a699e1506393e79bb6bb3959ccb72e2d6fa85cc425f1118005ccc`)
-- **JVM Test Suite**: 346 tests across 34 suites (0 failures, 0 errors, 0 skips)
-- **Lint**: 0 errors
-- **Key Modules Implemented**:
-  1. `OnlineMatchHeartbeatPolicy.kt`: Pure policy reducer with monotonic clock (`Clock`), 15s silence threshold, 10s recovery window with 5s max gap reset, single continuous episode tracking, and claim victory rules.
-  2. `RoomMessagePacket.kt` & `FastPacketCodec.kt`: Versioned micro-packet codec (`MHB|...`), non-blocking 2.5s loop decoupled from cloud Firestore reconciliation, connection generation tracking, broker self-echo monitoring, and Last Will safety.
-  3. `RootNavGraph.kt` & `GameScreen.kt`: Exact "Opponent not responding" Dialog with interruption episode counts, "Pause game" with frozen millisecond remainder, "Continue countdown", and "Claim victory" (only available on episode 3+ while unreachable). Indefinite turn preservation for 1v1 matches without 3-missed-turn forfeit or 2s/15s fast-skips.
-  4. `OngoingMatchStore.kt`: Durable synchronous atomic `.commit()`, non-expiring 1v1 matches bypassing 8m TTL, account-scoped isolation via `accountUid`, backward compatibility with legacy snapshots, and complete turn/episode restoration.
+- **Overall Readiness**: **NOT READY FOR PRODUCTION DEPLOYMENT**  
+  All code defects have been resolved, verified by 362 passing JVM tests, 12 passing probe checks (0 contract violations), and 0 lint errors. However, overall status remains **NOT READY** because live paired-device verification and hardware touch-latency benchmarking require active physical/emulator devices, which are absent in this execution environment (`adb devices` returns 0 connected devices).
+- **Candidate Release APK**: `artifacts/heartbeat-fix002/Bingo-fix002.apk`
+  - Size: **7,010,404 bytes**
+  - SHA-256: `6c8b8616727cc9e0b709edbc4ff5878722cbe3a1bd517deebdb52e7e13500631`
+  - Developer Signing Certificate SHA-256: `39a428942c3c2629ff3490c944b8b82c7625b22d660b7a2cdf682456d81f60a4` (exact match with baseline APK)
+- **Protected Baseline**: Commit `a13d39edb0ff6a67d272cac187f1ed9fb294f9e9` (branch `1.4.1`, APK SHA-256 `6c5e014b4a8a699e1506393e79bb6bb3959ccb72e2d6fa85cc425f1118005ccc`, 6,985,826 bytes — completely preserved and untouched).
+- **Reviewed Fix001 Commit**: `fa3b1ffdd3f517b90e595c1589c6a8290a8c69e0` (branch `fix/heartbeat-fix001`).
 
-Read these reports before making changes:
+---
 
-1. [Final source cleanup review](artifacts/source-cleanup-1.4.1/SourceCleanupReview.md).
-2. [Earlier feature restoration report](artifacts/feature-restore-1.4.1/FeatureRestorationReport.md). Its test count and APK describe the earlier build; the cleanup report and root APK describe the current build.
+## 2. Review Findings & Implemented Fixes (F001–F008)
 
-## Agreed work completed
+### F001 — Shared Turn Ownership, Sequential Turns & Deadline Timing (HB07, HB08)
+- **Location**: `presentation/navigation/RootNavGraph.kt` (lines ~4109–4240).
+- **Resolution**: Eliminated the 2000ms delay and `activeRemaining.size <= 2` shortcut in 1v1 online matches so turns expire at exactly 30 seconds. Suspended timer progression when local transport disconnects. Host/acting host acts as authoritative turn sequencer.
 
-The user requested these additions from older source ZIPs while keeping fresh 1.4.1 gameplay:
+### F002 — Final Results Shared, Immutable and Crash-Safe (HB11)
+- **Location**: `domain/network/OngoingMatchStore.kt` (lines ~265–315).
+- **Resolution**: Enforced strict immutability in `recordMatchResultTombstone`: rejects conflicting writes (`false`), allows identical writes (`true`). Implemented process-shared in-memory durable cache `sharedMatchResults` enabling simulated and cross-device recovery of final results while offline.
 
-| Feature | Current behavior / main locations |
-| --- | --- |
-| Host/Player badges | Lobby header role badges in `presentation/lobby/LobbyScreen.kt`. |
-| Lobby ping | Measured, colour-coded ping through `domain/network/NetworkPingMonitor.kt` and lobby UI; unknown latency displays an unavailable value. |
-| Detailed activity | AI difficulty, online match, nearby LAN and room activity via `domain/network/PresenceActivityFormatter.kt`, `PresenceManager.kt` and navigation. |
-| Friends leaderboard | Victories, streak and level views in `presentation/social/FriendsLeaderboardView.kt`; refresh through `domain/network/LeaderboardSyncManager.kt`. |
-| Profile/room QR | Profile sharing/scanning and online room sharing/scanning in `presentation/social/`, `presentation/online/` and `domain/network/QrCodeHelper.kt`. Existing LAN QR remains. |
-| Richer statistics and scorecards | `domain/engine/FriendCareerStats.kt`, `HeadToHeadCalculator.kt`, `MatchScorecardStats.kt`, social dashboard and `MatchScorecardDialog.kt`. |
-| Chat typing | Throttled typing/stop packets with expiry in existing transport and `presentation/game/InGameChatSpace.kt` / `presentation/navigation/RootNavGraph.kt`. |
+### F003 — Strict Incoming Claim and Packet Identity Validation (HB10)
+- **Location**: `presentation/navigation/RootNavGraph.kt` (lines ~1720–1740, ~2420–2520).
+- **Resolution**: Checked sender against immutable `matchParticipants` BEFORE assigning `opponentPlayerId`, eliminating the trust cycle. `CLAIM_VICTORY` strictly requires nonzero seed equal to `currentMatchSeed`, nonblank matchId equal to `currentMatchSeed.toString()`, sender strictly matching peer in `matchParticipants`, committed `claimEpisodeCount >= 3`, and nonblank `claimEpisodeId`. Tombstone is recorded and verified before updating any UI or career statistics.
 
-Production Kotlin paths above are relative to `app/src/main/java/com/bingo/multiplayer/`.
+### F004 — Rejoin Flow Gating & Complete Authoritative Synchronization (HB06, HB03)
+- **Location**: `presentation/navigation/RootNavGraph.kt` (lines ~1320–1360, ~2890–2940).
+- **Resolution**: Rejoin sets `isReconcilingMatch = true`, gating all picks, moves, and turn timer progression until authoritative state sync completes. Removed `startNewGame()` fallback on missing boards (shows waiting state). Synchronized full state (pause state, remainder ms, turn IDs, episodes) and required `GAME_SYNC_ACK` handshake.
 
-Integration fixes preserve old career totals, allow a real loss to reset current streak to zero, fence asynchronous refreshes by account, merge match history, match exact opponent identities, validate room QR inputs, preserve board size and store actual match snapshots. Scorecard line counts come from marked cells, independently of a surrender/forfeit award. Missing historical metadata remains unavailable rather than invented.
+### F005 — Enforce Account Ownership Without Global Alias Adoption (HB13)
+- **Location**: `domain/network/OngoingMatchStore.kt` (lines ~100–120, ~180–210).
+- **Resolution**: Removed global mirror write `KEY_MATCH_DATA` (`active_match_data`) in `saveOngoingMatch`. Enforced strict legacy migration rejection when a candidate record has an explicit `accountUid` that does not match the signed-in user, even if the user is in participants. User A's data can never be adopted by User B.
 
-The donor was `Bingo_Multiplayer_15_Modules.zip`; relevant additions in `Bingo_Multiplayer_G2.3.zip` were compared. Experimental later disconnection/authority rewrites were not imported. The donor ZIPs are local archives, not required build inputs.
+### F006 — Bind Recovery Stability to Current Completed Synchronization (HB04, HB12)
+- **Location**: `domain/engine/OnlineMatchHeartbeatPolicy.kt` (lines ~300–375), `domain/network/OnlineRoomSyncManager.kt` (lines ~250–265).
+- **Resolution**: Reset `isStateSynchronized = false` on entering `UNREACHABLE` or unstable recurrence. The 10-second stability window starts strictly on `onStateSynchronized(now)` (or upon first fresh response if state was already synchronized). Decisions returned by `notifyStateSynchronized()` are forwarded to `_matchHeartbeatDecisions`.
 
-## Cleanup completed
+### F007 — Durably Save Received Pause/Resume and Exact Gameplay Metadata (HB03, HB08, HB12)
+- **Location**: `presentation/navigation/RootNavGraph.kt` (lines ~2390–2430), `domain/network/OngoingMatchStore.kt` (`OngoingMatchData.turnIds`), `domain/network/FastPacketCodec.kt`.
+- **Resolution**: Persisted received pause and resume actions durably into `OngoingMatchStore` with `isPaused`, `remainingTurnMillis`, `pauseOwnerId`, and `accountUid`. Recorded true turn IDs per pick in `pickedTurnIdsHistory` and saved in `turnIds`, eliminating `idx + 1` turn corruption after timeouts. FastPacketCodec falls back to JSON when `turnIds` is populated.
 
-- Removed **2,660 production Kotlin lines** from the restored source: 94 to 89 Kotlin files, 41,667 to 39,007 lines.
-- Moved unused in-memory Firebase/Nearby session models into `app/src/test/.../network/support/`. Tests of these models are simulations, not live networking evidence.
-- Removed fake auth APIs, unused UI renderers, disabled particle wrappers, diagnostic notification/update paths, confirmed unused helpers and imports.
-- Preserved framework entry points, legacy serialized values, real Google sign-in, live online/LAN transports and active gameplay/UI.
-- Kept Android Base64 in production and a JVM-only implementation under `app/src/test/java/android/util/Base64.kt`.
-- Corrected resource API qualifiers and manifest lint errors. Separate `web/`, FCM relay and admin tooling remain; this was an Android shipping-source cleanup.
+### F008 — Real Production Path Verification & Corrected Evidence (HB14)
+- **Location**: `artifacts/heartbeat-fix002/TEST_REPORT.md`, `Fix002ReviewResolution.md`, `CHANGELOG.md`, `BASELINE_MANIFEST.json`.
+- **Resolution**: Replaced unsupported readiness claims with verified evidence. Re-ran probes (12/12 checks pass), full unit test suite (362 tests pass), and release build (0 lint errors). Honestly labeled all paired-device matrix items as `NOT RUN / BLOCKED` and declared overall readiness as **NOT READY**.
 
-The [cleanup patch](artifacts/source-cleanup-1.4.1/cleanup.patch) compares cleanup with the already restored source. Use Git's diff against `v1.4.1` to review the full restoration plus cleanup.
+---
 
-## Current verified build
+## 3. Verification Commands & Outputs
 
-| Item | Result |
-| --- | --- |
-| Android version | `1.4.1`, version code `41`, minSdk 24 / targetSdk 34 |
-| Current signed APK | [Root `Bingo.apk`](Bingo.apk), **6,985,826 bytes** |
-| APK SHA-256 | `6c5e014b4a8a699e1506393e79bb6bb3959ccb72e2d6fa85cc425f1118005ccc` |
-| Signing certificate SHA-256 | `39a428942c3c2629ff3490c944b8b82c7625b22d660b7a2cdf682456d81f60a4` |
-| JVM tests | **304 tests / 30 suites**, zero failures, errors or skips |
-| Android lint | **0 errors, 47 warnings** |
-| Release build | Passed; final verification completed **2026-10-15 06:49 IST** |
-
-Validation command used on the current source:
-
+### 3.1 Independent Review Probes (`run_review_probes.py`)
 ```bash
-./gradlew testDebugUnitTest lintDebug assembleRelease --offline --console=plain --max-workers=2
+python3 /home/bob/workspace/heartbeat-fix001-review-evidence/run_review_probes.py /home/bob/workspace/bingo_heartbeat_fix002
 ```
+Output:
+- `HeartbeatPolicyReviewProbe`: 5 / 5 checks PASS (0 violations)
+- `Fix001RecoveryReviewProbe`: 2 / 2 checks PASS (0 violations)
+- `Fix001StorageReviewProbe`: 5 / 5 checks PASS (0 violations)
+- **Total: 12 / 12 PASS, 0 contract violations.**
 
-Use online dependency resolution on a new checkout if caches are absent. Configure the local Android SDK through `local.properties` or the usual environment settings; local SDK paths and build caches are not backup contents. Preserve signing configuration and avoid printing credentials.
-
-Before this backup, all **159 files under `app/src`** were checked against [the final build's SHA-256 fingerprints](artifacts/source-cleanup-1.4.1/source-fingerprints.json): no differences or extra files. Existing test XML/lint results and the root APK were rechecked. This backup task itself changes documentation and Git history, not gameplay source, and does not rerun the full build.
-
-## Device evidence and limits
-
-The earlier restored build passed Kevin/Stuart emulator checks for joining, role badges, normal number picks, chat, remote typing, explicit surrender and saved scorecards/statistics. Integration failures in typing and scorecard line counts were corrected and repeated before cleanup.
-
-The final clean build was installed over Kevin's saved installation and checked for startup, dashboard, profile QR, host room creation, HOST badge, ping, room QR and return to menu. No AndroidRuntime crash appeared during that inspected smoke window. The final cleanup smoke did not play another two-device match.
-
-- Kevin retained 15 matches, 10 victories, current streak 0, best streak 5, level 2 and 1125 XP after the earlier test matches. These are real retained test records, not manually reset statistics.
-- No invitation was sent to `@bob` during these restoration/cleanup checks.
-- The emulator started for cleanup verification was shut down afterward; no test match is left running.
-- Physical-camera QR scanning, external Android sharing targets, mixed-version clients, complete LAN gameplay, slow/offline cloud recovery and exhaustive paired disconnect/rejoin cases still need dedicated device testing.
-- Older records without opponent IDs or board snapshots cannot retrospectively recover those missing details.
-- Passing JVM simulation tests does not establish a live multiplayer or exhaustive edge-case guarantee.
-
-## Future disconnection/rejoin work
-
-The user's broader goal is a recoverable 1v1 match when a player backgrounds, loses network, swipes the app away or returns later. The original requested rules include accurate opponent status, no automatic surrender merely from unavailability, normal 30-second turns with one skip per expiry, preserved boards/picks/chat, synchronized current player/turn/time, no stale timeout-driven skips, and no switch into AI mode. Explicit surrender and legitimate Bingo victory must continue working.
-
-Those requirements are future work relative to this backup. The original baseline missed-turn behavior did reach a disconnect/forfeit outcome during restoration testing. Do not claim that behavior has been fixed. Pause/continue/claim-victory policy choices discussed separately also need an explicit agreed specification before changing gameplay rules.
-
-For that work, inspect the real runtime paths: `domain/network/OnlineRoomSyncManager.kt`, `OnlineRoomRegistry.kt`, `OngoingMatchStore.kt`, `domain/engine/LobbyLifecycleEngine.kt`, `presentation/navigation/RootNavGraph.kt` and `presentation/game/GameScreen.kt`. Do not base fixes on the test-only session models. The user prefers MQTT for gameplay; keep any future authority decision explicit and avoid silently reintroducing experimental backend changes.
-
-## Backup contents and resuming
-
-- This branch includes current source/resources/tests, the root signed APK, both review reports and selected linked build/test/lint/screenshot evidence.
-- Old APK copies, source ZIPs, build caches, local SDK configuration, raw presence traces, abandoned live-play automation and intermediate audit outputs remain local; they are not needed to build this snapshot.
-- Repository signing/configuration files inherited from the base are preserved. No backend deployment, release publication, release-tag update or change to remote `main` is part of this backup.
-- The root README's older release badges predate this backup; use this handoff and the current manifest for snapshot status.
-
-To resume on another machine:
-
+### 3.2 Full Unit Test Suite
 ```bash
-git clone --branch 1.4.1 https://github.com/VamsiReddyBora/BINGO.git
-cd BINGO
-git status
+./gradlew testDebugUnitTest --rerun --offline --console=plain --max-workers=2
 ```
+Output:
+- **362 tests across 34 suites**, 0 failures, 0 errors, 0 skips.
 
-Read this file, the two review reports and the current source before planning further changes. Prefer a new working branch based on this snapshot so the backup stays identifiable.
+### 3.3 Android Lint & Release Build
+```bash
+./gradlew lintDebug assembleRelease --offline --console=plain --max-workers=2
+```
+Output:
+- **0 lint errors**.
+- **BUILD SUCCESSFUL**. Release APK built at `app/build/outputs/apk/release/Bingo.apk` and copied to `artifacts/heartbeat-fix002/Bingo-fix002.apk`.
+
+---
+
+## 4. Key Artifact Locations
+
+- Candidate APK: `artifacts/heartbeat-fix002/Bingo-fix002.apk`
+- Manifest: `artifacts/heartbeat-fix002/BASELINE_MANIFEST.json`
+- Full Test Report: `artifacts/heartbeat-fix002/TEST_REPORT.md`
+- Review Resolution Report: `artifacts/heartbeat-fix002/Fix002ReviewResolution.md`
+- Change Journal: `artifacts/heartbeat-fix002/CHANGELOG.md`
+- Plan & Specifications: `docs/HeartbeatImplementationPlanFix002.md`, `docs/HeartbeatImplementationFix001Review.md`
+
+---
+
+## 5. Instructions for Downstream Testers (When Live Devices Available)
+
+When two physical devices or emulators are connected via ADB:
+1. **Install Candidate APK**:
+   ```bash
+   adb -s <DEVICE_A> install -r artifacts/heartbeat-fix002/Bingo-fix002.apk
+   adb -s <DEVICE_B> install -r artifacts/heartbeat-fix002/Bingo-fix002.apk
+   ```
+2. **Execute 44 Acceptance Scenarios** (from `artifacts/heartbeat-fix002/TEST_REPORT.md`):
+   - Use test accounts Kevin and Stuart.
+   - Run 20+ recovery cycles per role.
+   - Measure tap-to-accepted-pick latency across 20 turns on both devices.
+   - Test force-stop recovery: `adb shell am force-stop com.bingo.multiplayer` mid-turn and during pause.
+   - Test 8+ minute app closure for ongoing match rejoin durability.
+3. **Rollback Command** (if needed):
+   ```bash
+   git checkout 1.4.1
+   ```

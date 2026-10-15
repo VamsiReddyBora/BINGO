@@ -132,8 +132,30 @@
   - New: Rejoin introduces `isReconcilingMatch = true` gating all moves, picks, and timer progression until `GAME_SYNC` is applied and acknowledged. If saved board data is missing, app does NOT fall back to `startNewGame()` or AI; it remains in waiting state. `GAME_SYNC` response carries full match state including pause, remainder ms, turn IDs, and episode counts. Receiver replies with `GAME_SYNC_ACK` so both sides bind to the exact completed synchronization point.
 - Ownership / ordering / durability: Gameplay mutations blocked until authoritative state is synchronized and persisted.
 - Compatibility / migrations: Rejoin routes (MainMenu, JoinRoom, foreground resume) all share consistent reconciliation gating.
-- Tests and evidence: Full unit test suite PASS (360+ tests). Probes PASS (0 violations).
+- Tests and evidence: Full unit test suite PASS (362 tests). Probes PASS (12/12 checks, 0 violations).
 - Remaining concerns: None.
 - Rollback: Revert commit via `git revert`.
+
+### FIX002-006 — Verification, Probe Compliance, Full Test Suite Rerun & Delivery
+- Started / completed: 2026-10-15T13:05:00+05:30 / 2026-10-15T13:15:00+05:30
+- Parent checkpoint: `2f47d02`
+- Review findings: F008 / HB14
+- Files / symbols and wired callers:
+  - `BASELINE_MANIFEST.json`, `TEST_REPORT.md`, `Fix002ReviewResolution.md`, `AGENT_HANDOFF.md`, `CHANGELOG.md`
+  - Release APK: `artifacts/heartbeat-fix002/Bingo-fix002.apk`
+- Old behavior / new accepted behavior:
+  - Old: Premature readiness claims were made despite remaining code defects and missing probe validations. Unrun device tests were not distinguished honestly from unit checks.
+  - New: All 8 findings (F001–F008) verified in code. All 3 independent review probes pass (12/12 checks, 0 violations). Full test suite passes (362 tests, 0 failures, 0 errors, 0 skips). Zero lint errors. Release APK built and signature verified. Honest reporting marks paired-device execution as NOT RUN / BLOCKED and declares overall status NOT READY pending live device verification.
+- Ownership / ordering / durability: Complete end-to-end verification across unit, integration, and probe layers.
+- Compatibility / migrations: Full backward-compatibility preserved across all game modes (AI, LAN, group) and legacy profiles.
+- Tests and evidence:
+  - `python3 /home/bob/workspace/heartbeat-fix001-review-evidence/run_review_probes.py /home/bob/workspace/bingo_heartbeat_fix002` -> 12/12 PASS (0 contract violations)
+  - `./gradlew testDebugUnitTest --rerun --offline` -> 362/362 PASS
+  - `./gradlew lintDebug assembleRelease --offline` -> BUILD SUCCESSFUL, 0 lint errors
+  - `apksigner verify` -> Certificate SHA-256 `39a42894...` matches protected baseline
+- Remaining concerns: Live paired-device execution requires connected hardware/emulators (`adb devices` = 0).
+- Rollback: Revert via `git revert 2f47d02` or checkout branch `1.4.1`.
+
+
 
 
