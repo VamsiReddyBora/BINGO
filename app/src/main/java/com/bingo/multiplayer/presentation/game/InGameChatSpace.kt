@@ -169,14 +169,19 @@ private fun InGameChatBubble(
     val isEmojiOnly = trimmed.isNotBlank() && trimmed.length <= 8 && !trimmed.any { it.isLetterOrDigit() }
 
     if (message.isSystemMessage) {
-        // Centered system notice (e.g. "Player 3 left the game", "Player 3 joined the game")
+        val notice = MatchStatusPresentation.notice(message.text)
+        val noticeColor = notice.tone.color(tokens.isDark)
+        // The formatter affects display only, including previously saved notices.
         Box(
             modifier = Modifier.fillMaxWidth(),
             contentAlignment = Alignment.Center
         ) {
             Surface(
                 shape = RoundedCornerShape(12.dp),
-                color = if (tokens.isDark) Color(0xFF23272A).copy(alpha = 0.85f) else Color(0xFFE2E8F0).copy(alpha = 0.90f),
+                color = if (notice.tone == MatchNoticeTone.NEUTRAL) {
+                    if (tokens.isDark) Color(0xFF23272A).copy(alpha = 0.85f) else Color(0xFFE2E8F0).copy(alpha = 0.90f)
+                } else noticeColor.copy(alpha = if (tokens.isDark) 0.13f else 0.08f),
+                border = BorderStroke(1.dp, noticeColor.copy(alpha = 0.15f)),
                 shadowElevation = 0.dp,
                 modifier = Modifier
                     .graphicsLayer {
@@ -186,12 +191,12 @@ private fun InGameChatBubble(
                     .padding(vertical = 2.dp)
             ) {
                 Text(
-                    text = message.text,
-                    fontSize = 11.sp,
-                    lineHeight = 14.sp,
-                    color = if (tokens.isDark) Color(0xFFCBD5E1) else Color(0xFF475569),
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                    text = notice.text,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                    color = noticeColor,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                 )
             }
         }

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.bingo.multiplayer.domain.network.MatchHeartbeatPacketCodecTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-10-15T17:31:51" hostname="VR" time="0.008">
+  <properties/>
+  <testcase name="test legacy packets remain strictly compatible with FastPacketCodec" classname="com.bingo.multiplayer.domain.network.MatchHeartbeatPacketCodecTest" time="0.0"/>
+  <testcase name="test MATCH_HEARTBEAT micro-string encode and decode roundtrip" classname="com.bingo.multiplayer.domain.network.MatchHeartbeatPacketCodecTest" time="0.007"/>
+  <testcase name="test challenge validation rejects challenges older than 5000 ms" classname="com.bingo.multiplayer.domain.network.MatchHeartbeatPacketCodecTest" time="0.001"/>
+  <testcase name="HB12 - generic peer traffic, old-match sync, and expired or duplicate ACKs do not clear unavailability" classname="com.bingo.multiplayer.domain.network.MatchHeartbeatPacketCodecTest" time="0.0"/>
+  <testcase name="test MATCH_HEARTBEAT ACK encode and decode roundtrip" classname="com.bingo.multiplayer.domain.network.MatchHeartbeatPacketCodecTest" time="0.0"/>
+  <testcase name="H10 - packets for wrong match or superseded connection generation must not match" classname="com.bingo.multiplayer.domain.network.MatchHeartbeatPacketCodecTest" time="0.0"/>
+  <testcase name="H11 - reconnect creates fresh connection generation invalidating older generation ACKs" classname="com.bingo.multiplayer.domain.network.MatchHeartbeatPacketCodecTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

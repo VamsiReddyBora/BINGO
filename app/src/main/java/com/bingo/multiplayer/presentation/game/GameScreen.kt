@@ -482,7 +482,8 @@ fun GameScreen(
     BackHandler(enabled = !isGameOver && (hostDisconnected || isGamePaused ||
         (canControlPause && interruptionPrompt.episodeId.isNotBlank() && !interruptionPrompt.decided))) {}
 
-    if (hostDisconnected && !isGameOver) HostDisconnectedDialog()
+    if (hostDisconnected && !isGameOver) HostDisconnectedDialog(
+        hostName = hostName, avatarUrl = players.firstOrNull { it.isHost }?.avatarUrl ?: opponentAvatarUrl)
 
     if (showSurrenderDialog && !hostDisconnected) {
         val isMultiplayerLobbyGame = (onReturnToLobby != null)
@@ -546,7 +547,7 @@ fun GameScreen(
         AlertDialog(
             onDismissRequest = {},
             properties = MatchDecisionDialogSpec.properties,
-            shape = RoundedCornerShape(20.dp),
+            shape = RoundedCornerShape(28.dp),
             containerColor = tokens.surface,
             icon = {
                 Icon(
@@ -558,7 +559,7 @@ fun GameScreen(
             },
             title = {
                 Text(
-                    text = "Match Paused",
+                    text = "⏸️ Match paused",
                     fontWeight = FontWeight.Bold,
                     fontSize = 18.sp,
                     color = tokens.cellNeutralText,
@@ -568,17 +569,18 @@ fun GameScreen(
             text = {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        text = if (pausedByPlayerName.isNotBlank()) "$pausedByPlayerName paused the game." else "The game is currently paused.",
+                        text = if (pausedByPlayerName.isNotBlank()) "$pausedByPlayerName paused the match." else "Your match is on hold.",
                         fontSize = 14.sp, color = tokens.cellNeutralText.copy(alpha = 0.8f),
                         textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()
                     )
                     if (opponentConnectionStatus.isNotBlank()) {
                         Spacer(Modifier.height(12.dp))
-                        Text(opponentConnectionStatus, color = tokens.cellNeutralText, textAlign = TextAlign.Center)
+                        val status = MatchStatusPresentation.notice(opponentConnectionStatus)
+                        MatchStatusChip(status.text, status.tone, Modifier.fillMaxWidth())
                     }
                     if (!canControlPause) {
                         Spacer(Modifier.height(12.dp))
-                        Text("Waiting for $hostName to resume the game.", color = tokens.cellNeutralText, textAlign = TextAlign.Center)
+                        Text("⏳ Waiting for $hostName to resume…", color = tokens.cellNeutralText, textAlign = TextAlign.Center)
                     }
                 }
             },
@@ -588,7 +590,7 @@ fun GameScreen(
                     enabled = canResumeGame,
                     colors = ButtonDefaults.buttonColors(containerColor = tokens.primaryButtonBg, contentColor = tokens.primaryButtonText),
                     shape = RoundedCornerShape(12.dp)
-                ) { Text("Resume Game", fontWeight = FontWeight.Bold) }
+                ) { Text("▶️ Resume match", fontWeight = FontWeight.Bold) }
             },
             dismissButton = {
                 TextButton(onClick = { showSurrenderDialog = true }) {
@@ -609,6 +611,7 @@ fun GameScreen(
         InterruptionDecisionDialog(
             prompt = interruptionPrompt,
             opponentName = opponentName,
+            opponentAvatarUrl = opponentAvatarUrl,
             opponentUnreachable = isOpponentUnreachable,
             connectionStatus = opponentConnectionStatus,
             pauseEnabled = !gameplaySuspended,

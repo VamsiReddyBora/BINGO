@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.bingo.multiplayer.domain.network.MultiplayerWinLogicAndSimulationTest" tests="27" skipped="0" failures="0" errors="0" timestamp="2026-10-15T17:31:51" hostname="VR" time="0.019">
+  <properties/>
+  <testcase name="three players - rule 3 - if one player completed 5 lines first then two players lost and one player won" classname="com.bingo.multiplayer.domain.network.MultiplayerWinLogicAndSimulationTest" time="0.001"/>
+  <testcase name="8 players simulation - mid game departure shrinks turn rotation, emits system chat, rejoin restores rotation, and game finishes with winner and runners" classname="com.bingo.multiplayer.domain.network.MultiplayerWinLogicAndSimulationTest" time="0.002"/>
+  <testcase name="lobby player kick - host blacklist rejects in-flight heartbeats and late cloud packets from kicked player" classname="com.bingo.multiplayer.domain.network.MultiplayerWinLogicAndSimulationTest" time="0.0"/>
+  <testcase name="spotlight bar - heartbeat updates to timestamps do not change animation targetState keys" classname="com.bingo.multiplayer.domain.network.MultiplayerWinLogicAndSimulationTest" time="0.0"/>
+  <testcase name="two player match - player loses when opponent achieves 5 lines first" classname="com.bingo.multiplayer.domain.network.MultiplayerWinLogicAndSimulationTest" time="0.0"/>
+  <testcase name="dynamic board - packet serialization round trip preserves dynamic board state" classname="com.bingo.multiplayer.domain.network.MultiplayerWinLogicAndSimulationTest" time="0.0"/>
+  <testcase name="spotlight bar - circular indexing for 5 players matches specification exactly" classname="com.bingo.multiplayer.domain.network.MultiplayerWinLogicAndSimulationTest" time="0.0"/>
+  <testcase name="lobby exit and rematch - allPlayerBoards clean slate prevents previous match carry-over" classname="com.bingo.multiplayer.domain.network.MultiplayerWinLogicAndSimulationTest" time="0.001"/>
+  <testcase name="two player match - does not declare loss in the middle of a match with partial lines" classname="com.bingo.multiplayer.domain.network.MultiplayerWinLogicAndSimulationTest" time="0.0"/>
+  <testcase name="review stamps - three winner draw displays DRAW stamps on all three boards" classname="com.bingo.multiplayer.domain.network.MultiplayerWinLogicAndSimulationTest" time="0.0"/>
+  <testcase name="review stamps - two winner draw displays DRAW stamps on both, and LOST stamp on third" classname="com.bingo.multiplayer.domain.network.MultiplayerWinLogicAndSimulationTest" time="0.0"/>
+  <testcase name="review stamps - solo winner displays WON stamp, losers display LOST stamps" classname="com.bingo.multiplayer.domain.network.MultiplayerWinLogicAndSimulationTest" time="0.0"/>
+  <testcase name="two player match - player wins when player achieves 5 lines first" classname="com.bingo.multiplayer.domain.network.MultiplayerWinLogicAndSimulationTest" time="0.0"/>
+  <testcase name="dynamic board - manual board design simulation for dynamic sizes" classname="com.bingo.multiplayer.domain.network.MultiplayerWinLogicAndSimulationTest" time="0.0"/>
+  <testcase name="friend deletion persistence - recentlyRemoved blacklist prevents resurrection from stale cloud responses" classname="com.bingo.multiplayer.domain.network.MultiplayerWinLogicAndSimulationTest" time="0.0"/>
+  <testcase name="three players - rule 1 - if three players completed 5 lines at a time then draw for all" classname="com.bingo.multiplayer.domain.network.MultiplayerWinLogicAndSimulationTest" time="0.001"/>
+  <testcase name="three players - rule 2 - if two players completed 5 lines at a time then third player lost and two get draw" classname="com.bingo.multiplayer.domain.network.MultiplayerWinLogicAndSimulationTest" time="0.0"/>
+  <testcase name="dynamic board - gameplay and win logic simulation on 6x6 grid" classname="com.bingo.multiplayer.domain.network.MultiplayerWinLogicAndSimulationTest" time="0.0"/>
+  <testcase name="post-game board review layout - 2-player match uses 50-50 equal weight edge-to-edge tabs without trailing space" classname="com.bingo.multiplayer.domain.network.MultiplayerWinLogicAndSimulationTest" time="0.001"/>
+  <testcase name="two player match - draw when both players achieve 5 lines at the same time" classname="com.bingo.multiplayer.domain.network.MultiplayerWinLogicAndSimulationTest" time="0.0"/>
+  <testcase name="manual board 3-player readiness synchronization - game waits until all 3 players click Board Ready" classname="com.bingo.multiplayer.domain.network.MultiplayerWinLogicAndSimulationTest" time="0.0"/>
+  <testcase name="BINGOOOO letters generation - repeats 'O' for extra lines and never uses stars" classname="com.bingo.multiplayer.domain.network.MultiplayerWinLogicAndSimulationTest" time="0.001"/>
+  <testcase name="test8PlayersWinnerRunnerLoserTurnPriorityAndSortingSimulation" classname="com.bingo.multiplayer.domain.network.MultiplayerWinLogicAndSimulationTest" time="0.003"/>
+  <testcase name="dynamic target lines - 5x5 requires 5 lines, 6x6 requires 6 lines, 7x7 requires 7 lines" classname="com.bingo.multiplayer.domain.network.MultiplayerWinLogicAndSimulationTest" time="0.0"/>
+  <testcase name="dynamic board - host lobby checkbox toggle and grid scaling simulation" classname="com.bingo.multiplayer.domain.network.MultiplayerWinLogicAndSimulationTest" time="0.002"/>
+  <testcase name="end to end virtual 3-player match - turn alternation and deterministic board sync" classname="com.bingo.multiplayer.domain.network.MultiplayerWinLogicAndSimulationTest" time="0.003"/>
+  <testcase name="testHostSelectedGridSizesFrom5x5To10x10Simulation" classname="com.bingo.multiplayer.domain.network.MultiplayerWinLogicAndSimulationTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

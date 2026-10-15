@@ -15,7 +15,7 @@ class HostDisconnectedDialogTest {
         assertFalse(MatchDecisionDialogSpec.properties.dismissOnClickOutside)
     }
     @Test fun hostHoldDialogUsesTheAgreedBlockingMessage() {
-        assertEquals("Host Disconnected", HostDisconnectedDialogSpec.title)
-        assertEquals("Waiting for the host to continue the game.", HostDisconnectedDialogSpec.message)
+        assertEquals("🔴 Host disconnected", HostDisconnectedDialogSpec.title)
+        assertEquals("Your board and remaining time are preserved.", HostDisconnectedDialogSpec.message)
     }
 }

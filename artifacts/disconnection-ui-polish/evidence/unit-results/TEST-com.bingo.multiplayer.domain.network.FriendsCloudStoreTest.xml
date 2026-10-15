@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.bingo.multiplayer.domain.network.FriendsCloudStoreTest" tests="11" skipped="0" failures="0" errors="0" timestamp="2026-10-15T17:31:43" hostname="VR" time="0.108">
+  <properties/>
+  <testcase name="networkExceptionDoesNotAuthorizeAReplacementWrite" classname="com.bingo.multiplayer.domain.network.FriendsCloudStoreTest" time="0.01"/>
+  <testcase name="failedWriteIsReportedAsFailure" classname="com.bingo.multiplayer.domain.network.FriendsCloudStoreTest" time="0.017"/>
+  <testcase name="largeRequestAvatarDoesNotPreventCloudPersistence" classname="com.bingo.multiplayer.domain.network.FriendsCloudStoreTest" time="0.007"/>
+  <testcase name="oversizedAvatarsDoNotInflateCloudRosterQueryStrings" classname="com.bingo.multiplayer.domain.network.FriendsCloudStoreTest" time="0.005"/>
+  <testcase name="malformedSuccessfulResponseCannotOverwriteFriends" classname="com.bingo.multiplayer.domain.network.FriendsCloudStoreTest" time="0.017"/>
+  <testcase name="rawAndBase64LegacyRostersDecodeWithoutLosingFriends" classname="com.bingo.multiplayer.domain.network.FriendsCloudStoreTest" time="0.007"/>
+  <testcase name="addingOneFriendPreservesExistingFriendsAndNormalizesDuplicates" classname="com.bingo.multiplayer.domain.network.FriendsCloudStoreTest" time="0.011"/>
+  <testcase name="genuineMissingOrEmptyRecordIsAnEmptyList" classname="com.bingo.multiplayer.domain.network.FriendsCloudStoreTest" time="0.011"/>
+  <testcase name="pendingRequestReadsDistinguishNetworkFailureFromNoRequestsAndFilterResolved" classname="com.bingo.multiplayer.domain.network.FriendsCloudStoreTest" time="0.01"/>
+  <testcase name="fullFourFriendRosterFitsStorageLimitWithoutDroppingAnyFriend" classname="com.bingo.multiplayer.domain.network.FriendsCloudStoreTest" time="0.007"/>
+  <testcase name="failedGetDoesNotTurnIntoEmptyFriendsAndCannotOverwriteThem" classname="com.bingo.multiplayer.domain.network.FriendsCloudStoreTest" time="0.004"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

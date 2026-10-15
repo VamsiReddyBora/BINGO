@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.bingo.multiplayer.domain.network.NearbyConnectionsSessionManagerTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-10-15T17:31:52" hostname="VR" time="1.6">
+  <properties/>
+  <testcase name="testTurnLockWatchdog_preventsDeadlockOnPacketDrop" classname="com.bingo.multiplayer.domain.network.NearbyConnectionsSessionManagerTest" time="0.605"/>
+  <testcase name="testStateSynchronization_reconcilesMissingHistory" classname="com.bingo.multiplayer.domain.network.NearbyConnectionsSessionManagerTest" time="0.003"/>
+  <testcase name="testLostPeerDetection_triggersPauseOrForfeitEvent" classname="com.bingo.multiplayer.domain.network.NearbyConnectionsSessionManagerTest" time="0.805"/>
+  <testcase name="testLatencySimulation_150to500ms_payloadArrivesWithoutDeadlock" classname="com.bingo.multiplayer.domain.network.NearbyConnectionsSessionManagerTest" time="0.187"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

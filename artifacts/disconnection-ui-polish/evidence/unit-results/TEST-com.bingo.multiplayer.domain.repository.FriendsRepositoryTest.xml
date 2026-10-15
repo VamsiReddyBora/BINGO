@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.bingo.multiplayer.domain.repository.FriendsRepositoryTest" tests="24" skipped="0" failures="0" errors="0" timestamp="2026-10-15T17:32:02" hostname="VR" time="0.08">
+  <properties/>
+  <testcase name="equivalentUsernamesAndEmptyUidsDoNotDropUnrelatedFriends" classname="com.bingo.multiplayer.domain.repository.FriendsRepositoryTest" time="0.011"/>
+  <testcase name="repeatedPollsCoalesceWhileCloudReadIsRunning" classname="com.bingo.multiplayer.domain.repository.FriendsRepositoryTest" time="0.004"/>
+  <testcase name="declinedRequestDoesNotReappearOnStaleReadOrPacket" classname="com.bingo.multiplayer.domain.repository.FriendsRepositoryTest" time="0.005"/>
+  <testcase name="friendAcceptanceNotificationRequiresConfirmedFriendshipAndIsDeduplicated" classname="com.bingo.multiplayer.domain.repository.FriendsRepositoryTest" time="0.004"/>
+  <testcase name="acceptedRequestAndSameSenderDuplicatesAreRemovedAndStaySilentAfterRestart" classname="com.bingo.multiplayer.domain.repository.FriendsRepositoryTest" time="0.002"/>
+  <testcase name="failedPrimaryReadKeepsCacheAndNeverWritesAPartialList" classname="com.bingo.multiplayer.domain.repository.FriendsRepositoryTest" time="0.003"/>
+  <testcase name="newRequestIdFromSameSenderCanNotifyAfterEarlierDecline" classname="com.bingo.multiplayer.domain.repository.FriendsRepositoryTest" time="0.003"/>
+  <testcase name="unavailableRequestReadRetainsUiButDoesNotAuthorizeAToast" classname="com.bingo.multiplayer.domain.repository.FriendsRepositoryTest" time="0.002"/>
+  <testcase name="compactPrimaryRecordsKeepFullCareerStatisticsFromBackup" classname="com.bingo.multiplayer.domain.repository.FriendsRepositoryTest" time="0.002"/>
+  <testcase name="explicitlyRemovedFriendStaysRemovedAcrossRestartAndStaleBackups" classname="com.bingo.multiplayer.domain.repository.FriendsRepositoryTest" time="0.005"/>
+  <testcase name="genuineNewRequestNotifiesOnceAcrossDuplicatesAndProcessRestarts" classname="com.bingo.multiplayer.domain.repository.FriendsRepositoryTest" time="0.004"/>
+  <testcase name="newerCareerSnapshotCanResetStreakWithoutOldCacheUndoingIt" classname="com.bingo.multiplayer.domain.repository.FriendsRepositoryTest" time="0.002"/>
+  <testcase name="requestAbsentFromCloudNeverNotifies" classname="com.bingo.multiplayer.domain.repository.FriendsRepositoryTest" time="0.002"/>
+  <testcase name="closedListenerAndWrongRecipientCannotNotify" classname="com.bingo.multiplayer.domain.repository.FriendsRepositoryTest" time="0.003"/>
+  <testcase name="explicitAcceptanceCanReaddARemovedFriend" classname="com.bingo.multiplayer.domain.repository.FriendsRepositoryTest" time="0.004"/>
+  <testcase name="olderRestorationMarkerCannotUndoANewerExplicitRemoval" classname="com.bingo.multiplayer.domain.repository.FriendsRepositoryTest" time="0.004"/>
+  <testcase name="partialPrimaryRestoresAllFourFriendsFromExistingBackup" classname="com.bingo.multiplayer.domain.repository.FriendsRepositoryTest" time="0.002"/>
+  <testcase name="backupRemovalMarkersAreHonored" classname="com.bingo.multiplayer.domain.repository.FriendsRepositoryTest" time="0.002"/>
+  <testcase name="acceptancePacketRefreshesBackupBeforeNotifyingEvenWhenPrimaryIsPartial" classname="com.bingo.multiplayer.domain.repository.FriendsRepositoryTest" time="0.004"/>
+  <testcase name="friendReaddedByOtherPlayersAcceptanceRecoversAfterRestart" classname="com.bingo.multiplayer.domain.repository.FriendsRepositoryTest" time="0.003"/>
+  <testcase name="acceptedFriendReplayedRequestNeverNotifiesEvenAtColdStartup" classname="com.bingo.multiplayer.domain.repository.FriendsRepositoryTest" time="0.003"/>
+  <testcase name="successfulEmptyPrimaryDoesNotEraseBackupOrCache" classname="com.bingo.multiplayer.domain.repository.FriendsRepositoryTest" time="0.001"/>
+  <testcase name="accountSwitchRejectsOldAsyncResultsAndKeepsCachesSeparate" classname="com.bingo.multiplayer.domain.repository.FriendsRepositoryTest" time="0.002"/>
+  <testcase name="failedAcceptKeepsPendingRequestAndDoesNotInventFriendship" classname="com.bingo.multiplayer.domain.repository.FriendsRepositoryTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

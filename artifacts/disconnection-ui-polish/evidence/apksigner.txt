@@ -1,0 +1,17 @@
+Verifies
+Verified using v1 scheme (JAR signing): false
+Verified using v2 scheme (APK Signature Scheme v2): true
+Verified using v3 scheme (APK Signature Scheme v3): false
+Verified using v3.1 scheme (APK Signature Scheme v3.1): false
+Verified using v4 scheme (APK Signature Scheme v4): false
+Verified for SourceStamp: false
+Number of signers: 1
+Signer #1 certificate DN: CN=BingoApp, OU=Dev, O=Self, L=Hyd, ST=TS, C=IN
+Signer #1 certificate SHA-256 digest: 39a428942c3c2629ff3490c944b8b82c7625b22d660b7a2cdf682456d81f60a4
+Signer #1 certificate SHA-1 digest: 8899c8f87d48bf7a0580e206874287ab0c2a29f1
+Signer #1 certificate MD5 digest: 486f14bf3849c364ae881479d75774e3
+Signer #1 key algorithm: RSA
+Signer #1 key size (bits): 2048
+Signer #1 public key SHA-256 digest: 19a3ea6ebe44d66d6754cabb3841e2d8a8ccfd93d441e25389822ff12438c081
+Signer #1 public key SHA-1 digest: 90b398abafeabea7fd4fb25211bbe42488b8bec1
+Signer #1 public key MD5 digest: c3dd28e9be4bfc1f76c4e17164fe717b
