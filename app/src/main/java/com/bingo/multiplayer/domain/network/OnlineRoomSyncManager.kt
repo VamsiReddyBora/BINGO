@@ -248,7 +248,10 @@ class OnlineRoomSyncManager(
     }
 
     fun notifyStateSynchronized() {
-        matchHeartbeatPolicy?.onStateSynchronized()
+        val decision = matchHeartbeatPolicy?.onStateSynchronized() ?: com.bingo.multiplayer.domain.engine.HeartbeatDecision.NoOp
+        if (decision !is com.bingo.multiplayer.domain.engine.HeartbeatDecision.NoOp) {
+            _matchHeartbeatDecisions.tryEmit(decision)
+        }
     }
 
     fun claimMatchVictory(localUid: String = localPlayer?.id ?: "local_player"): com.bingo.multiplayer.domain.engine.ClaimResult? {

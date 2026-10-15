@@ -232,6 +232,9 @@ class OnlineMatchHeartbeatPolicy(
                 val silence = now - lastFreshPeerResponseAt
                 if (silence >= UNAVAILABLE_THRESHOLD_MS) {
                     state = PeerAvailabilityState.UNREACHABLE
+                    isStateSynchronized = false
+                    recoveryStartedAt = null
+                    lastRecoveryProbeAt = null
                     if (!isEpisodeOpen) {
                         isEpisodeOpen = true
                         committedEpisodeCount++
@@ -252,6 +255,7 @@ class OnlineMatchHeartbeatPolicy(
                     // Outage recurred before stability requirement was met.
                     // Reopen the warning for the SAME episode; do NOT increment incident count!
                     state = PeerAvailabilityState.UNREACHABLE
+                    isStateSynchronized = false
                     isEpisodeOpen = true
                     recoveryStartedAt = null
                     lastRecoveryProbeAt = null
@@ -266,7 +270,11 @@ class OnlineMatchHeartbeatPolicy(
                 // If gap between probes exceeded 5,000 ms, stability window restarts
                 val lastProbe = lastRecoveryProbeAt
                 if (lastProbe != null && (now - lastProbe > STABLE_HEARTBEAT_MAX_GAP_MS)) {
-                    recoveryStartedAt = now
+                    if (isStateSynchronized) {
+                        recoveryStartedAt = now
+                    } else {
+                        recoveryStartedAt = null
+                    }
                 }
 
                 val decision = completeRecoveryIfEligible(now)
@@ -301,9 +309,13 @@ class OnlineMatchHeartbeatPolicy(
                 // First verified fresh response after silence!
                 state = PeerAvailabilityState.RECOVERING
                 lastFreshPeerResponseAt = now
-                recoveryStartedAt = now
                 lastRecoveryProbeAt = now
                 isClaimVictoryEligible = false // Immediately disable claim victory!
+                if (isStateSynchronized) {
+                    recoveryStartedAt = now
+                } else {
+                    recoveryStartedAt = null
+                }
                 return HeartbeatDecision.StartedRecovering(
                     episodeId = currentEpisodeId,
                     episodeCount = committedEpisodeCount
@@ -315,7 +327,13 @@ class OnlineMatchHeartbeatPolicy(
                 val gap = now - prevProbe
                 if (gap > STABLE_HEARTBEAT_MAX_GAP_MS) {
                     // Gap exceeded 5,000 ms! Restart the 10-second stability window.
-                    recoveryStartedAt = now
+                    if (isStateSynchronized) {
+                        recoveryStartedAt = now
+                    } else {
+                        recoveryStartedAt = null
+                    }
+                } else if (isStateSynchronized && recoveryStartedAt == null) {
+                    recoveryStartedAt = prevProbe
                 }
                 lastRecoveryProbeAt = now
                 lastFreshPeerResponseAt = now
@@ -328,9 +346,13 @@ class OnlineMatchHeartbeatPolicy(
                 if (isEpisodeOpen) {
                     // Open episode exists from before local outage! Must recover it.
                     state = PeerAvailabilityState.RECOVERING
-                    recoveryStartedAt = now
                     lastRecoveryProbeAt = now
                     isClaimVictoryEligible = false
+                    if (isStateSynchronized) {
+                        recoveryStartedAt = now
+                    } else {
+                        recoveryStartedAt = null
+                    }
                     return HeartbeatDecision.StartedRecovering(
                         episodeId = currentEpisodeId,
                         episodeCount = committedEpisodeCount
@@ -359,6 +381,9 @@ class OnlineMatchHeartbeatPolicy(
     fun onStateSynchronized(now: Long = clock.elapsedRealtime()): HeartbeatDecision {
         isStateSynchronized = true
         if (state == PeerAvailabilityState.RECOVERING) {
+            // Start the required 10-second stable window after current state synchronization completes.
+            // ACKs received before that point cannot be credited as post-sync stability.
+            recoveryStartedAt = now
             return completeRecoveryIfEligible(now)
         }
         return HeartbeatDecision.NoOp

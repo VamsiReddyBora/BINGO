@@ -77,6 +77,14 @@ object OngoingMatchStore {
 
     @androidx.annotation.VisibleForTesting
     var customPrefs: SharedPreferences? = null
+        set(value) {
+            field = value
+            if (value == null) {
+                sharedMatchResults.clear()
+            }
+        }
+
+    private val sharedMatchResults = java.util.concurrent.ConcurrentHashMap<Long, MatchResultTombstone>()
 
     private fun getPrefs(context: Context?): SharedPreferences {
         return customPrefs ?: context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -92,6 +100,7 @@ object OngoingMatchStore {
 
     /**
      * Atomically and durably saves match checkpoint using commit().
+     * Owner-scoped keys isolate each player's ongoing match without global mirror overwrites.
      */
     fun saveOngoingMatch(
         context: Context?,
@@ -101,9 +110,6 @@ object OngoingMatchStore {
             val serialized = json.encodeToString(matchData)
             val key = getMatchKey(matchData.accountUid)
             val editor = getPrefs(context).edit().putString(key, serialized)
-            if (key != KEY_MATCH_DATA) {
-                editor.putString(KEY_MATCH_DATA, serialized)
-            }
             editor.commit()
         } catch (_: Exception) {
             false
@@ -166,12 +172,20 @@ object OngoingMatchStore {
     /**
      * Retrieves the active ongoing match.
      * 1v1 online matches bypass the 8-minute TTL so interrupted/recovering games never expire silently.
-     * When accountUid is specified, ensures cross-account isolation (HB13).
+     * When accountUid is specified, ensures cross-account isolation (HB13, F005).
      */
     fun getOngoingMatch(context: Context? = null, accountUid: String? = null): OngoingMatchData? {
         val prefs = getPrefs(context)
         val scopedKey = getMatchKey(accountUid)
         var serialized = prefs.getString(scopedKey, null)
+
+        if (serialized == null && scopedKey == KEY_MATCH_DATA) {
+            // Unscoped read fallback: check if there is an active scoped match key
+            val anyKey = prefs.all.keys.firstOrNull { it.startsWith("active_match_data_") }
+            if (anyKey != null) {
+                serialized = prefs.getString(anyKey, null)
+            }
+        }
 
         // Legacy migration: if scoped record is absent, check global legacy record
         if (serialized == null && scopedKey != KEY_MATCH_DATA) {
@@ -180,12 +194,20 @@ object OngoingMatchStore {
                 try {
                     val candidate = json.decodeFromString<OngoingMatchData>(legacy)
                     val uidClean = accountUid?.trim()?.lowercase() ?: ""
-                    if (candidate.accountUid.equals(uidClean, ignoreCase = true) ||
-                        candidate.participants.any { it.id.equals(uidClean, ignoreCase = true) }
-                    ) {
-                        val migrated = candidate.copy(accountUid = uidClean)
-                        serialized = json.encodeToString(migrated)
-                        prefs.edit().putString(scopedKey, serialized).commit()
+                    if (candidate.accountUid.isNotBlank()) {
+                        // Explicit owner exists! ONLY migrate if it matches the signed-in account!
+                        if (candidate.accountUid.equals(uidClean, ignoreCase = true)) {
+                            serialized = legacy
+                            prefs.edit().putString(scopedKey, legacy).remove(KEY_MATCH_DATA).commit()
+                        }
+                        // Explicit owner mismatch: reject migration even if uidClean is in participants!
+                    } else {
+                        // Ownerless legacy record: only migrate if uidClean is a known participant
+                        if (candidate.participants.any { it.id.equals(uidClean, ignoreCase = true) }) {
+                            val migrated = candidate.copy(accountUid = uidClean)
+                            serialized = json.encodeToString(migrated)
+                            prefs.edit().putString(scopedKey, serialized).remove(KEY_MATCH_DATA).commit()
+                        }
                     }
                 } catch (_: Exception) {}
             }
@@ -199,7 +221,7 @@ object OngoingMatchStore {
                 return null
             }
 
-            // Check if this match has already concluded via a durable result tombstone (HB11)
+            // Check if this match has already concluded via a durable result tombstone (HB11, F002)
             val tombstone = getMatchResultTombstone(context, data.matchSeed)
             if (tombstone != null) {
                 clearOngoingMatch(context, accountUid)
@@ -235,14 +257,8 @@ object OngoingMatchStore {
             if (!accountUid.isNullOrBlank()) {
                 editor.remove(getMatchKey(accountUid))
             } else {
-                val legacy = prefs.getString(KEY_MATCH_DATA, null)
-                if (legacy != null) {
-                    try {
-                        val parsed = json.decodeFromString<OngoingMatchData>(legacy)
-                        if (parsed.accountUid.isNotBlank()) {
-                            editor.remove(getMatchKey(parsed.accountUid))
-                        }
-                    } catch (_: Exception) {}
+                prefs.all.keys.filter { it.startsWith("active_match_data") }.forEach {
+                    editor.remove(it)
                 }
             }
             editor.commit()
@@ -252,7 +268,8 @@ object OngoingMatchStore {
     }
 
     /**
-     * Durably stores an immutable final result tombstone keyed by match seed (HB11).
+     * Durably stores an immutable final result tombstone keyed by match seed (HB11, F002).
+     * Rejects conflicting writes and allows idempotent duplicate writes.
      */
     fun recordMatchResultTombstone(
         context: Context?,
@@ -264,6 +281,15 @@ object OngoingMatchStore {
         accountUid: String? = null
     ): Boolean {
         if (matchSeed == 0L) return false
+        val existing = getMatchResultTombstone(context, matchSeed)
+        if (existing != null) {
+            // Idempotent: identical result returns true
+            if (existing.winnerUid == winnerUid && existing.winReason == winReason) {
+                return true
+            }
+            // Conflicting second write rejected!
+            return false
+        }
         return try {
             val tombstone = MatchResultTombstone(
                 matchSeed = matchSeed,
@@ -273,6 +299,7 @@ object OngoingMatchStore {
                 episodeCount = episodeCount,
                 accountUid = accountUid ?: ""
             )
+            sharedMatchResults[matchSeed] = tombstone
             val serialized = json.encodeToString(tombstone)
             getPrefs(context).edit().putString(getTombstoneKey(matchSeed), serialized).commit()
         } catch (_: Exception) {
@@ -281,15 +308,28 @@ object OngoingMatchStore {
     }
 
     /**
-     * Retrieves an immutable final result tombstone if one exists for this match seed (HB11).
+     * Retrieves an immutable final result tombstone if one exists for this match seed (HB11, F002).
      */
     fun getMatchResultTombstone(context: Context?, matchSeed: Long): MatchResultTombstone? {
         if (matchSeed == 0L) return null
-        return try {
-            val serialized = getPrefs(context).getString(getTombstoneKey(matchSeed), null) ?: return null
-            json.decodeFromString<MatchResultTombstone>(serialized)
+        val local = try {
+            val serialized = getPrefs(context).getString(getTombstoneKey(matchSeed), null)
+            if (serialized != null) json.decodeFromString<MatchResultTombstone>(serialized) else null
         } catch (_: Exception) {
             null
         }
+        if (local != null) {
+            sharedMatchResults.putIfAbsent(matchSeed, local)
+            return local
+        }
+        val shared = sharedMatchResults[matchSeed]
+        if (shared != null) {
+            try {
+                val serialized = json.encodeToString(shared)
+                getPrefs(context).edit().putString(getTombstoneKey(matchSeed), serialized).commit()
+            } catch (_: Exception) {}
+            return shared
+        }
+        return null
     }
 }
