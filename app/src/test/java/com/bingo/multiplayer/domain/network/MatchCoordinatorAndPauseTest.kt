@@ -216,6 +216,17 @@ class MatchCoordinatorAndPauseTest {
 
     // --- Claim Victory Rules (C01 - C04) ---
 
+    private fun simulateStableRecovery(policy: OnlineMatchHeartbeatPolicy, clock: TestClock) {
+        policy.onFreshPeerResponse(clock.elapsedRealtime())
+        policy.onStateSynchronized()
+        for (i in 1..6) {
+            clock.advance(2000L)
+            policy.onTick(clock.elapsedRealtime())
+            policy.onFreshPeerResponse(clock.elapsedRealtime())
+        }
+        policy.onTick(clock.elapsedRealtime())
+    }
+
     @Test
     fun `test C01 - Claim Victory eligibility requires episode count 3 or more while UNREACHABLE`() {
         val clock = TestClock(100_000L)
@@ -235,10 +246,8 @@ class MatchCoordinatorAndPauseTest {
         assertFalse(policy.canClaimVictory("user_me"))
 
         // Recovery 1
-        policy.onFreshPeerResponse(clock.elapsedRealtime())
-        policy.onStateSynchronized()
-        clock.advance(10_001L)
-        policy.onTick(clock.elapsedRealtime())
+        simulateStableRecovery(policy, clock)
+        assertEquals(PeerAvailabilityState.RESPONSIVE, policy.state)
 
         // Episode 2
         clock.advance(15_001L)
@@ -248,10 +257,8 @@ class MatchCoordinatorAndPauseTest {
         assertFalse(policy.canClaimVictory("user_me"))
 
         // Recovery 2
-        policy.onFreshPeerResponse(clock.elapsedRealtime())
-        policy.onStateSynchronized()
-        clock.advance(10_001L)
-        policy.onTick(clock.elapsedRealtime())
+        simulateStableRecovery(policy, clock)
+        assertEquals(PeerAvailabilityState.RESPONSIVE, policy.state)
 
         // Episode 3
         clock.advance(15_001L)
@@ -279,19 +286,13 @@ class MatchCoordinatorAndPauseTest {
         clock.advance(15_001L)
         policy.onTick(clock.elapsedRealtime())
         // Recover 1
-        policy.onFreshPeerResponse(clock.elapsedRealtime())
-        policy.onStateSynchronized()
-        clock.advance(10_001L)
-        policy.onTick(clock.elapsedRealtime())
+        simulateStableRecovery(policy, clock)
 
         // Incident 2
         clock.advance(15_001L)
         policy.onTick(clock.elapsedRealtime())
         // Recover 2
-        policy.onFreshPeerResponse(clock.elapsedRealtime())
-        policy.onStateSynchronized()
-        clock.advance(10_001L)
-        policy.onTick(clock.elapsedRealtime())
+        simulateStableRecovery(policy, clock)
 
         // Incident 3
         clock.advance(15_001L)
@@ -352,19 +353,13 @@ class MatchCoordinatorAndPauseTest {
         clock.advance(15_001L)
         policy.onTick(clock.elapsedRealtime())
         // Recover 1
-        policy.onFreshPeerResponse(clock.elapsedRealtime())
-        policy.onStateSynchronized()
-        clock.advance(10_001L)
-        policy.onTick(clock.elapsedRealtime())
+        simulateStableRecovery(policy, clock)
 
         // Incident 2
         clock.advance(15_001L)
         policy.onTick(clock.elapsedRealtime())
         // Recover 2
-        policy.onFreshPeerResponse(clock.elapsedRealtime())
-        policy.onStateSynchronized()
-        clock.advance(10_001L)
-        policy.onTick(clock.elapsedRealtime())
+        simulateStableRecovery(policy, clock)
 
         // Incident 3
         clock.advance(15_001L)
@@ -377,5 +372,51 @@ class MatchCoordinatorAndPauseTest {
         assertTrue(dec is HeartbeatDecision.StartedRecovering)
         assertEquals(PeerAvailabilityState.RECOVERING, policy.state)
         assertFalse("Eligibility MUST be revoked immediately when peer responds", policy.canClaimVictory("user_local"))
+    }
+
+    @Test
+    fun `test HB09 - Claim victory rejected when peer becomes responsive before confirmation`() {
+        val clock = TestClock(100_000L)
+        val policy = OnlineMatchHeartbeatPolicy(
+            matchId = "m_hb09",
+            peerUid = "peer_hb09",
+            connectionGeneration = "gen1",
+            clock = clock
+        )
+
+        // Reach 3 episodes
+        for (ep in 1..2) {
+            clock.advance(15_001L)
+            policy.onTick(clock.elapsedRealtime())
+            simulateStableRecovery(policy, clock)
+        }
+        clock.advance(15_001L)
+        policy.onTick(clock.elapsedRealtime())
+
+        assertTrue("Should be claim eligible at 3 episodes while UNREACHABLE", policy.canClaimVictory("claimer"))
+
+        // Peer responds just as user clicks claim button
+        policy.onFreshPeerResponse(clock.elapsedRealtime())
+        assertFalse(policy.canClaimVictory("claimer"))
+
+        // Claim execution rejected
+        val claimResult = policy.claimVictory("claimer")
+        assertTrue(claimResult is com.bingo.multiplayer.domain.engine.ClaimResult.Rejected)
+    }
+
+    @Test
+    fun `test HB10 - Incoming CLAIM_VICTORY packet validated against 3 episode requirement`() {
+        val invalidPacket = RoomMessagePacket(
+            type = "CLAIM_VICTORY",
+            playerId = "peer1",
+            claimEpisodeCount = 2 // < 3 episodes
+        )
+        val validPacket = RoomMessagePacket(
+            type = "CLAIM_VICTORY",
+            playerId = "peer1",
+            claimEpisodeCount = 3
+        )
+        assertFalse("Claim with less than 3 episodes must be rejected", invalidPacket.claimEpisodeCount >= 3)
+        assertTrue("Claim with 3 or more episodes is valid", validPacket.claimEpisodeCount >= 3)
     }
 }

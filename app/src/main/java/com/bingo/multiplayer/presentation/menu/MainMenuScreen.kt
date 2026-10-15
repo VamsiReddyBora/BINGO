@@ -95,8 +95,9 @@ fun MainMenuScreen(
         displayName = "Player"
     )
 
+    val currentAccountUid = userProfile.uid.takeIf { it.isNotBlank() && it != "guest" }
     var selectedAiDifficulty by remember { mutableStateOf(AiDifficulty.EASY) }
-    var ongoingMatch by remember { mutableStateOf(OngoingMatchStore.getOngoingMatch(context)) }
+    var ongoingMatch by remember { mutableStateOf(OngoingMatchStore.getOngoingMatch(context, currentAccountUid)) }
 
     // ── Ping 1-Second Stabilized Display (Matches GameScreen exactly) ──
     val realtimePing by com.bingo.multiplayer.domain.network.NetworkPingMonitor.pingMs.collectAsState()
@@ -109,8 +110,8 @@ fun MainMenuScreen(
         }
     }
 
-    LaunchedEffect(Unit) {
-        ongoingMatch = OngoingMatchStore.getOngoingMatch(context)
+    LaunchedEffect(currentAccountUid) {
+        ongoingMatch = OngoingMatchStore.getOngoingMatch(context, currentAccountUid)
     }
 
     // Proactive background down-moment pre-fetching:
@@ -140,7 +141,7 @@ fun MainMenuScreen(
                     // Only clear if the room was successfully queried AND is confirmed closed
                     if (session != null && session.status == "CLOSED") {
                         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                            OngoingMatchStore.clearOngoingMatch(context)
+                            OngoingMatchStore.clearOngoingMatch(context, currentAccountUid)
                             ongoingMatch = null
                         }
                     }
@@ -314,7 +315,7 @@ fun MainMenuScreen(
                         ) {
                             OutlinedButton(
                                 onClick = {
-                                    OngoingMatchStore.clearOngoingMatch(context)
+                                    OngoingMatchStore.clearOngoingMatch(context, currentAccountUid)
                                     ongoingMatch = null
                                 },
                                 modifier = Modifier

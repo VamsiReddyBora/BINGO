@@ -325,4 +325,112 @@ class OngoingMatchStoreRejoinTest {
         assertTrue(cleared)
         assertNull(OngoingMatchStore.getOngoingMatch(context = null, accountUid = "user_temp"))
     }
+
+    @Test
+    fun `test HB11 - Result tombstone prevents rejoining concluded match and clears ongoing match`() {
+        val matchData = OngoingMatchData(
+            roomCode = "TOMB_ROOM",
+            matchSeed = 445566L,
+            boardSize = 5,
+            is1v1Match = true,
+            accountUid = "user_me",
+            participants = listOf(
+                Player(id = "user_me", displayName = "Me"),
+                Player(id = "user_peer", displayName = "Peer")
+            )
+        )
+        OngoingMatchStore.saveOngoingMatch(context = null, matchData = matchData)
+        assertNotNull(OngoingMatchStore.getOngoingMatch(context = null, accountUid = "user_me"))
+
+        // Record final result tombstone
+        val recorded = OngoingMatchStore.recordMatchResultTombstone(
+            context = null,
+            roomCode = "TOMB_ROOM",
+            matchSeed = 445566L,
+            winnerUid = "user_me",
+            winReason = "Opponent Unreachable (Claimed Victory)",
+            episodeCount = 3,
+            accountUid = "user_me"
+        )
+        assertTrue(recorded)
+
+        val tombstone = OngoingMatchStore.getMatchResultTombstone(context = null, 445566L)
+        assertNotNull(tombstone)
+        assertEquals("user_me", tombstone?.winnerUid)
+        assertEquals("Opponent Unreachable (Claimed Victory)", tombstone?.winReason)
+        assertEquals(3, tombstone?.episodeCount)
+
+        // Attempting to retrieve ongoing match for this concluded seed returns null and wipes ongoing match
+        val retrieved = OngoingMatchStore.getOngoingMatch(context = null, accountUid = "user_me")
+        assertNull("Concluded match with tombstone must not be retrievable", retrieved)
+    }
+
+    @Test
+    fun `test HB03 - clearNullableEpisodeFields clears currentEpisodeId when episode closes`() {
+        val matchData = OngoingMatchData(
+            roomCode = "EP_CLOSE_ROOM",
+            matchSeed = 778899L,
+            boardSize = 5,
+            is1v1Match = true,
+            accountUid = "user_me",
+            committedEpisodeCount = 2,
+            currentEpisodeId = "ep_778899_2_12345",
+            isEpisodeOpen = true,
+            peerAvailabilityState = "UNREACHABLE"
+        )
+        OngoingMatchStore.saveOngoingMatch(context = null, matchData = matchData)
+
+        // When recovery completes, currentEpisodeId becomes null and isEpisodeOpen becomes false
+        val updated = OngoingMatchStore.updateMatchGameState(
+            context = null,
+            committedEpisodeCount = 2,
+            currentEpisodeId = null,
+            isEpisodeOpen = false,
+            peerAvailabilityState = "RESPONSIVE",
+            clearNullableEpisodeFields = true,
+            accountUid = "user_me"
+        )
+        assertTrue(updated)
+
+        val loaded = OngoingMatchStore.getOngoingMatch(context = null, accountUid = "user_me")
+        assertNotNull(loaded)
+        assertNull("currentEpisodeId must be cleared to null when clearNullableEpisodeFields is true", loaded?.currentEpisodeId)
+        assertFalse("isEpisodeOpen must be updated to false", loaded?.isEpisodeOpen == true)
+        assertEquals("RESPONSIVE", loaded?.peerAvailabilityState)
+    }
+
+    @Test
+    fun `test HB13 - Legacy match migrated to scoped key on first read`() {
+        val legacyJson = """
+            {
+                "roomCode": "LEGACY_MIGRATE",
+                "matchSeed": 332211,
+                "boardSize": 5,
+                "isHost": true,
+                "participants": [
+                    {"id": "user_migrated", "displayName": "Migrated Player", "isHost": true},
+                    {"id": "user_opponent", "displayName": "Opponent", "isHost": false}
+                ],
+                "turnNumber": 1,
+                "currentTurnPlayerId": "user_migrated",
+                "accountUid": "user_migrated",
+                "is1v1Match": true
+            }
+        """.trimIndent()
+
+        // Place legacy record directly in fakePrefs under KEY_MATCH_DATA
+        fakePrefs.edit().putString("active_match_data", legacyJson).commit()
+
+        // Read using accountUid "user_migrated"
+        val loaded = OngoingMatchStore.getOngoingMatch(context = null, accountUid = "user_migrated")
+        assertNotNull("Legacy match should be migrated and retrieved", loaded)
+        assertEquals("LEGACY_MIGRATE", loaded?.roomCode)
+
+        // Verify that the scoped key now exists in prefs
+        assertTrue(fakePrefs.contains("active_match_data_user_migrated"))
+
+        // Different account cannot see it
+        val forOther = OngoingMatchStore.getOngoingMatch(context = null, accountUid = "user_other")
+        assertNull("Different account must not see migrated match", forOther)
+    }
 }

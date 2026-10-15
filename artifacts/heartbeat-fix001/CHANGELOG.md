@@ -91,4 +91,64 @@
 - Remaining dependencies: Coordinator lifecycle and auto-forfeit bypass in Chunk 3.
 - Rollback: `git checkout b95fe3c -- app/src/main/java/com/bingo/multiplayer/domain/network/OnlineRoomSyncManager.kt app/src/main/java/com/bingo/multiplayer/presentation/navigation/RootNavGraph.kt app/src/test/java/com/bingo/multiplayer/domain/network/MatchHeartbeatPacketCodecTest.kt`
 
+---
+
+### FIX001-003 — Coordinator Lifecycle, Centralized Activation, and Rejoin Route Consolidation
+- Started / completed: 2026-10-15 11:25 IST / 2026-10-15 11:38 IST
+- Checkpoint before edit: 8df72ba
+- Review IDs: HB01, HB02, HB06
+- Files / symbols:
+  - `app/src/main/java/com/bingo/multiplayer/presentation/navigation/RootNavGraph.kt` (`activateMatchHeartbeatIf1v1`, `restoreAndRejoinOngoingMatch`, `startNewGame`, `startCountdownAndInitiateTurn`, MainMenuScreen `onRejoinMatch`, JoinRoomScreen playing match restore, LobbyScreen `onRejoinMatch`)
+- Actual old behavior / replacement:
+  - Old: Automatic board starts in `startNewGame()` never initialized or activated the match heartbeat (only manual board countdown did). `TURN_TIMEOUT` marked disconnected players and forfeited after 3 consecutive missed turns even in 1v1 online matches. MainMenuScreen, JoinRoomScreen, and LobbyScreen each had separate divergent copy-pasted match rejoin logic; some started heartbeat before `connectToRoom()`, which wiped the heartbeat session during room connection.
+  - New: `activateMatchHeartbeatIf1v1()` centralized and invoked on every 1v1 match start path (automatic boards in `startNewGame`, manual countdown, and rejoins). In `TURN_TIMEOUT`, 1v1 online matches bypass `markPlayerDisconnected`, `consecutiveMissedTurns` increment, and forfeit logic. All rejoin entry points (MainMenu, JoinRoom, Lobby) delegate to a single unified `restoreAndRejoinOngoingMatch()` helper that connects to room FIRST, restores the policy checkpoint (`committedEpisodeCount`, `currentEpisodeId`, `isEpisodeOpen`), and attaches the restored heartbeat policy.
+- Scope and compatibility: Multi-player (3+) and LAN matches retain standard forfeit and presence handling.
+- Tests:
+  - `./gradlew testDebugUnitTest --tests "com.bingo.multiplayer.domain.network.MatchCoordinatorAndPauseTest"` -> PASS
+  - `python3 /home/bob/workspace/heartbeat-review-evidence/run_probe.py /home/bob/workspace/bingo_heartbeat_fix001` -> 5 of 5 checks PASS, 0 contract violations.
+- Remaining dependencies: Pause remainder synchronization and result tombstone persistence in Chunk 4.
+- Rollback: `git checkout 8df72ba -- app/src/main/java/com/bingo/multiplayer/presentation/navigation/RootNavGraph.kt`
+
+---
+
+### FIX001-004 — Shared Pause Remainder, Strict Claim Victory Guard, and Result Tombstone Persistence
+- Started / completed: 2026-10-15 11:38 IST / 2026-10-15 11:43 IST
+- Checkpoint before edit: 8df72ba
+- Review IDs: HB07, HB08, HB09, HB10, HB11
+- Files / symbols:
+  - `app/src/main/java/com/bingo/multiplayer/presentation/navigation/RootNavGraph.kt` (`executeClaimVictory`, `CLAIM_VICTORY` handler, `GAME_RESUMED` handler, turn timer LaunchedEffect)
+  - `app/src/main/java/com/bingo/multiplayer/domain/network/OngoingMatchStore.kt` (`recordMatchResultTombstone`, `getMatchResultTombstone`, `MatchResultTombstone`)
+  - `app/src/test/java/com/bingo/multiplayer/domain/network/MatchCoordinatorAndPauseTest.kt` (`test C01`, `test C02`, `test C04`, `test HB09`, `test HB10`)
+- Actual old behavior / replacement:
+  - Old: `GAME_RESUMED` set `frozenRemainingTurnSeconds = null` immediately in packet handler, causing the turn timer LaunchedEffect to reset to 30s instead of resuming the paused remainder. `executeClaimVictory()` allowed victory claim if `isClaimVictoryEligible` was true even if policy rejected it due to concurrent peer recovery. Concluded matches cleared active match without durable tombstone, allowing offline peers to attempt rejoining a finished match. Incoming `CLAIM_VICTORY` did not validate 1v1 online mode, match seed, peer identity, or 3-episode requirement.
+  - New: `GAME_RESUMED` preserves `frozenRemainingTurnSeconds` remainder so LaunchedEffect sets `turnTimer` to exact remainder and then clears it. `executeClaimVictory()` strictly requires `result is ClaimResult.Accepted`. `recordMatchResultTombstone()` durably records immutable final result tombstone before clearing ongoing match. Incoming `CLAIM_VICTORY` enforces 1v1 online mode, validates match seed, peer sender, and requires `claimEpisodeCount >= 3`.
+- Scope and compatibility: Concluded match tombstones prevent ghost rejoins without affecting normal career statistics or other game modes.
+- Tests:
+  - `./gradlew testDebugUnitTest --tests "com.bingo.multiplayer.domain.network.MatchCoordinatorAndPauseTest"` -> 13 of 13 tests PASS.
+  - `python3 /home/bob/workspace/heartbeat-review-evidence/run_probe.py /home/bob/workspace/bingo_heartbeat_fix001` -> 5 of 5 checks PASS, 0 contract violations.
+- Remaining dependencies: Account scoping and storage hardening in Chunk 5.
+- Rollback: `git checkout 8df72ba -- app/src/main/java/com/bingo/multiplayer/presentation/navigation/RootNavGraph.kt app/src/main/java/com/bingo/multiplayer/domain/network/OngoingMatchStore.kt app/src/test/java/com/bingo/multiplayer/domain/network/MatchCoordinatorAndPauseTest.kt`
+
+---
+
+### FIX001-005 — Enforced Account Scoping, Isolated Storage Keys, and Policy Checkpoint Persistence
+- Started / completed: 2026-10-15 11:43 IST / 2026-10-15 11:47 IST
+- Checkpoint before edit: 8df72ba
+- Review IDs: HB03, HB13
+- Files / symbols:
+  - `app/src/main/java/com/bingo/multiplayer/domain/network/OngoingMatchStore.kt` (`getMatchKey`, `saveOngoingMatch`, `getOngoingMatch`, `updateMatchGameState`, `clearOngoingMatch`)
+  - `app/src/main/java/com/bingo/multiplayer/presentation/menu/MainMenuScreen.kt` (account-scoped match read & clear)
+  - `app/src/main/java/com/bingo/multiplayer/presentation/navigation/RootNavGraph.kt` (persists policy checkpoint on `matchHeartbeatDecisions` with `clearNullableEpisodeFields = true`)
+  - `app/src/test/java/com/bingo/multiplayer/domain/network/OngoingMatchStoreRejoinTest.kt` (`test HB11`, `test HB03`, `test HB13`)
+- Actual old behavior / replacement:
+  - Old: `OngoingMatchStore` used a single global key `active_match_data`, allowing any signed-in account to see and resume another account's match. Policy checkpoints (committed episodes, open episode ID, peer availability) were not updated on availability decisions. `updateMatchGameState` could not clear nullable episode fields when episodes closed.
+  - New: `OngoingMatchStore` scopes keys by account UID (`active_match_data_$accountUid`). Seamless legacy migration migrates global records only when account ownership matches. Heartbeat availability transitions (`BecameUnreachable`, `StartedRecovering`, `RecoveryCompleted`) trigger `updateMatchGameState` with `clearNullableEpisodeFields = true` to accurately record committed episode counts and clear episode IDs on recovery completion.
+- Scope and compatibility: Backward-compatible deserialization and migration for existing installations.
+- Tests:
+  - `./gradlew testDebugUnitTest --tests "com.bingo.multiplayer.domain.network.OngoingMatchStoreRejoinTest"` -> 12 of 12 tests PASS.
+  - Full unit test suite `./gradlew testDebugUnitTest` -> 355 of 355 tests PASS.
+  - `python3 /home/bob/workspace/heartbeat-review-evidence/run_probe.py /home/bob/workspace/bingo_heartbeat_fix001` -> 5 of 5 checks PASS, 0 contract violations.
+- Rollback: `git checkout 8df72ba -- app/src/main/java/com/bingo/multiplayer/domain/network/OngoingMatchStore.kt app/src/main/java/com/bingo/multiplayer/presentation/menu/MainMenuScreen.kt app/src/main/java/com/bingo/multiplayer/presentation/navigation/RootNavGraph.kt app/src/test/java/com/bingo/multiplayer/domain/network/OngoingMatchStoreRejoinTest.kt`
+
+
 

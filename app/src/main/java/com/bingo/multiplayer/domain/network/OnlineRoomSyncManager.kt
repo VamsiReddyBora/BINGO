@@ -176,17 +176,21 @@ class OnlineRoomSyncManager(
     fun startMatchHeartbeat(
         matchId: String,
         peerUid: String,
-        policy: com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicy = com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicy(
-            matchId = matchId,
-            peerUid = peerUid,
-            connectionGeneration = activeMatchConnectionGeneration
-        )
+        policy: com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicy? = null
     ) {
+        if (policy == null && is1v1MatchActive && currentMatchId == matchId && currentPeerUid == peerUid && matchHeartbeatPolicy != null) {
+            // Already active for this match and peer; idempotent
+            return
+        }
         stopMatchHeartbeat()
         is1v1MatchActive = true
         currentMatchId = matchId
         currentPeerUid = peerUid
-        matchHeartbeatPolicy = policy
+        matchHeartbeatPolicy = policy ?: com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicy(
+            matchId = matchId,
+            peerUid = peerUid,
+            connectionGeneration = activeMatchConnectionGeneration
+        )
         lastBrokerReceiveEchoAt = android.os.SystemClock.elapsedRealtime()
         outstandingChallenges.clear()
 
@@ -328,7 +332,6 @@ class OnlineRoomSyncManager(
     }
 
     fun resetInGameHeartbeats(participantIds: Collection<String>) {
-        val now = System.currentTimeMillis()
         participantIds.forEach { id ->
             recordDirectHeartbeat(id)
         }
