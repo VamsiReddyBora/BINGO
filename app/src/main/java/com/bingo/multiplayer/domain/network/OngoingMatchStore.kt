@@ -9,7 +9,7 @@ import com.bingo.multiplayer.domain.model.Player
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import java.io.File
+import com.bingo.multiplayer.domain.engine.ReliableMatchSnapshot
 
 @Keep
 @Serializable
@@ -44,7 +44,9 @@ data class OngoingMatchData(
     val committedEpisodeCount: Int = 0,
     val currentEpisodeId: String? = null,
     val isEpisodeOpen: Boolean = false,
-    val peerAvailabilityState: String = "RESPONSIVE"
+    val peerAvailabilityState: String = "RESPONSIVE",
+    val reliableSnapshot: ReliableMatchSnapshot? = null,
+    val reliablePending: Boolean = false
 )
 
 @Keep
@@ -58,61 +60,6 @@ data class MatchResultTombstone(
     val recordedAt: Long = System.currentTimeMillis(),
     val accountUid: String = ""
 )
-
-interface SharedMatchResultAdapter {
-    fun recordResult(seed: Long, tombstone: MatchResultTombstone): Boolean
-    fun getResult(seed: Long): MatchResultTombstone?
-    fun clearResult(seed: Long)
-}
-
-class FileSharedMatchResultAdapter(private val directoryProvider: () -> File) : SharedMatchResultAdapter {
-    private val json = Json { ignoreUnknownKeys = true; isLenient = true; encodeDefaults = true }
-
-    override fun recordResult(seed: Long, tombstone: MatchResultTombstone): Boolean {
-        return try {
-            val dir = directoryProvider()
-            if (!dir.exists()) dir.mkdirs()
-            val file = File(dir, "tombstone_$seed.json")
-            if (file.exists()) {
-                val existing = getResult(seed)
-                if (existing != null) {
-                    if (existing.winnerUid == tombstone.winnerUid && existing.winReason == tombstone.winReason) {
-                        return true
-                    }
-                    return false
-                }
-            }
-            val serialized = json.encodeToString(tombstone)
-            file.writeText(serialized)
-            true
-        } catch (_: Exception) {
-            false
-        }
-    }
-
-    override fun getResult(seed: Long): MatchResultTombstone? {
-        return try {
-            val dir = directoryProvider()
-            val file = File(dir, "tombstone_$seed.json")
-            if (file.exists()) {
-                val text = file.readText()
-                json.decodeFromString<MatchResultTombstone>(text)
-            } else {
-                null
-            }
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    override fun clearResult(seed: Long) {
-        try {
-            val dir = directoryProvider()
-            val file = File(dir, "tombstone_$seed.json")
-            if (file.exists()) file.delete()
-        } catch (_: Exception) {}
-    }
-}
 
 /**
  * Persists active online room match metadata so a player who temporarily exited,
@@ -133,19 +80,6 @@ object OngoingMatchStore {
 
     @androidx.annotation.VisibleForTesting
     var customPrefs: SharedPreferences? = null
-        set(value) {
-            field = value
-            if (value == null) {
-                try {
-                    val dir = File(System.getProperty("java.io.tmpdir", "/tmp"), "bingo_shared_results")
-                    dir.deleteRecursively()
-                } catch (_: Exception) {}
-            }
-        }
-
-    var sharedResultAdapter: SharedMatchResultAdapter = FileSharedMatchResultAdapter {
-        File(System.getProperty("java.io.tmpdir", "/tmp"), "bingo_shared_results")
-    }
 
     private fun getPrefs(context: Context?): SharedPreferences {
         return customPrefs ?: context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -163,11 +97,13 @@ object OngoingMatchStore {
      * Atomically and durably saves match checkpoint using commit().
      * Owner-scoped keys isolate each player's ongoing match without global mirror overwrites.
      */
+    @Synchronized
     fun saveOngoingMatch(
         context: Context?,
         matchData: OngoingMatchData
     ): Boolean {
         return try {
+            if (matchData.accountUid.isBlank()) return false
             val serialized = json.encodeToString(matchData)
             val key = getMatchKey(matchData.accountUid)
             val editor = getPrefs(context).edit().putString(key, serialized)
@@ -177,9 +113,27 @@ object OngoingMatchStore {
         }
     }
 
+    /** Compare the active account/match before every asynchronous controller write.
+     * A cancelled old session cannot overwrite a rematch or resurrect a dismissed checkpoint. */
+    @Synchronized
+    fun saveReliableCheckpoint(context: Context?, data: OngoingMatchData): Boolean {
+        val snapshot = data.reliableSnapshot ?: return false
+        if (data.accountUid.isBlank() || !snapshot.valid()) return false
+        val stored = getPrefs(context).getString(getMatchKey(data.accountUid), null) ?: return false
+        val current = try { json.decodeFromString<OngoingMatchData>(stored) } catch (_: Exception) { return false }
+        if (current.accountUid != data.accountUid || current.matchSeed != data.matchSeed) return false
+        val previous = current.reliableSnapshot
+        if (previous != null && !current.reliablePending) {
+            if (snapshot.sequence < previous.sequence || snapshot.revision < previous.revision) return false
+            if (previous.final != null && snapshot.final != previous.final) return false
+        }
+        return saveOngoingMatch(context, data)
+    }
+
     /**
      * Updates ongoing match state with incremental turn, board, pause, and heartbeat data.
      */
+    @Synchronized
     fun updateMatchGameState(
         context: Context? = null,
         playerBoard: Board? = null,
@@ -200,20 +154,23 @@ object OngoingMatchStore {
         peerAvailabilityState: String? = null,
         matchRevision: Long? = null,
         clearNullableEpisodeFields: Boolean = false,
+        expectedMatchSeed: Long? = null,
         accountUid: String? = null
     ): Boolean {
+        if (accountUid.isNullOrBlank()) return false
         return try {
             val current = getOngoingMatch(context, accountUid) ?: return false
+            if (expectedMatchSeed != null && current.matchSeed != expectedMatchSeed) return false
             val updated = current.copy(
                 playerBoard = playerBoard ?: current.playerBoard,
                 opponentBoard = opponentBoard ?: current.opponentBoard,
                 allPlayerBoards = allPlayerBoards ?: current.allPlayerBoards,
                 pickedNumbers = pickedNumbers ?: current.pickedNumbers,
                 pickedByPlayers = pickedByPlayers ?: current.pickedByPlayers,
-                turnIds = if (turnIds != null && turnIds.isNotEmpty()) turnIds else current.turnIds,
+                turnIds = turnIds ?: current.turnIds,
                 turnNumber = turnNumber ?: current.turnNumber,
                 currentTurnPlayerId = currentTurnPlayerId ?: current.currentTurnPlayerId,
-                chatMessages = if (chatMessages != null && chatMessages.isNotEmpty()) chatMessages else current.chatMessages,
+                chatMessages = chatMessages ?: current.chatMessages,
                 isPaused = isPaused ?: current.isPaused,
                 remainingTurnMillis = remainingTurnMillis ?: current.remainingTurnMillis,
                 pauseOwnerId = pauseOwnerId ?: current.pauseOwnerId,
@@ -221,7 +178,7 @@ object OngoingMatchStore {
                 currentEpisodeId = if (clearNullableEpisodeFields) currentEpisodeId else (currentEpisodeId ?: current.currentEpisodeId),
                 isEpisodeOpen = isEpisodeOpen ?: current.isEpisodeOpen,
                 peerAvailabilityState = peerAvailabilityState ?: current.peerAvailabilityState,
-                matchRevision = matchRevision ?: (current.matchRevision + 1L),
+                matchRevision = matchRevision ?: if (current.reliableSnapshot == null) current.matchRevision + 1 else current.matchRevision,
                 lastUpdatedAt = System.currentTimeMillis()
             )
             saveOngoingMatch(context, updated)
@@ -235,7 +192,9 @@ object OngoingMatchStore {
      * 1v1 online matches bypass the 8-minute TTL so interrupted/recovering games never expire silently.
      * When accountUid is specified, ensures cross-account isolation (HB13, F005).
      */
+    @Synchronized
     fun getOngoingMatch(context: Context? = null, accountUid: String? = null): OngoingMatchData? {
+        if (accountUid.isNullOrBlank()) return null
         val prefs = getPrefs(context)
         val scopedKey = getMatchKey(accountUid)
         var serialized = prefs.getString(scopedKey, null)
@@ -246,22 +205,15 @@ object OngoingMatchStore {
             if (legacy != null) {
                 try {
                     val candidate = json.decodeFromString<OngoingMatchData>(legacy)
-                    val uidClean = accountUid?.trim()?.lowercase() ?: ""
+                    val uidClean = accountUid.trim().lowercase()
                     if (candidate.accountUid.isNotBlank()) {
                         // Explicit owner exists! ONLY migrate if it matches the signed-in account!
                         if (candidate.accountUid.equals(uidClean, ignoreCase = true)) {
+                            if (!prefs.edit().putString(scopedKey, legacy).remove(KEY_MATCH_DATA).commit()) return null
                             serialized = legacy
-                            prefs.edit().putString(scopedKey, legacy).remove(KEY_MATCH_DATA).commit()
                         }
                         // Explicit owner mismatch: reject migration even if uidClean is in participants!
-                    } else {
-                        // Ownerless legacy record: only migrate if uidClean is a known participant
-                        if (candidate.participants.any { it.id.equals(uidClean, ignoreCase = true) }) {
-                            val migrated = candidate.copy(accountUid = uidClean)
-                            serialized = json.encodeToString(migrated)
-                            prefs.edit().putString(scopedKey, serialized).remove(KEY_MATCH_DATA).commit()
-                        }
-                    }
+                    } // Ownerless legacy records are preserved, never adopted by a participant.
                 } catch (_: Exception) {}
             }
         }
@@ -276,7 +228,7 @@ object OngoingMatchStore {
 
             // Check if this match has already concluded via a durable result tombstone (HB11, F002)
             val tombstone = getMatchResultTombstone(context, data.matchSeed)
-            if (tombstone != null) {
+            if (tombstone != null && data.reliableSnapshot == null) {
                 clearOngoingMatch(context, accountUid)
                 return null
             }
@@ -303,6 +255,7 @@ object OngoingMatchStore {
     /**
      * Atomically clears active ongoing match on match completion, explicit surrender, or exit.
      */
+    @Synchronized
     fun clearOngoingMatch(context: Context? = null, accountUid: String? = null): Boolean {
         return try {
             val prefs = getPrefs(context)
@@ -319,9 +272,10 @@ object OngoingMatchStore {
     }
 
     /**
-     * Durably stores an immutable final result tombstone keyed by match seed (HB11, F002).
+     * Durably stores a LOCAL immutable accepted result tombstone keyed by match seed (HB11, F002).
      * Rejects conflicting writes and allows idempotent duplicate writes.
      */
+    @Synchronized
     fun recordMatchResultTombstone(
         context: Context?,
         roomCode: String,
@@ -355,7 +309,6 @@ object OngoingMatchStore {
             if (!committed) {
                 return false
             }
-            sharedResultAdapter.recordResult(matchSeed, tombstone)
             true
         } catch (_: Exception) {
             false
@@ -375,14 +328,6 @@ object OngoingMatchStore {
         }
         if (local != null) {
             return local
-        }
-        val shared = sharedResultAdapter.getResult(matchSeed)
-        if (shared != null) {
-            try {
-                val serialized = json.encodeToString(shared)
-                getPrefs(context).edit().putString(getTombstoneKey(matchSeed), serialized).commit()
-            } catch (_: Exception) {}
-            return shared
         }
         return null
     }

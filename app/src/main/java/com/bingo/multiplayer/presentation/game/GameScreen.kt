@@ -119,6 +119,8 @@ import com.bingo.multiplayer.presentation.components.RecentPicksQueuePill
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun GameScreen(
+    synchronizationMessage: String = "",
+    useAcceptedChatHistory: Boolean = false,
     board: Board,
     opponentBoard: Board? = null,
     isMyTurn: Boolean,
@@ -182,6 +184,10 @@ fun GameScreen(
     val gameMountTime = remember(matchSeed) { System.currentTimeMillis() }
     var lastHandledChatId by remember(matchSeed) { androidx.compose.runtime.mutableLongStateOf(0L) }
     var chatMessages by remember(matchSeed) { mutableStateOf(initialChatMessages) }
+    LaunchedEffect(initialChatMessages, matchSeed, useAcceptedChatHistory) {
+        if (useAcceptedChatHistory) chatMessages = initialChatMessages
+    }
+
     var customChatInput by remember { mutableStateOf("") }
     var isCustomChatFocused by remember { mutableStateOf(false) }
     var isFullLengthChatActive by remember { mutableStateOf(false) }
@@ -738,6 +744,11 @@ fun GameScreen(
                     .padding(top = 10.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                if (synchronizationMessage.isNotBlank() && !isGameOver) {
+                    Text(text = synchronizationMessage, color = tokens.textPrimary,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                        fontSize = 13.sp, textAlign = TextAlign.Center)
+                }
                 if (isOpponentUnreachable && !isGameOver) {
                     Surface(
                         onClick = { showInterruptionDialog = true },

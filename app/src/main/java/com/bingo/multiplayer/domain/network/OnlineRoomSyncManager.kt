@@ -50,7 +50,8 @@ data class RoomMessagePacket(
     val winnerPlayerId: String = "",
     val winReason: String = "",
     val runnerPlayerIds: List<String> = emptyList(),
-    val protocolVersion: Int = 1,
+    val protocolVersion: Int = 0,
+    val reliablePolicyVersion: Int = 0,
     val matchId: String = "",
     val peerUid: String = "",
     val connectionGeneration: String = "",
@@ -65,7 +66,12 @@ data class RoomMessagePacket(
     val pauseReason: String = "",
     val pauseOwnerId: String = "",
     val claimEpisodeId: String = "",
-    val claimEpisodeCount: Int = 0
+    val claimEpisodeCount: Int = 0,
+    val roomCode: String = "",
+    val requestId: String = "",
+    val ownerId: String = "",
+    val reliableSnapshot: com.bingo.multiplayer.domain.engine.ReliableMatchSnapshot? = null,
+    val matchIntent: com.bingo.multiplayer.domain.engine.MatchIntent? = null
 )
 
 class OnlineRoomSyncManager(
@@ -77,6 +83,8 @@ class OnlineRoomSyncManager(
     }
 
     val instanceId: String = UUID.randomUUID().toString()
+    private val policyAgreement = com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement()
+    fun canStartReliableMatch(participants: List<String>, localUid: String): Boolean = policyAgreement.canStart(participants, localUid)
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -504,12 +512,18 @@ class OnlineRoomSyncManager(
                         try {
                             val payloadStr = String(payloadBytes, StandardCharsets.UTF_8)
                             val packet = FastPacketCodec.decode(payloadStr)
+                            if (message.isRetained && topic != null) {
+                                reliableRetainedChecks[topic]?.let { (expected, received) ->
+                                    if (packet.type == "MATCH_V2_STATE" && packet.reliableSnapshot == expected) received.complete(true)
+                                }
+                            }
                             handleIncomingPacket(packet)
                         } catch (_: Exception) { }
                     }
 
                     override fun connectionLost(cause: Throwable?) {
                         isSubscribed = false
+                        verifiedReliableTopics.clear()
                         matchHeartbeatPolicy?.let { policy ->
                             if (policy.isLocalHealthy) {
                                 val decision = policy.onLocalHealthLost()
@@ -642,6 +656,51 @@ class OnlineRoomSyncManager(
         )
     }
 
+    private var reliableStateTopic: String? = null
+    private val verifiedReliableTopics = ConcurrentHashMap.newKeySet<String>()
+    private val reliableRetainedChecks = ConcurrentHashMap<String, Pair<com.bingo.multiplayer.domain.engine.ReliableMatchSnapshot, CompletableDeferred<Boolean>>>()
+
+    /** Confirmed retained transport used only by the version-2 controller. No HTTP per move. */
+    suspend fun reliableSubscribe(seed: Long): Boolean = withContext(Dispatchers.IO) {
+        val code = currentRoomCode ?: return@withContext false
+        val client = mqttClient ?: return@withContext false
+        try {
+            if (!client.isConnected || !isSubscribed) return@withContext false
+            val topic = "bingo/v4/match/$code/$seed/state"
+            reliableStateTopic?.takeIf { it != topic }?.let { client.unsubscribe(it).waitForCompletion(3000) }
+            client.subscribe(topic, 1).waitForCompletion(3000)
+            reliableStateTopic = topic
+            true
+        } catch (_: Exception) { false }
+    }
+
+    suspend fun reliablePublish(packet: RoomMessagePacket, retained: Boolean = false, stateTopic: Boolean = false): Boolean = withContext(Dispatchers.IO) {
+        val code = currentRoomCode ?: return@withContext false
+        val client = mqttClient ?: return@withContext false
+        try {
+            if (!client.isConnected || !isSubscribed) return@withContext false
+            val message = MqttMessage(json.encodeToString(packet.copy(senderInstanceId = instanceId)).toByteArray(StandardCharsets.UTF_8)).apply {
+                qos = 1
+                isRetained = retained
+            }
+            val topic = if (stateTopic) "bingo/v4/match/$code/${packet.seed}/state" else getTopic(code)
+            client.publish(topic, message).waitForCompletion(3000)
+            if (retained && stateTopic && (topic !in verifiedReliableTopics || packet.reliableSnapshot?.final != null)) {
+                val expected = packet.reliableSnapshot ?: return@withContext false
+                val received = CompletableDeferred<Boolean>()
+                reliableRetainedChecks[topic] = expected to received
+                try {
+                    // A live self echo/PUBACK alone does not prove the broker retained the record.
+                    // Resubscription must return the exact snapshot with the MQTT RETAIN flag.
+                    client.subscribe(topic, 1).waitForCompletion(3000)
+                    withTimeout(3000) { received.await() }
+                    verifiedReliableTopics.add(topic)
+                } finally { reliableRetainedChecks.remove(topic) }
+            }
+            true
+        } catch (_: Exception) { false }
+    }
+
     /**
      * Publishes a message packet with optimized QoS routing:
      * High-speed moves (PICK_NUMBER, PING, PONG) use QoS 0 for instant, zero-ACK delivery.
@@ -661,7 +720,9 @@ class OnlineRoomSyncManager(
                     client = mqttClient
                 }
                 if (client != null && client.isConnected) {
-                    val outgoing = if (packet.senderInstanceId.isBlank()) packet.copy(senderInstanceId = instanceId) else packet
+                    val outgoing = packet.copy(senderInstanceId = packet.senderInstanceId.ifBlank { instanceId },
+                        reliablePolicyVersion = 2,
+                        protocolVersion = if (packet.type in setOf("START_GAME", "PLAY_AGAIN") && packet.players.size == 2) 2 else packet.protocolVersion)
                     val payload = FastPacketCodec.encode(outgoing)
                     val qosLevel = when (packet.type) {
                         "PICK_NUMBER", "PING", "PONG", "MATCH_HEARTBEAT" -> 0 // Instant line-rate flight, zero ACK wait, non-retained, disposable
@@ -897,6 +958,11 @@ class OnlineRoomSyncManager(
     }
 
     private fun handleIncomingPacket(packet: RoomMessagePacket) {
+        if (packet.type in setOf("JOIN", "HEARTBEAT", "ROOM_STATE")) policyAgreement.observe(packet.playerId, packet.reliablePolicyVersion)
+        if (packet.type.startsWith("MATCH_V2_")) {
+            _incomingPackets.tryEmit(packet)
+            return
+        }
         if (packet.senderInstanceId.isNotBlank() && packet.senderInstanceId == instanceId && packet.type != "PING") {
             return
         }
@@ -1260,6 +1326,7 @@ class OnlineRoomSyncManager(
     }
 
     fun disconnect() {
+        policyAgreement.clear()
         val p = localPlayer
         val code = currentRoomCode
         val client = mqttClient

@@ -152,14 +152,12 @@ class AuthRepository(
     }
 
     suspend fun verifyPersistedSession(): AuthState = withContext(Dispatchers.IO) {
-        val profile = getPersistedUserSync()
-        val state = if (profile != null) {
-            AuthState.Authenticated(profile)
-        } else {
-            AuthState.Unauthenticated
+        val state = synchronized(this@AuthRepository) {
+            val profile = getPersistedUserSync()
+            val resolved = if (profile != null) AuthState.Authenticated(profile) else AuthState.Unauthenticated
+            _authState.value = resolved
+            resolved
         }
-
-        _authState.value = state
         if (state is AuthState.Authenticated) {
             val user = state.user
             com.bingo.multiplayer.domain.network.PresenceManager.setCurrentUser(user.username)
@@ -221,6 +219,7 @@ class AuthRepository(
     /**
      * Called after a successful real Google Sign-In (account picker).
      */
+    @Synchronized
     fun onGoogleSignInSuccess(
         googleId: String,
         displayName: String,
@@ -634,11 +633,18 @@ class AuthRepository(
         linesCompleted: Int = 0,
         durationSeconds: Long = 0L,
         finalBoardNumbers: List<Int> = emptyList(),
-        markedNumbers: List<Int> = emptyList()
-    ) {
+        markedNumbers: List<Int> = emptyList(),
+        stableResultId: String? = null,
+        expectedAccountUid: String? = null
+    ): Boolean {
+        if (expectedAccountUid != null && (getPersistedUserSync()?.uid != expectedAccountUid ||
+            (_authState.value as? AuthState.Authenticated)?.user?.uid != expectedAccountUid)) return false
         val currentHistory = getMatchHistory().toMutableList()
+        val receiptKey = stableResultId?.let { "applied_result_${getPersistedUserSync()?.uid}:$it" }
+        if (receiptKey != null && prefs.getBoolean(receiptKey, false)) return true
+        if (stableResultId != null && currentHistory.any { it.id == stableResultId }) return true
         val record = com.bingo.multiplayer.domain.model.MatchRecord(
-            id = UUID.randomUUID().toString().take(8),
+            id = stableResultId ?: UUID.randomUUID().toString().take(8),
             mode = mode,
             opponentName = opponentName,
             didWin = didWin,
@@ -653,8 +659,40 @@ class AuthRepository(
             finalBoardNumbers = finalBoardNumbers,
             markedNumbers = markedNumbers
         )
+        val previousHistory = currentHistory.toList()
         currentHistory.add(0, record)
         val trimmed = if (currentHistory.size > 1000) currentHistory.take(1000) else currentHistory
+        if (stableResultId != null) {
+            val current = (_authState.value as? AuthState.Authenticated)?.user ?: return false
+            val streak = if (didWin) current.currentStreak + 1 else if (isDraw) current.currentStreak else 0
+            val xp = current.xp + if (didWin) 100 else if (isDraw) 50 else 25
+            val updated = current.copy(gamesPlayed = current.gamesPlayed + 1,
+                gamesWon = current.gamesWon + if (didWin) 1 else 0,
+                currentStreak = streak, bestStreak = maxOf(current.bestStreak, streak),
+                xp = xp, level = (xp / 400).coerceAtLeast(1))
+            // The result identity, history and profile counters commit together. A restart cannot
+            // observe an increment without its deduplication record, or the inverse.
+            val saved = prefs.edit().putString("match_history", Json.encodeToString(trimmed))
+                .putInt(KEY_GAMES_PLAYED, updated.gamesPlayed).putInt(KEY_GAMES_WON, updated.gamesWon)
+                .putInt(KEY_STREAK, updated.currentStreak).putInt(KEY_BEST_STREAK, updated.bestStreak)
+                .putInt(KEY_XP, updated.xp).putInt(KEY_LEVEL, updated.level).putBoolean(receiptKey!!, true).commit()
+            if (!saved) {
+                // Android updates SharedPreferences memory even when its disk commit fails.
+                // Restore the touched memory values so a retry cannot trust an unpersisted receipt.
+                // The rollback itself may fail on disk; the result stays pending either way.
+                prefs.edit().putString("match_history", Json.encodeToString(previousHistory))
+                    .putInt(KEY_GAMES_PLAYED, current.gamesPlayed).putInt(KEY_GAMES_WON, current.gamesWon)
+                    .putInt(KEY_STREAK, current.currentStreak).putInt(KEY_BEST_STREAK, current.bestStreak)
+                    .putInt(KEY_XP, current.xp).putInt(KEY_LEVEL, current.level).remove(receiptKey).commit()
+                return false
+            }
+            _authState.value = AuthState.Authenticated(updated)
+            if (context != null) {
+                com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(context).recordMatch(updated.uid, record)
+            }
+            publishCareerProfile(updated)
+            return true
+        }
         prefs.edit().putString("match_history", Json.encodeToString(trimmed)).apply()
 
         if (context != null) {
@@ -665,8 +703,10 @@ class AuthRepository(
         }
 
         recordGameFinished(didWin = didWin, isDraw = isDraw)
+        return true
     }
 
+    @Synchronized
     fun recordGameFinished(didWin: Boolean, isDraw: Boolean = false) {
         val current = (_authState.value as? AuthState.Authenticated)?.user ?: return
         val newPlayed = current.gamesPlayed + 1
@@ -690,6 +730,10 @@ class AuthRepository(
         )
         persistUser(updated, prefs.getString(KEY_AUTH_TOKEN, ""))
         _authState.value = AuthState.Authenticated(updated)
+        publishCareerProfile(updated)
+    }
+
+    private fun publishCareerProfile(updated: UserProfile) {
         backupUserDataToCloud()
         if (context != null && updated.uid.isNotBlank()) {
             com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(context)
@@ -780,6 +824,7 @@ class AuthRepository(
         return true
     }
 
+    @Synchronized
     fun signOut() {
         com.bingo.multiplayer.domain.network.LeaderboardSyncManager.reset()
         val current = (_authState.value as? AuthState.Authenticated)?.user
@@ -833,6 +878,7 @@ class AuthRepository(
         )
     }
 
+    @Synchronized
     private fun persistUser(profile: UserProfile, token: String? = null) {
         val editor = prefs.edit()
             .putString(KEY_UID, profile.uid)

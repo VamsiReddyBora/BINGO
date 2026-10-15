@@ -139,7 +139,7 @@ fun MainMenuScreen(
                 try {
                     val session = com.bingo.multiplayer.domain.network.OnlineRoomRegistry.getRoom(ongoing.roomCode)
                     // Only clear if the room was successfully queried AND is confirmed closed
-                    if (session != null && session.status == "CLOSED") {
+                    if (session != null && session.status == "CLOSED" && !ongoing.is1v1Match && ongoing.participants.size != 2) {
                         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                             OngoingMatchStore.clearOngoingMatch(context, currentAccountUid)
                             ongoingMatch = null

@@ -76,6 +76,8 @@ object FastPacketCodec {
             "HEARTBEAT" -> {
                 if (packet.players.isNotEmpty()) {
                     json.encodeToString(packet)
+                } else if (packet.reliablePolicyVersion != 0) {
+                    "H|${packet.playerId}|${packet.displayName}|${if (packet.isHost) "1" else "0"}|${packet.timestamp}|${packet.username}|${packet.avatarUrl ?: ""}|${packet.readyStatus}|${packet.readyVersion}|${packet.reliablePolicyVersion}"
                 } else if (packet.username.isNullOrEmpty() && packet.avatarUrl.isNullOrEmpty() && (packet.readyStatus.isEmpty() || packet.readyStatus == "NOT_READY") && packet.readyVersion == 0L) {
                     "H|${packet.playerId}|${packet.displayName}|${if (packet.isHost) "1" else "0"}|${packet.timestamp}"
                 } else {
@@ -252,7 +254,8 @@ object FastPacketCodec {
                         username = parts.getOrNull(5)?.takeIf { it.isNotBlank() } ?: (parts.getOrNull(2) ?: ""),
                         avatarUrl = parts.getOrNull(6)?.takeIf { it.isNotBlank() },
                         readyStatus = ready,
-                        readyVersion = readyVer
+                        readyVersion = readyVer,
+                        reliablePolicyVersion = parts.getOrNull(9)?.toIntOrNull() ?: 0
                     )
                 }
 

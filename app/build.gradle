@@ -78,8 +78,8 @@ android {
                     // Do not overwrite rootDir/Bingo.apk or workspace/Bingo.apk to protect baselines
                     copy {
                         from "${layout.buildDirectory.get()}/outputs/apk/release/Bingo.apk"
-                        into "${rootDir}/artifacts/heartbeat-fix003/"
-                        rename { "Bingo-fix003.apk" }
+                        into "${rootDir}/artifacts/heartbeat-codex/"
+                        rename { "Bingo-codex.apk" }
                     }
                 }
             }

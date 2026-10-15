@@ -115,6 +115,7 @@ class OnlineMatchHeartbeatPolicy(
     var connectionGeneration: String = connectionGeneration
         private set
 
+    @Synchronized
     fun updateConnectionGeneration(newGen: String) {
         connectionGeneration = newGen
     }
@@ -153,6 +154,7 @@ class OnlineMatchHeartbeatPolicy(
      * Initializes observation on handshake or connection establishment.
      * Sets initial observation time so an unset time is never treated as infinitely old.
      */
+    @Synchronized
     fun initializeObservation(
         generation: String,
         initialObservationTime: Long = clock.elapsedRealtime()
@@ -170,6 +172,7 @@ class OnlineMatchHeartbeatPolicy(
     /**
      * Restores state from a durable checkpoint on app launch/rejoin before evaluating eligibility.
      */
+    @Synchronized
     fun restoreCheckpoint(
         savedEpisodeCount: Int,
         savedEpisodeOpen: Boolean,
@@ -221,6 +224,7 @@ class OnlineMatchHeartbeatPolicy(
     /**
      * Periodic watchdog tick (evaluated at least every 250 ms).
      */
+    @Synchronized
     fun onTick(now: Long = clock.elapsedRealtime()): HeartbeatDecision {
         if (!isLocalHealthy) {
             return HeartbeatDecision.NoOp
@@ -299,6 +303,7 @@ class OnlineMatchHeartbeatPolicy(
     /**
      * Called when a verified fresh peer ACK/response arrives for a challenge issued within 5,000 ms.
      */
+    @Synchronized
     fun onFreshPeerResponse(now: Long = clock.elapsedRealtime()): HeartbeatDecision {
         if (!isLocalHealthy) {
             return HeartbeatDecision.NoOp
@@ -378,6 +383,7 @@ class OnlineMatchHeartbeatPolicy(
     /**
      * Marks that state synchronization with the peer has completed.
      */
+    @Synchronized
     fun onStateSynchronized(now: Long = clock.elapsedRealtime()): HeartbeatDecision {
         val wasSynchronized = isStateSynchronized
         isStateSynchronized = true
@@ -396,6 +402,7 @@ class OnlineMatchHeartbeatPolicy(
     /**
      * Marks that state synchronization is pending / invalid.
      */
+    @Synchronized
     fun onStateDesynchronized() {
         isStateSynchronized = false
     }
@@ -404,6 +411,7 @@ class OnlineMatchHeartbeatPolicy(
      * Local transport/network lost, app backgrounded, or broker disconnected.
      * Suspends peer failure judgments; does NOT penalize peer.
      */
+    @Synchronized
     fun onLocalHealthLost(): HeartbeatDecision {
         isLocalHealthy = false
         state = PeerAvailabilityState.LOCAL_UNAVAILABLE
@@ -415,6 +423,7 @@ class OnlineMatchHeartbeatPolicy(
      * Local transport restored and room re-subscribed.
      * Resets observation window to prevent counting our offline time against the peer.
      */
+    @Synchronized
     fun onLocalHealthRestored(now: Long = clock.elapsedRealtime()): HeartbeatDecision {
         isLocalHealthy = true
         state = PeerAvailabilityState.SYNCING
@@ -429,6 +438,7 @@ class OnlineMatchHeartbeatPolicy(
     /**
      * Evaluates explicit Claim Victory action.
      */
+    @Synchronized
     fun evaluateClaimVictory(
         actorUid: String,
         matchAlreadyFinished: Boolean
@@ -460,6 +470,7 @@ class OnlineMatchHeartbeatPolicy(
     /**
      * Helper to test if a claim victory action would currently succeed.
      */
+    @Synchronized
     fun canClaimVictory(actorUid: String = "local_player"): Boolean {
         return evaluateClaimVictory(actorUid, false) is ClaimResult.Accepted
     }
@@ -467,6 +478,7 @@ class OnlineMatchHeartbeatPolicy(
     /**
      * Executes claim victory evaluation with sensible defaults.
      */
+    @Synchronized
     fun claimVictory(actorUid: String = "local_player", matchAlreadyFinished: Boolean = false): ClaimResult {
         return evaluateClaimVictory(actorUid, matchAlreadyFinished)
     }
@@ -474,6 +486,7 @@ class OnlineMatchHeartbeatPolicy(
     /**
      * Creates an immutable snapshot of the current state.
      */
+    @Synchronized
     fun toSnapshot(): HeartbeatPolicySnapshot {
         return HeartbeatPolicySnapshot(
             matchId = matchId,
