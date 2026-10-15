@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.bingo.multiplayer.domain.network.ActionCooldownManagerTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-15T13:14:51" hostname="VR" time="0.091">
-  <properties/>
-  <testcase name="testFriendRequestCooldown_activationAndNormalization" classname="com.bingo.multiplayer.domain.network.ActionCooldownManagerTest" time="0.009"/>
-  <testcase name="testCooldownExpiration_withShortDuration" classname="com.bingo.multiplayer.domain.network.ActionCooldownManagerTest" time="0.081"/>
-  <testcase name="testInviteCooldown_activationAndNormalization" classname="com.bingo.multiplayer.domain.network.ActionCooldownManagerTest" time="0.001"/>
-  <system-out><![CDATA[]]></system-out>
-  <system-err><![CDATA[]]></system-err>
-</testsuite>

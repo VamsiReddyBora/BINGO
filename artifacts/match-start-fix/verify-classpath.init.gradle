@@ -1,8 +1,0 @@
-gradle.projectsEvaluated {
-    def app = gradle.rootProject.findProject(':app')
-    app.tasks.register('exportMatchStartVerificationClasspath') {
-        doLast {
-            new File(gradle.rootProject.projectDir, 'artifacts/match-start-fix/evidence/test.classpath').text = app.tasks.named('testDebugUnitTest').get().classpath.asPath
-        }
-    }
-}

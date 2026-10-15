@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.bingo.multiplayer.domain.repository.ReliableMatchStatisticsTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-10-15T13:15:06" hostname="VR" time="0.005">
-  <properties/>
-  <testcase name="resultHistoryAndCareerAreAtomicAndIdempotentAcrossRepositoryRestart" classname="com.bingo.multiplayer.domain.repository.ReliableMatchStatisticsTest" time="0.005"/>
-  <system-out><![CDATA[]]></system-out>
-  <system-err><![CDATA[]]></system-err>
-</testsuite>

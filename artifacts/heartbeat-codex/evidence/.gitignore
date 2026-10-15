@@ -1,5 +1,0 @@
-# Machine-specific classpath and generated independent-device fixture files.
-test.classpath
-writer/
-reader/
-cleanup/

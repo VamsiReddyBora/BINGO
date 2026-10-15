@@ -12,9 +12,8 @@ captures/
 *.Zone.Identifier
 *.sh
 
-# Exclude generated / temporary APKs but track root Bingo.apk
+# Generated APKs are not source; current deliverables live in releases/.
 *.apk
-!Bingo.apk
 
 # Web build artifacts & dependencies
 web/node_modules/

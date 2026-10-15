@@ -75,11 +75,11 @@ android {
         if (variant.name == "release") {
             variant.assembleProvider.configure {
                 doLast {
-                    // Do not overwrite rootDir/Bingo.apk or workspace/Bingo.apk to protect baselines
+                    // Keep the signed deliverable separate from source and historical backups.
                     copy {
                         from "${layout.buildDirectory.get()}/outputs/apk/release/Bingo.apk"
-                        into "${rootDir}/artifacts/release-preparation/"
-                        rename { "Bingo-release-candidate.apk" }
+                        into "${rootDir}/releases/"
+                        rename { "Bingo-${variant.versionName}.apk" }
                     }
                 }
             }

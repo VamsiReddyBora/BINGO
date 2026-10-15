@@ -1,9 +1,0 @@
-{
-  "timestamp": "2026-10-15T19:10:30+05:30",
-  "operation": "read-only GET; no production writes",
-  "account": "bob",
-  "primary_friends_count": 1,
-  "firestore_backup_friend_count": 4,
-  "pending_cloud_requests": 0,
-  "prior_host_wait_apk_sha256": "9db6b81303c28c6d1e66b55b0ffd9f47af758f0c343dd27ca7eb2e7fc2bb0eba"
-}

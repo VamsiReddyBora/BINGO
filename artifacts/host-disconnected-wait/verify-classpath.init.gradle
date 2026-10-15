@@ -1,8 +1,0 @@
-gradle.projectsEvaluated {
-    def app = gradle.rootProject.findProject(':app')
-    app.tasks.register('exportHostWaitVerificationClasspath') {
-        doLast {
-            new File(gradle.rootProject.projectDir, 'artifacts/host-disconnected-wait/evidence/test.classpath').text = app.tasks.named('testDebugUnitTest').get().classpath.asPath
-        }
-    }
-}

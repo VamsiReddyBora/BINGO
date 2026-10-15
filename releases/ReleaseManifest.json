@@ -1,0 +1,36 @@
+{
+  "timestamp": "2026-10-15T23:35:33+05:30",
+  "status": "local release candidate; not published",
+  "versionName": "1.4.2",
+  "versionCode": 42,
+  "sourceFolder": "/home/bob/workspace/bingo_multiplayer",
+  "branch": "release/1.4.2",
+  "sourceFixCommit": "04102f23431e78583962b1adc2a1ec95042fe5cf",
+  "apk": {
+    "file": "Bingo-1.4.2.apk",
+    "bytes": 7096410,
+    "sha256": "fae9910f3bdfe54dd70e8ba6eed4581dd6becb350b9c3069fc22e7fe0d5e7f79",
+    "certificateSHA256": "39a428942c3c2629ff3490c944b8b82c7625b22d660b7a2cdf682456d81f60a4"
+  },
+  "unitTests": {
+    "suites": 46,
+    "tests": 481,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "lint": {
+    "Warning": 36
+  },
+  "checks": {
+    "systemNoticeTextOnly": true,
+    "popupAvatarUsernameForwarded": true,
+    "opponentAvatarIdentityForwarded": true,
+    "hostAvatarIdentityForwarded": true,
+    "domainSourcesUnchanged": true,
+    "oneActiveBingoFolder": true,
+    "originalBaselineVerified": true
+  },
+  "backupFolder": "/home/bob/backups/bingo-release-preparation-2026-10-15",
+  "physicalTesting": "User will test on phones; popup rendering/photos were not exercised on a device in this task."
+}
