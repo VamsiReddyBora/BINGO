@@ -1,11 +1,13 @@
-# Match-start fix handoff
+# Gameplay feedback and disconnect popup fix handoff
 
-Updated 2026-10-15T21:23:51+05:30. Worktree `/home/bob/workspace/bingo_match_start_fix`, branch `fix/lobby-version-handshake`; base `d7dccec`.
+Updated 2026-10-15T22:37:21+05:30. Active source `/home/bob/workspace/bingo_gameplay_feedback_fix`, branch `fix/gameplay-feedback-dialogs`, base `9babde7`.
 
-Fixes missing compatibility data in READY packets, adds a small correlated MQTT request/reply with bounded retries at Start, distinguishes missing confirmation from explicit old versions, preserves cloud START metadata, and closes owned MQTT resources after DISCONNECT completes. Friends fixes and host-disconnection policy remain included.
+APK: `artifacts/gameplay-feedback-fix/Bingo-gameplay-feedback-fix.apk` (7,096,411 bytes), SHA256 `bd2b95935f43e6d0730054a8366d7c3726f0df78a4e8d0dab56f9cb606a62e72`. Signature verified with the existing certificate; version 1.4.1 / 41. Final run: 481 tests across 46 suites pass; lint 0 errors / 36 warnings; signed release built.
 
-APK: `artifacts/match-start-fix/Bingo-match-start-fix.apk` (7080033 bytes), SHA256 `bb1d3b4f066f5c0e85634d05fa9d09a92b80f2b55362543fc2e63895467b055a`. Release build succeeded; apksigner verified the existing signing certificate. Final unit run: 466 tests, 0 failures.
+Fixes periodic snapshots replaying pick haptics, stale lobby compatibility downgrades, top status banners, dismissible/unbounded disconnect choices, guest pause/resume, and missing peer status during pause. Choices have a persisted 15-second deadline and default to Continue without altering the game timer. Statuses are centered local system chat and survive sync/rejoin while preserving accepted player-chat order. Host alone resumes after fresh peer/state synchronization. Recovery also explicitly synchronizes when heartbeats return without transport loss. Existing Host Disconnected indefinite hold and exact timer recovery remain unchanged.
 
-User explicitly requested immediate APK delivery and will test physical devices. Do not run more simulations without a new request. Prior live run completed a 21-pick Bingo match but hung during shutdown; thread dump showed leaked MQTT ping timers. Final source fixes that cleanup; live rerun after this final change was deferred at the user's request. Physical checks remain unverified. Preserve initial evidence and do not present those shutdown-timeout runs as fully passed.
+The unexpected closure was not reproduced and has no trace. **Do not claim it is fixed.** Settings → Copy app diagnostics now captures private bounded crash frames/types and Android process-exit codes/times. No chat, packet payloads or exception messages are recorded/uploaded. Exact release R8 mapping is local in `artifacts/gameplay-feedback-fix/evidence/release-r8-mapping.zip` for retracing.
 
-Install the exact APK on both phones and create a fresh room. Previous friends-fix, host-wait, shared and protected 1.4.1 APKs/checkouts remain unchanged. No deployment, push, real invitations or profile writes.
+Read `artifacts/gameplay-feedback-fix/CHANGELOG.md`, `TEST_REPORT.md` and `ReviewManifest.json`. Source/test and evidence files are saved on the repair branch; generated APK and mapping ZIP stay local/ignored. Prior worktrees and APKs, including protected 1.4.1's 159 source fingerprints, were rechecked unchanged.
+
+User will test physical devices. Do not launch more emulator/live-broker simulations without a new request. No push, deployment, real invitation or profile write was performed. For rollback use the untouched preceding `bingo_match_start_fix` checkout/APK and retain app data. Install this exact new APK on both phones for testing.

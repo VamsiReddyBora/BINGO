@@ -2358,6 +2358,17 @@ fun SettingsScreen(
                     }
                 }
 
+                TextButton(onClick = {
+                    coroutineScope.launch {
+                        val diagnostic = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            com.bingo.multiplayer.core.diagnostics.AppExitDiagnostics.read(context.applicationContext)
+                        }
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Bingo app diagnostics", diagnostic))
+                        Toast.makeText(context, "App diagnostics copied", Toast.LENGTH_SHORT).show()
+                    }
+                }) { Text("Copy app diagnostics", fontSize = 12.sp, color = tokens.textMuted) }
+
                 if (updateState is UpdateState.UpToDate) {
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(

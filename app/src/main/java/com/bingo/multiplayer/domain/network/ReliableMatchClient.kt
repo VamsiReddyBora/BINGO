@@ -125,6 +125,7 @@ class ReliableMatchClient(
     fun request(kind: String, number: Int = 0, text: String = "", episodeId: String = "") {
         events.trySend {
             if (mutableView.value.waiting || coordinator.state.final != null || !transport.healthy) return@trySend
+            if (!isHost && kind in setOf("PAUSE", "RESUME")) return@trySend
             val intent = MatchIntent(UUID.randomUUID().toString(), activeMatchId, localUid, coordinator.state.revision,
                 coordinator.state.turn, kind, number, text, System.currentTimeMillis(), episodeId)
             if (isHost) {
@@ -445,7 +446,7 @@ class ReliableMatchClient(
     private fun updateView(overrideMessage: String = "") {
         val waiting = !coordinator.ready || coordinator.state.recoveryId.isNotEmpty()
         val message = if (waiting) {
-            if (isHost) "Synchronizing match; opponent must use the updated app…" else "Waiting for the match host to reconnect…"
+            if (isHost) "Synchronizing match…" else "Waiting for the match host to reconnect…"
         } else ""
         val displayed = if (hostDisconnected) hostWaitSnapshot ?: coordinator.sampled() else coordinator.sampled()
         mutableView.value = ReliableMatchView(displayed, displayed.remainingMillis, waiting,

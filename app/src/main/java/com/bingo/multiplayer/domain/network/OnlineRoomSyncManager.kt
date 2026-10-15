@@ -86,10 +86,23 @@ class OnlineRoomSyncManager(
     }
 
     val instanceId: String = UUID.randomUUID().toString()
-    private val policyAgreement = com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement()
+    private data class VerifiedLobbyPeer(val version: Int, val probeAt: Long)
+    private val verifiedLobbyPeers = ConcurrentHashMap<String, VerifiedLobbyPeer>()
     fun canStartReliableMatch(participants: List<String>, localUid: String): Boolean =
-        isConnected && isSubscribed && policyAgreement.canStart(participants, localUid)
-    fun reliableCompatibilityStatus(participants: List<String>, localUid: String) = policyAgreement.status(participants, localUid)
+        isConnected && isSubscribed && reliableCompatibilityStatus(participants, localUid) ==
+            com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.Status.COMPATIBLE
+
+    fun reliableCompatibilityStatus(participants: List<String>, localUid: String): com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.Status {
+        if (participants.size != 2 || participants.any { it.isBlank() } ||
+            participants.distinct().size != 2 || localUid !in participants) return com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.Status.INVALID_PARTICIPANTS
+        val proof = verifiedLobbyPeers[participants.single { it != localUid }] ?: return com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.Status.WAITING
+        if (System.nanoTime() - proof.probeAt > 15_000_000_000L) return com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.Status.WAITING
+        return when (proof.version) {
+            com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.VERSION -> com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.Status.COMPATIBLE
+            0 -> com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.Status.WAITING
+            else -> com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.Status.INCOMPATIBLE
+        }
+    }
 
     private data class LobbyChallenge(val room: String, val generation: String, val uid: String, val createdAt: Long)
     private val lobbyChallenges = ConcurrentHashMap<String, LobbyChallenge>()
@@ -893,7 +906,7 @@ class OnlineRoomSyncManager(
             ) {
                 val participants = cloudSession.players.distinctBy { it.id }
                 val isTwoPlayer = participants.size == 2
-                if (isTwoPlayer && !policyAgreement.canStart(participants.map { it.id }, localP.id)) {
+                if (isTwoPlayer && !canStartReliableMatch(participants.map { it.id }, localP.id)) {
                     requestLobbyCompatibility()
                     return
                 }
@@ -1039,15 +1052,16 @@ class OnlineRoomSyncManager(
                     System.nanoTime() - expected.createdAt > 5_000_000_000L) return
                 if (packet.reliablePolicyVersion == com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.VERSION &&
                     (packet.protocolVersion != 2 || packet.hostWaitVersion != 1)) return
-                policyAgreement.observe(packet.playerId, packet.reliablePolicyVersion)
+                verifiedLobbyPeers.compute(packet.playerId) { _, previous ->
+                    if (previous != null && previous.probeAt > expected.createdAt) previous
+                    else VerifiedLobbyPeer(packet.reliablePolicyVersion, expected.createdAt)
+                }
                 // One broadcast probe can receive a response from each lobby participant.
             }
             return
         }
-        if (packet.type in setOf("JOIN", "HEARTBEAT", "ROOM_STATE") ||
-            (packet.type == "READY_STATUS" && packet.reliablePolicyVersion != 0)) {
-            policyAgreement.observe(packet.playerId, packet.reliablePolicyVersion)
-        }
+        // Advertisements can be delayed across reconnects. Only a response to our
+        // current room/connection nonce is proof of the peer's current capabilities.
         if (packet.type.startsWith("MATCH_V2_")) {
             _incomingPackets.tryEmit(packet)
             return
@@ -1418,7 +1432,7 @@ class OnlineRoomSyncManager(
     fun disconnect() {
         roomConnectionId = UUID.randomUUID().toString()
         lobbyChallenges.clear()
-        policyAgreement.clear()
+        verifiedLobbyPeers.clear()
         val p = localPlayer
         val code = currentRoomCode
         val client = mqttClient

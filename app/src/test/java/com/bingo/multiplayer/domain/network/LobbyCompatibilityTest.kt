@@ -71,13 +71,13 @@ class LobbyCompatibilityTest {
         while (!condition()) delay(10)
     }
 
-    @Test fun updatedReadyPacketCarriesCompatibilityThroughActualManagerIngress() {
+    @Test fun readyAdvertisementAloneDoesNotReplaceAFreshPeerReply() {
         val packet = RoomMessagePacket("READY_STATUS", playerId = "B", username = "stuart", displayName = "Stuart",
             readyStatus = "READY", readyVersion = 100, senderInstanceId = "guest-install",
             reliablePolicyVersion = 3, hostWaitVersion = 1, protocolVersion = 2)
         val manager = OnlineRoomSyncManager(roomRegistry = Registry())
         manager.handleIncomingPacket(FastPacketCodec.decode(FastPacketCodec.encode(packet)))
-        assertEquals(ReliablePolicyAgreement.Status.COMPATIBLE, manager.reliableCompatibilityStatus(ids, "A"))
+        assertEquals(ReliablePolicyAgreement.Status.WAITING, manager.reliableCompatibilityStatus(ids, "A"))
     }
 
     @Test fun missingOrLegacyReadyInformationIsWaitingAndDoesNotClaimAnOldApp() {
@@ -85,7 +85,7 @@ class LobbyCompatibilityTest {
         manager.handleIncomingPacket(FastPacketCodec.decode("R|B|READY|stuart|Stuart|100|guest-install"))
         assertEquals(ReliablePolicyAgreement.Status.WAITING, manager.reliableCompatibilityStatus(ids, "A"))
         manager.handleIncomingPacket(RoomMessagePacket("JOIN", playerId = "B", reliablePolicyVersion = 2))
-        assertEquals(ReliablePolicyAgreement.Status.INCOMPATIBLE, manager.reliableCompatibilityStatus(ids, "A"))
+        assertEquals(ReliablePolicyAgreement.Status.WAITING, manager.reliableCompatibilityStatus(ids, "A"))
     }
 
     @Test fun smallRequestReplyStartsSameBuildWithoutDependingOnJoinOrHeartbeat() = runBlocking {
@@ -98,6 +98,20 @@ class LobbyCompatibilityTest {
             assertTrue(caps.any { it.type == "LOBBY_CAPS_RESPONSE" })
             assertTrue(caps.all { FastPacketCodec.encode(it).toByteArray().size < 600 })
             assertTrue(caps.all { it.avatarUrl == null && it.players.isEmpty() })
+        }
+    }
+
+    @Test fun delayedLobbyAdvertisementsCannotUndoFreshSameBuildProof() = runBlocking {
+        PairFixture().use { f ->
+            assertTrue(f.a.awaitReliableCompatibility(ids, "A"))
+            for (type in listOf("JOIN", "HEARTBEAT", "ROOM_STATE", "READY_STATUS")) {
+                for (version in listOf(0, 2)) {
+                    f.a.handleIncomingPacket(RoomMessagePacket(type, playerId = "B", senderInstanceId = "old-install",
+                        reliablePolicyVersion = version, players = listOf(host, guest)))
+                    assertEquals(ReliablePolicyAgreement.Status.COMPATIBLE, f.a.reliableCompatibilityStatus(ids, "A"))
+                    assertTrue(f.a.canStartReliableMatch(ids, "A"))
+                }
+            }
         }
     }
 

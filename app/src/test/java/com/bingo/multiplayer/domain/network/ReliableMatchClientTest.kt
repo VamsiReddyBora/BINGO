@@ -121,7 +121,9 @@ class ReliableMatchClientTest {
         val broker = Broker(); val a = broker.Endpoint(); val b = broker.Endpoint()
         val aStore = Store(); val bStore = Store()
         val clock = object : Clock { override fun elapsedRealtime() = test.testScheduler.currentTime }
-        val host = ReliableMatchClient(initial(), "A", "owner-A", clock, a, aStore, test.backgroundScope)
+        var hostSyncs = 0
+        val host = ReliableMatchClient(initial(), "A", "owner-A", clock, a, aStore, test.backgroundScope,
+            onSynchronized = { hostSyncs++ })
         val guest = ReliableMatchClient(initial(), "B", "owner-B", clock, b, bStore, test.backgroundScope)
         init { a.receive = host::receive; b.receive = guest::receive }
     }
@@ -144,6 +146,8 @@ class ReliableMatchClientTest {
         val old = p.broker.retained!!
         advanceTimeBy(80_000); runCurrent()
         p.guest.request("RESUME"); runCurrent()
+        assertTrue(p.host.view.value.snapshot!!.paused)
+        p.host.request("RESUME"); runCurrent()
         assertFalse(p.host.view.value.snapshot!!.paused)
         assertEquals(14_250L, p.host.view.value.remainingMillis)
         p.guest.receive(old); runCurrent()
@@ -151,6 +155,33 @@ class ReliableMatchClientTest {
         advanceTimeBy(14_300); runCurrent()
         assertEquals(2, p.host.view.value.snapshot!!.turn)
         assertTrue(p.host.view.value.remainingMillis in 29_800L..30_000L)
+    }
+    @Test fun peerReturningWithoutTransportLossCanCompleteAFreshSyncAndPreserveManualPause() = runTest {
+        val p = Pairing(this); runCurrent(); advanceTimeBy(15_750); runCurrent()
+        p.host.request("PAUSE"); runCurrent()
+        p.host.peerEpisode("B", MatchEpisode(1, "lost-probes", true, true)); runCurrent()
+        val syncs = p.hostSyncs
+        p.host.peerEpisode("B", MatchEpisode(1, "lost-probes", true, false))
+        p.host.requestSync(); runCurrent()
+        assertTrue(p.host.view.value.waiting)
+        assertTrue(p.host.view.value.snapshot!!.paused)
+        // Recovery sends its new barrier/HELLO on the next 100 ms protocol tick.
+        advanceTimeBy(300); runCurrent()
+        assertTrue(p.hostSyncs > syncs)
+        assertFalse(p.host.view.value.waiting)
+        assertTrue(p.host.view.value.snapshot!!.paused)
+        assertTrue(p.guest.view.value.snapshot!!.paused)
+        assertEquals(14_250L, p.host.view.value.remainingMillis)
+        p.host.request("RESUME"); runCurrent()
+        assertFalse(p.host.view.value.snapshot!!.paused)
+        assertEquals(14_250L, p.host.view.value.remainingMillis)
+    }
+
+    @Test fun guestCannotPauseThroughTheRealRequestPath() = runTest {
+        val p = Pairing(this); runCurrent()
+        p.guest.request("PAUSE"); runCurrent()
+        assertFalse(p.host.view.value.snapshot!!.paused)
+        assertFalse(p.b.sent.any { it.matchIntent?.kind == "PAUSE" })
     }
     @Test fun lateUnpausedSnapshotCannotClearADeliberatePause() = runTest {
         val p = Pairing(this); runCurrent(); val old = p.broker.retained!!

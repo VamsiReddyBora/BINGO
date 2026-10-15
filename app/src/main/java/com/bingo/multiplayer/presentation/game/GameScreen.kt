@@ -121,7 +121,12 @@ import com.bingo.multiplayer.presentation.components.RecentPicksQueuePill
 fun GameScreen(
     hostDisconnected: Boolean = false,
     gameplaySuspended: Boolean = false,
-    synchronizationMessage: String = "",
+    canControlPause: Boolean = true,
+    canResumeGame: Boolean = true,
+    opponentConnectionStatus: String = "",
+    hostName: String = "Host",
+    interruptionPrompt: com.bingo.multiplayer.domain.engine.InterruptionPromptState = com.bingo.multiplayer.domain.engine.InterruptionPromptState(),
+    onContinueCountdown: () -> Unit = {},
     useAcceptedChatHistory: Boolean = false,
     board: Board,
     opponentBoard: Board? = null,
@@ -168,7 +173,6 @@ fun GameScreen(
     typingPlayerName: String? = null,
     onSetTyping: (Boolean) -> Unit = {},
     isOpponentUnreachable: Boolean = false,
-    interruptionEpisodeCount: Int = 0,
     isClaimVictoryEligible: Boolean = false,
     onPauseGame: () -> Unit = {},
     onResumeGame: () -> Unit = {},
@@ -301,14 +305,7 @@ fun GameScreen(
             if (!chatMessages.any { it.id == incomingChatMessage.id || (it.text == incomingChatMessage.text && kotlin.math.abs(it.timestamp - incomingChatMessage.timestamp) < 2000L) }) {
                 chatMessages = chatMessages + incomingChatMessage
             }
-            if (incomingChatMessage.isSystemMessage) {
-                spawnEmote(
-                    emoji = incomingChatMessage.text,
-                    isSelf = false,
-                    senderName = null,
-                    scaleMultiplier = 1.05f
-                )
-            }
+
         }
     }
 
@@ -358,8 +355,9 @@ fun GameScreen(
     }
 
     // Trigger haptic vibration whenever the opponent picks a number
-    LaunchedEffect(recentPick) {
-        if (recentPick != null && recentPick.number > 0) {
+    val pickFeedback = remember(matchSeed) { com.bingo.multiplayer.domain.engine.PickFeedbackTracker(recentPick) }
+    LaunchedEffect(recentPick?.number, recentPick?.pickedByPlayerId, recentPick?.turnNumber) {
+        if (pickFeedback.observe(recentPick, gameplaySuspended || isGameOver) && recentPick != null && recentPick.number > 0) {
             val isOpponentPick = if (myPlayerId.isNotBlank()) {
                 recentPick.pickedByPlayerId != myPlayerId
             } else {
@@ -481,7 +479,8 @@ fun GameScreen(
     }
 
 
-    BackHandler(enabled = hostDisconnected && !isGameOver) {}
+    BackHandler(enabled = !isGameOver && (hostDisconnected || isGamePaused ||
+        (canControlPause && interruptionPrompt.episodeId.isNotBlank() && !interruptionPrompt.decided))) {}
 
     if (hostDisconnected && !isGameOver) HostDisconnectedDialog()
 
@@ -543,9 +542,10 @@ fun GameScreen(
         )
     }
 
-    if (isGamePaused && !hostDisconnected) {
+    if (isGamePaused && !hostDisconnected && !isGameOver) {
         AlertDialog(
-            onDismissRequest = { /* Modal */ },
+            onDismissRequest = {},
+            properties = MatchDecisionDialogSpec.properties,
             shape = RoundedCornerShape(20.dp),
             containerColor = tokens.surface,
             icon = {
@@ -566,28 +566,29 @@ fun GameScreen(
                 )
             },
             text = {
-                Text(
-                    text = if (pausedByPlayerName.isNotBlank())
-                        "$pausedByPlayerName paused the game."
-                    else
-                        "The game is currently paused.",
-                    fontSize = 14.sp,
-                    color = tokens.cellNeutralText.copy(alpha = 0.8f),
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = if (pausedByPlayerName.isNotBlank()) "$pausedByPlayerName paused the game." else "The game is currently paused.",
+                        fontSize = 14.sp, color = tokens.cellNeutralText.copy(alpha = 0.8f),
+                        textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()
+                    )
+                    if (opponentConnectionStatus.isNotBlank()) {
+                        Spacer(Modifier.height(12.dp))
+                        Text(opponentConnectionStatus, color = tokens.cellNeutralText, textAlign = TextAlign.Center)
+                    }
+                    if (!canControlPause) {
+                        Spacer(Modifier.height(12.dp))
+                        Text("Waiting for $hostName to resume the game.", color = tokens.cellNeutralText, textAlign = TextAlign.Center)
+                    }
+                }
             },
             confirmButton = {
-                Button(
-                    onClick = onTogglePause,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = tokens.primaryButtonBg,
-                        contentColor = tokens.primaryButtonText
-                    ),
+                if (canControlPause) Button(
+                    onClick = onResumeGame,
+                    enabled = canResumeGame,
+                    colors = ButtonDefaults.buttonColors(containerColor = tokens.primaryButtonBg, contentColor = tokens.primaryButtonText),
                     shape = RoundedCornerShape(12.dp)
-                ) {
-                    Text("Resume Game", color = tokens.primaryButtonText, fontWeight = FontWeight.Bold)
-                }
+                ) { Text("Resume Game", fontWeight = FontWeight.Bold) }
             },
             dismissButton = {
                 TextButton(onClick = { showSurrenderDialog = true }) {
@@ -597,156 +598,24 @@ fun GameScreen(
         )
     }
 
-    var showInterruptionDialog by remember { mutableStateOf(false) }
-    var showClaimConfirmationDialog by remember { mutableStateOf(false) }
-
     LaunchedEffect(hostDisconnected) {
         if (hostDisconnected) {
             showSurrenderDialog = false
-            showInterruptionDialog = false
-            showClaimConfirmationDialog = false
             showQuickChat = false
         }
     }
 
-    LaunchedEffect(isOpponentUnreachable, interruptionEpisodeCount) {
-        if (isOpponentUnreachable && interruptionEpisodeCount > 0) {
-            showInterruptionDialog = true
-        } else if (!isOpponentUnreachable) {
-            showInterruptionDialog = false
-            showClaimConfirmationDialog = false
-        }
-    }
-
-    if (showInterruptionDialog && isOpponentUnreachable && !isGameOver && !hostDisconnected) {
-        AlertDialog(
-            onDismissRequest = { showInterruptionDialog = false },
-            shape = RoundedCornerShape(20.dp),
-            containerColor = tokens.surface,
-            icon = {
-                Icon(
-                    imageVector = Icons.Default.Warning,
-                    contentDescription = null,
-                    tint = Color(0xFFF59E0B),
-                    modifier = Modifier.size(44.dp)
-                )
-            },
-            title = {
-                Text(
-                    text = "Opponent not responding",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
-                    color = tokens.textPrimary,
-                    textAlign = TextAlign.Center
-                )
-            },
-            text = {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = "No heartbeat received for 15 seconds. Interruption $interruptionEpisodeCount in this match.",
-                        fontSize = 14.sp,
-                        color = tokens.textSecondary,
-                        textAlign = TextAlign.Center
-                    )
-                }
-            },
-            confirmButton = {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    if (!isGamePaused) {
-                        Button(
-                            onClick = {
-                                onPauseGame()
-                                showInterruptionDialog = false
-                            },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = tokens.primaryButtonBg,
-                                contentColor = tokens.primaryButtonText
-                            ),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("Pause game", fontWeight = FontWeight.Bold)
-                        }
-                    }
-                    Button(
-                        onClick = { showInterruptionDialog = false },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = tokens.backgroundSecondary,
-                            contentColor = tokens.textPrimary
-                        ),
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Continue countdown", fontWeight = FontWeight.SemiBold)
-                    }
-                    if (isClaimVictoryEligible) {
-                        Button(
-                            onClick = {
-                                showClaimConfirmationDialog = true
-                            },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (tokens.isDark) Color(0xFFEF4444) else tokens.accentOpponent,
-                                contentColor = Color.White
-                            ),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("Claim victory", fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-            },
-            dismissButton = {}
-        )
-    }
-
-    if (showClaimConfirmationDialog && isClaimVictoryEligible && !isGameOver && !hostDisconnected) {
-        AlertDialog(
-            onDismissRequest = { showClaimConfirmationDialog = false },
-            shape = RoundedCornerShape(20.dp),
-            containerColor = tokens.surface,
-            title = {
-                Text(
-                    text = "Claim Victory?",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
-                    color = tokens.textPrimary
-                )
-            },
-            text = {
-                Text(
-                    text = "Your opponent has been unreachable for 3 or more interruptions in this match. Do you want to claim victory now?",
-                    fontSize = 14.sp,
-                    color = tokens.textSecondary
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showClaimConfirmationDialog = false
-                        showInterruptionDialog = false
-                        onClaimVictory()
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (tokens.isDark) Color(0xFFEF4444) else tokens.accentOpponent,
-                        contentColor = Color.White
-                    ),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Text("Confirm Claim", color = Color.White, fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showClaimConfirmationDialog = false }) {
-                    Text("Cancel", color = tokens.textMuted)
-                }
-            }
+    if (canControlPause && !isGameOver && !hostDisconnected && !isGamePaused) {
+        InterruptionDecisionDialog(
+            prompt = interruptionPrompt,
+            opponentName = opponentName,
+            opponentUnreachable = isOpponentUnreachable,
+            connectionStatus = opponentConnectionStatus,
+            pauseEnabled = !gameplaySuspended,
+            claimEligible = isClaimVictoryEligible,
+            onPause = onPauseGame,
+            onContinue = onContinueCountdown,
+            onClaim = { onClaimVictory(); onContinueCountdown() }
         )
     }
 
@@ -759,36 +628,6 @@ fun GameScreen(
                     .padding(top = 10.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                if (synchronizationMessage.isNotBlank() && !isGameOver) {
-                    Text(text = synchronizationMessage, color = tokens.textPrimary,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
-                        fontSize = 13.sp, textAlign = TextAlign.Center)
-                }
-                if (isOpponentUnreachable && !isGameOver) {
-                    Surface(
-                        onClick = { showInterruptionDialog = true },
-                        color = Color(0xFFFEF3C7),
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 2.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            Icon(Icons.Default.Warning, contentDescription = null, tint = Color(0xFFD97706), modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Opponent not responding (Interruption $interruptionEpisodeCount) • Tap for options",
-                                fontSize = 12.sp,
-                                color = Color(0xFF92400E),
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                    }
-                }
                 // Modern Aesthetic Top Bar (Items 1, 2, 3)
                 Box(
                     modifier = Modifier
@@ -855,6 +694,7 @@ fun GameScreen(
                         // 1. Pause button comes first
                         IconButton(
                             onClick = onTogglePause,
+                            enabled = canControlPause && !gameplaySuspended && (!isGamePaused || canResumeGame),
                             modifier = Modifier.size(32.dp)
                         ) {
                             Icon(

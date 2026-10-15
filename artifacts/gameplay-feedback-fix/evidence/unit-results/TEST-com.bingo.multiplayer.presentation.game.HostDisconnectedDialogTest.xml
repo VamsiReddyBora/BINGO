@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.bingo.multiplayer.presentation.game.HostDisconnectedDialogTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-15T17:01:22" hostname="VR" time="0.002">
+  <properties/>
+  <testcase name="hostHoldDialogRejectsBackAndOutsideDismissal" classname="com.bingo.multiplayer.presentation.game.HostDisconnectedDialogTest" time="0.001"/>
+  <testcase name="hostHoldDialogUsesTheAgreedBlockingMessage" classname="com.bingo.multiplayer.presentation.game.HostDisconnectedDialogTest" time="0.0"/>
+  <testcase name="interruptionAndPauseDialogsRejectBackAndOutsideDismissal" classname="com.bingo.multiplayer.presentation.game.HostDisconnectedDialogTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

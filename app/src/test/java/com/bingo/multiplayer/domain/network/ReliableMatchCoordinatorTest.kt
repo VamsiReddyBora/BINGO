@@ -40,6 +40,21 @@ class ReliableMatchCoordinatorTest {
     private fun intent(c: ReliableMatchCoordinator, kind: String, actor: String = "A", id: String = "$kind-${c.state.revision}", number: Int = 0, episode: String = "") =
         MatchIntent(id, "123", actor, c.state.revision, c.state.turn, kind, number = number, episodeId = episode)
 
+    @Test fun originalHostAloneCanPauseAndResumeAndMustWaitForThePeersReturn() {
+        val clock = FakeClock(); val c = ReliableMatchCoordinator(initial(), "A", "installation-A", clock) { true }
+        c.resumeObservation(); clock.now = 15_750
+        assertFalse(c.dispatch(intent(c, "PAUSE", actor = "B")))
+        assertTrue(c.dispatch(intent(c, "PAUSE")))
+        assertFalse(c.dispatch(intent(c, "RESUME", actor = "B")))
+        assertTrue(c.updatePeerEpisode("B", MatchEpisode(1, "outage", true, true)))
+        assertFalse(c.dispatch(intent(c, "RESUME")))
+        clock.now += 60_000
+        assertEquals(14_250L, c.remainingMillis())
+        assertTrue(c.updatePeerEpisode("B", MatchEpisode(1, "outage", true, false)))
+        assertTrue(c.dispatch(intent(c, "RESUME")))
+        assertEquals(14_250L, c.remainingMillis())
+    }
+
     @Test fun pauseResumePreserves14250MillisAndNextTurnIsExactly30000() {
         val clock = FakeClock(); val c = ReliableMatchCoordinator(initial(), "A", "installation-A", clock) { true }; c.resumeObservation()
         clock.now = 15_750

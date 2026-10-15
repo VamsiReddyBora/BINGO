@@ -10,6 +10,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import com.bingo.multiplayer.domain.engine.ReliableMatchSnapshot
+import com.bingo.multiplayer.domain.engine.InterruptionPromptState
+import com.bingo.multiplayer.domain.engine.MatchSystemMessages
 
 @Keep
 @Serializable
@@ -31,6 +33,8 @@ data class OngoingMatchData(
     val currentTurnPlayerId: String = "",
     val randomizedTurnOrder: List<Player> = emptyList(),
     val chatMessages: List<InGameChatMessage> = emptyList(),
+    val systemMessages: List<InGameChatMessage> = emptyList(),
+    val interruptionPrompt: InterruptionPromptState = InterruptionPromptState(),
     val startedAt: Long = System.currentTimeMillis(),
     val lastUpdatedAt: Long = System.currentTimeMillis(),
     val is1v1Match: Boolean = false,
@@ -134,7 +138,9 @@ object OngoingMatchStore {
             isEpisodeOpen = current.isEpisodeOpen, peerAvailabilityState = current.peerAvailabilityState,
             hostWaitSnapshot = current.hostWaitSnapshot
         ) else data
-        return saveOngoingMatch(context, scoped)
+        return saveOngoingMatch(context, scoped.copy(
+            systemMessages = MatchSystemMessages.merge(current.systemMessages, data.systemMessages),
+            interruptionPrompt = InterruptionPromptState.merge(current.interruptionPrompt, data.interruptionPrompt)))
     }
 
     @Synchronized
@@ -145,6 +151,16 @@ object OngoingMatchStore {
         if (snapshot != null && (!snapshot.valid() || snapshot.seed != seed || snapshot.roomCode != current.roomCode ||
                     accountUid !in snapshot.order || accountUid == snapshot.hostId)) return false
         return saveOngoingMatch(context, current.copy(hostWaitSnapshot = snapshot))
+    }
+
+    @Synchronized
+    fun savePresentation(context: Context?, accountUid: String, seed: Long,
+        notice: InGameChatMessage? = null, prompt: InterruptionPromptState? = null): Boolean {
+        val current = getOngoingMatch(context, accountUid) ?: return false
+        if (current.matchSeed != seed || current.accountUid != accountUid) return false
+        val notices = if (notice == null) current.systemMessages else MatchSystemMessages.merge(current.systemMessages, listOf(notice))
+        return saveOngoingMatch(context, current.copy(systemMessages = notices,
+            interruptionPrompt = if (prompt == null) current.interruptionPrompt else InterruptionPromptState.merge(current.interruptionPrompt, prompt)))
     }
 
     /**

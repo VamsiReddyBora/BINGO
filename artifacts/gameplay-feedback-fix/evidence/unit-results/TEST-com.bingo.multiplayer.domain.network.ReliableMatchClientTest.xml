@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" tests="32" skipped="0" failures="0" errors="0" timestamp="2026-10-15T17:01:00" hostname="VR" time="1.717">
+  <properties/>
+  <testcase name="guestCannotPromoteItselfWhenHostStopsResponding" classname="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" time="0.37"/>
+  <testcase name="coldHostWithPendingCheckpointAndAbsentGuestRecoversTheBrokerThenResumesAlone" classname="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" time="0.027"/>
+  <testcase name="guestAbsenceStillAllowsTheActiveHostToAdvanceNormally" classname="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" time="0.052"/>
+  <testcase name="chatUsesAcceptedStableIdsAndSurvivesASeparateReturningClient" classname="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" time="0.03"/>
+  <testcase name="zeroBeforeHostDetectionStaysZeroAndExpiresOnceAfterRecovery" classname="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" time="0.069"/>
+  <testcase name="failedLocalAcceptanceAfterPublishRecoversTheBrokersCommittedSnapshot" classname="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" time="0.035"/>
+  <testcase name="durableFinalResultOverridesAnOldHostHoldEvenOnOfflineColdLaunch" classname="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" time="0.035"/>
+  <testcase name="delayedReadyRetriesWithoutLettingRetainedStateUnlockThePopup" classname="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" time="0.054"/>
+  <testcase name="staleBrokerPauseSampleCannotUndoAnAcceptedManualPauseWhenHostRestarts" classname="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" time="0.027"/>
+  <testcase name="exactPauseSurvivesWireAndResumeWithoutThirtySecondReset" classname="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" time="0.102"/>
+  <testcase name="twentyReconnectCyclesForEachRoleKeepOneHistoryAndNeverInventAResult" classname="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" time="0.29"/>
+  <testcase name="failedPublicationKeepsPendingStateAndBlocksMutationsUntilBrokerRecovery" classname="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" time="0.02"/>
+  <testcase name="forgedClaimAndStaleSyncAckCannotCreateAFinalResult" classname="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" time="0.009"/>
+  <testcase name="lateUnpausedSnapshotCannotClearADeliberatePause" classname="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" time="0.008"/>
+  <testcase name="hostCrashWithUnpublishedCandidateRecoversAcceptedBrokerStateInsteadOfInventingPickOrResult" classname="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" time="0.026"/>
+  <testcase name="guestCannotPauseThroughTheRealRequestPath" classname="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" time="0.008"/>
+  <testcase name="guestColdLaunchRestoresBlockingHostHoldAndFrozenTime" classname="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" time="0.167"/>
+  <testcase name="hostAbsenceFreezes14250MillisAndEveryGuestActionUntilConfirmedRecovery" classname="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" time="0.042"/>
+  <testcase name="duplicateReadyCannotRestartTheResumedCountdown" classname="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" time="0.006"/>
+  <testcase name="manualPauseAndAcceptedChatSurviveHostHoldWithoutImplicitResume" classname="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" time="0.056"/>
+  <testcase name="absentPeerGetsFinalResultFromRetainedBrokerAfterWinnerClientCloses" classname="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" time="0.012"/>
+  <testcase name="fullSyncWithoutFinalReadyCannotRemoveHostPopupOrEnableOwnerMoves" classname="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" time="0.017"/>
+  <testcase name="replayedStateAndWrongReadyCannotUnlockHostHold" classname="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" time="0.014"/>
+  <testcase name="hostReturningWithoutGuestSuspendsOfflineTimeThenContinuesNormalTurns" classname="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" time="0.122"/>
+  <testcase name="inconsistentSavedBoardRemainsWaitingInsteadOfCrashingOrGeneratingANewBoard" classname="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" time="0.005"/>
+  <testcase name="pendingHostCandidateWithNoSharedCheckpointStaysBlockedAndCannotInventAResult" classname="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" time="0.023"/>
+  <testcase name="duplicateSequenceWithDifferentPauseDataCannotOverwriteTheAcceptedCheckpoint" classname="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" time="0.012"/>
+  <testcase name="peerReturningWithoutTransportLossCanCompleteAFreshSyncAndPreserveManualPause" classname="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" time="0.021"/>
+  <testcase name="actualProtocolNegotiatesAndReconcilesAPickWithSeparateStores" classname="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" time="0.011"/>
+  <testcase name="guestStorageFailureKeepsPopupAndRetriesInsteadOfUnlocking" classname="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" time="0.018"/>
+  <testcase name="wrongProtocolOrIncompleteSnapshotCannotUnlockRecovery" classname="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" time="0.005"/>
+  <testcase name="delayedSyncAckStillAuthorizesThePeerAfterTheOwnerAdvancesAndDuplicateRequestArrives" classname="com.bingo.multiplayer.domain.network.ReliableMatchClientTest" time="0.009"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

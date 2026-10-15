@@ -7,6 +7,7 @@ import androidx.appcompat.app.AppCompatDelegate
 class BingoApplication : Application() {
     override fun onCreate() {
         super.onCreate()
+        com.bingo.multiplayer.core.diagnostics.AppExitDiagnostics.install(this)
         try {
             val prefs = getSharedPreferences("bingo_theme_prefs", Context.MODE_PRIVATE)
             val authPrefs = getSharedPreferences("bingo_auth_prefs", Context.MODE_PRIVATE)

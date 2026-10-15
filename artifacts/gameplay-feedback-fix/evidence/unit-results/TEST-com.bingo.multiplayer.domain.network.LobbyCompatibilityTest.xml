@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.bingo.multiplayer.domain.network.LobbyCompatibilityTest" tests="13" skipped="0" failures="0" errors="0" timestamp="2026-10-15T17:01:06" hostname="VR" time="4.734">
+  <properties/>
+  <testcase name="mismatchedResponsesCannotSatisfyTheHandshake" classname="com.bingo.multiplayer.domain.network.LobbyCompatibilityTest" time="0.72"/>
+  <testcase name="disconnectionCancelsStartAndOldResponseCannotUnlockTheNextSession" classname="com.bingo.multiplayer.domain.network.LobbyCompatibilityTest" time="0.155"/>
+  <testcase name="delayedConfirmationIsRetriedAndCanStartWithinTheSameButtonAttempt" classname="com.bingo.multiplayer.domain.network.LobbyCompatibilityTest" time="0.906"/>
+  <testcase name="cloudStartWaitsForCompatibilityThenPreservesProtocolAndBoardSettings" classname="com.bingo.multiplayer.domain.network.LobbyCompatibilityTest" time="0.93"/>
+  <testcase name="unreachablePeerTimesOutWithoutEnablingPlayOrCallingItAnOldApp" classname="com.bingo.multiplayer.domain.network.LobbyCompatibilityTest" time="0.403"/>
+  <testcase name="delayedLobbyAdvertisementsCannotUndoFreshSameBuildProof" classname="com.bingo.multiplayer.domain.network.LobbyCompatibilityTest" time="0.305"/>
+  <testcase name="missingOrLegacyReadyInformationIsWaitingAndDoesNotClaimAnOldApp" classname="com.bingo.multiplayer.domain.network.LobbyCompatibilityTest" time="0.0"/>
+  <testcase name="smallRequestReplyStartsSameBuildWithoutDependingOnJoinOrHeartbeat" classname="com.bingo.multiplayer.domain.network.LobbyCompatibilityTest" time="0.604"/>
+  <testcase name="disconnectReleasesTheOwnedMqttClientEvenAfterConnectionLoss" classname="com.bingo.multiplayer.domain.network.LobbyCompatibilityTest" time="0.001"/>
+  <testcase name="noConnectionOrInvalidParticipantsCannotStartFromAnOldAdvertisement" classname="com.bingo.multiplayer.domain.network.LobbyCompatibilityTest" time="0.302"/>
+  <testcase name="pipeInDisplayNameDoesNotCorruptCompatibilityOrIdentity" classname="com.bingo.multiplayer.domain.network.LobbyCompatibilityTest" time="0.0"/>
+  <testcase name="readyAdvertisementAloneDoesNotReplaceAFreshPeerReply" classname="com.bingo.multiplayer.domain.network.LobbyCompatibilityTest" time="0.004"/>
+  <testcase name="explicitOldResponseRemainsBlocked" classname="com.bingo.multiplayer.domain.network.LobbyCompatibilityTest" time="0.403"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

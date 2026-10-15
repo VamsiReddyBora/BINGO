@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.bingo.multiplayer.domain.network.OngoingMatchStoreRejoinTest" tests="16" skipped="0" failures="0" errors="0" timestamp="2026-10-15T17:01:13" hostname="VR" time="0.007">
+  <properties/>
+  <testcase name="test R04b - Legacy group match older than 8 minutes expires cleanly" classname="com.bingo.multiplayer.domain.network.OngoingMatchStoreRejoinTest" time="0.0"/>
+  <testcase name="test F002 - Tombstone immutability rejects conflicting write and allows idempotent identical write" classname="com.bingo.multiplayer.domain.network.OngoingMatchStoreRejoinTest" time="0.001"/>
+  <testcase name="test HB03 - clearNullableEpisodeFields clears currentEpisodeId when episode closes" classname="com.bingo.multiplayer.domain.network.OngoingMatchStoreRejoinTest" time="0.0"/>
+  <testcase name="test R03 - Backward compatibility deserializes legacy match JSON with safe defaults" classname="com.bingo.multiplayer.domain.network.OngoingMatchStoreRejoinTest" time="0.0"/>
+  <testcase name="test R01 - Full 1v1 match state serialization and deserialization" classname="com.bingo.multiplayer.domain.network.OngoingMatchStoreRejoinTest" time="0.001"/>
+  <testcase name="test R05 - Account scoped isolation prevents cross-account match leakage" classname="com.bingo.multiplayer.domain.network.OngoingMatchStoreRejoinTest" time="0.001"/>
+  <testcase name="test HB11 - Result tombstone prevents rejoining concluded match and clears ongoing match" classname="com.bingo.multiplayer.domain.network.OngoingMatchStoreRejoinTest" time="0.0"/>
+  <testcase name="test R02 - Cold-launch recovery from durable state" classname="com.bingo.multiplayer.domain.network.OngoingMatchStoreRejoinTest" time="0.001"/>
+  <testcase name="test F005 - Participant B cannot adopt A-owned record during legacy migration" classname="com.bingo.multiplayer.domain.network.OngoingMatchStoreRejoinTest" time="0.0"/>
+  <testcase name="test F007 - Durably saving received pause and resume updates pause metadata and remaining milliseconds" classname="com.bingo.multiplayer.domain.network.OngoingMatchStoreRejoinTest" time="0.0"/>
+  <testcase name="test F007 - Actual turn IDs preserved across skipped turns in OngoingMatchStore" classname="com.bingo.multiplayer.domain.network.OngoingMatchStoreRejoinTest" time="0.0"/>
+  <testcase name="test HB13 - Legacy match migrated to scoped key on first read" classname="com.bingo.multiplayer.domain.network.OngoingMatchStoreRejoinTest" time="0.0"/>
+  <testcase name="test R10 - Clear ongoing match wipes storage completely" classname="com.bingo.multiplayer.domain.network.OngoingMatchStoreRejoinTest" time="0.001"/>
+  <testcase name="test R04 - 1v1 match older than 8 minutes does NOT expire" classname="com.bingo.multiplayer.domain.network.OngoingMatchStoreRejoinTest" time="0.0"/>
+  <testcase name="test R08 - Restoring committed episode count persists across updates" classname="com.bingo.multiplayer.domain.network.OngoingMatchStoreRejoinTest" time="0.0"/>
+  <testcase name="test R06 - updateMatchGameState updates state and increments match revision" classname="com.bingo.multiplayer.domain.network.OngoingMatchStoreRejoinTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

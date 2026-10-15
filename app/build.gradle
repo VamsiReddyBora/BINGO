@@ -78,8 +78,8 @@ android {
                     // Do not overwrite rootDir/Bingo.apk or workspace/Bingo.apk to protect baselines
                     copy {
                         from "${layout.buildDirectory.get()}/outputs/apk/release/Bingo.apk"
-                        into "${rootDir}/artifacts/match-start-fix/"
-                        rename { "Bingo-match-start-fix.apk" }
+                        into "${rootDir}/artifacts/gameplay-feedback-fix/"
+                        rename { "Bingo-gameplay-feedback-fix.apk" }
                     }
                 }
             }

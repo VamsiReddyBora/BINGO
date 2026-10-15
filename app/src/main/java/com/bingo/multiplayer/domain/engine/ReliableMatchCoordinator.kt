@@ -202,11 +202,11 @@ class ReliableMatchCoordinator(
                 next = next.copy(turn = state.turn + 1, currentPlayerId = state.order.first { it != state.currentPlayerId }, remainingMillis = 30_000)
             }
             "PAUSE" -> {
-                if (state.paused) return false
+                if (intent.actorId != state.hostId || state.paused) return false
                 next = next.copy(paused = true, pauseOwnerId = intent.actorId)
             }
             "RESUME" -> {
-                if (!state.paused) return false
+                if (intent.actorId != state.hostId || !state.paused || state.episodes[peer]?.unreachable == true) return false
                 next = next.copy(paused = false, pauseOwnerId = "")
             }
             "SURRENDER" -> next = next.copy(final = MatchFinal("${state.matchId}:${intent.id}", peer, "SURRENDER"))
