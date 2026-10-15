@@ -78,6 +78,9 @@ object FastPacketCodec {
                     "H|${packet.playerId}|${packet.displayName}|${if (packet.isHost) "1" else "0"}|${packet.timestamp}|${packet.username}|${packet.avatarUrl ?: ""}|${packet.readyStatus}|${packet.readyVersion}"
                 }
             }
+            "MATCH_HEARTBEAT" -> {
+                "MHB|${packet.protocolVersion}|${packet.matchId}|${packet.heartbeatAction}|${packet.playerId}|${packet.peerUid}|${packet.connectionGeneration}|${packet.sequence}|${packet.challengeId}|${packet.timestamp}"
+            }
             else -> json.encodeToString(packet)
         }
     }
@@ -246,6 +249,31 @@ object FastPacketCodec {
                         avatarUrl = parts.getOrNull(6)?.takeIf { it.isNotBlank() },
                         readyStatus = ready,
                         readyVersion = readyVer
+                    )
+                }
+
+                trimmed.startsWith("MHB|") -> {
+                    val parts = trimmed.split("|")
+                    val proto = parts.getOrNull(1)?.toIntOrNull() ?: 1
+                    val matchId = parts.getOrNull(2) ?: ""
+                    val action = parts.getOrNull(3) ?: ""
+                    val senderUid = parts.getOrNull(4) ?: ""
+                    val peerUid = parts.getOrNull(5) ?: ""
+                    val generation = parts.getOrNull(6) ?: ""
+                    val seq = parts.getOrNull(7)?.toLongOrNull() ?: 0L
+                    val challenge = parts.getOrNull(8) ?: ""
+                    val ts = parts.getOrNull(9)?.toLongOrNull() ?: System.currentTimeMillis()
+                    RoomMessagePacket(
+                        type = "MATCH_HEARTBEAT",
+                        protocolVersion = proto,
+                        matchId = matchId,
+                        heartbeatAction = action,
+                        playerId = senderUid,
+                        peerUid = peerUid,
+                        connectionGeneration = generation,
+                        sequence = seq,
+                        challengeId = challenge,
+                        timestamp = ts
                     )
                 }
 

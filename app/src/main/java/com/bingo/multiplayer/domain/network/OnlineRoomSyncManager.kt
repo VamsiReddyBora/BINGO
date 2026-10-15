@@ -48,7 +48,23 @@ data class RoomMessagePacket(
     val senderInstanceId: String = "",
     val winnerPlayerId: String = "",
     val winReason: String = "",
-    val runnerPlayerIds: List<String> = emptyList()
+    val runnerPlayerIds: List<String> = emptyList(),
+    val protocolVersion: Int = 1,
+    val matchId: String = "",
+    val peerUid: String = "",
+    val connectionGeneration: String = "",
+    val sequence: Long = 0L,
+    val challengeId: String = "",
+    val heartbeatAction: String = "",
+    val turnId: String = "",
+    val remainingTurnMillis: Long = 0L,
+    val controllerEpoch: Long = 0L,
+    val matchRevision: Long = 0L,
+    val isPaused: Boolean = false,
+    val pauseReason: String = "",
+    val pauseOwnerId: String = "",
+    val claimEpisodeId: String = "",
+    val claimEpisodeCount: Int = 0
 )
 
 class OnlineRoomSyncManager(
@@ -126,6 +142,121 @@ class OnlineRoomSyncManager(
     private var heartbeatJob: Job? = null
     private var livenessJob: Job? = null
     private var pingJob: Job? = null
+
+    // Dedicated 1v1 Match Heartbeat & Availability State
+    var activeMatchConnectionGeneration: String = UUID.randomUUID().toString()
+        private set
+    var is1v1MatchActive: Boolean = false
+        private set
+    var currentMatchId: String = ""
+        private set
+    var currentPeerUid: String = ""
+        private set
+    var matchHeartbeatPolicy: com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicy? = null
+        private set
+    var lastBrokerReceiveEchoAt: Long = 0L
+        private set
+
+    private var matchHeartbeatJob: Job? = null
+    private var matchWatchdogJob: Job? = null
+    private val outstandingChallenges = ConcurrentHashMap<String, Long>()
+    private var heartbeatSequence: Long = 0L
+
+    private val _matchHeartbeatDecisions = MutableSharedFlow<com.bingo.multiplayer.domain.engine.HeartbeatDecision>(extraBufferCapacity = 64)
+    val matchHeartbeatDecisions: SharedFlow<com.bingo.multiplayer.domain.engine.HeartbeatDecision> = _matchHeartbeatDecisions.asSharedFlow()
+
+    fun isLocalObservationHealthy(nowMonotonic: Long = android.os.SystemClock.elapsedRealtime()): Boolean {
+        val inForeground = AppLifecycleObserver.isAppInForeground.value
+        val connected = isConnected
+        val subscribed = isSubscribed
+        val brokerEchoFresh = (nowMonotonic - lastBrokerReceiveEchoAt) <= 5000L
+        return inForeground && connected && subscribed && (lastBrokerReceiveEchoAt > 0L && brokerEchoFresh)
+    }
+
+    fun startMatchHeartbeat(
+        matchId: String,
+        peerUid: String,
+        policy: com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicy
+    ) {
+        stopMatchHeartbeat()
+        is1v1MatchActive = true
+        currentMatchId = matchId
+        currentPeerUid = peerUid
+        matchHeartbeatPolicy = policy
+        lastBrokerReceiveEchoAt = android.os.SystemClock.elapsedRealtime()
+        outstandingChallenges.clear()
+
+        // Dedicated 2.5s probe loop decoupled from cloud reconciliation
+        matchHeartbeatJob = scope.launch(Dispatchers.IO) {
+            while (isActive) {
+                delay(2500L)
+                if (!AppLifecycleObserver.isAppInForeground.value) continue
+                val client = mqttClient ?: continue
+                if (!client.isConnected || !isSubscribed) continue
+                val p = localPlayer ?: continue
+
+                val challenge = UUID.randomUUID().toString().take(8)
+                val nowMonotonic = android.os.SystemClock.elapsedRealtime()
+                outstandingChallenges[challenge] = nowMonotonic
+                outstandingChallenges.entries.removeIf { (nowMonotonic - it.value) > 5000L }
+
+                heartbeatSequence++
+                val probePacket = RoomMessagePacket(
+                    type = "MATCH_HEARTBEAT",
+                    protocolVersion = 1,
+                    matchId = matchId,
+                    playerId = p.id,
+                    peerUid = peerUid,
+                    connectionGeneration = activeMatchConnectionGeneration,
+                    sequence = heartbeatSequence,
+                    challengeId = challenge,
+                    heartbeatAction = "PROBE",
+                    timestamp = System.currentTimeMillis()
+                )
+                broadcastPacket(probePacket)
+            }
+        }
+
+        // Dedicated watchdog loop checking at most every 250ms
+        matchWatchdogJob = scope.launch(Dispatchers.IO) {
+            while (isActive) {
+                delay(250L)
+                checkMatchWatchdog()
+            }
+        }
+    }
+
+    fun stopMatchHeartbeat() {
+        matchHeartbeatJob?.cancel()
+        matchHeartbeatJob = null
+        matchWatchdogJob?.cancel()
+        matchWatchdogJob = null
+        is1v1MatchActive = false
+        matchHeartbeatPolicy = null
+        outstandingChallenges.clear()
+    }
+
+    private fun checkMatchWatchdog() {
+        val policy = matchHeartbeatPolicy ?: return
+        val now = android.os.SystemClock.elapsedRealtime()
+        val healthy = isLocalObservationHealthy(now)
+        if (!healthy) {
+            if (policy.isLocalHealthy) {
+                val decision = policy.onLocalHealthLost()
+                _matchHeartbeatDecisions.tryEmit(decision)
+            }
+        } else {
+            if (!policy.isLocalHealthy) {
+                val decision = policy.onLocalHealthRestored(now)
+                _matchHeartbeatDecisions.tryEmit(decision)
+            }
+            val decision = policy.onTick(now)
+            if (decision !is com.bingo.multiplayer.domain.engine.HeartbeatDecision.NoOp) {
+                _matchHeartbeatDecisions.tryEmit(decision)
+            }
+        }
+    }
+
 
     @Volatile private var isSubscribed: Boolean = false
     @Volatile private var lastStartedMatchSeed: Long = 0L
@@ -306,6 +437,12 @@ class OnlineRoomSyncManager(
 
                 client.setCallback(object : MqttCallbackExtended {
                     override fun connectComplete(reconnect: Boolean, serverURI: String?) {
+                        activeMatchConnectionGeneration = UUID.randomUUID().toString()
+                        val policy = matchHeartbeatPolicy
+                        if (policy != null && !policy.isLocalHealthy) {
+                            val decision = policy.onLocalHealthRestored()
+                            _matchHeartbeatDecisions.tryEmit(decision)
+                        }
                         scope.launch(Dispatchers.IO) {
                             subscribeToRoom(cleanCode)
                             sendJoinPacket()
@@ -350,6 +487,12 @@ class OnlineRoomSyncManager(
 
                     override fun connectionLost(cause: Throwable?) {
                         isSubscribed = false
+                        matchHeartbeatPolicy?.let { policy ->
+                            if (policy.isLocalHealthy) {
+                                val decision = policy.onLocalHealthLost()
+                                _matchHeartbeatDecisions.tryEmit(decision)
+                            }
+                        }
                         scope.launch(Dispatchers.IO) {
                             delay(1500L)
                             val code = currentRoomCode
@@ -488,7 +631,7 @@ class OnlineRoomSyncManager(
             try {
                 var retryCount = 0
                 var client = mqttClient
-                val maxRetries = if (packet.type == "PICK_NUMBER" || packet.type == "PING" || packet.type == "PONG") 5 else 30
+                val maxRetries = if (packet.type == "MATCH_HEARTBEAT") 0 else if (packet.type == "PICK_NUMBER" || packet.type == "PING" || packet.type == "PONG") 5 else 30
                 while ((client == null || !client.isConnected) && retryCount < maxRetries) {
                     delay(100L)
                     retryCount++
@@ -498,7 +641,7 @@ class OnlineRoomSyncManager(
                     val outgoing = if (packet.senderInstanceId.isBlank()) packet.copy(senderInstanceId = instanceId) else packet
                     val payload = FastPacketCodec.encode(outgoing)
                     val qosLevel = when (packet.type) {
-                        "PICK_NUMBER", "PING", "PONG" -> 0 // Instant line-rate flight, zero ACK wait
+                        "PICK_NUMBER", "PING", "PONG", "MATCH_HEARTBEAT" -> 0 // Instant line-rate flight, zero ACK wait, non-retained, disposable
                         "TURN_TIMEOUT", "GAME_SYNC", "START_GAME", "PLAY_AGAIN", "ROOM_STATE", "SURRENDER", "LEAVE" -> 1 // Guaranteed delivery
                         else -> 1 // Guaranteed delivery for room control & state (START_GAME, PLAY_AGAIN, BOARD_READY, ROOM_STATE, etc.)
                     }
@@ -923,6 +1066,11 @@ class OnlineRoomSyncManager(
             }
 
             "LEAVE" -> {
+                if (is1v1MatchActive) {
+                    // Protected by 1v1 heartbeat policy: transport disconnects or Last Will
+                    // must never alter immutable match participants or cause premature departure
+                    return
+                }
                 if (packet.playerId.isNotEmpty()) {
                     val existing = playerRegistry[packet.playerId]
                     if (existing != null) {
@@ -945,6 +1093,7 @@ class OnlineRoomSyncManager(
 
             "PING" -> {
                 if (packet.playerId == localPlayer?.id || com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(packet.playerId, localPlayer?.id ?: "")) {
+                    lastBrokerReceiveEchoAt = android.os.SystemClock.elapsedRealtime()
                     // Direct broker round-trip echo: provides exact client-to-broker network ping
                     if (packet.pingTimestamp > 0L) {
                         val brokerRtt = (System.currentTimeMillis() - packet.pingTimestamp).coerceAtLeast(1L)
@@ -952,6 +1101,47 @@ class OnlineRoomSyncManager(
                         val smoothed = if (cur <= 0L) brokerRtt else ((cur * 0.60) + (brokerRtt * 0.40)).toLong().coerceAtLeast(1L)
                         _pingMs.value = smoothed
                         NetworkPingMonitor.recordExternalPing(smoothed)
+                    }
+                }
+            }
+
+            "MATCH_HEARTBEAT" -> {
+                val policy = matchHeartbeatPolicy
+                if (policy != null && packet.matchId == policy.matchId) {
+                    val myId = localPlayer?.id ?: ""
+                    val isForMe = packet.peerUid == myId || com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(packet.peerUid, myId)
+                    val isFromPeer = packet.playerId == policy.peerUid || com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(packet.playerId, policy.peerUid)
+                    if (isForMe && isFromPeer) {
+                        if (packet.heartbeatAction == "PROBE") {
+                            // Foreground peer sent PROBE; reply immediately with ACK addressing requesting generation
+                            if (AppLifecycleObserver.isAppInForeground.value) {
+                                val ackPacket = RoomMessagePacket(
+                                    type = "MATCH_HEARTBEAT",
+                                    protocolVersion = packet.protocolVersion,
+                                    matchId = packet.matchId,
+                                    playerId = myId,
+                                    peerUid = packet.playerId,
+                                    connectionGeneration = packet.connectionGeneration,
+                                    sequence = packet.sequence,
+                                    challengeId = packet.challengeId,
+                                    heartbeatAction = "ACK",
+                                    timestamp = System.currentTimeMillis()
+                                )
+                                broadcastPacket(ackPacket)
+                            }
+                        } else if (packet.heartbeatAction == "ACK") {
+                            // Verify generation matches our active connection generation
+                            if (packet.connectionGeneration == activeMatchConnectionGeneration) {
+                                val challengeSentAt = outstandingChallenges.remove(packet.challengeId)
+                                val nowMonotonic = android.os.SystemClock.elapsedRealtime()
+                                if (challengeSentAt != null && (nowMonotonic - challengeSentAt) <= 5000L) {
+                                    val decision = policy.onFreshPeerResponse(nowMonotonic)
+                                    if (decision !is com.bingo.multiplayer.domain.engine.HeartbeatDecision.NoOp) {
+                                        _matchHeartbeatDecisions.tryEmit(decision)
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1065,6 +1255,7 @@ class OnlineRoomSyncManager(
             }
         }
 
+        stopMatchHeartbeat()
         heartbeatJob?.cancel()
         livenessJob?.cancel()
         pingJob?.cancel()

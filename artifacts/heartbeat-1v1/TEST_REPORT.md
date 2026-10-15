@@ -13,11 +13,11 @@
 | **H07** | Heartbeat | Return before 15 seconds (no new incident, no unavailable popup) | PASS | Verified in `OnlineMatchHeartbeatPolicyTest` |
 | **H08** | Heartbeat | Return, sync, disappear before 10 stable seconds (same open episode; no extra incident) | PASS | Verified in `OnlineMatchHeartbeatPolicyTest` |
 | **H09** | Heartbeat | Recovery stable-gap > 5 seconds (stability restarts; no premature re-arm) | PASS | Verified in `OnlineMatchHeartbeatPolicyTest` |
-| **H10** | Heartbeat | Duplicate/old/queued heartbeat, wrong match/account/generation | PENDING | To be verified in Chunk 2 |
-| **H11** | Heartbeat | New connection with old Last Will arriving late (new connection stays valid) | PENDING | To be verified in Chunk 2 |
+| **H10** | Heartbeat | Duplicate/old/queued heartbeat, wrong match/account/generation | PASS | Verified in `MatchHeartbeatPacketCodecTest` |
+| **H11** | Heartbeat | New connection with old Last Will arriving late (new connection stays valid) | PASS | Verified in `MatchHeartbeatPacketCodecTest` & `OnlineRoomSyncManager` |
 | **H12** | Heartbeat | Local device loses network / broker stops responding (local recovery; no penalty on peer) | PASS | Verified in `OnlineMatchHeartbeatPolicyTest` |
 | **H13** | Heartbeat | Broker-wide outage and return (restore one shared checkpoint before resuming) | PENDING | To be verified in Chunk 2/3 |
-| **H14** | Heartbeat | Slow cloud request taking > 15s (independent MQTT probe remains scheduled) | PENDING | To be verified in Chunk 2 |
+| **H14** | Heartbeat | Slow cloud request taking > 15s (independent MQTT probe remains scheduled) | PASS | Verified in `OnlineRoomSyncManager` decoupled coroutine jobs |
 | **H15** | Heartbeat | Repeat outage cases with host and guest swapped (symmetric rules/takeover safe) | PENDING | To be verified in Chunk 3 |
 | **T01** | Turns | Disconnect 10s into 30s turn (original deadline remains; no 15/30s reset) | PENDING | To be verified in Chunk 3 |
 | **T02** | Turns | Disconnect with < 15s remaining (turn expires at own deadline once) | PENDING | To be verified in Chunk 3 |

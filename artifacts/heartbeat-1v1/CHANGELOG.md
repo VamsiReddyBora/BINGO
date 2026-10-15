@@ -57,6 +57,21 @@
 - Storage / packet changes: None in this chunk (pure policy reducer).
 - Validation: Full JVM suite passed (318 unit tests, 0 failures, 0 errors, 31 suites). Direct unit tests in `OnlineMatchHeartbeatPolicyTest` verifying H01, H02, H03, H04, H05, H06, H07, H08, H09, C01, C02, C03, H12, R11.
 - Remaining concern: None for pure reducer; ready for transport and coordinator integration in Chunks 2 & 3.
-- Rollback: `git checkout a13d39edb0ff6a67d272cac187f1ed9fb294f9e9 -- app/src/main/java/com/bingo/multiplayer/domain/engine/OnlineMatchHeartbeatPolicy.kt app/src/test/java/com/bingo/multiplayer/domain/engine/OnlineMatchHeartbeatPolicyTest.kt`
+### Change 002 — Dedicated Transport, Match Heartbeat Codec, & Decoupled Scheduler
+- Started / completed: Started 2026-10-15 09:56 IST / Completed 2026-10-15 10:02 IST
+- Checkpoint before edit: f0bdb6e
+- Files and symbols:
+  - `app/src/main/java/com/bingo/multiplayer/domain/network/OnlineRoomSyncManager.kt` (`RoomMessagePacket`, `activeMatchConnectionGeneration`, `startMatchHeartbeat`, `stopMatchHeartbeat`, decoupled coroutine jobs, QoS 0 disposable heartbeats, broker receive path echo tracking, Last Will safety for active 1v1)
+  - `app/src/main/java/com/bingo/multiplayer/domain/network/FastPacketCodec.kt` (`MATCH_HEARTBEAT` codec path `MHB|`)
+  - `app/src/test/java/com/bingo/multiplayer/domain/network/MatchHeartbeatPacketCodecTest.kt` (6 unit tests)
+- Previous behavior: Match heartbeats shared the 2.5s loop with blocking cloud Firestore room reconciliation. Packets lacked matchId, generation, intended peer UID, and challenge IDs. MQTT Last Will was an unvalidated `LEAVE` that could prematurely forfeit an ongoing 1v1 match on brief socket drops.
+- New behavior: Adds `MATCH_HEARTBEAT` packet type with `PROBE`/`ACK` challenges, connection generation, intended peer UID, sequence, and protocol version. Decouples the 2.5s match probe job from cloud reconciliation so slow HTTP/cloud requests never starve heartbeats. Probes are QoS 0, non-retained, and non-queued. Challenges must be answered within 5,000 ms and match the active generation. Broker receive health is tracked via broker self-echoes.
+- Scope guard: Lobby heartbeats and group matches continue using standard `HEARTBEAT` and cloud reconciliation. `MATCH_HEARTBEAT` is scoped strictly to active 2-player match connections.
+- Storage / packet changes: Backward-compatible additions to `RoomMessagePacket` with safe default values; compact `MHB|` micro-payload encoding in `FastPacketCodec` with JSON fallback.
+- Validation: Full JVM suite passed (324 unit tests, 0 failures, 0 errors, 32 suites). Direct unit tests in `MatchHeartbeatPacketCodecTest` verifying H10, H11, H14, challenge-reply round-trips, generation isolation, and codec serialization.
+- Remaining concern: Integration with `RootNavGraph` coordinator and game screen UI dialog in Chunk 3.
+- Rollback: `git checkout f0bdb6e -- app/src/main/java/com/bingo/multiplayer/domain/network/OnlineRoomSyncManager.kt app/src/main/java/com/bingo/multiplayer/domain/network/FastPacketCodec.kt`
+
+
 
 
