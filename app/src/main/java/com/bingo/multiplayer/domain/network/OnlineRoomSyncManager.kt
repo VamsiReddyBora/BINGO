@@ -52,6 +52,7 @@ data class RoomMessagePacket(
     val runnerPlayerIds: List<String> = emptyList(),
     val protocolVersion: Int = 0,
     val reliablePolicyVersion: Int = 0,
+    val hostWaitVersion: Int = 0,
     val matchId: String = "",
     val peerUid: String = "",
     val connectionGeneration: String = "",
@@ -71,6 +72,7 @@ data class RoomMessagePacket(
     val requestId: String = "",
     val ownerId: String = "",
     val reliableSnapshot: com.bingo.multiplayer.domain.engine.ReliableMatchSnapshot? = null,
+    val hostWaitSnapshot: com.bingo.multiplayer.domain.engine.ReliableMatchSnapshot? = null,
     val matchIntent: com.bingo.multiplayer.domain.engine.MatchIntent? = null
 )
 
@@ -721,7 +723,8 @@ class OnlineRoomSyncManager(
                 }
                 if (client != null && client.isConnected) {
                     val outgoing = packet.copy(senderInstanceId = packet.senderInstanceId.ifBlank { instanceId },
-                        reliablePolicyVersion = 2,
+                        reliablePolicyVersion = com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.VERSION,
+                        hostWaitVersion = 1,
                         protocolVersion = if (packet.type in setOf("START_GAME", "PLAY_AGAIN") && packet.players.size == 2) 2 else packet.protocolVersion)
                     val payload = FastPacketCodec.encode(outgoing)
                     val qosLevel = when (packet.type) {

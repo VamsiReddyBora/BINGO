@@ -37,6 +37,8 @@ data class ReliableMatchSnapshot(
     val paused: Boolean = false,
     val pauseOwnerId: String = "",
     val remainingMillis: Long = 30_000,
+    val elapsedPlayMillis: Long = 0,
+    val recoveryId: String = "",
     val final: MatchFinal? = null,
     val acceptedActions: List<String> = emptyList()
 ) {
@@ -46,7 +48,7 @@ data class ReliableMatchSnapshot(
         if (ids.size != 2 || ids.distinct().size != 2 || ids.any { it.isBlank() } || hostId !in ids) return false
         if (participants.count { it.isHost } != 1 || participants.first { it.isHost }.id != hostId) return false
         if (boards.keys != ids.toSet() || order.toSet() != ids.toSet() || order.size != 2 || currentPlayerId !in ids) return false
-        if (turn < 1 || revision < 0 || sequence < 0 || remainingMillis !in 0L..30_000L) return false
+        if (turn < 1 || revision < 0 || sequence < 0 || elapsedPlayMillis < 0 || remainingMillis !in 0L..30_000L) return false
         val size = boards.values.first().size
         if (size !in 3..10 || boards.values.any { it.size != size || it.cells.map { c -> c.number }.toSet() != (1..size*size).toSet() }) return false
         if (picks.map { it.number }.distinct().size != picks.size || picks.zipWithNext().any { it.first.turn >= it.second.turn }) return false
@@ -104,23 +106,65 @@ class ReliableMatchCoordinator(
         private set
     private var deadline: Long? = null
     private var suspendedRemaining = initial.remainingMillis
+    private var elapsedBase = initial.elapsedPlayMillis
+    private var runningSince: Long? = null
     val isOwner: Boolean get() = localUid == state.hostId && ownerId == state.ownerId
 
     init { require(initial.valid() || initial.boards.isEmpty()) }
 
     @Synchronized fun resumeObservation() {
-        if (!state.valid()) return
+        if (!state.valid() || ready) return
         ready = true
-        deadline = if (!state.paused && state.final == null) clock.elapsedRealtime() + suspendedRemaining else null
+        val running = !state.paused && state.final == null && state.recoveryId.isEmpty()
+        deadline = if (running) clock.elapsedRealtime() + suspendedRemaining else null
+        runningSince = if (running) clock.elapsedRealtime() else null
     }
     @Synchronized fun suspendObservation() {
         suspendedRemaining = remainingMillis()
+        elapsedBase = elapsedMillis()
+        runningSince = null
         deadline = null
         ready = false
     }
     @Synchronized fun remainingMillis(): Long =
         deadline?.let { (it - clock.elapsedRealtime()).coerceIn(0, 30_000) } ?: suspendedRemaining
-    @Synchronized fun sampled(): ReliableMatchSnapshot = state.copy(remainingMillis = remainingMillis())
+    private fun elapsedMillis(): Long = elapsedBase + (runningSince?.let { (clock.elapsedRealtime() - it).coerceAtLeast(0) } ?: 0)
+    @Synchronized fun sampled(): ReliableMatchSnapshot = state.copy(remainingMillis = remainingMillis(), elapsedPlayMillis = elapsedMillis())
+
+    /** Fixed host only. Recovery is a system hold, independent of the user's manual pause. */
+    @Synchronized fun holdForRecovery(id: String, frozen: ReliableMatchSnapshot? = null): Boolean {
+        if (!isOwner || !state.valid() || id.isBlank() || state.final != null) return false
+        suspendObservation()
+        var next = sampled()
+        if (frozen != null && samePosition(next, frozen)) {
+            next = next.copy(remainingMillis = minOf(next.remainingMillis, frozen.remainingMillis),
+                elapsedPlayMillis = maxOf(next.elapsedPlayMillis, frozen.elapsedPlayMillis))
+        }
+        next = next.copy(recoveryId = id, revision = state.revision + 1, sequence = state.sequence + 1)
+        if (!commit(next)) return false
+        state = next
+        suspendedRemaining = next.remainingMillis
+        elapsedBase = next.elapsedPlayMillis
+        ready = true
+        return true
+    }
+
+    @Synchronized fun resumeAfterRecovery(id: String): Boolean {
+        if (!isOwner || !ready || state.recoveryId != id || id.isEmpty()) return false
+        val next = sampled().copy(recoveryId = "", revision = state.revision + 1, sequence = state.sequence + 1)
+        if (!commit(next)) { suspendObservation(); return false }
+        state = next
+        suspendedRemaining = next.remainingMillis
+        elapsedBase = next.elapsedPlayMillis
+        ready = false
+        resumeObservation()
+        return true
+    }
+
+    private fun samePosition(a: ReliableMatchSnapshot, b: ReliableMatchSnapshot): Boolean =
+        b.valid() && a.matchId == b.matchId && a.roomCode == b.roomCode && a.ownerId == b.ownerId && a.hostId == b.hostId && a.order == b.order &&
+            a.turn == b.turn && a.currentPlayerId == b.currentPlayerId && a.boards == b.boards &&
+            a.picks == b.picks && a.paused == b.paused && a.pauseOwnerId == b.pauseOwnerId && b.final == null
 
     @Synchronized fun acceptRemote(snapshot: ReliableMatchSnapshot): Boolean {
         if (!snapshot.valid() || snapshot.matchId != state.matchId || snapshot.roomCode != state.roomCode || snapshot.hostId != state.hostId || snapshot.ownerId != state.ownerId) return false
@@ -129,14 +173,17 @@ class ReliableMatchCoordinator(
         if (state.final != null && snapshot.final != state.final) return false
         state = snapshot
         suspendedRemaining = snapshot.remainingMillis
-        deadline = if (ready && !snapshot.paused && snapshot.final == null) clock.elapsedRealtime() + snapshot.remainingMillis else null
+        elapsedBase = snapshot.elapsedPlayMillis
+        val running = ready && !snapshot.paused && snapshot.final == null && snapshot.recoveryId.isEmpty()
+        deadline = if (running) clock.elapsedRealtime() + snapshot.remainingMillis else null
+        runningSince = if (running) clock.elapsedRealtime() else null
         return true
     }
 
     @Synchronized fun dispatch(intent: MatchIntent, healthy: Boolean = true): Boolean {
         if (!isOwner || !ready || !healthy || intent.matchId != state.matchId || intent.actorId !in state.order || intent.id.isBlank()) return false
         if (intent.id in state.acceptedActions) return true
-        if (state.final != null || intent.expectedRevision != state.revision || intent.turn != state.turn) return false
+        if (state.final != null || state.recoveryId.isNotEmpty() || intent.expectedRevision != state.revision || intent.turn != state.turn) return false
         val now = clock.elapsedRealtime()
         var next = sampled()
         val peer = state.order.first { it != intent.actorId }
@@ -181,18 +228,22 @@ class ReliableMatchCoordinator(
         val changedTurn = next.turn != state.turn
         state = next
         suspendedRemaining = next.remainingMillis
+        elapsedBase = next.elapsedPlayMillis
+        runningSince = if (next.paused || next.final != null) null else now
         deadline = if (next.paused || next.final != null) null else if (changedTurn || intent.kind == "RESUME") now + next.remainingMillis else deadline
         return true
     }
 
     @Synchronized fun updatePeerEpisode(peer: String, episode: MatchEpisode): Boolean {
-        if (!isOwner || !ready || peer == localUid || peer !in state.order || state.final != null) return false
+        if (!isOwner || !ready || peer == localUid || peer !in state.order || state.final != null || state.recoveryId.isNotEmpty()) return false
         if (state.episodes[peer] == episode) return true
         val previous = state.episodes[peer]
         if (previous != null && episode.count < previous.count) return false
         val next = sampled().copy(episodes = state.episodes + (peer to episode), revision = state.revision + 1, sequence = state.sequence + 1)
         if (!next.valid() || !commit(next)) { suspendObservation(); return false }
+        elapsedBase = elapsedMillis()
         state = next
+        runningSince = if (deadline != null) clock.elapsedRealtime() else null
         return true
     }
 
@@ -200,7 +251,9 @@ class ReliableMatchCoordinator(
         if (!isOwner || !ready) return false
         val next = sampled().copy(sequence = state.sequence + 1)
         if (!commit(next)) { suspendObservation(); return false }
+        elapsedBase = elapsedMillis()
         state = next
+        runningSince = if (deadline != null) clock.elapsedRealtime() else null
         return true
     }
 }

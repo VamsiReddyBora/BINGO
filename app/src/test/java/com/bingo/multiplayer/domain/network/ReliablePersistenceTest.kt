@@ -8,6 +8,21 @@ import org.junit.After
 import org.junit.Test
 
 class ReliablePersistenceTest {
+    @Test fun hostHoldSaveAndClearAreAccountAndMatchScoped() {
+        val prefs = FakeSharedPreferences(); OngoingMatchStore.customPrefs = prefs
+        val players = listOf(com.bingo.multiplayer.domain.model.Player("A","Kevin",isHost=true), com.bingo.multiplayer.domain.model.Player("B","Stuart"))
+        val frozen = com.bingo.multiplayer.domain.engine.ReliableMatchSnapshot(matchId="88",roomCode="ROOM",seed=88,hostId="A",ownerId="owner-A",
+            participants=players,boards=mapOf("A" to com.bingo.multiplayer.domain.engine.BingoEngine().generateBoard(3,1),"B" to com.bingo.multiplayer.domain.engine.BingoEngine().generateBoard(3,2)),
+            order=listOf("A","B"),currentPlayerId="A",remainingMillis=14_250)
+        OngoingMatchStore.saveOngoingMatch(null,OngoingMatchData("ROOM",88,3,accountUid="B",is1v1Match=true,reliableSnapshot=frozen))
+        assertTrue(OngoingMatchStore.saveHostWait(null,"B",88,frozen))
+        assertEquals(frozen,OngoingMatchStore.getOngoingMatch(null,"B")!!.hostWaitSnapshot)
+        assertFalse(OngoingMatchStore.saveHostWait(null,"B",89,null))
+        assertFalse(OngoingMatchStore.saveHostWait(null,"A",88,frozen))
+        assertEquals(frozen,OngoingMatchStore.getOngoingMatch(null,"B")!!.hostWaitSnapshot)
+        assertTrue(OngoingMatchStore.saveHostWait(null,"B",88,null))
+        assertNull(OngoingMatchStore.getOngoingMatch(null,"B")!!.hostWaitSnapshot)
+    }
     @After fun cleanup() { OngoingMatchStore.customPrefs = null }
     @Test fun ownerlessHostCheckpointIsNotAdoptedByGuestAndLegacyDataIsPreserved() {
         val prefs = FakeSharedPreferences(); OngoingMatchStore.customPrefs = prefs

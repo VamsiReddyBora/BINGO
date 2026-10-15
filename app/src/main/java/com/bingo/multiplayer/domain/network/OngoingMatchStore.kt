@@ -46,7 +46,9 @@ data class OngoingMatchData(
     val isEpisodeOpen: Boolean = false,
     val peerAvailabilityState: String = "RESPONSIVE",
     val reliableSnapshot: ReliableMatchSnapshot? = null,
-    val reliablePending: Boolean = false
+    val reliablePending: Boolean = false,
+    // Local frozen display checkpoint, never a second authority or accepted shared revision.
+    val hostWaitSnapshot: ReliableMatchSnapshot? = null
 )
 
 @Keep
@@ -127,7 +129,22 @@ object OngoingMatchStore {
             if (snapshot.sequence < previous.sequence || snapshot.revision < previous.revision) return false
             if (previous.final != null && snapshot.final != previous.final) return false
         }
-        return saveOngoingMatch(context, data)
+        val scoped = if (data.accountUid != snapshot.hostId) data.copy(
+            committedEpisodeCount = current.committedEpisodeCount, currentEpisodeId = current.currentEpisodeId,
+            isEpisodeOpen = current.isEpisodeOpen, peerAvailabilityState = current.peerAvailabilityState,
+            hostWaitSnapshot = current.hostWaitSnapshot
+        ) else data
+        return saveOngoingMatch(context, scoped)
+    }
+
+    @Synchronized
+    fun saveHostWait(context: Context?, accountUid: String, seed: Long, snapshot: ReliableMatchSnapshot?): Boolean {
+        if (accountUid.isBlank()) return false
+        val current = getOngoingMatch(context, accountUid) ?: return false
+        if (current.accountUid != accountUid || current.matchSeed != seed) return false
+        if (snapshot != null && (!snapshot.valid() || snapshot.seed != seed || snapshot.roomCode != current.roomCode ||
+                    accountUid !in snapshot.order || accountUid == snapshot.hostId)) return false
+        return saveOngoingMatch(context, current.copy(hostWaitSnapshot = snapshot))
     }
 
     /**

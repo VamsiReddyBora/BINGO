@@ -187,6 +187,9 @@ fun RootNavGraph(
     var frozenRemainingTurnMillis by remember { mutableStateOf<Long?>(null) }
     var reliableClient by remember { mutableStateOf<ReliableMatchClient?>(null) }
     var reliableStatus by remember { mutableStateOf("") }
+    var isHostDisconnected by remember { mutableStateOf(false) }
+    var reliableElapsedPlayMillis by remember { androidx.compose.runtime.mutableLongStateOf(0L) }
+    var reliableStartAttempt by remember { androidx.compose.runtime.mutableLongStateOf(0L) }
     val reliableScope = remember { CoroutineScope(SupervisorJob() + Dispatchers.IO) }
     DisposableEffect(Unit) { onDispose { reliableClient?.close(); reliableScope.cancel() } }
 
@@ -292,7 +295,9 @@ fun RootNavGraph(
     val authStateValue by authRepository.authState.collectAsState()
     val currentAuthUser = (authStateValue as? AuthState.Authenticated)?.user
     LaunchedEffect(currentAuthUser?.uid) {
-        reliableClient?.let { if (it.accountId != currentAuthUser?.uid) { it.close(); reliableClient = null } }
+        reliableClient?.let { if (it.accountId != currentAuthUser?.uid) {
+            reliableStartAttempt++; it.close(); reliableClient = null; isHostDisconnected = false
+        } }
     }
 
 
@@ -346,6 +351,7 @@ fun RootNavGraph(
         currentRoute != Screen.Login.route
 
     BackHandler(enabled = shouldInterceptBack) {
+        if (currentRoute == Screen.Game.route && isHostDisconnected) return@BackHandler
         if (currentRoute == Screen.ManualBoardDesign.route) {
             return@BackHandler
         }
@@ -829,7 +835,9 @@ fun RootNavGraph(
                 playerBoard.size, playerBoard.cells.map { it.number },
                 playerBoard.cells.filter { it.isMarked }.map { it.number }
             ) ?: 0,
-            durationSeconds = if (matchStartTimeMs > 0L) ((System.currentTimeMillis() - matchStartTimeMs) / 1000L).coerceAtLeast(0L) else 0L,
+            durationSeconds = if (currentGameMode == GameMode.ONLINE_ROOM && matchParticipants.size == 2)
+                reliableElapsedPlayMillis / 1000L
+            else if (matchStartTimeMs > 0L) ((System.currentTimeMillis() - matchStartTimeMs) / 1000L).coerceAtLeast(0L) else 0L,
             finalBoardNumbers = playerBoard.cells.map { it.number },
             markedNumbers = playerBoard.cells.filter { it.isMarked }.map { it.number },
             stableResultId = stableResultId,
@@ -856,9 +864,12 @@ fun RootNavGraph(
             if (client.accountId != getLocalUid()) { client.close(); return@collect }
             if (client !== reliableClient || currentGameMode != GameMode.ONLINE_ROOM || client.activeMatchId != currentMatchSeed.toString()) return@collect
             reliableStatus = v.message
+            isHostDisconnected = v.hostDisconnected
+            if (v.hostDisconnected) showLeaveMatchDialog = false
             isReconcilingMatch = v.waiting
             turnTimer = ((v.remainingMillis + 999) / 1000).toInt()
             val snapshot = v.snapshot ?: return@collect
+            reliableElapsedPlayMillis = snapshot.elapsedPlayMillis
             if (snapshot.sequence != appliedSequence) {
                 if (appliedSequence >= 0 && !v.waiting && snapshot.picks.size > pickedNumbersHistory.size) {
                     com.bingo.multiplayer.core.designsystem.BingoSoundEffects.playPickSound()
@@ -1087,7 +1098,9 @@ fun RootNavGraph(
 
     fun startReliableMatch(saved: OngoingMatchData? = null) {
         if (currentGameMode != GameMode.ONLINE_ROOM || matchParticipants.size != 2) return
+        val startAttempt = ++reliableStartAttempt
         reliableClient?.close(); reliableClient = null
+        isHostDisconnected = saved?.hostWaitSnapshot != null || (saved != null && !saved.isHost)
         isReconcilingMatch = true
         reliableStatus = "Synchronizing match…"
         val uid = getLocalUid()
@@ -1103,11 +1116,10 @@ fun RootNavGraph(
         val current = currentTurnPlayerId
         reliableScope.launch {
             val ownerPrefs = context.applicationContext.getSharedPreferences("reliable_match_installation", android.content.Context.MODE_PRIVATE)
-            var installation = ownerPrefs.getString("installation", null)
-            if (installation.isNullOrBlank()) {
-                installation = java.util.UUID.randomUUID().toString()
-                if (!ownerPrefs.edit().putString("installation", installation).commit()) return@launch
-            }
+            val installation = synchronized(OngoingMatchStore) {
+                ownerPrefs.getString("installation", null)?.takeIf { it.isNotBlank() }
+                    ?: java.util.UUID.randomUUID().toString().takeIf { ownerPrefs.edit().putString("installation", it).commit() }
+            } ?: return@launch
             val host = participants.singleOrNull { it.isHost }?.id ?: return@launch
             val original = saved?.reliableSnapshot
             val initial = original ?: ReliableMatchSnapshot(matchId = seed.toString(), roomCode = code, seed = seed,
@@ -1123,6 +1135,8 @@ fun RootNavGraph(
                 override suspend fun publish(packet: RoomMessagePacket, retained: Boolean, stateTopic: Boolean) = onlineRoomSync.reliablePublish(packet, retained, stateTopic)
             }
             val checkpoints = object : ReliableMatchCheckpoint {
+                override fun saveHostWait(snapshot: ReliableMatchSnapshot?): Boolean =
+                    OngoingMatchStore.saveHostWait(context, uid, seed, snapshot)
                 override fun save(snapshot: ReliableMatchSnapshot, pending: Boolean): Boolean {
                     val mine = snapshot.boards[uid] ?: return false
                     val old = OngoingMatchStore.getOngoingMatch(context, uid)
@@ -1142,16 +1156,17 @@ fun RootNavGraph(
                         currentEpisodeId = episode?.id ?: old?.currentEpisodeId,
                         isEpisodeOpen = episode?.open ?: old?.isEpisodeOpen ?: false,
                         peerAvailabilityState = old?.peerAvailabilityState ?: "SYNCING",
-                        reliableSnapshot = snapshot, reliablePending = pending)
+                        startedAt = old?.startedAt ?: System.currentTimeMillis(),
+                        reliableSnapshot = snapshot, reliablePending = pending, hostWaitSnapshot = old?.hostWaitSnapshot)
                     return OngoingMatchStore.saveReliableCheckpoint(context, data)
                 }
             }
             withContext(Dispatchers.Main) {
-                if (getLocalUid() != uid || currentMatchSeed != seed || currentGameMode != GameMode.ONLINE_ROOM) return@withContext
+                if (startAttempt != reliableStartAttempt || getLocalUid() != uid || currentMatchSeed != seed || currentGameMode != GameMode.ONLINE_ROOM) return@withContext
                 reliableClient = ReliableMatchClient(initial, uid, installation, object : Clock {
                     override fun elapsedRealtime() = android.os.SystemClock.elapsedRealtime()
                 }, transport, checkpoints, reliableScope, original != null && !saved.reliablePending,
-                    onSynchronized = { onlineRoomSync.notifyStateSynchronized() })
+                    onSynchronized = { onlineRoomSync.notifyStateSynchronized() }, initialHostWait = saved?.hostWaitSnapshot)
             }
         }
     }
@@ -1178,7 +1193,7 @@ fun RootNavGraph(
         hostSeed: Long? = null,
         incomingPlayersList: List<Player> = emptyList()
     ) {
-        reliableClient?.close(); reliableClient = null; reliableStatus = ""
+        reliableClient?.close(); reliableClient = null; reliableStatus = ""; isHostDisconnected = false; reliableStartAttempt++
         currentGameMode = mode
         currentAiDifficulty = difficulty
         boardSize = size
@@ -1852,7 +1867,7 @@ fun RootNavGraph(
 
     fun handleIncomingPacket(packet: RoomMessagePacket) {
         if (currentGameMode == GameMode.ONLINE_ROOM && packet.type in setOf("START_GAME", "PLAY_AGAIN") &&
-            packet.players.ifEmpty { realTimePlayers }.size == 2 && packet.protocolVersion != 2) {
+            packet.players.ifEmpty { realTimePlayers }.size == 2 && (packet.protocolVersion != 2 || packet.hostWaitVersion != 1)) {
             Toast.makeText(context, "Both players need the updated multiplayer version.", Toast.LENGTH_LONG).show()
             return
         }
@@ -4178,6 +4193,7 @@ fun RootNavGraph(
         // 6. Active Game Screen
         composable(Screen.Game.route) {
             BackHandler {
+                if (isHostDisconnected) return@BackHandler
                 if (!isGameOver) {
                     showLeaveMatchDialog = true
                 } else {
@@ -4347,10 +4363,10 @@ fun RootNavGraph(
                             opponentDisconnectMessage = "Opponent disconnected. You win by forfeit!"
                         } else {
                             val hostUid = activeList.find { it.isHost }?.id ?: ""
-                            val isHostDisconnected = com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(activePicker, hostUid)
+                            val isLegacyHostTurn = com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(activePicker, hostUid)
                             val isHostGone = isHostLeftGame || isPlayerDisconnected(hostUid)
                             val isActingHost = isHostGone && activeRemaining.firstOrNull()?.id == getLocalUid()
-                            val isAuthorizedSkipper = isHosting || isHostDisconnected || isActingHost || activeRemaining.size <= 2
+                            val isAuthorizedSkipper = isHosting || isLegacyHostTurn || isActingHost || activeRemaining.size <= 2
                             if (isAuthorizedSkipper) {
                                 val pickerName = activeList.find { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it.id, activePicker) }?.displayName ?: "Player"
                                 val skipText = "📢 Turn skipped ($pickerName reconnecting...)"
@@ -4433,6 +4449,7 @@ fun RootNavGraph(
                         val observingUid = getLocalUid()
                         val observingSeed = currentMatchSeed
                         var observed = policy.toSnapshot()
+                        if (observed.state == PeerAvailabilityState.UNREACHABLE && reliableClient?.isHost == false) reliableClient?.waitForHost()
                         // Persist the episode before presenting its actions. Retry a failed write
                         // without publishing eligibility, and never write into a later match/account.
                         while (isActive) {
@@ -4533,6 +4550,8 @@ fun RootNavGraph(
             }
 
             GameScreen(
+                hostDisconnected = currentGameMode == GameMode.ONLINE_ROOM && matchParticipants.size == 2 && isHostDisconnected && !isGameOver,
+                gameplaySuspended = isReconcilingMatch,
                 useAcceptedChatHistory = currentGameMode == GameMode.ONLINE_ROOM && matchParticipants.size == 2,
                 synchronizationMessage = if (currentGameMode == GameMode.ONLINE_ROOM && matchParticipants.size == 2) reliableStatus else "",
                 board = playerBoard,
@@ -4557,7 +4576,7 @@ fun RootNavGraph(
                 isGamePaused = isGamePaused,
                 pausedByPlayerName = pausedByPlayerName,
                 onTogglePause = { togglePause() },
-                isOpponentUnreachable = isOpponentUnreachable,
+                isOpponentUnreachable = isOpponentUnreachable && reliableClient?.isHost != false,
                 interruptionEpisodeCount = interruptionEpisodeCount,
                 isClaimVictoryEligible = isClaimVictoryEligible,
                 onPauseGame = { handlePauseAction(true) },
@@ -4578,6 +4597,7 @@ fun RootNavGraph(
                 incomingEmoteScale = latestIncomingEmoteScale,
                 incomingEmoteTimestamp = latestIncomingEmoteTimestamp,
                 onSendEmote = { emoji, scaleMultiplier ->
+                    if (isHostDisconnected) return@GameScreen
                     if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
                         broadcastPacket(
                             RoomMessagePacket(
@@ -4797,7 +4817,7 @@ fun RootNavGraph(
                     }
                 },
                 onBackToMenu = {
-                    reliableClient?.leave(); reliableClient = null; reliableStatus = ""
+                    reliableClient?.leave(); reliableClient = null; reliableStatus = ""; isHostDisconnected = false; reliableStartAttempt++
                     onlineRoomSync.stopMatchHeartbeat()
                     val wasOver = isGameOver
                     if (wasOver) {
@@ -4929,7 +4949,7 @@ fun RootNavGraph(
                         winnerPlayerId = ""
                         activeWinReason = ""
                         activeRunnerPlayerIds = emptyList()
-                        reliableClient?.leave(); reliableClient = null; reliableStatus = ""
+                        reliableClient?.leave(); reliableClient = null; reliableStatus = ""; isHostDisconnected = false; reliableStartAttempt++
                         onlineRoomSync.stopMatchHeartbeat()
                         currentMatchSeed = 0L
                         pickedNumbersHistory.clear()
@@ -5181,7 +5201,7 @@ fun RootNavGraph(
     }
 
     // Accidental Exit Prevention: Leave Match Confirmation Dialog
-    if (showLeaveMatchDialog) {
+    if (showLeaveMatchDialog && !isHostDisconnected) {
         AlertDialog(
             onDismissRequest = { showLeaveMatchDialog = false },
             title = {

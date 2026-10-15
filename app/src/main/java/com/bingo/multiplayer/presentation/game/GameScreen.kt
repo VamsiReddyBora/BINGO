@@ -119,6 +119,8 @@ import com.bingo.multiplayer.presentation.components.RecentPicksQueuePill
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun GameScreen(
+    hostDisconnected: Boolean = false,
+    gameplaySuspended: Boolean = false,
     synchronizationMessage: String = "",
     useAcceptedChatHistory: Boolean = false,
     board: Board,
@@ -330,7 +332,7 @@ fun GameScreen(
     }
 
     // ── Turn Urgency Countdown & Warning Pulse ──
-    val isUrgentTimer = turnTimeRemaining <= 5 && !isGamePaused && !isGameOver
+    val isUrgentTimer = turnTimeRemaining <= 5 && !isGamePaused && !isGameOver && !gameplaySuspended
     val urgentInfiniteTransition = rememberInfiniteTransition(label = "urgentCountdownTransition")
     val urgentWarningAlpha by if (isUrgentTimer) {
         urgentInfiniteTransition.animateFloat(
@@ -479,7 +481,11 @@ fun GameScreen(
     }
 
 
-    if (showSurrenderDialog) {
+    BackHandler(enabled = hostDisconnected && !isGameOver) {}
+
+    if (hostDisconnected && !isGameOver) HostDisconnectedDialog()
+
+    if (showSurrenderDialog && !hostDisconnected) {
         val isMultiplayerLobbyGame = (onReturnToLobby != null)
         AlertDialog(
             onDismissRequest = { showSurrenderDialog = false },
@@ -594,6 +600,15 @@ fun GameScreen(
     var showInterruptionDialog by remember { mutableStateOf(false) }
     var showClaimConfirmationDialog by remember { mutableStateOf(false) }
 
+    LaunchedEffect(hostDisconnected) {
+        if (hostDisconnected) {
+            showSurrenderDialog = false
+            showInterruptionDialog = false
+            showClaimConfirmationDialog = false
+            showQuickChat = false
+        }
+    }
+
     LaunchedEffect(isOpponentUnreachable, interruptionEpisodeCount) {
         if (isOpponentUnreachable && interruptionEpisodeCount > 0) {
             showInterruptionDialog = true
@@ -603,7 +618,7 @@ fun GameScreen(
         }
     }
 
-    if (showInterruptionDialog && isOpponentUnreachable && !isGameOver) {
+    if (showInterruptionDialog && isOpponentUnreachable && !isGameOver && !hostDisconnected) {
         AlertDialog(
             onDismissRequest = { showInterruptionDialog = false },
             shape = RoundedCornerShape(20.dp),
@@ -691,7 +706,7 @@ fun GameScreen(
         )
     }
 
-    if (showClaimConfirmationDialog && isClaimVictoryEligible && !isGameOver) {
+    if (showClaimConfirmationDialog && isClaimVictoryEligible && !isGameOver && !hostDisconnected) {
         AlertDialog(
             onDismissRequest = { showClaimConfirmationDialog = false },
             shape = RoundedCornerShape(20.dp),

@@ -6,6 +6,32 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ReliableMatchCoordinatorTest {
+    @Test fun recoveryHoldRejectsActionsAndWrongResumeAndKeepsExactRemainder() {
+        val clock=FakeClock(); val c=ReliableMatchCoordinator(initial(),"A","installation-A",clock){true}
+        c.resumeObservation();clock.now=15_750
+        assertTrue(c.holdForRecovery("attempt-one"))
+        clock.now+=600_000
+        assertEquals(14_250L,c.remainingMillis())
+        assertEquals(15_750L,c.sampled().elapsedPlayMillis)
+        assertFalse(c.dispatch(intent(c,"PICK",number=5)))
+        assertFalse(c.dispatch(intent(c,"TIMEOUT")))
+        assertFalse(c.resumeAfterRecovery("old-attempt"))
+        assertTrue(c.resumeAfterRecovery("attempt-one"))
+        assertEquals(14_250L,c.remainingMillis())
+        clock.now+=14_250
+        assertTrue(c.dispatch(intent(c,"TIMEOUT")))
+        assertEquals(30_000L,c.remainingMillis())
+    }
+
+    @Test fun oldFrozenPositionCannotRewindAnAcceptedPickDuringRecovery() {
+        val clock=FakeClock();val c=ReliableMatchCoordinator(initial(),"A","installation-A",clock){true}
+        c.resumeObservation();val old=c.sampled().copy(remainingMillis=100)
+        assertTrue(c.dispatch(intent(c,"PICK",number=5)))
+        assertTrue(c.holdForRecovery("current-attempt",old))
+        assertEquals(listOf(5),c.state.picks.map{it.number})
+        assertEquals(2,c.state.turn)
+        assertEquals(30_000L,c.remainingMillis())
+    }
     private class FakeClock(var now: Long = 0) : Clock { override fun elapsedRealtime() = now }
     private fun initial() = ReliableMatchSnapshot(matchId = "123", roomCode = "TEST", seed = 123,
         hostId = "A", ownerId = "installation-A", participants = listOf(Player("A", "Kevin", isHost = true), Player("B", "Stuart")),

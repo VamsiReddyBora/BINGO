@@ -45,6 +45,11 @@ object LiveMqttRecoveryProbe {
         fun clear() { mqtt.publish(stateTopic,MqttMessage(ByteArray(0)).apply { qos=1; isRetained=true }).waitForCompletion(5000) }
     }
     private class Store(private val file: File) : ReliableMatchCheckpoint {
+        override fun saveHostWait(snapshot: ReliableMatchSnapshot?): Boolean {
+            val target = File(file.parentFile, file.name + ".hold")
+            if (snapshot == null) target.delete() else { target.parentFile?.mkdirs(); target.writeText(json.encodeToString(snapshot)) }
+            return true
+        }
         override fun save(snapshot: ReliableMatchSnapshot,pending: Boolean): Boolean {
             // Each simulated device gets its own private directory; the broker is the only bridge.
             val target = File(file.parentFile,if(pending) file.name+".pending" else file.name)
@@ -69,8 +74,8 @@ object LiveMqttRecoveryProbe {
             return@runBlocking
         }
         if(mode=="writer") {
-            val a=Endpoint(code,"A"); val b=Endpoint(code,"B"); a.connect(); b.connect()
-            val host=ReliableMatchClient(initial,"A","owner-A",clock,a,Store(File(directory,"A/state.json")),jobs)
+            var a=Endpoint(code,"A"); val b=Endpoint(code,"B"); a.connect(); b.connect()
+            var host=ReliableMatchClient(initial,"A","owner-A",clock,a,Store(File(directory,"A/state.json")),jobs)
             val guest=ReliableMatchClient(initial,"B","owner-B",clock,b,Store(File(directory,"B/state.json")),jobs)
             a.receiver=host::receive; b.receiver=guest::receive
             try {
@@ -87,7 +92,35 @@ object LiveMqttRecoveryProbe {
                     check(host.view.value.snapshot!!.boards==guest.view.value.snapshot!!.boards)
                 }
                 val sorted=samples.sorted()
-                println("METRIC request-to-both-accepted samples=${samples.size} medianMs=${sorted[sorted.size/2]} p95Ms=${sorted.last()} rawMs=$samples (50ms poll resolution; not physical tap latency)")
+                val median=(sorted[(sorted.size-1)/2]+sorted[sorted.size/2])/2.0
+                println("METRIC request-to-both-accepted samples=${samples.size} medianMs=$median p95Ms=${sorted.last()} rawMs=$samples (50ms poll resolution; not physical tap latency)")
+                val ownerCheckpoint = host.view.value.snapshot!!.copy(remainingMillis = host.view.value.remainingMillis)
+                val policy = OnlineMatchHeartbeatPolicy(initial.matchId,"A","live-host-wait",clock)
+                policy.initializeObservation("live-host-wait")
+                host.close(); a.close()
+                delay(15_100)
+                check(policy.onTick() is HeartbeatDecision.BecameUnreachable)
+                guest.waitForHost()
+                waitFor("15s host silence enters persistent blocking guest hold") { guest.view.value.hostDisconnected && guest.view.value.waiting }
+                val frozen = guest.view.value
+                check(frozen.remainingMillis in 0..30_000)
+                guest.request("PICK",number=9);guest.request("SURRENDER")
+                delay(2_000)
+                check(guest.view.value.remainingMillis == frozen.remainingMillis)
+                check(guest.view.value.snapshot == frozen.snapshot)
+                check(guest.view.value.snapshot!!.final == null)
+                println("PASS MQTT host hold freezes remainingMs=${frozen.remainingMillis}, board, turns and actions")
+                a=Endpoint(code,"A");a.connect()
+                host=ReliableMatchClient(ownerCheckpoint,"A","owner-A",clock,a,Store(File(directory,"A/state.json")),jobs,previouslyAccepted=true)
+                a.receiver=host::receive
+                waitFor("returning host and guest finish correlated recovery") { !host.view.value.waiting && !guest.view.value.waiting && !guest.view.value.hostDisconnected }
+                check(host.view.value.snapshot!!.boards == frozen.snapshot!!.boards)
+                check(guest.view.value.snapshot!!.picks == frozen.snapshot!!.picks)
+                check(host.view.value.snapshot!!.turn == frozen.snapshot!!.turn)
+                check(host.view.value.remainingMillis <= frozen.remainingMillis)
+                check(guest.view.value.remainingMillis <= frozen.remainingMillis)
+                check(kotlin.math.abs(host.view.value.remainingMillis - guest.view.value.remainingMillis) < 1500)
+                println("PASS MQTT rejoin preserves board/picks/turn; frozenMs=${frozen.remainingMillis}, hostMs=${host.view.value.remainingMillis}, guestMs=${guest.view.value.remainingMillis}")
                 guest.close(); b.close()
                 host.peerEpisode("B",MatchEpisode(3,"third-test-episode",true,true))
                 waitFor("prepared third-episode checkpoint published") { host.view.value.snapshot?.episodes?.get("B")?.count==3 }
