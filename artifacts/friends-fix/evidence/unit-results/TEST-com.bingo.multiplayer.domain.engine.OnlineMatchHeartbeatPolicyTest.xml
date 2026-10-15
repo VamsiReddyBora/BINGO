@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicyTest" tests="19" skipped="0" failures="0" errors="0" timestamp="2026-10-15T13:54:05" hostname="VR" time="0.012">
+  <properties/>
+  <testcase name="recoveryGapOf5000MillisPreservesStabilityBut5001MillisRestartsIt" classname="com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicyTest" time="0.006"/>
+  <testcase name="H06 - third separate outage makes manual Claim Victory eligible while unreachable" classname="com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicyTest" time="0.001"/>
+  <testcase name="H08 - return, sync, disappear before 10 stable seconds reopens SAME episode without extra incident" classname="com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicyTest" time="0.0"/>
+  <testcase name="H05 - two separate outages after stable recovery produces count 1 then 2 without claim victory" classname="com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicyTest" time="0.0"/>
+  <testcase name="HB04 - stable recovery after local reconnect closes the prior episode and re-arms for next outage" classname="com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicyTest" time="0.0"/>
+  <testcase name="H02 - silence at 14999 ms causes zero incidents, exactly 15000 ms triggers BecameUnreachable" classname="com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicyTest" time="0.001"/>
+  <testcase name="C03 - fresh recovery races with claim confirmation and rejects claim" classname="com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicyTest" time="0.0"/>
+  <testcase name="HB04 - 10s without recovery heartbeats does not close the episode and remains in same episode" classname="com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicyTest" time="0.0"/>
+  <testcase name="duplicateSyncDuringLateRecoveryDoesNotMoveTheStableWindowInEitherCallbackOrder" classname="com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicyTest" time="0.001"/>
+  <testcase name="C02 - eligible third incident claim confirmed once succeeds" classname="com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicyTest" time="0.0"/>
+  <testcase name="R11 - monotonic clock prevents wall clock time shifts from affecting duration" classname="com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicyTest" time="0.0"/>
+  <testcase name="HB05 - new policy in SYNCING state notices first peer absence after 15s" classname="com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicyTest" time="0.0"/>
+  <testcase name="C01 - claim on incident 1 or 2 is strictly rejected" classname="com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicyTest" time="0.0"/>
+  <testcase name="H09 - recovery stable-gap greater than 5 seconds restarts stability window" classname="com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicyTest" time="0.001"/>
+  <testcase name="H12 - local device loses network sets LOCAL_UNAVAILABLE and rejects claim" classname="com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicyTest" time="0.0"/>
+  <testcase name="H07 - return before 15 seconds creates no new incident and no popup" classname="com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicyTest" time="0.001"/>
+  <testcase name="H01 - healthy heartbeat traffic causes no incidents and stays responsive" classname="com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicyTest" time="0.0"/>
+  <testcase name="H04 - continuous silence for 45 seconds and 5 minutes remains exactly one episode" classname="com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicyTest" time="0.0"/>
+  <testcase name="H03 - healthy replies with occasional dropped probes judges fresh response time not packet count" classname="com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicyTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

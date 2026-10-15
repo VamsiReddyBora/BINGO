@@ -1,0 +1,9 @@
+{
+  "timestamp": "2026-10-15T19:16:33+05:30",
+  "operation": "read-only, no cloud writes",
+  "account": "bob",
+  "primary_friends_count": 1,
+  "backup_friends_count": 4,
+  "backup_friends_absent_from_directory": 3,
+  "backup_with_large_avatar": 1
+}

@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.bingo.multiplayer.domain.network.TwoPlayerMatchSimulationTest" tests="12" skipped="0" failures="0" errors="0" timestamp="2026-10-15T13:54:12" hostname="VR" time="0.044">
+  <properties/>
+  <testcase name="testSimulation_TurnTimeout_ConsecutiveTimeouts_AlternatesContinuouslyWithoutStall" classname="com.bingo.multiplayer.domain.network.TwoPlayerMatchSimulationTest" time="0.012"/>
+  <testcase name="testSimulation_QuickChatPhrasesAndReactionsDuringGameplay" classname="com.bingo.multiplayer.domain.network.TwoPlayerMatchSimulationTest" time="0.002"/>
+  <testcase name="testSimulation_NormalMatchWithoutManualBoard" classname="com.bingo.multiplayer.domain.network.TwoPlayerMatchSimulationTest" time="0.001"/>
+  <testcase name="testSimulation_MultiMatchStressTest_DetectsTurnFlickering" classname="com.bingo.multiplayer.domain.network.TwoPlayerMatchSimulationTest" time="0.016"/>
+  <testcase name="testSimulation_FullGameInviteAndAcceptFlow_ManualBoardToFinishToLobby" classname="com.bingo.multiplayer.domain.network.TwoPlayerMatchSimulationTest" time="0.007"/>
+  <testcase name="testSimulation_HeadToHeadScorecardAndStrikeProgressionLogic" classname="com.bingo.multiplayer.domain.network.TwoPlayerMatchSimulationTest" time="0.0"/>
+  <testcase name="testSimulation_ManualBoardDesignFullLifecycle" classname="com.bingo.multiplayer.domain.network.TwoPlayerMatchSimulationTest" time="0.001"/>
+  <testcase name="testSimulation_SplitScreenDualInstancePacketIsolation" classname="com.bingo.multiplayer.domain.network.TwoPlayerMatchSimulationTest" time="0.001"/>
+  <testcase name="testSimulation_TurnTimeout_ActivePlayerTimesOut_ControlSwitchesCleanly" classname="com.bingo.multiplayer.domain.network.TwoPlayerMatchSimulationTest" time="0.0"/>
+  <testcase name="testSimulation_StaleSeedPacketsAreRejected" classname="com.bingo.multiplayer.domain.network.TwoPlayerMatchSimulationTest" time="0.001"/>
+  <testcase name="testSimulation_TurnTimeout_DroppedPacket_NonActivePlayerFallbackTakesControl" classname="com.bingo.multiplayer.domain.network.TwoPlayerMatchSimulationTest" time="0.0"/>
+  <testcase name="testSimulation_NearbyNetworkP2p_ManualBoardAndRematchFlow" classname="com.bingo.multiplayer.domain.network.TwoPlayerMatchSimulationTest" time="0.001"/>
+  <system-out><![CDATA[✅ Simulation Test 10 (Consecutive Timeouts Alternation) PASSED successfully!
+✅ Simulation Test 11 (Quick Chat Phrases & Reactions) PASSED successfully!
+✅ Simulation Test 2 (Normal Match Without Manual Board) PASSED successfully!
+--- Match 1: host.isMyTurn=false, guest.isMyTurn=false, host.turn=1, guest.turn=1, host.currentTurn=, guest.currentTurn= ---
+Before GAME_SYNC: host.isMyTurn=true, guest.isMyTurn=false, host.turn=3, guest.turn=3, host.currentTurn=host_1, guest.currentTurn=host_1
+--- Match 2: host.isMyTurn=true, guest.isMyTurn=false, host.turn=3, guest.turn=3, host.currentTurn=host_1, guest.currentTurn=host_1 ---
+Before GAME_SYNC: host.isMyTurn=false, guest.isMyTurn=true, host.turn=5, guest.turn=5, host.currentTurn=guest_2, guest.currentTurn=guest_2
+--- Match 3: host.isMyTurn=false, guest.isMyTurn=true, host.turn=5, guest.turn=5, host.currentTurn=guest_2, guest.currentTurn=guest_2 ---
+Before GAME_SYNC: host.isMyTurn=true, guest.isMyTurn=false, host.turn=7, guest.turn=7, host.currentTurn=host_1, guest.currentTurn=host_1
+--- Match 4: host.isMyTurn=true, guest.isMyTurn=false, host.turn=7, guest.turn=7, host.currentTurn=host_1, guest.currentTurn=host_1 ---
+Before GAME_SYNC: host.isMyTurn=true, guest.isMyTurn=false, host.turn=9, guest.turn=9, host.currentTurn=host_1, guest.currentTurn=host_1
+--- Match 5: host.isMyTurn=true, guest.isMyTurn=false, host.turn=9, guest.turn=9, host.currentTurn=host_1, guest.currentTurn=host_1 ---
+Before GAME_SYNC: host.isMyTurn=true, guest.isMyTurn=false, host.turn=11, guest.turn=11, host.currentTurn=host_1, guest.currentTurn=host_1
+✅ Simulation Test 3 (5 Consecutive Matches - Zero Turn Flickering) PASSED successfully!
+[SIM-INVITE] Host Alice created room INV777
+[SIM-INVITE] Alice sent game invite to Bob: roomCode=INV777
+[SIM-INVITE] Bob accepted invite and joined room INV777
+[SIM-INVITE] Bob toggled READY. Start button enabled on Host.
+[SIM-INVITE] Host started game with isManualBoard=true. Sent START_GAME packet.
+[SIM-INVITE] Guest Bob successfully navigated to MANUAL_BOARD screen!
+[SIM-INVITE] Bob finished board arrangement first. Waiting dialog displayed on clean background.
+[SIM-INVITE] Alice finished board arrangement. Synchronized 5s countdown triggered!
+[SIM-INVITE] Both players entered GAME screen! First turn assigned to: guest_bob
+[SIM-INVITE] Turn 1 played (Pick 1). Turn advanced to 2.
+[SIM-INVITE] Turn 2 played (Pick 2). Turn advanced to 3.
+[SIM-INVITE] Both players returned to LOBBY! Seeds and board ready states cleanly reset.
+[SIM-INVITE] Rematch initiated! Both players navigated to MANUAL_BOARD again cleanly.
+✅ Simulation Test 5 (Full Game Invite -> Manual Board -> Return to Lobby -> Rematch) PASSED successfully!
+✅ Simulation Test 12 (Scorecard & Strike Progression Logic) PASSED successfully!
+✅ Simulation Test 1 (Manual Board Design Full Lifecycle) PASSED successfully!
+✅ Simulation Test 6 (Split-Screen / Dual Instance Packet Isolation) PASSED successfully!
+✅ Simulation Test 8 (Turn Timeout - Control Switches Cleanly) PASSED successfully!
+✅ Simulation Test 4 (Stale Seed Packet Rejection) PASSED successfully!
+✅ Simulation Test 9 (Turn Timeout - Fallback Rotation & Zero-Stall Guarantee) PASSED successfully!
+✅ Simulation Test 7 (Nearby Network P2P with Full Lobby & Manual Board Flow) PASSED successfully!
+]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

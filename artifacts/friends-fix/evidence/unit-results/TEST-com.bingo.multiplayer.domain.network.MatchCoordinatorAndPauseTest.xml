@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.bingo.multiplayer.domain.network.MatchCoordinatorAndPauseTest" tests="18" skipped="0" failures="0" errors="0" timestamp="2026-10-15T13:54:09" hostname="VR" time="0.008">
+  <properties/>
+  <testcase name="test C03 - Peer receiving CLAIM_VICTORY packet decodes and processes loss" classname="com.bingo.multiplayer.domain.network.MatchCoordinatorAndPauseTest" time="0.0"/>
+  <testcase name="test P01 - Pause captures exact remaining turn seconds" classname="com.bingo.multiplayer.domain.network.MatchCoordinatorAndPauseTest" time="0.001"/>
+  <testcase name="test P04 - GAME_RESUMED packet encodes and decodes remainingTurnMillis and isPaused false" classname="com.bingo.multiplayer.domain.network.MatchCoordinatorAndPauseTest" time="0.0"/>
+  <testcase name="test T02 - 1v1 online match keeps both players in rotation indefinitely" classname="com.bingo.multiplayer.domain.network.MatchCoordinatorAndPauseTest" time="0.003"/>
+  <testcase name="test T04 - 1v1 online match consecutive missed turns does not forfeit" classname="com.bingo.multiplayer.domain.network.MatchCoordinatorAndPauseTest" time="0.0"/>
+  <testcase name="test C02 - Claim Victory execution accepted and broadcasts CLAIM_VICTORY" classname="com.bingo.multiplayer.domain.network.MatchCoordinatorAndPauseTest" time="0.001"/>
+  <testcase name="test F006 - Invalidation of sync flag on new outage and post-sync 10s stability window" classname="com.bingo.multiplayer.domain.network.MatchCoordinatorAndPauseTest" time="0.0"/>
+  <testcase name="test T03 - 1v1 online match does not fast-skip turns" classname="com.bingo.multiplayer.domain.network.MatchCoordinatorAndPauseTest" time="0.0"/>
+  <testcase name="test P03 - GAME_PAUSED packet encodes and decodes remainingTurnMillis and isPaused" classname="com.bingo.multiplayer.domain.network.MatchCoordinatorAndPauseTest" time="0.001"/>
+  <testcase name="test P02 - Resume restores frozen remainder and subsequent turn gets full 30s" classname="com.bingo.multiplayer.domain.network.MatchCoordinatorAndPauseTest" time="0.0"/>
+  <testcase name="test T01 - Clean turn pass on timeout with number -1" classname="com.bingo.multiplayer.domain.network.MatchCoordinatorAndPauseTest" time="0.0"/>
+  <testcase name="test C01 - Claim Victory eligibility requires episode count 3 or more while UNREACHABLE" classname="com.bingo.multiplayer.domain.network.MatchCoordinatorAndPauseTest" time="0.0"/>
+  <testcase name="test HB09 - Claim victory rejected when peer becomes responsive before confirmation" classname="com.bingo.multiplayer.domain.network.MatchCoordinatorAndPauseTest" time="0.0"/>
+  <testcase name="test F003 - Incoming claim validation rejects missing seed, blank matchId, unknown sender, and invalid episode ID" classname="com.bingo.multiplayer.domain.network.MatchCoordinatorAndPauseTest" time="0.001"/>
+  <testcase name="test F003 - Sender identity cannot overwrite opponentPlayerId if sender is not in matchParticipants" classname="com.bingo.multiplayer.domain.network.MatchCoordinatorAndPauseTest" time="0.0"/>
+  <testcase name="test HB10 - Incoming CLAIM_VICTORY packet validated against 3 episode requirement" classname="com.bingo.multiplayer.domain.network.MatchCoordinatorAndPauseTest" time="0.0"/>
+  <testcase name="test T05 - Multi-player match (3+ players) retains skip and forfeit logic" classname="com.bingo.multiplayer.domain.network.MatchCoordinatorAndPauseTest" time="0.001"/>
+  <testcase name="test C04 - Peer activity immediately revokes claim eligibility" classname="com.bingo.multiplayer.domain.network.MatchCoordinatorAndPauseTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

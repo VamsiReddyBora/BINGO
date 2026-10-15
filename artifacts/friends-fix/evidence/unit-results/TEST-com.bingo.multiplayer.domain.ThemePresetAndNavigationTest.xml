@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.bingo.multiplayer.domain.ThemePresetAndNavigationTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-15T13:54:05" hostname="VR" time="0.005">
+  <properties/>
+  <testcase name="testDefaultAppPaletteIsMatteSlate" classname="com.bingo.multiplayer.domain.ThemePresetAndNavigationTest" time="0.0"/>
+  <testcase name="testLightModePresets" classname="com.bingo.multiplayer.domain.ThemePresetAndNavigationTest" time="0.005"/>
+  <testcase name="testDarkModePresets" classname="com.bingo.multiplayer.domain.ThemePresetAndNavigationTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

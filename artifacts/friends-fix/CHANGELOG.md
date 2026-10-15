@@ -1,0 +1,14 @@
+# Friends repair change log
+
+Started 2026-10-15T19:10:30+05:30. Base: `064af5f3b3daa4aae421a9ff9c9fb5f09158931e`, branch `fix/friends-list-requests`. Protected baseline and host-wait APK are separate and unchanged.
+
+1. Read-only diagnosis: Bob has one primary KeyValue friend record and four existing Firestore friend documents. A second read confirmed that exactly three of the four backup friends are absent from `user_directory`; the old pruning code therefore produces the observed one-friend list and writes it back. This matches the reported symptom. No cloud records were modified and no notifications/invitations were sent during diagnosis.
+2. Removed destructive roster pruning based on the non-authoritative user directory. Reconcile primary + existing backup + account-scoped cache. A failed/malformed read cannot authorize a replacement write.
+3. Read the existing Firestore backup; retain versioned explicit-removal markers (unique IDs, no clock comparisons) to prevent recovery from resurrecting newly removed friends.
+4. Separate missing lists from failed reads; friend acceptance preserves other friends, checks write results, and sends notifications only after persistence. Keep large avatar data out of KeyValue roster/request URLs. The read-only four-friend payload size is 1,048 bytes against the documented 1,024-byte query limit; compact optional fields and fall back to identity/display fields without dropping any friends. Merge career streaks using the newest game totals, so compact records do not zero them and an actual later loss can reset them. Full profiles remain in the existing per-friend backup; readers remain compatible with legacy base64 JSON.
+5. Reject retained request packets. Before a live notification, restore friendships and verify that the request is still pending for the current account. Persist notification IDs/handled IDs across restarts, and filter existing friends from pending requests.
+6. Bind local lists and request receipts to account UID. Ignore stale results/listeners after switching accounts. Coalesce overlapping polling jobs.
+7. Keep the host-disconnection implementation intact; write the candidate only to `artifacts/friends-fix/Bingo-friends-fix.apk`.
+8. Add production-repository and HTTP-adapter regression tests. Initial 27/28 pass had a test-fixture timestamp default issue, corrected with a fixed fixture timestamp. Subsequent 447/447 and expanded 451/451 runs passed. Final validation includes the query-size regression and follows in TEST_REPORT.md; intermediate logs are retained.
+
+Rollback: use the separate `/home/bob/workspace/bingo_host_wait` checkout and its existing signed APK. Do not reset or clean this checkout to roll back. Keep app data when installing updates; the old device-wide friend cache is preserved and migrated once.
