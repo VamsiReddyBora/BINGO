@@ -102,8 +102,23 @@
 - New behavior: Atomic synchronous persistence using `.commit()`, 1v1 online matches bypass 8m TTL and persist indefinitely until game over or explicit surrender, account-scoped isolation prevents cross-account match leakage, backward compatibility with legacy snapshots, full preservation of pause state, turn remainder, and incident history across app switches, restarts, and process kills.
 - Scope guard: 1v1 bypass applies strictly when `is1v1Match || participants.size == 2`. Group matches (3+ players) retain their 8-minute TTL.
 - Storage / packet changes: Added optional fields to `OngoingMatchData` with backward-compatible defaults.
-- Validation: All 346 JVM tests passed (34 suites, 0 failures, 0 errors).
-- Rollback: `git checkout 4fadac6 -- app/src/main/java/com/bingo/multiplayer/domain/network/OngoingMatchStore.kt app/src/main/java/com/bingo/multiplayer/presentation/navigation/RootNavGraph.kt`
+---
+
+### Change 005 — Full Verification Build, Lint, Candidate APK & Signing Certification
+- Started / completed: Started 2026-10-15 10:30 IST / Completed 2026-10-15 10:36 IST
+- Checkpoint before edit: cd037cf
+- Commands run:
+  - `./gradlew testDebugUnitTest lintDebug assembleRelease --offline --console=plain --max-workers=2`
+  - `/home/bob/android-sdk/build-tools/34.0.0/apksigner verify --verbose --print-certs artifacts/heartbeat-1v1/Bingo-candidate.apk`
+- Results:
+  - Unit Tests: 346 unit tests executed across 34 test suites. 0 failures, 0 errors, 0 skips.
+  - Lint: 0 errors (HTML report written to `app/build/reports/lint-results-debug.html`).
+  - Assemble Release: BUILD SUCCESSFUL in 4m 9s.
+  - Baseline APK preserved: `Bingo.apk` SHA-256: `6c5e014b4a8a699e1506393e79bb6bb3959ccb72e2d6fa85cc425f1118005ccc`.
+  - Candidate APK generated: `artifacts/heartbeat-1v1/Bingo-candidate.apk` (7,006,311 bytes) SHA-256: `46b5038530ca19685581bb407bff648c85ba5ee6b5ea5470fc577066f688c8e0`.
+  - Signing Certificate Comparison: Identical SHA-256 digest `39a428942c3c2629ff3490c944b8b82c7625b22d660b7a2cdf682456d81f60a4` under APK Signature Scheme v2, DN: `CN=BingoApp, OU=Dev, O=Self, L=Hyd, ST=TS, C=IN`.
+- Status: READY.
+
 
 
 

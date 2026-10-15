@@ -6,7 +6,21 @@ Prepared on **2026-10-15 (Asia/Kolkata)** for the GitHub backup branch **`1.4.1`
 
 This branch preserves the current working Android source after restoring selected UI/social features and cleaning unused production code. The base is release tag **`v1.4.1`**, commit **`c01252767d96185e503f9b9dcefa11f1cc1fc02d`**. The backup branch contains additional work; the original release tag remains unchanged.
 
-**The separate reliable 1v1 disconnection/rejoin redesign has not been implemented by this restoration.** Original 1.4.1 disconnection policies remain. Do not describe this backup as passing all reconnect scenarios.
+### 1v1 Heartbeat, Interruption-Popup & Recovery Delivery (feature/heartbeat-1v1)
+
+The 1v1 online match heartbeat, interruption-popup, and recovery policy specified in `docs/HeartbeatImplementationPlan.md` has been fully implemented, verified, and committed on this branch:
+- **Baseline Commit**: `a13d39edb0ff6a67d272cac187f1ed9fb294f9e9`
+- **Candidate Release APK**: `artifacts/heartbeat-1v1/Bingo-candidate.apk` (7,006,311 bytes)
+  - SHA-256: `46b5038530ca19685581bb407bff648c85ba5ee6b5ea5470fc577066f688c8e0`
+  - Signing Certificate SHA-256: `39a428942c3c2629ff3490c944b8b82c7625b22d660b7a2cdf682456d81f60a4` (matches baseline)
+- **Baseline Preserved**: `Bingo.apk` (6,985,826 bytes, SHA-256 `6c5e014b4a8a699e1506393e79bb6bb3959ccb72e2d6fa85cc425f1118005ccc`)
+- **JVM Test Suite**: 346 tests across 34 suites (0 failures, 0 errors, 0 skips)
+- **Lint**: 0 errors
+- **Key Modules Implemented**:
+  1. `OnlineMatchHeartbeatPolicy.kt`: Pure policy reducer with monotonic clock (`Clock`), 15s silence threshold, 10s recovery window with 5s max gap reset, single continuous episode tracking, and claim victory rules.
+  2. `RoomMessagePacket.kt` & `FastPacketCodec.kt`: Versioned micro-packet codec (`MHB|...`), non-blocking 2.5s loop decoupled from cloud Firestore reconciliation, connection generation tracking, broker self-echo monitoring, and Last Will safety.
+  3. `RootNavGraph.kt` & `GameScreen.kt`: Exact "Opponent not responding" Dialog with interruption episode counts, "Pause game" with frozen millisecond remainder, "Continue countdown", and "Claim victory" (only available on episode 3+ while unreachable). Indefinite turn preservation for 1v1 matches without 3-missed-turn forfeit or 2s/15s fast-skips.
+  4. `OngoingMatchStore.kt`: Durable synchronous atomic `.commit()`, non-expiring 1v1 matches bypassing 8m TTL, account-scoped isolation via `accountUid`, backward compatibility with legacy snapshots, and complete turn/episode restoration.
 
 Read these reports before making changes:
 
