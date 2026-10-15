@@ -29,6 +29,85 @@ class OnlineMatchHeartbeatPolicyTest {
     private val myUid = "user_kevin"
     private val generation = "gen_abc_1"
 
+    @Test
+    fun duplicateSyncDuringLateRecoveryDoesNotMoveTheStableWindowInEitherCallbackOrder() {
+        for (syncFirst in listOf(true, false)) {
+            val c = FakeClock(0)
+            val p = OnlineMatchHeartbeatPolicy(matchId, peerUid, generation, c)
+            p.initializeObservation(generation)
+            c.currentMs = 15_000
+            p.onTick()
+            for (at in listOf(16_000L, 18_500L, 21_000L, 23_500L)) {
+                c.currentMs = at
+                p.onFreshPeerResponse()
+            }
+            c.currentMs = 26_000
+            if (syncFirst) p.onStateSynchronized()
+            p.onFreshPeerResponse()
+            p.onStateSynchronized()
+            assertEquals(26_000L, p.recoveryStartedAt)
+            for (at in listOf(28_500L, 31_000L, 33_500L)) {
+                c.currentMs = at
+                p.onStateSynchronized()
+                p.onFreshPeerResponse()
+                p.onStateSynchronized()
+                assertEquals(26_000L, p.recoveryStartedAt)
+            }
+            c.currentMs = 35_999
+            assertEquals(HeartbeatDecision.NoOp, p.onTick())
+            assertTrue(p.isEpisodeOpen)
+            c.currentMs = 36_000
+            assertTrue(p.onFreshPeerResponse() is HeartbeatDecision.RecoveryCompleted)
+            assertFalse(p.isEpisodeOpen)
+
+            // Repeated periodic sync must also allow two later distinct incidents to re-arm.
+            for (count in 2..3) {
+                c.advance(15_000)
+                p.onTick()
+                assertEquals(count, p.committedEpisodeCount)
+                if (count == 3) break
+                c.advance(1_000)
+                p.onFreshPeerResponse()
+                p.onStateSynchronized()
+                repeat(4) {
+                    c.advance(2_500)
+                    p.onStateSynchronized()
+                    p.onFreshPeerResponse()
+                }
+                assertFalse(p.isEpisodeOpen)
+            }
+        }
+    }
+
+    @Test
+    fun recoveryGapOf5000MillisPreservesStabilityBut5001MillisRestartsIt() {
+        for (gap in listOf(5_000L, 5_001L)) {
+            val c = FakeClock(0)
+            val p = OnlineMatchHeartbeatPolicy(matchId, peerUid, generation, c)
+            p.initializeObservation(generation)
+            c.currentMs = 15_000
+            p.onTick()
+            c.currentMs = 16_000
+            p.onFreshPeerResponse()
+            p.onStateSynchronized()
+            c.advance(gap)
+            p.onFreshPeerResponse()
+            val stableStart = if (gap == 5_000L) 16_000L else 21_001L
+            assertEquals(stableStart, p.recoveryStartedAt)
+            while (c.currentMs + 2_500 < stableStart + 10_000) {
+                c.advance(2_500)
+                p.onFreshPeerResponse()
+                p.onStateSynchronized()
+            }
+            c.currentMs = stableStart + 9_999
+            assertEquals(HeartbeatDecision.NoOp, p.onTick())
+            assertTrue(p.isEpisodeOpen)
+            c.advance(1)
+            assertTrue(p.onFreshPeerResponse() is HeartbeatDecision.RecoveryCompleted)
+            assertEquals(1, p.committedEpisodeCount)
+        }
+    }
+
     @Before
     fun setUp() {
         clock = FakeClock(100_000L)
