@@ -1,0 +1,528 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<issues format="6" by="lint 8.2.2">
+
+    <issue
+        id="ObsoleteLintCustomCheck"
+        severity="Warning"
+        message="Library lint checks reference invalid APIs; these checks **will be skipped**!&#xA;&#xA;Lint found an issue registry (`androidx.compose.runtime.lint.RuntimeIssueRegistry`)&#xA;which contains some references to invalid API:&#xA;org.jetbrains.kotlin.analysis.api.session.KtAnalysisSessionProvider: org.jetbrains.kotlin.analysis.api.lifetime.KtLifetimeTokenFactory getTokenFactory()&#xA;(Referenced from androidx/compose/runtime/lint/AutoboxingStateCreationDetector.class)&#xA;&#xA;Therefore, this lint check library is **not** included&#xA;in analysis. This affects the following lint checks:&#xA;`AutoboxingStateValueProperty`&#xA;`AutoboxingStateCreation`&#xA;`CoroutineCreationDuringComposition`&#xA;`FlowOperatorInvokedInComposition`&#xA;`ComposableLambdaParameterNaming`&#xA;`ComposableLambdaParameterPosition`&#xA;`ComposableNaming`&#xA;`StateFlowValueCalledInComposition`&#xA;`CompositionLocalNaming`&#xA;`MutableCollectionMutableState`&#xA;`ProduceStateDoesNotAssignValue`&#xA;`RememberReturnType`&#xA;`OpaqueUnitKey`&#xA;`UnrememberedMutableState`&#xA;&#xA;To use this lint check, upgrade to a more recent version&#xA;of the library."
+        category="Lint"
+        priority="10"
+        summary="Obsolete custom lint check"
+        explanation="Lint can be extended with &quot;custom checks&quot;: additional checks implemented by developers and libraries to for example enforce specific API usages required by a library or a company coding style guideline.&#xA;&#xA;The Lint APIs are not yet stable, so these checks may either cause a performance degradation, or stop working, or provide wrong results.&#xA;&#xA;This warning flags custom lint checks that are found to be using obsolete APIs and will need to be updated to run in the current lint environment.&#xA;&#xA;It may also flag issues found to be using a **newer** version of the API, meaning that you need to use a newer version of lint (or Android Studio or Gradle plugin etc) to work with these checks.">
+        <location
+            file="/home/bob/.gradle/caches/transforms-3/77b839210a06c93a9d8c60fcddbb9337/transformed/runtime-release/jars/lint.jar"/>
+    </issue>
+
+    <issue
+        id="ApplySharedPref"
+        severity="Warning"
+        message="Consider using `apply()` instead; `commit` writes its data to persistent storage immediately, whereas `apply` will handle it in the background"
+        category="Correctness"
+        priority="6"
+        summary="Use `apply()` on `SharedPreferences`"
+        explanation="Consider using `apply()` instead of `commit` on shared preferences. Whereas `commit` blocks and writes its data to persistent storage immediately, `apply` will handle it in the background."
+        errorLine1="                    .putInt(KEY_XP, current.xp).putInt(KEY_LEVEL, current.level).remove(receiptKey).commit()"
+        errorLine2="                                                                                                    ~~~~~~~~">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/java/com/bingo/multiplayer/domain/repository/AuthRepository.kt"
+            line="686"
+            column="101"/>
+    </issue>
+
+    <issue
+        id="ApplySharedPref"
+        severity="Warning"
+        message="Consider using `apply()` instead; `commit` writes its data to persistent storage immediately, whereas `apply` will handle it in the background"
+        category="Correctness"
+        priority="6"
+        summary="Use `apply()` on `SharedPreferences`"
+        explanation="Consider using `apply()` instead of `commit` on shared preferences. Whereas `commit` blocks and writes its data to persistent storage immediately, `apply` will handle it in the background."
+        errorLine1="            editor.commit()"
+        errorLine2="                   ~~~~~~~~">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/java/com/bingo/multiplayer/domain/network/OngoingMatchStore.kt"
+            line="110"
+            column="20"/>
+    </issue>
+
+    <issue
+        id="ApplySharedPref"
+        severity="Warning"
+        message="Consider using `apply()` instead; `commit` writes its data to persistent storage immediately, whereas `apply` will handle it in the background"
+        category="Correctness"
+        priority="6"
+        summary="Use `apply()` on `SharedPreferences`"
+        explanation="Consider using `apply()` instead of `commit` on shared preferences. Whereas `commit` blocks and writes its data to persistent storage immediately, `apply` will handle it in the background."
+        errorLine1="            editor.commit()"
+        errorLine2="                   ~~~~~~~~">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/java/com/bingo/multiplayer/domain/network/OngoingMatchStore.kt"
+            line="268"
+            column="20"/>
+    </issue>
+
+    <issue
+        id="InlinedApi"
+        severity="Warning"
+        message="Field requires API level 25 (current min is 24): `android.provider.Settings.Global#DEVICE_NAME`"
+        category="Correctness"
+        priority="6"
+        summary="Using inlined constants on older versions"
+        explanation="This check scans through all the Android API field references in the application and flags certain constants, such as static final integers and Strings, which were introduced in later versions. These will actually be copied into the class files rather than being referenced, which means that the value is available even when running on older devices. In some cases that&apos;s fine, and in other cases it can result in a runtime crash or incorrect behavior. It depends on the context, so consider the code carefully and decide whether it&apos;s safe and can be suppressed or whether the code needs to be guarded.&#xA;&#xA;If you really want to use this API and don&apos;t need to support older devices just set the `minSdkVersion` in your `build.gradle` or `AndroidManifest.xml` files.&#xA;&#xA;If your code is **deliberately** accessing newer APIs, and you have ensured (e.g. with conditional execution) that this code will only ever be called on a supported platform, then you can annotate your class or method with the `@TargetApi` annotation specifying the local minimum SDK to apply, such as `@TargetApi(11)`, such that this check considers 11 rather than your manifest file&apos;s minimum SDK as the required API level."
+        errorLine1="            val devName = Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME)"
+        errorLine2="                                                                             ~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/java/com/bingo/multiplayer/domain/network/HotspotAndWifiManager.kt"
+            line="153"
+            column="78"/>
+    </issue>
+
+    <issue
+        id="InlinedApi"
+        severity="Warning"
+        message="Field requires API level 26 (current min is 24): `android.provider.Settings#ACTION_APP_NOTIFICATION_SETTINGS`"
+        category="Correctness"
+        priority="6"
+        summary="Using inlined constants on older versions"
+        explanation="This check scans through all the Android API field references in the application and flags certain constants, such as static final integers and Strings, which were introduced in later versions. These will actually be copied into the class files rather than being referenced, which means that the value is available even when running on older devices. In some cases that&apos;s fine, and in other cases it can result in a runtime crash or incorrect behavior. It depends on the context, so consider the code carefully and decide whether it&apos;s safe and can be suppressed or whether the code needs to be guarded.&#xA;&#xA;If you really want to use this API and don&apos;t need to support older devices just set the `minSdkVersion` in your `build.gradle` or `AndroidManifest.xml` files.&#xA;&#xA;If your code is **deliberately** accessing newer APIs, and you have ensured (e.g. with conditional execution) that this code will only ever be called on a supported platform, then you can annotate your class or method with the `@TargetApi` annotation specifying the local minimum SDK to apply, such as `@TargetApi(11)`, such that this check considers 11 rather than your manifest file&apos;s minimum SDK as the required API level."
+        errorLine1="                        val intent = Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {"
+        errorLine2="                                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/java/com/bingo/multiplayer/presentation/settings/SettingsScreen.kt"
+            line="2417"
+            column="45"/>
+    </issue>
+
+    <issue
+        id="InlinedApi"
+        severity="Warning"
+        message="Field requires API level 26 (current min is 24): `android.provider.Settings#EXTRA_APP_PACKAGE`"
+        category="Correctness"
+        priority="6"
+        summary="Using inlined constants on older versions"
+        explanation="This check scans through all the Android API field references in the application and flags certain constants, such as static final integers and Strings, which were introduced in later versions. These will actually be copied into the class files rather than being referenced, which means that the value is available even when running on older devices. In some cases that&apos;s fine, and in other cases it can result in a runtime crash or incorrect behavior. It depends on the context, so consider the code carefully and decide whether it&apos;s safe and can be suppressed or whether the code needs to be guarded.&#xA;&#xA;If you really want to use this API and don&apos;t need to support older devices just set the `minSdkVersion` in your `build.gradle` or `AndroidManifest.xml` files.&#xA;&#xA;If your code is **deliberately** accessing newer APIs, and you have ensured (e.g. with conditional execution) that this code will only ever be called on a supported platform, then you can annotate your class or method with the `@TargetApi` annotation specifying the local minimum SDK to apply, such as `@TargetApi(11)`, such that this check considers 11 rather than your manifest file&apos;s minimum SDK as the required API level."
+        errorLine1="                            putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)"
+        errorLine2="                                     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/java/com/bingo/multiplayer/presentation/settings/SettingsScreen.kt"
+            line="2418"
+            column="38"/>
+    </issue>
+
+    <issue
+        id="SdCardPath"
+        severity="Warning"
+        message="Do not hardcode &quot;/sdcard/&quot;; use `Environment.getExternalStorageDirectory().getPath()` instead"
+        category="Correctness"
+        priority="6"
+        summary="Hardcoded reference to `/sdcard`"
+        explanation="Your code should not reference the `/sdcard` path directly; instead use `Environment.getExternalStorageDirectory().getPath()`.&#xA;&#xA;Similarly, do not reference the `/data/data/` path directly; it can vary in multi-user scenarios. Instead, use `Context.getFilesDir().getPath()`."
+        url="https://developer.android.com/training/data-storage#filesExternal"
+        urls="https://developer.android.com/training/data-storage#filesExternal"
+        errorLine1="        path.contains(&quot;/sdcard/&quot;) ||"
+        errorLine2="                       ~~~~~~~~">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/java/com/bingo/multiplayer/domain/network/AccountSessionManager.kt"
+            line="90"
+            column="24"/>
+    </issue>
+
+    <issue
+        id="SdCardPath"
+        severity="Warning"
+        message="Do not hardcode &quot;/sdcard/&quot;; use `Environment.getExternalStorageDirectory().getPath()` instead"
+        category="Correctness"
+        priority="6"
+        summary="Hardcoded reference to `/sdcard`"
+        explanation="Your code should not reference the `/sdcard` path directly; instead use `Environment.getExternalStorageDirectory().getPath()`.&#xA;&#xA;Similarly, do not reference the `/data/data/` path directly; it can vary in multi-user scenarios. Instead, use `Context.getFilesDir().getPath()`."
+        url="https://developer.android.com/training/data-storage#filesExternal"
+        urls="https://developer.android.com/training/data-storage#filesExternal"
+        errorLine1="        path.contains(&quot;/sdcard/&quot;) ||"
+        errorLine2="                       ~~~~~~~~">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/java/com/bingo/multiplayer/presentation/common/PlayerAvatar.kt"
+            line="164"
+            column="24"/>
+    </issue>
+
+    <issue
+        id="QueryPermissionsNeeded"
+        severity="Warning"
+        message="Consider adding a `&lt;queries>` declaration to your manifest when calling this \&#xA;method; see https://g.co/dev/packagevisibility for details"
+        category="Correctness"
+        priority="5"
+        summary="Using APIs affected by query permissions"
+        explanation="Apps that target Android 11 cannot query or interact with other installed apps by default. If you need to query or interact with other installed apps, you may need to add a `&lt;queries>` declaration in your manifest.&#xA;&#xA;As a corollary, the methods `PackageManager#getInstalledPackages` and `PackageManager#getInstalledApplications` will no longer return information about all installed apps. To query specific apps or types of apps, you can use methods like `PackageManager#getPackageInfo` or `PackageManager#queryIntentActivities`."
+        url="https://g.co/dev/packagevisibility"
+        urls="https://g.co/dev/packagevisibility"
+        errorLine1="            val resolvedActivities = context.packageManager.queryIntentActivities(installIntent, 0)"
+        errorLine2="                                                            ~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/java/com/bingo/multiplayer/domain/network/AppUpdateManager.kt"
+            line="431"
+            column="61"/>
+    </issue>
+
+    <issue
+        id="SourceLockedOrientationActivity"
+        severity="Warning"
+        message="You should not lock orientation of your activities, so that you can support a good user experience for any device or orientation"
+        category="Correctness"
+        priority="4"
+        summary="Incompatible setRequestedOrientation value"
+        explanation="The `Activity` should not be locked to a portrait orientation so that users can take advantage of the multi-window environments and larger landscape-first screens that Android runs on such as ChromeOS, tablets, and foldables. To fix the issue, consider calling `setRequestedOrientation` with the `ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR` or `ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED` options or removing the call all together."
+        url="https://developer.android.com/guide/topics/large-screens/large-screen-cookbook#restricted_app_orientation"
+        urls="https://developer.android.com/guide/topics/large-screens/large-screen-cookbook#restricted_app_orientation"
+        errorLine1="        requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT"
+        errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/java/com/bingo/multiplayer/MainActivity.kt"
+            line="37"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="ModifierParameter"
+        severity="Warning"
+        message="Modifier parameter should be the first optional parameter"
+        category="Correctness"
+        priority="3"
+        summary="Guidelines for Modifier parameters in a Composable function"
+        explanation="The first (or only) Modifier parameter in a Composable function should follow the following rules:&#xA;- Be named `modifier`&#xA;- Have a type of `Modifier`&#xA;- Either have no default value, or have a default value of `Modifier`&#xA;- If optional, be the first optional parameter in the parameter list"
+        errorLine1="    modifier: Modifier = Modifier,"
+        errorLine2="    ~~~~~~~~">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/java/com/bingo/multiplayer/presentation/social/DashboardAndFriendsScreen.kt"
+            line="410"
+            column="5"/>
+    </issue>
+
+    <issue
+        id="ModifierParameter"
+        severity="Warning"
+        message="Modifier parameter should be the first optional parameter"
+        category="Correctness"
+        priority="3"
+        summary="Guidelines for Modifier parameters in a Composable function"
+        explanation="The first (or only) Modifier parameter in a Composable function should follow the following rules:&#xA;- Be named `modifier`&#xA;- Have a type of `Modifier`&#xA;- Either have no default value, or have a default value of `Modifier`&#xA;- If optional, be the first optional parameter in the parameter list"
+        errorLine1="    modifier: Modifier = Modifier"
+        errorLine2="    ~~~~~~~~">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/java/com/bingo/multiplayer/presentation/common/GoogleGLogo.kt"
+            line="18"
+            column="5"/>
+    </issue>
+
+    <issue
+        id="ModifierParameter"
+        severity="Warning"
+        message="Modifier parameter should be the first optional parameter"
+        category="Correctness"
+        priority="3"
+        summary="Guidelines for Modifier parameters in a Composable function"
+        explanation="The first (or only) Modifier parameter in a Composable function should follow the following rules:&#xA;- Be named `modifier`&#xA;- Have a type of `Modifier`&#xA;- Either have no default value, or have a default value of `Modifier`&#xA;- If optional, be the first optional parameter in the parameter list"
+        errorLine1="    modifier: Modifier = Modifier"
+        errorLine2="    ~~~~~~~~">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/java/com/bingo/multiplayer/presentation/game/InGameChatSpace.kt"
+            line="74"
+            column="5"/>
+    </issue>
+
+    <issue
+        id="StaticFieldLeak"
+        severity="Warning"
+        message="Do not place Android context classes in static fields (static reference to `AuthRepository` which has field `context` pointing to `Context`); this is a memory leak"
+        category="Performance"
+        priority="6"
+        summary="Static Field Leaks"
+        explanation="A static field will leak contexts.&#xA;&#xA;Non-static inner classes have an implicit reference to their outer class. If that outer class is for example a `Fragment` or `Activity`, then this reference means that the long-running handler/loader/task will hold a reference to the activity which prevents it from getting garbage collected.&#xA;&#xA;Similarly, direct field references to activities and fragments from these longer running instances can cause leaks.&#xA;&#xA;ViewModel classes should never point to Views or non-application Contexts."
+        errorLine1="        @Volatile var activeInstance: AuthRepository? = null"
+        errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/java/com/bingo/multiplayer/domain/repository/AuthRepository.kt"
+            line="918"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="StaticFieldLeak"
+        severity="Warning"
+        message="Do not place Android context classes in static fields (static reference to `FirestoreSyncManager` which has field `context` pointing to `Context`); this is a memory leak"
+        category="Performance"
+        priority="6"
+        summary="Static Field Leaks"
+        explanation="A static field will leak contexts.&#xA;&#xA;Non-static inner classes have an implicit reference to their outer class. If that outer class is for example a `Fragment` or `Activity`, then this reference means that the long-running handler/loader/task will hold a reference to the activity which prevents it from getting garbage collected.&#xA;&#xA;Similarly, direct field references to activities and fragments from these longer running instances can cause leaks.&#xA;&#xA;ViewModel classes should never point to Views or non-application Contexts."
+        errorLine1="        @Volatile"
+        errorLine2="        ^">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/java/com/bingo/multiplayer/domain/network/FirestoreSyncManager.kt"
+            line="545"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="StaticFieldLeak"
+        severity="Warning"
+        message="Do not place Android context classes in static fields (static reference to `FriendsRepository` which has field `context` pointing to `Context`); this is a memory leak"
+        category="Performance"
+        priority="6"
+        summary="Static Field Leaks"
+        explanation="A static field will leak contexts.&#xA;&#xA;Non-static inner classes have an implicit reference to their outer class. If that outer class is for example a `Fragment` or `Activity`, then this reference means that the long-running handler/loader/task will hold a reference to the activity which prevents it from getting garbage collected.&#xA;&#xA;Similarly, direct field references to activities and fragments from these longer running instances can cause leaks.&#xA;&#xA;ViewModel classes should never point to Views or non-application Contexts."
+        errorLine1="        @Volatile var activeInstance: FriendsRepository? = null"
+        errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/java/com/bingo/multiplayer/domain/repository/FriendsRepository.kt"
+            line="416"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="IconLauncherShape"
+        severity="Warning"
+        message="Launcher icons should not fill every pixel of their square region; see the design guide for details"
+        category="Usability:Icons"
+        priority="6"
+        summary="The launcher icon shape should use a distinct silhouette"
+        explanation="According to the Android Design Guide (https://d.android.com/r/studio-ui/designer/material/iconography) your launcher icons should &quot;use a distinct silhouette&quot;, a &quot;three-dimensional, front view, with a slight perspective as if viewed from above, so that users perceive some depth.&quot;&#xA;&#xA;The unique silhouette implies that your launcher icon should not be a filled square.">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/res/mipmap-hdpi/ic_launcher.png"/>
+    </issue>
+
+    <issue
+        id="IconLauncherShape"
+        severity="Warning"
+        message="Launcher icons should not fill every pixel of their square region; see the design guide for details"
+        category="Usability:Icons"
+        priority="6"
+        summary="The launcher icon shape should use a distinct silhouette"
+        explanation="According to the Android Design Guide (https://d.android.com/r/studio-ui/designer/material/iconography) your launcher icons should &quot;use a distinct silhouette&quot;, a &quot;three-dimensional, front view, with a slight perspective as if viewed from above, so that users perceive some depth.&quot;&#xA;&#xA;The unique silhouette implies that your launcher icon should not be a filled square.">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/res/mipmap-mdpi/ic_launcher.png"/>
+    </issue>
+
+    <issue
+        id="IconLauncherShape"
+        severity="Warning"
+        message="Launcher icons should not fill every pixel of their square region; see the design guide for details"
+        category="Usability:Icons"
+        priority="6"
+        summary="The launcher icon shape should use a distinct silhouette"
+        explanation="According to the Android Design Guide (https://d.android.com/r/studio-ui/designer/material/iconography) your launcher icons should &quot;use a distinct silhouette&quot;, a &quot;three-dimensional, front view, with a slight perspective as if viewed from above, so that users perceive some depth.&quot;&#xA;&#xA;The unique silhouette implies that your launcher icon should not be a filled square.">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/res/mipmap-xhdpi/ic_launcher.png"/>
+    </issue>
+
+    <issue
+        id="IconLauncherShape"
+        severity="Warning"
+        message="Launcher icons should not fill every pixel of their square region; see the design guide for details"
+        category="Usability:Icons"
+        priority="6"
+        summary="The launcher icon shape should use a distinct silhouette"
+        explanation="According to the Android Design Guide (https://d.android.com/r/studio-ui/designer/material/iconography) your launcher icons should &quot;use a distinct silhouette&quot;, a &quot;three-dimensional, front view, with a slight perspective as if viewed from above, so that users perceive some depth.&quot;&#xA;&#xA;The unique silhouette implies that your launcher icon should not be a filled square.">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/res/mipmap-xxhdpi/ic_launcher.png"/>
+    </issue>
+
+    <issue
+        id="IconLauncherShape"
+        severity="Warning"
+        message="Launcher icons should not fill every pixel of their square region; see the design guide for details"
+        category="Usability:Icons"
+        priority="6"
+        summary="The launcher icon shape should use a distinct silhouette"
+        explanation="According to the Android Design Guide (https://d.android.com/r/studio-ui/designer/material/iconography) your launcher icons should &quot;use a distinct silhouette&quot;, a &quot;three-dimensional, front view, with a slight perspective as if viewed from above, so that users perceive some depth.&quot;&#xA;&#xA;The unique silhouette implies that your launcher icon should not be a filled square.">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png"/>
+    </issue>
+
+    <issue
+        id="MonochromeLauncherIcon"
+        severity="Warning"
+        message="The application adaptive icon is missing a monochrome tag"
+        category="Usability:Icons"
+        priority="6"
+        summary="Monochrome icon is not defined"
+        explanation="If `android:roundIcon` and `android:icon` are both in your manifest, you must either remove the reference to `android:roundIcon` if it is not needed; or, supply the monochrome icon in the drawable defined by the `android:roundIcon` and `android:icon` attribute.&#xA;&#xA;For example, if `android:roundIcon` and `android:icon` are both in the manifest, a launcher might choose to use `android:roundIcon` over `android:icon` to display the adaptive app icon. Therefore, your themed application iconwill not show if your monochrome attribute is not also specified in `android:roundIcon`."
+        errorLine1="&lt;adaptive-icon xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot;>"
+        errorLine2="^">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
+            line="2"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="MonochromeLauncherIcon"
+        severity="Warning"
+        message="The application adaptive roundIcon is missing a monochrome tag"
+        category="Usability:Icons"
+        priority="6"
+        summary="Monochrome icon is not defined"
+        explanation="If `android:roundIcon` and `android:icon` are both in your manifest, you must either remove the reference to `android:roundIcon` if it is not needed; or, supply the monochrome icon in the drawable defined by the `android:roundIcon` and `android:icon` attribute.&#xA;&#xA;For example, if `android:roundIcon` and `android:icon` are both in the manifest, a launcher might choose to use `android:roundIcon` over `android:icon` to display the adaptive app icon. Therefore, your themed application iconwill not show if your monochrome attribute is not also specified in `android:roundIcon`."
+        errorLine1="&lt;adaptive-icon xmlns:android=&quot;http://schemas.android.com/apk/res/android&quot;>"
+        errorLine2="^">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml"
+            line="2"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="IconLocation"
+        severity="Warning"
+        message="Found bitmap drawable `res/drawable/ic_bingo_logo.png` in densityless folder"
+        category="Usability:Icons"
+        priority="5"
+        summary="Image defined in density-independent drawable folder"
+        explanation="The res/drawable folder is intended for density-independent graphics such as shapes defined in XML. For bitmaps, move it to `drawable-mdpi` and consider providing higher and lower resolution versions in `drawable-ldpi`, `drawable-hdpi` and `drawable-xhdpi`. If the icon **really** is density independent (for example a solid color) you can place it in `drawable-nodpi`."
+        url="https://developer.android.com/guide/practices/screens_support.html"
+        urls="https://developer.android.com/guide/practices/screens_support.html">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/res/drawable/ic_bingo_logo.png"/>
+    </issue>
+
+    <issue
+        id="IconLocation"
+        severity="Warning"
+        message="Found bitmap drawable `res/drawable/ic_splash_logo.png` in densityless folder"
+        category="Usability:Icons"
+        priority="5"
+        summary="Image defined in density-independent drawable folder"
+        explanation="The res/drawable folder is intended for density-independent graphics such as shapes defined in XML. For bitmaps, move it to `drawable-mdpi` and consider providing higher and lower resolution versions in `drawable-ldpi`, `drawable-hdpi` and `drawable-xhdpi`. If the icon **really** is density independent (for example a solid color) you can place it in `drawable-nodpi`."
+        url="https://developer.android.com/guide/practices/screens_support.html"
+        urls="https://developer.android.com/guide/practices/screens_support.html">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/res/drawable/ic_splash_logo.png"/>
+    </issue>
+
+    <issue
+        id="HardcodedText"
+        severity="Warning"
+        message="Hardcoded string &quot;🎮 Match Invitation&quot;, should use `@string` resource"
+        category="Internationalization"
+        priority="5"
+        summary="Hardcoded text"
+        explanation="Hardcoding text attributes directly in layout files is bad for several reasons:&#xA;&#xA;* When creating configuration variations (for example for landscape or portrait) you have to repeat the actual text (and keep it up to date when making changes)&#xA;&#xA;* The application cannot be translated to other languages by just adding new translations for existing string resources.&#xA;&#xA;There are quickfixes to automatically extract this hardcoded string into a resource lookup."
+        errorLine1="        android:text=&quot;🎮 Match Invitation&quot;"
+        errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/res/layout/notification_invite_collapsed.xml"
+            line="16"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="HardcodedText"
+        severity="Warning"
+        message="Hardcoded string &quot;Invited you to play Bingo&quot;, should use `@string` resource"
+        category="Internationalization"
+        priority="5"
+        summary="Hardcoded text"
+        explanation="Hardcoding text attributes directly in layout files is bad for several reasons:&#xA;&#xA;* When creating configuration variations (for example for landscape or portrait) you have to repeat the actual text (and keep it up to date when making changes)&#xA;&#xA;* The application cannot be translated to other languages by just adding new translations for existing string resources.&#xA;&#xA;There are quickfixes to automatically extract this hardcoded string into a resource lookup."
+        errorLine1="        android:text=&quot;Invited you to play Bingo&quot;"
+        errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/res/layout/notification_invite_collapsed.xml"
+            line="27"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="HardcodedText"
+        severity="Warning"
+        message="Hardcoded string &quot;✅ Accept&quot;, should use `@string` resource"
+        category="Internationalization"
+        priority="5"
+        summary="Hardcoded text"
+        explanation="Hardcoding text attributes directly in layout files is bad for several reasons:&#xA;&#xA;* When creating configuration variations (for example for landscape or portrait) you have to repeat the actual text (and keep it up to date when making changes)&#xA;&#xA;* The application cannot be translated to other languages by just adding new translations for existing string resources.&#xA;&#xA;There are quickfixes to automatically extract this hardcoded string into a resource lookup."
+        errorLine1="            android:text=&quot;✅ Accept&quot;"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/res/layout/notification_invite_collapsed.xml"
+            line="46"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="HardcodedText"
+        severity="Warning"
+        message="Hardcoded string &quot;❌ Decline&quot;, should use `@string` resource"
+        category="Internationalization"
+        priority="5"
+        summary="Hardcoded text"
+        explanation="Hardcoding text attributes directly in layout files is bad for several reasons:&#xA;&#xA;* When creating configuration variations (for example for landscape or portrait) you have to repeat the actual text (and keep it up to date when making changes)&#xA;&#xA;* The application cannot be translated to other languages by just adding new translations for existing string resources.&#xA;&#xA;There are quickfixes to automatically extract this hardcoded string into a resource lookup."
+        errorLine1="            android:text=&quot;❌ Decline&quot;"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/res/layout/notification_invite_collapsed.xml"
+            line="61"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="HardcodedText"
+        severity="Warning"
+        message="Hardcoded string &quot;🎮 Match Invitation&quot;, should use `@string` resource"
+        category="Internationalization"
+        priority="5"
+        summary="Hardcoded text"
+        explanation="Hardcoding text attributes directly in layout files is bad for several reasons:&#xA;&#xA;* When creating configuration variations (for example for landscape or portrait) you have to repeat the actual text (and keep it up to date when making changes)&#xA;&#xA;* The application cannot be translated to other languages by just adding new translations for existing string resources.&#xA;&#xA;There are quickfixes to automatically extract this hardcoded string into a resource lookup."
+        errorLine1="        android:text=&quot;🎮 Match Invitation&quot;"
+        errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/res/layout/notification_invite_expanded.xml"
+            line="16"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="HardcodedText"
+        severity="Warning"
+        message="Hardcoded string &quot;Your friend invited you to play a real-time Bingo match!&quot;, should use `@string` resource"
+        category="Internationalization"
+        priority="5"
+        summary="Hardcoded text"
+        explanation="Hardcoding text attributes directly in layout files is bad for several reasons:&#xA;&#xA;* When creating configuration variations (for example for landscape or portrait) you have to repeat the actual text (and keep it up to date when making changes)&#xA;&#xA;* The application cannot be translated to other languages by just adding new translations for existing string resources.&#xA;&#xA;There are quickfixes to automatically extract this hardcoded string into a resource lookup."
+        errorLine1="        android:text=&quot;Your friend invited you to play a real-time Bingo match!&quot;"
+        errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/res/layout/notification_invite_expanded.xml"
+            line="26"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="HardcodedText"
+        severity="Warning"
+        message="Hardcoded string &quot;✅ Accept &amp; Play&quot;, should use `@string` resource"
+        category="Internationalization"
+        priority="5"
+        summary="Hardcoded text"
+        explanation="Hardcoding text attributes directly in layout files is bad for several reasons:&#xA;&#xA;* When creating configuration variations (for example for landscape or portrait) you have to repeat the actual text (and keep it up to date when making changes)&#xA;&#xA;* The application cannot be translated to other languages by just adding new translations for existing string resources.&#xA;&#xA;There are quickfixes to automatically extract this hardcoded string into a resource lookup."
+        errorLine1="            android:text=&quot;✅ Accept &amp;amp; Play&quot;"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/res/layout/notification_invite_expanded.xml"
+            line="45"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="HardcodedText"
+        severity="Warning"
+        message="Hardcoded string &quot;❌ Decline&quot;, should use `@string` resource"
+        category="Internationalization"
+        priority="5"
+        summary="Hardcoded text"
+        explanation="Hardcoding text attributes directly in layout files is bad for several reasons:&#xA;&#xA;* When creating configuration variations (for example for landscape or portrait) you have to repeat the actual text (and keep it up to date when making changes)&#xA;&#xA;* The application cannot be translated to other languages by just adding new translations for existing string resources.&#xA;&#xA;There are quickfixes to automatically extract this hardcoded string into a resource lookup."
+        errorLine1="            android:text=&quot;❌ Decline&quot;"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="/home/bob/workspace/bingo_heartbeat_codex/app/src/main/res/layout/notification_invite_expanded.xml"
+            line="60"
+            column="13"/>
+    </issue>
+
+</issues>

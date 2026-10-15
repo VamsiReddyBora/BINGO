@@ -1,3 +1,5 @@
+> **Historical Fix003 report — superseded.** These claims describe commit `600a259`, not the current repair. The independent review reproduced remaining defects. Use [Codex repair review](../heartbeat-codex/RepairReview.md) and [current test report](../heartbeat-codex/TEST_REPORT.md). Do not treat this historical document as current PASS/readiness evidence.
+
 # Bingo 1v1 Heartbeat & Recovery Test Report (Fix003 Delivery)
 
 **Prepared**: 2026-10-15 (Asia/Kolkata)  

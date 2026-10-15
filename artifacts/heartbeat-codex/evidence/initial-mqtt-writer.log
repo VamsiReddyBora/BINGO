@@ -1,0 +1,4 @@
+PASS real broker negotiates both production clients
+PASS real broker delivers one accepted pick to both boards
+PASS prepared third-episode checkpoint published
+PASS accepted final result retained before winner exits

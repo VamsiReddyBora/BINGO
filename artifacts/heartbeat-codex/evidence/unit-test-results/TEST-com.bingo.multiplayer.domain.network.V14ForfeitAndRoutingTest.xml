@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.bingo.multiplayer.domain.network.V14ForfeitAndRoutingTest" tests="19" skipped="0" failures="0" errors="0" timestamp="2026-10-15T11:35:20" hostname="VR" time="0.008">
+  <properties/>
+  <testcase name="testBug029_stampResultTypeDrawIsDeprecated" classname="com.bingo.multiplayer.domain.network.V14ForfeitAndRoutingTest" time="0.004"/>
+  <testcase name="testBug038_timerTextFormattingAndFixedBadgeBounds" classname="com.bingo.multiplayer.domain.network.V14ForfeitAndRoutingTest" time="0.0"/>
+  <testcase name="testBug036_showQrButtonSetsInAppDialogFlag" classname="com.bingo.multiplayer.domain.network.V14ForfeitAndRoutingTest" time="0.0"/>
+  <testcase name="testBug026_twoPlayerDisconnectTurnRotationReachesThreeMisses" classname="com.bingo.multiplayer.domain.network.V14ForfeitAndRoutingTest" time="0.0"/>
+  <testcase name="testBug030_lanP2pHostDisconnectAwardsGuestWinByForfeit" classname="com.bingo.multiplayer.domain.network.V14ForfeitAndRoutingTest" time="0.0"/>
+  <testcase name="testBug028_surrenderDialogActionRouting" classname="com.bingo.multiplayer.domain.network.V14ForfeitAndRoutingTest" time="0.0"/>
+  <testcase name="testBug041_chatInputTruncatesPastedTextToMaxLimit" classname="com.bingo.multiplayer.domain.network.V14ForfeitAndRoutingTest" time="0.0"/>
+  <testcase name="testBug035_completedLineStylingPreservesOpponentRecentPickPrecedence" classname="com.bingo.multiplayer.domain.network.V14ForfeitAndRoutingTest" time="0.0"/>
+  <testcase name="testBug025_manualBoardDesignInGameRouteAndReadyFiltering" classname="com.bingo.multiplayer.domain.network.V14ForfeitAndRoutingTest" time="0.0"/>
+  <testcase name="testBug032_manualBoardRematchResetsRunnerAndWinnerOutcomes" classname="com.bingo.multiplayer.domain.network.V14ForfeitAndRoutingTest" time="0.0"/>
+  <testcase name="testBug037_manualBoardDesignerSwapAndRemove" classname="com.bingo.multiplayer.domain.network.V14ForfeitAndRoutingTest" time="0.0"/>
+  <testcase name="testBug039_victoryStampFontSizeScalingAndEllipsis" classname="com.bingo.multiplayer.domain.network.V14ForfeitAndRoutingTest" time="0.0"/>
+  <testcase name="testBug042_headToHeadAlertTextHasHighContrast" classname="com.bingo.multiplayer.domain.network.V14ForfeitAndRoutingTest" time="0.0"/>
+  <testcase name="testBug034_rejoinGameUsesNormalizedPrefixPlayerIdMatch" classname="com.bingo.multiplayer.domain.network.V14ForfeitAndRoutingTest" time="0.0"/>
+  <testcase name="testBug033_peerTurnTimeoutPacketIncrementsMissesAndEvaluatesForfeit" classname="com.bingo.multiplayer.domain.network.V14ForfeitAndRoutingTest" time="0.001"/>
+  <testcase name="testBug040_reactionStripPreferencesRecordedWithoutImmediateItemJumping" classname="com.bingo.multiplayer.domain.network.V14ForfeitAndRoutingTest" time="0.0"/>
+  <testcase name="testBug024_forfeitOutcomesPopulateWinnerAndWinReason" classname="com.bingo.multiplayer.domain.network.V14ForfeitAndRoutingTest" time="0.0"/>
+  <testcase name="testBug031_explicitSurrenderOrLeaveSetsThreeMissesImmediately" classname="com.bingo.multiplayer.domain.network.V14ForfeitAndRoutingTest" time="0.0"/>
+  <testcase name="testBug027_kickPlayerClearsOngoingMatch" classname="com.bingo.multiplayer.domain.network.V14ForfeitAndRoutingTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -1,0 +1,14 @@
+[
+  {
+    "mode": "writer",
+    "exit": 0
+  },
+  {
+    "mode": "reader",
+    "exit": 0
+  },
+  {
+    "mode": "cleanup",
+    "exit": 0
+  }
+]

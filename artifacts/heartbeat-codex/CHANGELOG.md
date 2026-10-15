@@ -33,3 +33,11 @@ All changes are isolated on fix/heartbeat-codex. No deployment or protected APK 
 - Strengthened the preference-failure test to model Android updating memory despite disk failure. It reproduced a rollback/history bug; preserved pre-edit history and restored touched fields/receipt on failure. The targeted fault test then passed.
 - Retained publication verification now checks initial/final storage through flagged retained read-back, beyond PUBACK/live self echo.
 - Final fresh verification is recorded in TEST_REPORT.md and the evidence directory. Historical intermediate failing logs are retained; they are not final acceptance results.
+
+## 2026-10-15 — Delivery checkpoint and review
+
+- Application implementation committed locally as d4abaac26a06004b97b97a26fb936907ef782126. Additional heartbeat-only regression commit: 194b34b186f7d18af29b1d9e1dc9365593ae6930.
+- Final full application verification passed: test/lint/release build, 0 lint errors/fatal and 34 warnings. Added exact repeated-sync and 5,000/5,001ms heartbeat-gap tests afterward; final fresh full unit run passed 398 tests across 39 suites with no failures/errors/skips. Application sources remain identical to the signed build.
+- Real MQTT probe passed eight alternating picks and independent-process retained final recovery after writer exit; test topics cleaned up. Median request-to-both-accepted 503ms / p95 554ms, eight headless samples with 50ms resolution. No physical baseline comparison claimed.
+- Self-review and all 79 planned-case evidence mappings recorded. Historical Fix003 reports marked superseded and old handoff preserved. Guest availability during original-host absence remains explicitly BLOCKED; paired Android UI remains NOT RUN.
+- APK built separately, signature verified, SHA256 262ef4c547941e975a854c5c17825e6495c0fa281aad983a9055afd5443b8e8c. Baseline 159/159 fingerprints and both protected/shared APK hashes reverified unchanged. No push/merge/deployment.

@@ -1,120 +1,61 @@
-# Bingo 1v1 Heartbeat & Recovery (Fix003 Delivery) - Agent Handoff
+# Bingo heartbeat repair — current handoff
 
-Prepared on **2026-10-15 (Asia/Kolkata)** for branch **`fix/heartbeat-fix003`** in worktree **`/home/bob/workspace/bingo_heartbeat_fix003`**.
+Updated **2026-10-15, Asia/Kolkata**. Active worktree: `/home/bob/workspace/bingo_heartbeat_codex`; local branch: `fix/heartbeat-codex`.
 
----
+**NOT READY for the full intended behavior.** Independent code repairs are implemented, built and tested. The guest still waits when the original host is unavailable: guest gameplay, claim and confirmed surrender require an enforceable MQTT authority/ownership solution. Full Android paired-device and baseline latency verification also remain outstanding. Do not report “all fixed except hardware.”
 
-## 1. Quick Start & Executive Summary
+## Read first
 
-This branch delivers the complete **Fix003** resolution addressing all eight findings (**F001–F008**) identified in `HeartbeatImplementationFix002Review.md`.
+- [Repair and self-review](artifacts/heartbeat-codex/RepairReview.md): F001–F008, actual changes and remaining limits.
+- [Verification report](artifacts/heartbeat-codex/TEST_REPORT.md): 398 tests, precise evidence layers, all original 44 + additional 35 planned cases.
+- [Exact new test names](artifacts/heartbeat-codex/evidence/RegressionTestIndex.md): 36 newly added test methods.
+- [Ownership/storage boundary](artifacts/heartbeat-codex/OWNERSHIP_AND_STORAGE.md): original single host; retained broker recovery; missing guest availability.
+- [Review manifest](artifacts/heartbeat-codex/ReviewManifest.json), [journal](artifacts/heartbeat-codex/CHANGELOG.md), [source hashes](artifacts/heartbeat-codex/SOURCE_FINGERPRINTS.json).
+- Original requirements/plans in `docs/`; latest independent review: `/home/bob/workspace/HeartbeatImplementationFix003Review.md`.
 
-- **Overall Readiness**: **NOT READY FOR PRODUCTION DEPLOYMENT**  
-  All code defects have been resolved, verified by 362 passing JVM unit tests, 24 passing independent probe assertions (0 contract violations across `run_review_probes.py` and `run_additional_probes.py`), and 0 Android lint errors. However, overall status remains **NOT READY** because live paired-device verification (N34) and hardware touch-latency benchmarking (N35) require active physical/emulator devices, which are absent in this headless Linux execution environment (`adb devices` returns 0 connected devices).
-- **Candidate Release APK**: `artifacts/heartbeat-fix003/Bingo-fix003.apk`
-  - Size: **7,014,503 bytes**
-  - SHA-256: `d31167e2d1d0ab6f490cbd93d0b4552ab43c572e25f7db6b3922f2b508077888`
-  - Developer Signing Certificate SHA-256: `39a428942c3c2629ff3490c944b8b82c7625b22d660b7a2cdf682456d81f60a4` (exact match with baseline APK)
-- **Protected Baseline**: Commit `a13d39edb0ff6a67d272cac187f1ed9fb294f9e9` (branch `1.4.1`, APK SHA-256 `6c5e014b4a8a699e1506393e79bb6bb3959ccb72e2d6fa85cc425f1118005ccc`, 6,985,826 bytes — completely preserved and untouched).
-- **Preserved Fix002 Checkpoint**: Commit `326231022f1bdf305e715b31f9c6625c55fca61b` (branch `fix/heartbeat-fix002`, APK SHA-256 `6c8b8616727cc9e0b709edbc4ff5878722cbe3a1bd517deebdb52e7e13500631`, 7,010,404 bytes — preserved).
+## Checkpoints
 
----
+1. Protected restored baseline `a13d39edb0ff6a67d272cac187f1ed9fb294f9e9`, branch `1.4.1`, checkout `/home/bob/workspace/bingo_multiplayer`. All 159 fingerprinted files and protected APK unchanged. Tag `v1.4.1` is the older release; do not move it.
+2. Starting Fix003 `600a2591da5efcf2135f3c8d3e1570aac059bac0`. Its “all code fixed” reports were inaccurate; historical files now carry superseded notices.
+3. Application implementation `d4abaac26a06004b97b97a26fb936907ef782126`.
+4. Additional heartbeat boundary tests `194b34b186f7d18af29b1d9e1dc9365593ae6930`. Application source is identical to the APK build checkpoint.
+5. Later local evidence/handoff commit: see `git log fix/heartbeat-codex`; manifests intentionally avoid a self-referential hash.
 
-## 2. Review Findings & Implemented Fixes (F001–F008)
+## Actual implementation
 
-### F001 — Shared Turn Ownership, Sequential Turns & Deadline Timing (HB07, HB08)
-- **Location**: `presentation/navigation/RootNavGraph.kt`
-- **Resolution**: Added `frozenRemainingTurnMillis` to preserve exact running milliseconds across pause, resume, and rejoin snapshots. Host acts as authoritative turn sequencer; guest waits safely if host transport disconnects without unilateral split-brain takeover.
+`ReliableMatchCoordinator` accepts all online 1v1 actions through one serialized path. `ReliableMatchClient` runs the production protocol; RootNavGraph submits requests and renders accepted snapshots. All complete board layouts, real pick/turn identities, accepted chat, exact timing/pause, host-observed episodes and canonical final results are synchronized. Legacy gameplay packets/timers cannot mutate a new 1v1 match. AI/LAN/groups retain legacy paths.
 
-### F002 — Final Results Shared, Immutable and Crash-Safe Across Processes (HB11)
-- **Location**: `domain/network/OngoingMatchStore.kt`
-- **Resolution**: Enforced disk `editor.commit()` before caching or publishing tombstone results. Failed writes return `false` without caching, ensuring retries re-attempt disk commit. Added durable `FileSharedMatchResultAdapter` writing to `/tmp/bingo_shared_results/tombstone_{seed}.json`, enabling cross-process result retrieval between separate JVM instances.
+The original host installation is the only writer; no takeover is inferred from silence. Local pending/accepted state is distinct. Actual retained QoS1 MQTT state is on `bingo/v4/match/{room}/{seed}/state`; requests use the room topic. Initial/final Android publications verify exact retained read-back. No per-move HTTP or new deployed backend. Statistics/history receipts are durable, atomic and account-bound. Ownerless legacy data is preserved without adoption; late old-match writes are rejected.
 
-### F003 — Strict Incoming Claim and Packet Identity Validation (HB10)
-- **Location**: `domain/engine/LobbyLifecycleEngine.kt`, `presentation/navigation/RootNavGraph.kt`
-- **Resolution**: In `isPacketForActiveMatch`, required `packetSeed != null && packetSeed != 0L && packetSeed == currentMatchSeed` when `currentMatchSeed != 0L`. In `RootNavGraph.kt`, verified sender against immutable `matchParticipants` before assigning peer, requiring committed `claimEpisodeCount >= 3` and nonblank `claimEpisodeId`.
+## Verified
 
-### F004 — Rejoin Flow Gating & Complete Authoritative Synchronization (HB06, HB03)
-- **Location**: `presentation/navigation/RootNavGraph.kt`
-- **Resolution**: `isReconcilingMatch` gates gameplay moves and turn progression until complete snapshot arrives. Handled both `packet.isPaused` (freezes timer) and `!packet.isPaused` (restores running turn). Periodic sync and rejoin responses include `turnIds`, `isPaused`, `pauseOwnerId`, and `remainingTurnMillis`.
+- Final full unit run: **398 tests / 39 suites**, zero failures, errors or skips.
+- Full application build/release/lint: success, **0 lint errors/fatal, 34 warnings**. It also ran 396 tests before the two test-only boundary additions.
+- Real MQTT: actual production clients negotiate and accept eight alternating picks; independent returning JVM recovers a retained final after writer JVM exit. Test device stores are separate. Third episode is a prepared fixture. Unique test topics cleaned up.
+- MQTT request-to-both-accepted metric: eight samples, median 503ms / p95 554ms, 50ms sampling resolution. This is not physical tap latency or a baseline comparison.
+- Two existing AVDs attempted without KVM; no usable boot-complete screenshots. No candidate installed, no data wiped, no invitations sent. Android gameplay **NOT RUN**. Both launched VMs stopped.
 
-### F005 — Enforce Account Ownership Without Global Alias Adoption (HB13)
-- **Location**: `domain/network/OngoingMatchStore.kt`, `presentation/auth/AuthGateScreen.kt`, `presentation/navigation/RootNavGraph.kt`
-- **Resolution**: Eliminated arbitrary scoped-key scanning in `getOngoingMatch(context, accountUid = null)`. In `clearOngoingMatch(context, accountUid = null)`, removed prefix-wide deletion so only legacy `KEY_MATCH_DATA` is cleared and other accounts' scoped saves remain intact. Scoped all live callers with authenticated user UID.
+## Build and artifacts
 
-### F006 — Bind Recovery Stability to Current Completed Synchronization (HB04, HB12)
-- **Location**: `domain/engine/OnlineMatchHeartbeatPolicy.kt`
-- **Resolution**: In `onStateSynchronized`, only initialize `recoveryStartedAt = now` on the first synchronization event (`!wasSynchronized || recoveryStartedAt == null`). Subsequent 2.5s periodic state synchronizations preserve the ongoing stability window, allowing recovery to complete after 10s of continuous post-sync ACKs and correctly incrementing episode count on future outages.
+Candidate: `artifacts/heartbeat-codex/Bingo-codex.apk`, **7,055,459 bytes**.
 
-### F007 — Durably Save Received Pause/Resume, Wire Histories, and Milliseconds (HB03, HB08, HB12)
-- **Location**: `domain/network/FastPacketCodec.kt`, `presentation/navigation/RootNavGraph.kt`
-- **Resolution**: In `FastPacketCodec.encode`, serialized `turnIds` for `TURN_TIMEOUT`. In `RootNavGraph.kt`, cleared `pickedTurnIdsHistory` and reset `frozenRemainingTurnMillis` on new game and rematch entry points. Preserved exact milliseconds across pause/resume cycles.
+SHA256: `262ef4c547941e975a854c5c17825e6495c0fa281aad983a9055afd5443b8e8c`.
 
-### F008 — Real Production Path Verification & Corrected Evidence (HB14)
-- **Location**: `artifacts/heartbeat-fix003/TEST_REPORT.md`, `Fix003ReviewResolution.md`, `CHANGELOG.md`, `BASELINE_MANIFEST.json`
-- **Resolution**: Executed both independent review probe suites (24/24 assertions PASS), full unit test suite (362/362 tests PASS), and Android lint (0 errors). Reported all paired-device and touch-latency items as `BLOCKED` due to missing devices and declared overall status as **NOT READY**.
+Verified signing certificate SHA256: `39a428942c3c2629ff3490c944b8b82c7625b22d660b7a2cdf682456d81f60a4`, matching baseline.
 
----
-
-## 3. Verification Commands & Outputs
-
-### 3.1 Additional Review Probes (`run_additional_probes.py`)
 ```bash
-python3 /home/bob/workspace/heartbeat-fix003-review-evidence/run_additional_probes.py /home/bob/workspace/bingo_heartbeat_fix003
+./gradlew testDebugUnitTest lintDebug assembleRelease :app:exportCodexVerificationClasspath \
+  -I artifacts/heartbeat-codex/verify-classpath.init.gradle \
+  --rerun-tasks --offline --console=plain --max-workers=2
+python3 artifacts/heartbeat-codex/run_live_mqtt.py
 ```
-Output:
-- `Fix002AdditionalReviewProbe`: 7 / 7 checks PASS (0 contract violations)
-- `Fix002SeparateProcessProbe`: 2 / 2 checks PASS (winner and absent-peer in separate JVM processes)
-- `Fix002WireReviewProbe`: 2 / 2 checks PASS (turnIds preserved in timeout packet; seed 0 rejected)
-- **Total: 3 / 3 suites PASS, 0 contract violations.**
 
-### 3.2 Review Probes (`run_review_probes.py`)
-```bash
-python3 /home/bob/workspace/heartbeat-fix003-review-evidence/run_review_probes.py /home/bob/workspace/bingo_heartbeat_fix003
-```
-Output:
-- `HeartbeatPolicyReviewProbe`: 5 / 5 checks PASS
-- `Fix001RecoveryReviewProbe`: 2 / 2 checks PASS
-- `Fix001StorageReviewProbe`: 5 / 5 checks PASS
-- **Total: 12 / 12 PASS, 0 contract violations.**
+Preserve existing live-probe evidence before rerunning. SDK configured locally in ignored `local.properties`. Do not expose broker credentials, Firebase secrets or signing configuration.
 
-### 3.3 Full Unit Test Suite
-```bash
-./gradlew testDebugUnitTest --rerun --offline --console=plain --max-workers=2
-```
-Output:
-- **362 tests across 34 suites**, 0 failures, 0 errors, 0 skips.
+## Continue safely
 
-### 3.4 Android Lint & Release Build
-```bash
-./gradlew lintDebug assembleRelease --offline --console=plain --max-workers=2
-```
-Output:
-- **0 lint errors**.
-- **BUILD SUCCESSFUL**. Candidate APK generated at `artifacts/heartbeat-fix003/Bingo-fix003.apk`.
+The user asked to fix all findings. Continue that objective when the missing authority/hosting configuration is supplied. A separate MQTT authority must have one enforceable writer and durable state; inventing another app-side “host” or a retained owner flag does not close the gap. User was asked where it could run, and asked for an explanation; explained Kevin-host-offline/Stuart-waiting. No hosting location has been supplied yet.
 
----
+Complete the 79-case/device matrix, especially both roles, app lifecycle/network faults, timer labels, manual board/chat preservation, result UI, statistics and the baseline latency comparison. Do not infer device PASS from unit tests or screen previews. Retention quota/acknowledged-final cleanup also needs a rollout policy.
 
-## 4. Key Artifact Locations
-
-- Candidate APK: `artifacts/heartbeat-fix003/Bingo-fix003.apk`
-- Manifest: `artifacts/heartbeat-fix003/BASELINE_MANIFEST.json`
-- Full Test Report: `artifacts/heartbeat-fix003/TEST_REPORT.md`
-- Review Resolution Report: `artifacts/heartbeat-fix003/Fix003ReviewResolution.md`
-- Change Journal: `artifacts/heartbeat-fix003/CHANGELOG.md`
-- Ownership & Storage Assessment: `artifacts/heartbeat-fix003/OWNERSHIP_AND_STORAGE.md`
-- Plans & Reviews: `docs/HeartbeatImplementationPlanFix003.md`, `docs/HeartbeatImplementationFix002Review.md`
-
----
-
-## 5. Instructions for Downstream Testers (When Live Devices Available)
-
-When two physical devices or emulators are connected via ADB:
-1. Verify device connection: `adb devices` (must list Device A and Device B).
-2. Install candidate APK on both:
-   ```bash
-   adb -s <device_a> install -r /home/bob/workspace/bingo_heartbeat_fix003/artifacts/heartbeat-fix003/Bingo-fix003.apk
-   adb -s <device_b> install -r /home/bob/workspace/bingo_heartbeat_fix003/artifacts/heartbeat-fix003/Bingo-fix003.apk
-   ```
-3. Test using dedicated test accounts (`Kevin` and `Stuart`).
-4. Execute 20 rapid reconnect cycles between Device A and Device B (verifying N34).
-5. Measure touch-to-mark input latency on board tiles comparing baseline and candidate (verifying N35).
+No push, merge, release or deployment was performed. Never overwrite `/home/bob/workspace/bingo_multiplayer/Bingo.apk` or shared `/home/bob/workspace/Bingo.apk`; their hashes are in the manifest. Roll back through a separate checkout at a preserved commit; retain new-schema saves and evidence rather than resetting/deleting user data.

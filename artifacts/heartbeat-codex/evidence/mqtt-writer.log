@@ -1,0 +1,12 @@
+PASS real broker negotiates both production clients
+PASS accepted MQTT pick 1 reaches both clients
+PASS accepted MQTT pick 2 reaches both clients
+PASS accepted MQTT pick 3 reaches both clients
+PASS accepted MQTT pick 4 reaches both clients
+PASS accepted MQTT pick 5 reaches both clients
+PASS accepted MQTT pick 6 reaches both clients
+PASS accepted MQTT pick 7 reaches both clients
+PASS accepted MQTT pick 8 reaches both clients
+METRIC request-to-both-accepted samples=8 medianMs=503 p95Ms=554 rawMs=[508, 554, 201, 503, 201, 503, 251, 553] (50ms poll resolution; not physical tap latency)
+PASS prepared third-episode checkpoint published
+PASS accepted final result retained before winner exits

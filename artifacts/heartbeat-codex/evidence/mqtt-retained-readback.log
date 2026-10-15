@@ -1,0 +1,1 @@
+PASS existing subscription receives exact stored payload with MQTT RETAIN flag after resubscription

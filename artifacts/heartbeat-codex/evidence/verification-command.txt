@@ -1,0 +1,11 @@
+Application/source build verification (d4abaac):
+./gradlew testDebugUnitTest lintDebug assembleRelease :app:exportCodexVerificationClasspath -I artifacts/heartbeat-codex/verify-classpath.init.gradle --rerun-tasks --offline --console=plain --max-workers=2
+
+Additional heartbeat boundary regressions (test-only follow-up):
+./gradlew testDebugUnitTest --rerun-tasks --offline --console=plain --max-workers=2
+
+Live broker production-client probe:
+python3 artifacts/heartbeat-codex/run_live_mqtt.py
+
+APK signature:
+/home/bob/android-sdk/build-tools/34.0.0/apksigner verify --verbose --print-certs artifacts/heartbeat-codex/Bingo-codex.apk

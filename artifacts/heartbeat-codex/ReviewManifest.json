@@ -1,0 +1,61 @@
+{
+  "prepared_at": "2026-10-15T17:09:45+05:30",
+  "branch": "fix/heartbeat-codex",
+  "worktree": "/home/bob/workspace/bingo_heartbeat_codex",
+  "application_implementation_commit": "d4abaac26a06004b97b97a26fb936907ef782126",
+  "boundary_regression_commit": "194b34b186f7d18af29b1d9e1dc9365593ae6930",
+  "application_sources_unchanged_since_release_build": true,
+  "source_fingerprints": "SOURCE_FINGERPRINTS.json",
+  "source_files_fingerprinted": 134,
+  "unit_tests": {
+    "tests": 398,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "suites": 39,
+    "new_regression_test_methods": 36
+  },
+  "lint": {
+    "errors": 0,
+    "fatal": 0,
+    "warnings": 34
+  },
+  "release_apk": {
+    "path": "/home/bob/workspace/bingo_heartbeat_codex/artifacts/heartbeat-codex/Bingo-codex.apk",
+    "bytes": 7055459,
+    "sha256": "262ef4c547941e975a854c5c17825e6495c0fa281aad983a9055afd5443b8e8c",
+    "signature_verified": true,
+    "certificate_sha256": "39a428942c3c2629ff3490c944b8b82c7625b22d660b7a2cdf682456d81f60a4"
+  },
+  "protected_baseline": {
+    "commit": "a13d39edb0ff6a67d272cac187f1ed9fb294f9e9",
+    "source_fingerprints_checked": 159,
+    "changed_files": []
+  },
+  "protected_apks": {
+    "/home/bob/workspace/bingo_multiplayer/Bingo.apk": "6c5e014b4a8a699e1506393e79bb6bb3959ccb72e2d6fa85cc425f1118005ccc",
+    "/home/bob/workspace/Bingo.apk": "6c8b8616727cc9e0b709edbc4ff5878722cbe3a1bd517deebdb52e7e13500631"
+  },
+  "live_mqtt": {
+    "production_client": true,
+    "independent_processes_and_device_directories": true,
+    "accepted_picks": 8,
+    "final_recovered_after_writer_exit": true,
+    "cleanup_exit": 0,
+    "latency_ms": {
+      "samples": 8,
+      "median": 503,
+      "p95": 554,
+      "resolution": 50,
+      "physical_tap_latency": false,
+      "baseline_comparison": false
+    },
+    "third_episode_is_prepared_fixture": true,
+    "broker_restart_tested": false
+  },
+  "android_ui_gameplay": "NOT RUN: AVDs attempted without KVM, no usable boot-complete screenshots; no APK installation",
+  "open_functional_requirement": "Guest continuation/claim/surrender confirmation while original host unavailable requires enforceable ownership or MQTT-connected authority",
+  "overall_readiness": "NOT READY",
+  "pushed_or_deployed": false,
+  "note": "This manifest identifies immutable application/test commits. The later documentation/evidence commit intentionally does not self-reference its hash."
+}

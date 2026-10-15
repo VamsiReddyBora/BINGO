@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.bingo.multiplayer.domain.PresenceAndFriendRequestTest" tests="12" skipped="0" failures="0" errors="0" timestamp="2026-10-15T11:35:12" hostname="VR" time="0.45">
+  <properties/>
+  <testcase name="testFriendRequestSerialization" classname="com.bingo.multiplayer.domain.PresenceAndFriendRequestTest" time="0.059"/>
+  <testcase name="testRoomMessagePacket_pingPongSurrenderPlayAgain" classname="com.bingo.multiplayer.domain.PresenceAndFriendRequestTest" time="0.011"/>
+  <testcase name="testPlayerOnlineStatus_lifecycleBased" classname="com.bingo.multiplayer.domain.PresenceAndFriendRequestTest" time="0.012"/>
+  <testcase name="testFastPacketCodec_microPayloads" classname="com.bingo.multiplayer.domain.PresenceAndFriendRequestTest" time="0.024"/>
+  <testcase name="testDetailedActivityStatuses_inLobbyAndPlaying" classname="com.bingo.multiplayer.domain.PresenceAndFriendRequestTest" time="0.308"/>
+  <testcase name="testGameInvite_serializationAndLifecycle" classname="com.bingo.multiplayer.domain.PresenceAndFriendRequestTest" time="0.002"/>
+  <testcase name="testPresenceDisplayFormatting_justNow" classname="com.bingo.multiplayer.domain.PresenceAndFriendRequestTest" time="0.0"/>
+  <testcase name="testOnlineRoomSession_lifecycleAndValidation" classname="com.bingo.multiplayer.domain.PresenceAndFriendRequestTest" time="0.003"/>
+  <testcase name="testOnlineRoomSession_compactPayloadUnderLimit" classname="com.bingo.multiplayer.domain.PresenceAndFriendRequestTest" time="0.013"/>
+  <testcase name="testPlayerPresence_isOnline_15secondWindow" classname="com.bingo.multiplayer.domain.PresenceAndFriendRequestTest" time="0.001"/>
+  <testcase name="testIsLocalFilePath_correctlyDifferentiatesBase64AndLocalPaths" classname="com.bingo.multiplayer.domain.PresenceAndFriendRequestTest" time="0.0"/>
+  <testcase name="testPresenceDisplayFormatting_noGreenDotsOrSymbols" classname="com.bingo.multiplayer.domain.PresenceAndFriendRequestTest" time="0.013"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
