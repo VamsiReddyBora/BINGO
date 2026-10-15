@@ -1,0 +1,16 @@
+{
+  "baseline_commit": "a13d39edb0ff6a67d272cac187f1ed9fb294f9e9",
+  "baseline_apk_sha256": "6c5e014b4a8a699e1506393e79bb6bb3959ccb72e2d6fa85cc425f1118005ccc",
+  "baseline_apk_size_bytes": 6985826,
+  "first_candidate_commit": "fc8bdf0ef460e29dc2e8e410fe41ae81ffd606bd",
+  "first_candidate_apk_sha256": "46b5038530ca19685581bb407bff648c85ba5ee6b5ea5470fc577066f688c8e0",
+  "fix001_reviewed_commit": "fa3b1ffdd3f517b90e595c1589c6a8290a8c69e0",
+  "fix001_candidate_apk_sha256": "6a96c7148629d777bbd203b4ac1849ee92bdb417c1802bdd6a274c267e186437",
+  "fix002_reviewed_commit": "326231022f1bdf305e715b31f9c6625c55fca61b",
+  "fix002_candidate_apk_sha256": "6c8b8616727cc9e0b709edbc4ff5878722cbe3a1bd517deebdb52e7e13500631",
+  "fix003_branch": "fix/heartbeat-fix003",
+  "fix003_worktree_dir": "/home/bob/workspace/bingo_heartbeat_fix003",
+  "starting_head": "326231022f1bdf305e715b31f9c6625c55fca61b",
+  "target_apk": "artifacts/heartbeat-fix003/Bingo-fix003.apk",
+  "apk_signing_cert_sha256": "39a428942c3c2629ff3490c944b8b82c7625b22d660b7a2cdf682456d81f60a4"
+}
