@@ -71,3 +71,24 @@
 - Remaining dependencies: Wire bounded observation start and transport challenge handling in Chunk 2.
 - Rollback: `git checkout fa190fd -- app/src/main/java/com/bingo/multiplayer/domain/engine/OnlineMatchHeartbeatPolicy.kt app/src/test/java/com/bingo/multiplayer/domain/engine/OnlineMatchHeartbeatPolicyTest.kt`
 
+---
+
+### FIX001-002 — Dedicated Challenge-Reply Freshness & Generic Shortcut Removal
+- Started / completed: 2026-10-15 11:15 IST / 2026-10-15 11:21 IST
+- Checkpoint before edit: b95fe3c
+- Review IDs: HB12, HB10 (transport part), HB05 (immediate first probe)
+- Files / symbols:
+  - `app/src/main/java/com/bingo/multiplayer/domain/network/OnlineRoomSyncManager.kt` (`startMatchHeartbeat`, `claimMatchVictory`, `notifyStateSynchronized`, `handleIncomingPacket`)
+  - `app/src/main/java/com/bingo/multiplayer/presentation/navigation/RootNavGraph.kt` (`GAME_SYNC` packet handling)
+  - `app/src/test/java/com/bingo/multiplayer/domain/network/MatchHeartbeatPacketCodecTest.kt` (`HB12 - generic peer traffic, old-match sync, and expired or duplicate ACKs do not clear unavailability`)
+- Actual old behavior / replacement:
+  - Old: `OnlineRoomSyncManager` had an unconditional fallback (lines 1167–1179) that treated all non-heartbeat packets as fresh peer responses, and called `onStateSynchronized()` immediately upon receiving any `GAME_SYNC` packet before validation or disk persistence. Probe loop delayed 2500ms before sending its first probe. `claimMatchVictory()` prematurely stopped heartbeat monitoring before coordinator acceptance.
+  - New: Removed generic packet activity fallback. Only verified challenge ACKs for the active match, intended peer, active connection generation, with challenge age <= 5000ms call `onFreshPeerResponse()`. `notifyStateSynchronized()` is invoked only after the coordinator validates, applies, and durably persists `GAME_SYNC`. First probe is dispatched immediately upon start. Broker echo RTT freshness (<= 5000ms) enforced on `PING`. Premature `stopMatchHeartbeat()` removed from `claimMatchVictory()`.
+- Scope and compatibility: Applies exclusively to online 1v1 match heartbeats; legacy packet codecs and LAN/group matches unaffected.
+- Tests:
+  - `./gradlew testDebugUnitTest --tests "com.bingo.multiplayer.domain.network.MatchHeartbeatPacketCodecTest"` -> PASS (all 6 tests, including new HB12 regression).
+  - `python3 /home/bob/workspace/heartbeat-review-evidence/run_probe.py /home/bob/workspace/bingo_heartbeat_fix001` -> 5 of 5 checks PASS, 0 contract violations.
+- Remaining dependencies: Coordinator lifecycle and auto-forfeit bypass in Chunk 3.
+- Rollback: `git checkout b95fe3c -- app/src/main/java/com/bingo/multiplayer/domain/network/OnlineRoomSyncManager.kt app/src/main/java/com/bingo/multiplayer/presentation/navigation/RootNavGraph.kt app/src/test/java/com/bingo/multiplayer/domain/network/MatchHeartbeatPacketCodecTest.kt`
+
+

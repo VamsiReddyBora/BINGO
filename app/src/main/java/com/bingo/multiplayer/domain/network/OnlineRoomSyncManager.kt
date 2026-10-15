@@ -193,31 +193,34 @@ class OnlineRoomSyncManager(
         // Dedicated 2.5s probe loop decoupled from cloud reconciliation
         matchHeartbeatJob = scope.launch(Dispatchers.IO) {
             while (isActive) {
+                if (AppLifecycleObserver.isAppInForeground.value) {
+                    val client = mqttClient
+                    if (client != null && client.isConnected && isSubscribed) {
+                        val p = localPlayer
+                        if (p != null) {
+                            val challenge = UUID.randomUUID().toString().take(8)
+                            val nowMonotonic = android.os.SystemClock.elapsedRealtime()
+                            outstandingChallenges[challenge] = nowMonotonic
+                            outstandingChallenges.entries.removeIf { (nowMonotonic - it.value) > 5000L }
+
+                            heartbeatSequence++
+                            val probePacket = RoomMessagePacket(
+                                type = "MATCH_HEARTBEAT",
+                                protocolVersion = 1,
+                                matchId = matchId,
+                                playerId = p.id,
+                                peerUid = peerUid,
+                                connectionGeneration = activeMatchConnectionGeneration,
+                                sequence = heartbeatSequence,
+                                challengeId = challenge,
+                                heartbeatAction = "PROBE",
+                                timestamp = System.currentTimeMillis()
+                            )
+                            broadcastPacket(probePacket)
+                        }
+                    }
+                }
                 delay(2500L)
-                if (!AppLifecycleObserver.isAppInForeground.value) continue
-                val client = mqttClient ?: continue
-                if (!client.isConnected || !isSubscribed) continue
-                val p = localPlayer ?: continue
-
-                val challenge = UUID.randomUUID().toString().take(8)
-                val nowMonotonic = android.os.SystemClock.elapsedRealtime()
-                outstandingChallenges[challenge] = nowMonotonic
-                outstandingChallenges.entries.removeIf { (nowMonotonic - it.value) > 5000L }
-
-                heartbeatSequence++
-                val probePacket = RoomMessagePacket(
-                    type = "MATCH_HEARTBEAT",
-                    protocolVersion = 1,
-                    matchId = matchId,
-                    playerId = p.id,
-                    peerUid = peerUid,
-                    connectionGeneration = activeMatchConnectionGeneration,
-                    sequence = heartbeatSequence,
-                    challengeId = challenge,
-                    heartbeatAction = "PROBE",
-                    timestamp = System.currentTimeMillis()
-                )
-                broadcastPacket(probePacket)
             }
         }
 
@@ -240,13 +243,13 @@ class OnlineRoomSyncManager(
         outstandingChallenges.clear()
     }
 
+    fun notifyStateSynchronized() {
+        matchHeartbeatPolicy?.onStateSynchronized()
+    }
+
     fun claimMatchVictory(localUid: String = localPlayer?.id ?: "local_player"): com.bingo.multiplayer.domain.engine.ClaimResult? {
         val policy = matchHeartbeatPolicy ?: return null
-        val result = policy.claimVictory(actorUid = localUid)
-        if (result is com.bingo.multiplayer.domain.engine.ClaimResult.Accepted) {
-            stopMatchHeartbeat()
-        }
-        return result
+        return policy.claimVictory(actorUid = localUid)
     }
 
     private fun checkMatchWatchdog() {
@@ -1106,14 +1109,18 @@ class OnlineRoomSyncManager(
 
             "PING" -> {
                 if (packet.playerId == localPlayer?.id || com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(packet.playerId, localPlayer?.id ?: "")) {
-                    lastBrokerReceiveEchoAt = android.os.SystemClock.elapsedRealtime()
                     // Direct broker round-trip echo: provides exact client-to-broker network ping
                     if (packet.pingTimestamp > 0L) {
-                        val brokerRtt = (System.currentTimeMillis() - packet.pingTimestamp).coerceAtLeast(1L)
-                        val cur = _pingMs.value
-                        val smoothed = if (cur <= 0L) brokerRtt else ((cur * 0.60) + (brokerRtt * 0.40)).toLong().coerceAtLeast(1L)
-                        _pingMs.value = smoothed
-                        NetworkPingMonitor.recordExternalPing(smoothed)
+                        val brokerRtt = System.currentTimeMillis() - packet.pingTimestamp
+                        if (brokerRtt in 0L..5000L) {
+                            lastBrokerReceiveEchoAt = android.os.SystemClock.elapsedRealtime()
+                            val cur = _pingMs.value
+                            val smoothed = if (cur <= 0L) brokerRtt.coerceAtLeast(1L) else ((cur * 0.60) + (brokerRtt.coerceAtLeast(1L) * 0.40)).toLong().coerceAtLeast(1L)
+                            _pingMs.value = smoothed
+                            NetworkPingMonitor.recordExternalPing(smoothed)
+                        }
+                    } else {
+                        lastBrokerReceiveEchoAt = android.os.SystemClock.elapsedRealtime()
                     }
                 }
             }
@@ -1164,19 +1171,9 @@ class OnlineRoomSyncManager(
             }
         }
 
-        val activePolicy = matchHeartbeatPolicy
-        if (activePolicy != null && (packet.playerId == activePolicy.peerUid || com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(packet.playerId, activePolicy.peerUid))) {
-            if (packet.type != "MATCH_HEARTBEAT" && packet.type != "LEAVE" && packet.type != "PLAYER_DISCONNECTED") {
-                val nowMonotonic = android.os.SystemClock.elapsedRealtime()
-                val decision = activePolicy.onFreshPeerResponse(nowMonotonic)
-                if (decision !is com.bingo.multiplayer.domain.engine.HeartbeatDecision.NoOp) {
-                    _matchHeartbeatDecisions.tryEmit(decision)
-                }
-                if (packet.type == "GAME_SYNC") {
-                    activePolicy.onStateSynchronized()
-                }
-            }
-        }
+        // Note: Generic fallback for non-heartbeat packets was removed per HB12.
+        // Only dedicated challenge-response ACKs with valid generation and latency <= 5s
+        // establish peer liveness. State synchronization is notified when validated and applied by coordinator.
 
         // Deliver game packets to listeners (START_GAME, PICK_NUMBER, GAME_SYNC, PLAY_AGAIN_REQUEST, SURRENDER, LEAVE, etc.)
         _incomingPackets.tryEmit(packet)

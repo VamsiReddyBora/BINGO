@@ -3,6 +3,8 @@ package com.bingo.multiplayer.domain.network
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.UUID
@@ -153,5 +155,96 @@ class MatchHeartbeatPacketCodecTest {
         assertEquals("HEARTBEAT", hbDecoded.type)
         assertEquals("u1", hbDecoded.playerId)
         assertTrue(hbDecoded.isHost)
+    }
+
+    @Test
+    fun `HB12 - generic peer traffic, old-match sync, and expired or duplicate ACKs do not clear unavailability`() {
+        class MockClock(var time: Long = 100_000L) : com.bingo.multiplayer.domain.engine.Clock {
+            override fun elapsedRealtime(): Long = time
+        }
+
+        val clock = MockClock(100_000L)
+        val policy = com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicy(
+            matchId = "match_active_1",
+            peerUid = "peer_stuart",
+            connectionGeneration = "gen_1",
+            clock = clock
+        )
+
+        // Reach 3 incidents to make claim eligible
+        // Episode 1
+        clock.time += 15_000L
+        policy.onTick(clock.time)
+        assertEquals(1, policy.committedEpisodeCount)
+        policy.onFreshPeerResponse(clock.time)
+        policy.onStateSynchronized(clock.time)
+        for (i in 1..4) {
+            clock.time += 2_500L
+            policy.onFreshPeerResponse(clock.time)
+            policy.onTick(clock.time)
+        }
+        assertFalse(policy.isEpisodeOpen)
+
+        // Episode 2
+        clock.time += 15_000L
+        policy.onTick(clock.time)
+        assertEquals(2, policy.committedEpisodeCount)
+        policy.onFreshPeerResponse(clock.time)
+        policy.onStateSynchronized(clock.time)
+        for (i in 1..4) {
+            clock.time += 2_500L
+            policy.onFreshPeerResponse(clock.time)
+            policy.onTick(clock.time)
+        }
+        assertFalse(policy.isEpisodeOpen)
+
+        // Episode 3 -> UNREACHABLE and Claim Victory eligible
+        clock.time += 15_000L
+        val dec3 = policy.onTick(clock.time)
+        assertEquals(3, policy.committedEpisodeCount)
+        assertTrue(dec3 is com.bingo.multiplayer.domain.engine.HeartbeatDecision.BecameUnreachable)
+        assertTrue((dec3 as com.bingo.multiplayer.domain.engine.HeartbeatDecision.BecameUnreachable).isClaimEligible)
+        assertTrue(policy.canClaimVictory())
+
+        // Simulation of transport: outstanding challenges map
+        val outstandingChallenges = mutableMapOf<String, Long>()
+        val activeGen = "gen_1"
+
+        // Issue a challenge at T
+        outstandingChallenges["chal_1"] = clock.time
+
+        // 1. Peer sends generic non-heartbeat packet (e.g. GAME_SYNC from old match, or CHAT, or READY_STATUS)
+        // Transport no longer passes these to onFreshPeerResponse()
+        // Claim eligibility MUST remain true
+        assertTrue("Claim must remain eligible when generic traffic arrives", policy.canClaimVictory())
+
+        // 2. Expired challenge ACK arrives (older than 5000ms)
+        clock.time += 5001L
+        val challengeSentAt = outstandingChallenges.remove("chal_1")
+        val isFresh = (challengeSentAt != null && (clock.time - challengeSentAt) <= 5000L)
+        assertFalse("Expired challenge must not be considered fresh", isFresh)
+        // Since expired, onFreshPeerResponse is NOT called
+        assertTrue("Claim must remain eligible when expired ACK arrives", policy.canClaimVictory())
+
+        // 3. Duplicate challenge arrives (already removed from map)
+        val duplicateSentAt = outstandingChallenges.remove("chal_1")
+        assertNull("Duplicate challenge ID must not be found in outstanding challenges", duplicateSentAt)
+        assertTrue("Claim must remain eligible after duplicate ACK", policy.canClaimVictory())
+
+        // 4. Valid fresh challenge ACK arrives for current generation
+        val freshChallengeId = "chal_2"
+        outstandingChallenges[freshChallengeId] = clock.time
+        clock.time += 200L // 200ms RTT
+        val freshSentAt = outstandingChallenges.remove(freshChallengeId)
+        assertNotNull(freshSentAt)
+        val isFreshAckValid = (clock.time - freshSentAt!!) <= 5000L
+        assertTrue(isFreshAckValid)
+
+        // Apply valid fresh response to policy
+        policy.onFreshPeerResponse(clock.time)
+
+        // A valid fresh ACK immediately revokes claim eligibility
+        assertFalse("A valid fresh ACK immediately revokes claim eligibility", policy.canClaimVictory())
+        assertEquals("Policy enters RECOVERING on fresh ACK", com.bingo.multiplayer.domain.engine.PeerAvailabilityState.RECOVERING, policy.state)
     }
 }

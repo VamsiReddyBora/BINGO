@@ -2203,6 +2203,9 @@ fun RootNavGraph(
                             }
                         }
                     }
+                    if (currentGameMode == GameMode.ONLINE_ROOM && matchParticipants.size == 2) {
+                        onlineRoomSync.notifyStateSynchronized()
+                    }
                 }
             }
 
