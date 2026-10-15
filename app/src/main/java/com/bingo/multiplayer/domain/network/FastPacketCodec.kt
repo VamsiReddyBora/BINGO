@@ -18,7 +18,7 @@ object FastPacketCodec {
     fun encode(packet: RoomMessagePacket): String {
         return when (packet.type) {
             "PICK_NUMBER" -> {
-                if (packet.winnerPlayerId.isNotBlank()) {
+                if (packet.winnerPlayerId.isNotBlank() || packet.turnIds.isNotEmpty()) {
                     json.encodeToString(packet)
                 } else {
                     val historyStr = packet.pickedHistory.joinToString(",")

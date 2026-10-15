@@ -35,6 +35,7 @@ data class RoomMessagePacket(
     val seed: Long = 0L,
     val pickedHistory: List<Int> = emptyList(),
     val pickedByHistory: List<String> = emptyList(),
+    val turnIds: List<Int> = emptyList(),
     val boardHash: Long = 0L,
     val currentTurnPlayerId: String = "",
     val pingTimestamp: Long = 0L,

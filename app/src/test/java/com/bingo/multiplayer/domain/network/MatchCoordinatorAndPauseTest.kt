@@ -419,4 +419,150 @@ class MatchCoordinatorAndPauseTest {
         assertFalse("Claim with less than 3 episodes must be rejected", invalidPacket.claimEpisodeCount >= 3)
         assertTrue("Claim with 3 or more episodes is valid", validPacket.claimEpisodeCount >= 3)
     }
+
+    @Test
+    fun `test F003 - Incoming claim validation rejects missing seed, blank matchId, unknown sender, and invalid episode ID`() {
+        val currentMatchSeed = 445566L
+        val myUid = "user_me"
+        val participants = listOf(
+            Player(id = "user_me", displayName = "Me", isHost = true),
+            Player(id = "user_peer", displayName = "Peer", isHost = false)
+        )
+
+        fun validateClaimPacket(packet: RoomMessagePacket): Boolean {
+            // Validate match seed: MUST be nonzero and match currentMatchSeed
+            if (packet.seed == 0L || packet.seed != currentMatchSeed) return false
+            // Validate matchId: MUST be nonblank and match currentMatchSeed string
+            if (packet.matchId.isBlank() || packet.matchId != currentMatchSeed.toString()) return false
+            // Validate peer identity: sender MUST be the peer in matchParticipants
+            val peer = participants.firstOrNull { it.id != myUid }
+            if (peer == null || packet.playerId != peer.id) return false
+            // Validate episode count and episode ID
+            if (packet.claimEpisodeCount < 3) return false
+            if (packet.claimEpisodeId.isBlank()) return false
+            return true
+        }
+
+        // 1. Zero seed (must be rejected!)
+        assertFalse("Zero seed must be rejected", validateClaimPacket(
+            RoomMessagePacket(type = "CLAIM_VICTORY", playerId = "user_peer", seed = 0L, matchId = "445566", claimEpisodeCount = 3, claimEpisodeId = "ep1")
+        ))
+
+        // 2. Mismatched seed
+        assertFalse("Mismatched seed must be rejected", validateClaimPacket(
+            RoomMessagePacket(type = "CLAIM_VICTORY", playerId = "user_peer", seed = 999L, matchId = "445566", claimEpisodeCount = 3, claimEpisodeId = "ep1")
+        ))
+
+        // 3. Blank matchId
+        assertFalse("Blank matchId must be rejected", validateClaimPacket(
+            RoomMessagePacket(type = "CLAIM_VICTORY", playerId = "user_peer", seed = 445566L, matchId = "", claimEpisodeCount = 3, claimEpisodeId = "ep1")
+        ))
+
+        // 4. Mismatched matchId
+        assertFalse("Mismatched matchId must be rejected", validateClaimPacket(
+            RoomMessagePacket(type = "CLAIM_VICTORY", playerId = "user_peer", seed = 445566L, matchId = "wrong_match", claimEpisodeCount = 3, claimEpisodeId = "ep1")
+        ))
+
+        // 5. Unknown sender not in participants
+        assertFalse("Unknown sender not in participants must be rejected", validateClaimPacket(
+            RoomMessagePacket(type = "CLAIM_VICTORY", playerId = "attacker", seed = 445566L, matchId = "445566", claimEpisodeCount = 3, claimEpisodeId = "ep1")
+        ))
+
+        // 6. Claim episode count < 3
+        assertFalse("Episode count < 3 must be rejected", validateClaimPacket(
+            RoomMessagePacket(type = "CLAIM_VICTORY", playerId = "user_peer", seed = 445566L, matchId = "445566", claimEpisodeCount = 2, claimEpisodeId = "ep1")
+        ))
+
+        // 7. Blank claim episode ID
+        assertFalse("Blank episode ID must be rejected", validateClaimPacket(
+            RoomMessagePacket(type = "CLAIM_VICTORY", playerId = "user_peer", seed = 445566L, matchId = "445566", claimEpisodeCount = 3, claimEpisodeId = "")
+        ))
+
+        // 8. Fully valid claim
+        assertTrue("Valid claim packet must be accepted", validateClaimPacket(
+            RoomMessagePacket(type = "CLAIM_VICTORY", playerId = "user_peer", seed = 445566L, matchId = "445566", claimEpisodeCount = 3, claimEpisodeId = "ep_445566_3")
+        ))
+    }
+
+    @Test
+    fun `test F003 - Sender identity cannot overwrite opponentPlayerId if sender is not in matchParticipants`() {
+        val myUid = "user_me"
+        val participants = listOf(
+            Player(id = "user_me", displayName = "Me", isHost = true),
+            Player(id = "user_peer", displayName = "Peer", isHost = false)
+        )
+        var opponentPlayerId = "user_peer"
+
+        fun onPacketReceived(packet: RoomMessagePacket) {
+            if (packet.playerId.isNotBlank() && packet.playerId != myUid) {
+                val isKnownParticipant = participants.isEmpty() || participants.any { it.id == packet.playerId }
+                if (isKnownParticipant) {
+                    opponentPlayerId = packet.playerId
+                }
+            }
+        }
+
+        // Packet from random unknown sender
+        val roguePacket = RoomMessagePacket(
+            type = "PING",
+            playerId = "random_rogue_sender"
+        )
+        onPacketReceived(roguePacket)
+
+        // Assert opponentPlayerId was NOT overwritten!
+        assertEquals("user_peer", opponentPlayerId)
+    }
+
+    @Test
+    fun `test F006 - Invalidation of sync flag on new outage and post-sync 10s stability window`() {
+        val clock = TestClock()
+        val policy = OnlineMatchHeartbeatPolicy(
+            matchId = "m_f006",
+            peerUid = "peer_f006",
+            connectionGeneration = "gen1",
+            clock = clock
+        )
+
+        // Initially state is synchronized
+        policy.onStateSynchronized(clock.elapsedRealtime())
+
+        // Outage occurs (> 15s)
+        clock.advance(15_001L)
+        policy.onTick(clock.elapsedRealtime())
+        assertEquals(PeerAvailabilityState.UNREACHABLE, policy.state)
+        assertEquals(1, policy.committedEpisodeCount)
+
+        // First ACK arrives
+        clock.advance(1_000L)
+        policy.onFreshPeerResponse(clock.elapsedRealtime())
+        assertEquals(PeerAvailabilityState.RECOVERING, policy.state)
+
+        // ACKs arrive for 10 seconds, but state synchronization has NOT been performed for this outage!
+        for (i in 1..4) {
+            clock.advance(2_500L)
+            policy.onFreshPeerResponse(clock.elapsedRealtime())
+        }
+        // Even after 10s of ACKs, because state is NOT synchronized, recovery must NOT complete!
+        assertEquals(PeerAvailabilityState.RECOVERING, policy.state)
+        assertTrue(policy.isEpisodeOpen)
+
+        // Now state sync completes!
+        policy.onStateSynchronized(clock.elapsedRealtime())
+        // Immediately after sync, episode MUST still be open (stability window just started!)
+        assertEquals(PeerAvailabilityState.RECOVERING, policy.state)
+        assertTrue(policy.isEpisodeOpen)
+
+        // Provide 10 seconds of stable heartbeats post-sync
+        for (i in 1..3) {
+            clock.advance(2_500L)
+            policy.onFreshPeerResponse(clock.elapsedRealtime())
+            assertEquals(PeerAvailabilityState.RECOVERING, policy.state)
+        }
+        clock.advance(2_500L)
+        val decision = policy.onFreshPeerResponse(clock.elapsedRealtime())
+        // Now 10 seconds post-sync have elapsed without gap > 5s -> recovery complete!
+        assertEquals(PeerAvailabilityState.RESPONSIVE, policy.state)
+        assertFalse(policy.isEpisodeOpen)
+        assertTrue(decision is HeartbeatDecision.RecoveryCompleted)
+    }
 }

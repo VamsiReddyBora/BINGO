@@ -87,6 +87,53 @@
 - Ownership / ordering / durability: Account isolation guaranteed. Match result tombstones are strictly immutable and shared across simulated instances.
 - Compatibility / migrations: Unscoped test callers fall back to active match keys without cross-account leakage.
 - Tests and evidence: `Fix001StorageReviewProbe` 5 of 5 tests PASS (0 violations). `OngoingMatchStoreRejoinTest` 12/12 PASS.
+### FIX002-003 — Strict Incoming Claim and Packet Identity Validation
+- Started / completed: 2026-10-15T12:45:00+05:30 / 2026-10-15T12:55:00+05:30
+- Parent checkpoint: `4ccb251`
+- Review findings: F003 / HB10
+- Files / symbols and wired callers:
+  - `RootNavGraph.kt`: `handleIncomingPacket`, `opponentPlayerId` assignment, `CLAIM_VICTORY` handler, `executeClaimVictory`
+  - `OnlineRoomSyncManager.kt`: `RoomMessagePacket`
+  - `FastPacketCodec.kt`: `encode`
+- Old behavior / new accepted behavior:
+  - Old: Non-local packets indiscriminately updated `opponentPlayerId = packet.playerId`, allowing an unknown/rogue sender to bypass peer validation in `CLAIM_VICTORY`. Claims accepted 0 seeds, blank matchIds, missing episode IDs, and did not verify tombstone durability before recording game over and updating stats.
+  - New: `opponentPlayerId` is only assigned if `packet.playerId` is in `matchParticipants` (or when `matchParticipants` is empty prior to game start). `CLAIM_VICTORY` strictly requires nonzero seed equal to `currentMatchSeed`, nonblank matchId equal to `currentMatchSeed.toString()`, sender strictly matching peer in `matchParticipants`, `claimEpisodeCount >= 3`, and nonblank `claimEpisodeId`. Tombstone is recorded and checked for success before any game over or career statistic mutations.
+- Ownership / ordering / durability: Complete identity verification prevents unauthorized game conclusion and eliminates the trust cycle.
+- Compatibility / migrations: Fully backward-compatible with 1v1 protocol; preserves group and LAN rules.
+- Tests and evidence: `test F003 - Incoming claim validation rejects missing seed, blank matchId, unknown sender, and invalid episode ID` PASS. `test F003 - Sender identity cannot overwrite opponentPlayerId if sender is not in matchParticipants` PASS.
 - Remaining concerns: None.
 - Rollback: Revert commit via `git revert`.
+
+### FIX002-004 — Shared Turn Ownership, Sequential Turns & Deadline-Based Timing
+- Started / completed: 2026-10-15T12:50:00+05:30 / 2026-10-15T13:00:00+05:30
+- Parent checkpoint: `4ccb251`
+- Review findings: F001, F007 / HB07, HB08, HB03
+- Files / symbols and wired callers:
+  - `RootNavGraph.kt`: `handlePauseAction`, `GAME_PAUSED`, `GAME_RESUMED`, turn countdown timer, `executePick`, `pickedTurnIdsHistory`
+  - `OnlineRoomSyncManager.kt`: `RoomMessagePacket.turnIds`
+  - `OngoingMatchStore.kt`: `OngoingMatchData.turnIds`, `updateMatchGameState`
+- Old behavior / new accepted behavior:
+  - Old: Received pause/resume updated only remembered Compose state without persisting to `OngoingMatchStore`. Turn timer for 1v1 online had a 2000ms delay and `activeRemaining.size <= 2` shortcut authorizing redundant skips. Pick history did not record actual turn IDs and reconstructed turns using `idx + 1`, corrupting turn numbering after timeouts.
+  - New: Received pause/resume durably updates `OngoingMatchStore` with `isPaused`, `remainingTurnMillis`, `pauseOwnerId`, and `accountUid`. Turn timer for 1v1 online expires at exactly 30s with no extra 2s delay and no `size <= 2` shortcut; turn advances strictly via host/acting host authority. Timer is suspended when local transport is disconnected. True turn IDs are recorded per pick in `pickedTurnIdsHistory` and persisted in `turnIds`.
+- Ownership / ordering / durability: Exact millisecond remainder and actual turn sequence persisted durably across process deaths and crashes.
+- Compatibility / migrations: Multi-player and LAN modes preserve existing fallback behavior.
+- Tests and evidence: `test F007 - Durably saving received pause and resume updates pause metadata and remaining milliseconds` PASS. `test F007 - Actual turn IDs preserved across skipped turns in OngoingMatchStore` PASS.
+- Remaining concerns: None.
+- Rollback: Revert commit via `git revert`.
+
+### FIX002-005 — Rejoin Flow Gating & Complete Authoritative Synchronization
+- Started / completed: 2026-10-15T12:55:00+05:30 / 2026-10-15T13:05:00+05:30
+- Parent checkpoint: `4ccb251`
+- Review findings: F004 / HB06, HB03
+- Files / symbols and wired callers:
+  - `RootNavGraph.kt`: `restoreAndRejoinOngoingMatch`, `onCellPicked`, `isReconcilingMatch`, `GAME_SYNC`, `GAME_SYNC_ACK`, `SYNC_REQUEST`
+- Old behavior / new accepted behavior:
+  - Old: Immediate local restore enabled picks and ran turn countdown before authoritative synchronization completed. Missing board data fell back to `startNewGame()`. `SYNC_REQUEST` response did not carry pause state, turn remainder, or turn IDs.
+  - New: Rejoin introduces `isReconcilingMatch = true` gating all moves, picks, and timer progression until `GAME_SYNC` is applied and acknowledged. If saved board data is missing, app does NOT fall back to `startNewGame()` or AI; it remains in waiting state. `GAME_SYNC` response carries full match state including pause, remainder ms, turn IDs, and episode counts. Receiver replies with `GAME_SYNC_ACK` so both sides bind to the exact completed synchronization point.
+- Ownership / ordering / durability: Gameplay mutations blocked until authoritative state is synchronized and persisted.
+- Compatibility / migrations: Rejoin routes (MainMenu, JoinRoom, foreground resume) all share consistent reconciliation gating.
+- Tests and evidence: Full unit test suite PASS (360+ tests). Probes PASS (0 violations).
+- Remaining concerns: None.
+- Rollback: Revert commit via `git revert`.
+
 

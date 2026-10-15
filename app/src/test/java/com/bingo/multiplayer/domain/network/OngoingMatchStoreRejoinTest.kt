@@ -433,4 +433,152 @@ class OngoingMatchStoreRejoinTest {
         val forOther = OngoingMatchStore.getOngoingMatch(context = null, accountUid = "user_other")
         assertNull("Different account must not see migrated match", forOther)
     }
+
+    @Test
+    fun `test F005 - Participant B cannot adopt A-owned record during legacy migration`() {
+        val legacyJson = """
+            {
+                "roomCode": "A_OWNED_ROOM",
+                "matchSeed": 998877,
+                "boardSize": 5,
+                "isHost": true,
+                "participants": [
+                    {"id": "account_a", "displayName": "Player A", "isHost": true},
+                    {"id": "account_b", "displayName": "Player B", "isHost": false}
+                ],
+                "turnNumber": 1,
+                "currentTurnPlayerId": "account_a",
+                "accountUid": "account_a",
+                "is1v1Match": true
+            }
+        """.trimIndent()
+
+        // Legacy record has explicit owner "account_a"
+        fakePrefs.edit().putString("active_match_data", legacyJson).commit()
+
+        // Account B requests it
+        val forB = OngoingMatchStore.getOngoingMatch(context = null, accountUid = "account_b")
+        assertNull("Account B must NOT adopt Account A's record even though B is a participant", forB)
+        assertFalse("Scoped key for B must NOT be created from A's data", fakePrefs.contains("active_match_data_account_b"))
+    }
+
+    @Test
+    fun `test F002 - Tombstone immutability rejects conflicting write and allows idempotent identical write`() {
+        val firstRecorded = OngoingMatchStore.recordMatchResultTombstone(
+            context = null,
+            roomCode = "TOMB_ROOM",
+            matchSeed = 112233L,
+            winnerUid = "account_winner",
+            winReason = "Bingo",
+            episodeCount = 0,
+            accountUid = "account_winner"
+        )
+        assertTrue(firstRecorded)
+
+        // Conflicting write (different winner)
+        val conflictingRecorded = OngoingMatchStore.recordMatchResultTombstone(
+            context = null,
+            roomCode = "TOMB_ROOM",
+            matchSeed = 112233L,
+            winnerUid = "account_impostor",
+            winReason = "Bingo",
+            episodeCount = 0,
+            accountUid = "account_impostor"
+        )
+        assertFalse("Conflicting second result write must be rejected", conflictingRecorded)
+
+        val tombstone = OngoingMatchStore.getMatchResultTombstone(context = null, 112233L)
+        assertNotNull(tombstone)
+        assertEquals("account_winner", tombstone?.winnerUid)
+
+        // Identical write is idempotent
+        val identicalRecorded = OngoingMatchStore.recordMatchResultTombstone(
+            context = null,
+            roomCode = "TOMB_ROOM",
+            matchSeed = 112233L,
+            winnerUid = "account_winner",
+            winReason = "Bingo",
+            episodeCount = 0,
+            accountUid = "account_winner"
+        )
+        assertTrue("Identical result write is idempotent and accepted", identicalRecorded)
+    }
+
+    @Test
+    fun `test F007 - Durably saving received pause and resume updates pause metadata and remaining milliseconds`() {
+        val initialMatch = OngoingMatchData(
+            roomCode = "PAUSE_ROOM",
+            matchSeed = 554433L,
+            boardSize = 5,
+            is1v1Match = true,
+            accountUid = "user_me",
+            isPaused = false,
+            remainingTurnMillis = 28_000L
+        )
+        OngoingMatchStore.saveOngoingMatch(context = null, matchData = initialMatch)
+
+        // Remote pause applied
+        val pauseUpdated = OngoingMatchStore.updateMatchGameState(
+            context = null,
+            isPaused = true,
+            remainingTurnMillis = 14_250L,
+            pauseOwnerId = "user_opponent",
+            accountUid = "user_me"
+        )
+        assertTrue(pauseUpdated)
+
+        val pausedMatch = OngoingMatchStore.getOngoingMatch(context = null, accountUid = "user_me")
+        assertNotNull(pausedMatch)
+        assertTrue(pausedMatch?.isPaused == true)
+        assertEquals(14_250L, pausedMatch?.remainingTurnMillis)
+        assertEquals("user_opponent", pausedMatch?.pauseOwnerId)
+
+        // Remote resume applied
+        val resumeUpdated = OngoingMatchStore.updateMatchGameState(
+            context = null,
+            isPaused = false,
+            remainingTurnMillis = 14_250L,
+            pauseOwnerId = "",
+            accountUid = "user_me"
+        )
+        assertTrue(resumeUpdated)
+
+        val resumedMatch = OngoingMatchStore.getOngoingMatch(context = null, accountUid = "user_me")
+        assertNotNull(resumedMatch)
+        assertFalse(resumedMatch?.isPaused == true)
+        assertEquals(14_250L, resumedMatch?.remainingTurnMillis)
+        assertEquals("", resumedMatch?.pauseOwnerId)
+    }
+
+    @Test
+    fun `test F007 - Actual turn IDs preserved across skipped turns in OngoingMatchStore`() {
+        val initialMatch = OngoingMatchData(
+            roomCode = "TURN_ID_ROOM",
+            matchSeed = 667788L,
+            boardSize = 5,
+            is1v1Match = true,
+            accountUid = "user_me",
+            pickedNumbers = listOf(5),
+            pickedByPlayers = listOf("user_me"),
+            turnIds = listOf(1),
+            turnNumber = 2
+        )
+        OngoingMatchStore.saveOngoingMatch(context = null, matchData = initialMatch)
+
+        // Turn 2 was skipped due to timeout. Turn 3 picks 19.
+        val updated = OngoingMatchStore.updateMatchGameState(
+            context = null,
+            pickedNumbers = listOf(5, 19),
+            pickedByPlayers = listOf("user_me", "user_opponent"),
+            turnIds = listOf(1, 3),
+            turnNumber = 4,
+            accountUid = "user_me"
+        )
+        assertTrue(updated)
+
+        val loaded = OngoingMatchStore.getOngoingMatch(context = null, accountUid = "user_me")
+        assertNotNull(loaded)
+        assertEquals(listOf(5, 19), loaded?.pickedNumbers)
+        assertEquals(listOf(1, 3), loaded?.turnIds)
+    }
 }
