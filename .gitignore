@@ -37,3 +37,9 @@ cloudflare_worker/.dev.vars
 cloudflare_worker/.dev.vars.*
 cloudflare_worker/dist/
 /.wrangler/
+
+# Curated, verified deliverables retained in the pre-release snapshot.
+!/releases/Bingo-1.4.2.apk
+!/releases/Bingo-1.4.2-mapping.zip
+!/releases/Bingo-1.4.2-validation.zip
+!/releases/Bingo-1.4.2-notification-review-evidence.zip

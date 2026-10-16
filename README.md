@@ -1,5 +1,7 @@
 # Bingo Multiplayer
 
+GitHub checkpoint: **[pre-release-ver-1.5](https://github.com/VamsiReddyBora/BINGO/tree/pre-release-ver-1.5)**. This branch preserves the current source, signed APK and agent handoff for continued work toward version 1.5. The included APK remains **1.4.2 / 43**; this checkpoint does not change its version.
+
 This is the single active source folder for the Android release candidate **1.4.2 (version code 43)**. Make all new changes here: `/home/bob/workspace/bingo_multiplayer`.
 
 ## Project layout

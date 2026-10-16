@@ -1,10 +1,10 @@
 {
   "timestamp": "2026-10-16T08:17:44+05:30",
-  "status": "signed local candidate; not published to GitHub",
+  "status": "pre-release branch checkpoint; not a published GitHub release",
   "versionName": "1.4.2",
   "versionCode": 43,
   "sourceFolder": "/home/bob/workspace/bingo_multiplayer",
-  "branch": "fix/notifications-1.4.2",
+  "branch": "pre-release-ver-1.5",
   "baselineCommit": "422ee84c911a1c2226a6eb3e4a17d2d5c0a740ce",
   "sourceFixCommit": "1e954987b0c1a1ff8f1cba9ade9824fc4423f281",
   "apk": {
@@ -112,5 +112,25 @@
   },
   "backupFolder": "/home/bob/backups/bingo-notification-hardening-2026-10-16",
   "physicalTesting": "Not performed; real Google sign-in, device delivery, permissions, lockscreen and OEM behavior remain acceptance checks.",
-  "compatibility": "Both Android players need build 43. Older unsigned guests need supported identity for secure notifications. Unchanged web/older APK clients use the legacy endpoint."
+  "compatibility": "Both Android players need build 43. Older unsigned guests need supported identity for secure notifications. Unchanged web/older APK clients use the legacy endpoint.",
+  "preReleaseSnapshot": {
+    "name": "Pre-release ver 1.5",
+    "branch": "pre-release-ver-1.5",
+    "createdAt": "2026-10-16T08:39:23+05:30",
+    "baseCommit": "4b91ad06d633866dae985bcc5fa4eac39b354bdf",
+    "repository": "https://github.com/VamsiReddyBora/BINGO",
+    "branchUrl": "https://github.com/VamsiReddyBora/BINGO/tree/pre-release-ver-1.5",
+    "applicationVersionUnchanged": true,
+    "apkRebuilt": false,
+    "applicationTestsRerun": false,
+    "artifactChecksumVerified": true,
+    "artifactArchivesVerified": true,
+    "trackedDeliverables": [
+      "Bingo-1.4.2.apk",
+      "Bingo-1.4.2.apk.sha256",
+      "Bingo-1.4.2-mapping.zip",
+      "Bingo-1.4.2-validation.zip",
+      "Bingo-1.4.2-notification-review-evidence.zip"
+    ]
+  }
 }

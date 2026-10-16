@@ -1,6 +1,6 @@
-# Bingo 1.4.2 / 43 handoff
+# Pre-release ver 1.5 — agent handoff
 
-Updated 2026-10-16T08:17:44+05:30. **Only active source: `/home/bob/workspace/bingo_multiplayer`**, branch `fix/notifications-1.4.2`. Implementation commit `1e954987b0c1a1ff8f1cba9ade9824fc4423f281`. Do not create another active source copy.
+Updated 2026-10-16T08:39:23+05:30. Build validation completed 2026-10-16T08:17:44+05:30. **Only active source: `/home/bob/workspace/bingo_multiplayer`**, branch `pre-release-ver-1.5`. Implementation commit `1e954987b0c1a1ff8f1cba9ade9824fc4423f281`. Do not create another active source copy.
 
 Signed APK: `releases/Bingo-1.4.2.apk`. SHA256 `80236de25e712c2844b35f7d0e80313d8df08ebabdc6005de1aa553cae96e8c9`. Package/signing certificate unchanged. Final checks: **512 Android tests, 54 relay tests, 5 actual SQLite smoke checks passed; lint 0 errors / 32 warnings**. FCM validate-only preflight returned 200/200; no real notification was sent. Exact mapping, evidence and manifest are in `releases/`.
 
@@ -12,4 +12,11 @@ Both Android players must use build 43 for secured notifications. Older unsigned
 
 Existing compact text-only system chat, approved colours/emojis, avatar identity forwarding, friends restoration, badges, lobby ping and social UI remain. `ReliableMatchClient.kt` and `OnlineRoomSyncManager.kt` are unchanged. Preserve silent heartbeats, host-only pause/resume, the 15-second choice/default Continue, blocking host-disconnected hold and match synchronization. No notification-server round trip was added to picks. The earlier unexplained closure was never confirmed fixed; retain Settings diagnostics and this APK's exact R8 mapping.
 
-Baseline source: `backup/pre-notification-hardening-20261016` at `422ee84c911a1c2226a6eb3e4a17d2d5c0a740ce`. Original signed APK/mapping/evidence: `/home/bob/backups/bingo-notification-hardening-2026-10-16`. Older consolidation/original 1.4.1 backup remains `/home/bob/backups/bingo-release-preparation-2026-10-15`; original branch `1.4.1` remains preserved. Preserve work before branch switching; do not wipe app data or delete Durable Objects for rollback. No GitHub push/tag/release is performed by this task.
+Baseline source: `backup/pre-notification-hardening-20261016` at `422ee84c911a1c2226a6eb3e4a17d2d5c0a740ce`. Original signed APK/mapping/evidence: `/home/bob/backups/bingo-notification-hardening-2026-10-16`. Older consolidation/original 1.4.1 backup remains `/home/bob/backups/bingo-release-preparation-2026-10-15`; original branch `1.4.1` remains preserved. Preserve work before branch switching; do not wipe app data or delete Durable Objects for rollback. This snapshot contains the current source, signed APK, checksum, exact R8 mapping, validation evidence and this handoff. GitHub branch: https://github.com/VamsiReddyBora/BINGO/tree/pre-release-ver-1.5. The branch is a development checkpoint for 1.5; the included APK remains 1.4.2 / 43. Publishing a GitHub release or app-store release is a separate action.
+
+## Continue from this snapshot
+
+1. Check out `pre-release-ver-1.5` and read this handoff, `README.md`, the notification hardening report and `releases/ReleaseManifest.json`.
+2. Preserve the accepted gameplay/disconnection behavior. Review remaining device acceptance and legacy-service/guest/web migration items before making new changes.
+3. Install the same `releases/Bingo-1.4.2.apk` on both phones for testing. Verify it against `releases/Bingo-1.4.2.apk.sha256`. The signed APK was verified again for this snapshot; packaging and documentation changed without rebuilding or rerunning the earlier application tests.
+4. Generated caches, dependency directories, machine-specific properties and the ignored FCM service-account credential are excluded. Supply local SDK and backend credentials through the ignored configuration described in the project READMEs. Existing signing configuration inherited from the original repository is unchanged.
