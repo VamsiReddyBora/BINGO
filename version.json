@@ -1,8 +1,8 @@
 {
-  "versionCode": 41,
-  "versionName": "1.4.1",
-  "tag_name": "v1.4.1",
+  "versionCode": 44,
+  "versionName": "1.5.0",
+  "tag_name": "v1.5.0",
   "downloadUrl": "https://vamsireddybora.github.io/BINGO/Bingo.apk",
-  "releaseNotes": "• v1.4.1: Sound & Vibration Settings & Launch Polish\n• Sounds & Vibration: New settings card with granular toggles for audio effects and complete haptic silencing\n• 10 Preset Sounds: Customizable pick sounds with instant live previews\n• Splash & Launch Animation: Unified theme match with smooth 1000ms delay and zoom effect\n• Direct high-speed CDN distribution on GitHub Pages",
-  "apkSize": 6943970
+  "releaseNotes": "• v1.5.0: Heartbeat Resilience & 1v1 Match Continuity\n• 1v1 Disconnect Recovery: Seamlessly reconnect to active matches without losing board progress\n• Turn Timer Preservation: Remaining turn countdowns are preserved across pause and reconnect\n• Hardened Notifications: Authenticated push notifications with native quick actions and duplicate suppression\n• Friends & Audio Polish: Roster loading fix and haptic silencing controls",
+  "apkSize": 7117566
 }
