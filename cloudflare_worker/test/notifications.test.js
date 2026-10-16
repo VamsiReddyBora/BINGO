@@ -619,6 +619,21 @@ test("Legacy migration decoding supports raw and base64 JSON", async () => {
     e,
   );
 });
+test("Maximum supported friend snapshot fits only after authentication", async () => {
+  const { instance: i, storage } = setup(),
+    s = await enroll(i);
+  const body = {
+    uids: Array.from(
+      { length: 1000 },
+      (_, n) => "guest_" + n.toString(16).padStart(64, "0"),
+    ),
+    revision: 2,
+  };
+  assert.ok(Buffer.byteLength(JSON.stringify(body)) > 8192);
+  assert.equal((await call(i, null, "/v2/friends", body)).status, 401);
+  assert.equal((await call(i, s, "/v2/friends", body)).status, 200);
+  assert.equal((await storage.get("account:" + s.uid)).friends.length, 1000);
+});
 test("Token updates are monotonic even when older work arrives late", async () => {
   const { instance: i, storage } = setup(),
     s = await enroll(i);

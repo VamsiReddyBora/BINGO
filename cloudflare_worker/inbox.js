@@ -51,7 +51,14 @@ export class NotificationInbox {
   async handle(request) {
     try {
       const path = new URL(request.url).pathname;
-      const body = request.method === "POST" ? await readBody(request) : {};
+      // A valid 1,000-friend snapshot exceeds the small event/proof limit. Authenticate
+      // before allowing this larger, still bounded body; all other routes retain 8 KiB.
+      const preauthenticated =
+        path === "/v2/friends" ? await this.authenticate(request) : null;
+      const body =
+        request.method === "POST"
+          ? await readBody(request, preauthenticated ? 131072 : 8192)
+          : {};
       if (path === "/internal/auth-rate") {
         await this.throttle("auth:" + body.key, 30);
         return response({ ok: true });
@@ -72,7 +79,7 @@ export class NotificationInbox {
           await this.revoke(reg);
         return response({ ok: true });
       }
-      const session = await this.authenticate(request);
+      const session = preauthenticated || (await this.authenticate(request));
       if (path === "/v2/register" && request.method === "POST") {
         requireThat(
           typeof body.token === "string" && body.token.length <= 4096,

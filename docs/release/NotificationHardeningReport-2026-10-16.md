@@ -27,10 +27,12 @@ This report accompanies Android **1.4.2 / 43** and notification relay **protocol
 ## Validation
 
 - Android: full unit tests, debug lint and signed release build. Final results are in `TEST_REPORT.md`.
-- Relay: **53 tests passed**, no failures. Real signature verification with test keys; outbound Google/FCM mocked.
+- Relay: **54 tests passed**, no failures. Real signature verification with test keys; outbound Google/FCM mocked.
 - workerd/Miniflare: **five smoke checks passed** with an actual SQLite-backed Durable Object: signed guest enrollment, private inbox, ACK/replay, generation transfer and rejected legacy send. No external requests.
 - Google preflight: OAuth **HTTP 200**, FCM **HTTP 200** with `validate_only: true`. No real notification sent; no device receipt claim.
 - Wrangler module bundle/migration dry run passed. Live deployment status is separate in the release manifest.
+- Separate notification Worker final version `7c5ae124-f2b8-4476-8eb0-e94158a7f57f`, verified at 2026-10-16T08:17:22+05:30. Live health returned 200/protocol 2; unauthenticated inbox and obsolete send returned 401; public `/internal/enroll` returned 404. The old Worker's deployed version was unchanged before/after.
+- Production dependency audit returned **0 known vulnerabilities** on 2026-10-16; this is the registry advisory result, not a proof of absence of vulnerabilities.
 - Gameplay engines `ReliableMatchClient.kt` and `OnlineRoomSyncManager.kt` are unchanged. This adds no server round trip to number picks.
 
 ## Remaining acceptance checks and boundaries
@@ -41,7 +43,7 @@ This report accompanies Android **1.4.2 / 43** and notification relay **protocol
 4. Android force-stop, OEM battery rules, scheduling and unavailable Play services can delay/block delivery; reopening recovers unexpired inbox data. Native timeout removal is platform-dependent on Android 7; explicit expiry still rejects stale taps.
 5. Older unsigned guest accounts cannot securely prove their original UID. Data is preserved; secure invitations/social push require a supported Google sign-in or new guest identity. Do not clear app data or silently reassign identities. Transparent old-guest migration requires a separately trusted ownership mechanism.
 6. Public profile/room/friend stores were not replaced. Legacy ownership/room/request checks depend on that baseline data. This authenticates notification callers and hides the new token directory; it does not establish cryptographic ownership of every historical public record or make game data tamper-proof.
-7. Live configuration inspection found the existing `bingo-fcm-relay` still has a `MATCHES` binding to `BingoMatch`, migration `v1-match-authority`, deployed version `2df41829-59de-480d-8f6a-e65b06043a18`. To avoid changing that service, this source prepares a separate **`bingo-notifications-v2`** Worker and APK endpoint. Previous APKs/web remain on the old endpoint and do not interoperate with new secure notifications. The old unauthenticated relay remains a separate security/retirement item; this new deployment does not fix it. Inventory consumers before retiring it or migrating its routes. Web needs protocol-2 integration for the secured service.
+7. Live configuration inspection found the existing `bingo-fcm-relay` still has a `MATCHES` binding to `BingoMatch`, migration `v1-match-authority`, deployed version `2df41829-59de-480d-8f6a-e65b06043a18`. To avoid changing that service, this source uses a separate **`bingo-notifications-v2`** Worker and APK endpoint. Previous APKs/web remain on the old endpoint and do not interoperate with new secure notifications. The old relay remains a separate security/retirement item; this deployment does not fix it, and its live notification-handler source was not verified. Inventory consumers before retiring it or migrating its routes. Web needs protocol-2 integration for the secured service.
 8. No device was connected and no real invitation, friend request or push was sent. Device checks remain open; they are not reported as passing. Existing unrelated lint warnings and the previously unconfirmed game-screen closure are not represented as fixed.
 
 No finite suite proves zero future bugs. These results describe measured behavior and explicitly retain device/migration limits.

@@ -53,14 +53,14 @@ async function boundedText(stream, limit) {
   }
   return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
 }
-export async function readBody(request) {
+export async function readBody(request, limit = 8192) {
   requireThat(
-    Number(request.headers.get("Content-Length") || 0) <= 8192,
+    Number(request.headers.get("Content-Length") || 0) <= limit,
     413,
     "Payload too large",
   );
   try {
-    const data = JSON.parse(await boundedText(request.body, 8192));
+    const data = JSON.parse(await boundedText(request.body, limit));
     requireThat(
       data && !Array.isArray(data) && typeof data === "object",
       400,

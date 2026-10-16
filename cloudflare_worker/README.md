@@ -30,7 +30,7 @@ Tests mock outbound services and deliver no notifications. `scripts/validate-fcm
 
 Complete Android validation and review the release report first. This configuration creates **`bingo-notifications-v2`**, a separate service at `https://bingo-notifications-v2.vamsireddy2534.workers.dev`. Do not change its name to `bingo-fcm-relay`: the existing live Worker has an older `MATCHES` / `BingoMatch` binding and migration not represented by this checkout.
 
-Both Android players need **1.4.2 / 43** for the new notification protocol. Previous APKs and the unchanged companion web sender continue using the old service; they cannot send through the secured service. Room-code gameplay remains separate. The old unauthenticated relay endpoint must be retired separately after identifying its remaining consumers; it is not secured by deploying this new Worker.
+Both Android players need **1.4.2 / 43** for the new notification protocol. Previous APKs and the unchanged companion web sender continue using the old service; they cannot send through the secured service. Room-code gameplay remains separate. The old relay needs a separate security/retirement review after identifying its remaining consumers; it is not secured by deploying this new Worker, and its live notification-handler source was not verified in this task.
 
 The ignored `service-account.json` must never be committed or embedded in the bundle. Upload it as a Worker secret, then deploy the complete module tree and SQLite migration:
 
