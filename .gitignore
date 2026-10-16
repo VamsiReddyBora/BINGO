@@ -42,10 +42,7 @@ cloudflare_worker/dist/
 !/releases/Bingo-1.5.0.apk
 !/releases/Bingo-1.5.0.apk.sha256
 !/releases/Bingo-1.5.0-mapping.zip
-!/releases/Bingo-1.4.2.apk
-!/releases/Bingo-1.4.2-mapping.zip
-!/releases/Bingo-1.4.2-validation.zip
-!/releases/Bingo-1.4.2-notification-review-evidence.zip
 
-# Testing scratch and simulation evidence
+# Temporary archive, testing scratch, and simulation evidence
+temp_archive/
 docs/testing/
