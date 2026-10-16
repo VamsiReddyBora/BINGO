@@ -1,6 +1,6 @@
 # Bingo Multiplayer
 
-This is the single active source folder for the Android release candidate **1.4.2 (version code 42)**. Make all new changes here: `/home/bob/workspace/bingo_multiplayer`.
+This is the single active source folder for the Android release candidate **1.4.2 (version code 43)**. Make all new changes here: `/home/bob/workspace/bingo_multiplayer`.
 
 ## Project layout
 
@@ -9,7 +9,7 @@ This is the single active source folder for the Android release candidate **1.4.
 - `releases/` — current signed APK and its verification information.
 - `docs/release/` — current change log, test evidence and release handoff.
 - `web/` — companion web source, retained with its existing behavior.
-- `cloudflare_worker/`, `firebase.json`, `firestore.rules` — existing supporting service source/configuration. Organizing the checkout does not deploy or alter those services.
+- `cloudflare_worker/` — protocol-2 notification service; see its README for rollout and compatibility. `firebase.json`, `firestore.rules` retain the existing application-data configuration.
 - `bingo.py` — existing optional development/ADB helper.
 
 ## Build
@@ -25,6 +25,8 @@ The signed APK is copied to `releases/Bingo-1.4.2.apk`. Future version names aut
 ## Current behavior
 
 The accepted heartbeat/reconnection behavior remains unchanged. System chat uses compact centered coloured text, and disconnect popups resolve profile photos through the same username/cache lookup as other player avatars. Read `AGENT_HANDOFF.md` and `docs/release/CHANGELOG.md` before continuing work.
+
+Notifications now use verified identities, private inboxes, persistent deduplication, account-scoped actions, original expiry and durable retries. Number picks do not use the notification service. Read `docs/release/NotificationHardeningReport-2026-10-16.md` for the audit fixes, real-device checks, old-guest/web compatibility and the separate legacy-service retirement item. Final deployment status is in `releases/ReleaseManifest.json`.
 
 ## History and backups
 

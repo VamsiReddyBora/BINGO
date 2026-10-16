@@ -21,9 +21,12 @@ class UpdateCheckWorker(
         return try {
             val updateInfo = AppUpdateManager.queryUpdateSilently(applicationContext)
             if (updateInfo != null && updateInfo.hasUpdate) {
-                Log.i("UpdateCheckWorker", "Update available in background: ${updateInfo.latestVersionTag}")
+                BingoNotificationManager.showUpdate(applicationContext, updateInfo)
             } else {
                 Log.d("UpdateCheckWorker", "App is up to date.")
+            }
+            BroadcastMessageManager.queryForNotification(applicationContext)?.let {
+                BingoNotificationManager.showBroadcast(applicationContext, it)
             }
             Result.success()
         } catch (e: Exception) {

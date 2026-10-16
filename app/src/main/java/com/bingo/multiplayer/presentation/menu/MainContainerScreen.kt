@@ -74,7 +74,10 @@ fun MainContainerScreen(
     onAcceptInviteToMatch: (GameInvite) -> Unit,
     onOpenDeveloperNote: () -> Unit = {},
     onRejoinMatch: ((com.bingo.multiplayer.domain.network.OngoingMatchData) -> Unit)? = null,
-    initialPage: Int = 0
+    initialPage: Int = 0,
+    notificationFriendUsername: String? = null,
+    notificationRequests: Boolean = false,
+    onNotificationTargetConsumed: () -> Unit = {}
 ) {
     val coroutineScope = rememberCoroutineScope()
     val pagerState = rememberPagerState(initialPage = initialPage, pageCount = { 3 })
@@ -126,7 +129,10 @@ fun MainContainerScreen(
                         onAcceptInviteToMatch = onAcceptInviteToMatch,
                         onBack = {
                             coroutineScope.launch { pagerState.animateScrollToPage(0) }
-                        }
+                        },
+                        notificationFriendUsername = notificationFriendUsername,
+                        notificationRequests = notificationRequests,
+                        onNotificationTargetConsumed = onNotificationTargetConsumed
                     )
                 }
                 2 -> {

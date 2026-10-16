@@ -108,7 +108,7 @@ object BroadcastMessageManager {
         if (msgId.isBlank()) return false
         return try {
             val prefs = ctx.getSharedPreferences("bingo_bcast_seen", Context.MODE_PRIVATE)
-            val set = prefs.getStringSet("seen_ids", emptySet()) ?: emptySet()
+            val set = prefs.getStringSet("seen_ids:${com.bingo.multiplayer.domain.notifications.NotificationRuntime.profile(ctx)?.uid ?: "public"}", emptySet()) ?: emptySet()
             set.contains(msgId)
         } catch (_: Exception) { false }
     }
@@ -121,9 +121,9 @@ object BroadcastMessageManager {
         if (msgId.isBlank()) return
         try {
             val prefs = ctx.getSharedPreferences("bingo_bcast_seen", Context.MODE_PRIVATE)
-            val set = prefs.getStringSet("seen_ids", emptySet())?.toMutableSet() ?: mutableSetOf()
+            val set = prefs.getStringSet("seen_ids:${com.bingo.multiplayer.domain.notifications.NotificationRuntime.profile(ctx)?.uid ?: "public"}", emptySet())?.toMutableSet() ?: mutableSetOf()
             set.add(msgId)
-            prefs.edit().putStringSet("seen_ids", set).apply()
+            prefs.edit().putStringSet("seen_ids:${com.bingo.multiplayer.domain.notifications.NotificationRuntime.profile(ctx)?.uid ?: "public"}", set).apply()
         } catch (_: Exception) {}
     }
 
@@ -133,13 +133,12 @@ object BroadcastMessageManager {
     fun getLocalUsername(context: Context?): String {
         val ctx = context ?: lastApplicationContext
         if (ctx == null) return ""
-        return try {
-            val prefs = ctx.getSharedPreferences("bingo_auth_prefs", Context.MODE_PRIVATE)
-            val uname = prefs.getString("username", null)?.trim()
-            if (!uname.isNullOrBlank()) uname else (prefs.getString("display_name", "")?.trim() ?: "")
-        } catch (_: Exception) {
-            ""
-        }
+        return com.bingo.multiplayer.domain.notifications.NotificationRuntime.profile(ctx)?.username.orEmpty()
+    }
+
+    fun onAccountChanged() {
+        hasDismissedInSession = false
+        _activeBroadcast.value = null
     }
 
     /**
@@ -185,7 +184,7 @@ object BroadcastMessageManager {
                     } else null
                 }
 
-                if (activeMsg != null && !hasDismissedInSession) {
+                if (activeMsg != null && !hasDismissedInSession && isTargetMatch(activeMsg, context)) {
                     if (activeMsg.isOnlyOnce && hasMessageBeenSeen(context, activeMsg.id)) {
                         Log.d(TAG, "Message ${activeMsg.id} was already seen in ONCE mode, suppressing startup popup")
                         _activeBroadcast.value = null
@@ -200,6 +199,15 @@ object BroadcastMessageManager {
                 Log.w(TAG, "Error checking broadcast: ${e.message}")
             }
         }
+    }
+
+    suspend fun queryForNotification(context: Context): BroadcastMessage? {
+        val account = com.bingo.multiplayer.domain.notifications.NotificationRuntime.account(context)
+        val username = getLocalUsername(context).trim().removePrefix("@").lowercase()
+        val direct = if (username.isNotBlank()) fetchDirectMessageFromCloud(username) else null
+        val message = direct?.takeIf { it.active && it.message.isNotBlank() } ?: fetchCurrentActiveBroadcast()
+        if (com.bingo.multiplayer.domain.notifications.NotificationRuntime.account(context) != account) return null
+        return message?.takeIf { it.active && it.message.isNotBlank() && isTargetMatch(it, context) && !hasMessageBeenSeen(context, it.id) }
     }
 
     /**
@@ -222,6 +230,12 @@ object BroadcastMessageManager {
                 }
                 if (!hasDismissedInSession) {
                     _activeBroadcast.value = msg
+                    if (context != null && !AppLifecycleObserver.isAppInForeground.value) {
+                        scope.launch {
+                            val canonical = queryForNotification(context)
+                            if (canonical?.id == msg.id) BingoNotificationManager.showBroadcast(context, canonical)
+                        }
+                    }
                     Log.i(TAG, "Live broadcast received: ${msg.title} (target=${msg.targetUsername}, mode=${msg.deliveryMode})")
                 }
             }

@@ -29,7 +29,11 @@ object NetworkConfig {
      * Cloudflare Worker relay endpoint for secure background push notifications via FCM HTTP v1.
      * Keeps service account private key off the client binary.
      */
-    const val FCM_RELAY_URL = "https://bingo-fcm-relay.vamsireddy2534.workers.dev/send"
+    const val FCM_RELAY_URL = "https://bingo-notifications-v2.vamsireddy2534.workers.dev/send"
+
+    // Public Web OAuth audience for notification authentication; configured before release.
+    const val NOTIFICATION_GOOGLE_CLIENT_ID = "957593338442-ol5p4icr1a8e15m8lb1ln5mab5n1r5lp.apps.googleusercontent.com"
+
 
     /**
      * Current client application version metadata.

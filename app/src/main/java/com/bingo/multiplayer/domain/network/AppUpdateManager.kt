@@ -163,6 +163,8 @@ object AppUpdateManager {
      * @param manual If true, sets state to UpToDate if no update is found (for explicit user clicks in Settings).
      */
     fun checkForUpdates(context: Context, manual: Boolean = false) {
+        com.bingo.multiplayer.core.designsystem.NotificationPreferences.init(context)
+        if (!manual && !com.bingo.multiplayer.core.designsystem.NotificationPreferences.inAppNotificationsEnabled.value) return
         if (!manual && hasDismissedInSession) {
             Log.d(TAG, "Update check skipped: user already dismissed update prompt in this session")
             return

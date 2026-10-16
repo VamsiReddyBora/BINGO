@@ -64,6 +64,7 @@ fun BroadcastMessageDialog() {
         return
     }
 
+    if (!com.bingo.multiplayer.core.designsystem.NotificationPreferences.inAppNotificationsEnabled.value) return
     val broadcast = activeBroadcast ?: return
 
     val isDirect = broadcast.isDirectMessage

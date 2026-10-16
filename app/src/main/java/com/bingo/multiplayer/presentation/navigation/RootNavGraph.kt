@@ -1,6 +1,9 @@
 package com.bingo.multiplayer.presentation.navigation
 
 import android.widget.Toast
+import com.bingo.multiplayer.domain.notifications.*
+import com.bingo.multiplayer.domain.network.toEvent
+import com.bingo.multiplayer.domain.network.toInvite
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavHostController
@@ -331,7 +334,6 @@ fun RootNavGraph(
 
     var incomingInvite by remember { mutableStateOf<com.bingo.multiplayer.domain.network.GameInvite?>(null) }
     var isJoiningRoom by remember { mutableStateOf(false) }
-    val handledInviteRoomCodes = remember { mutableStateMapOf<String, Long>() }
     var showLeaveMatchDialog by remember { mutableStateOf(false) }
     val authStateValue by authRepository.authState.collectAsState()
     val currentAuthUser = (authStateValue as? AuthState.Authenticated)?.user
@@ -449,35 +451,15 @@ fun RootNavGraph(
         if (username.isNullOrBlank()) {
             onDispose {}
         } else {
-            val inviteListener = com.bingo.multiplayer.domain.network.GameInviteManager.startInviteListener(username) { invite ->
-                val now = System.currentTimeMillis()
-                val lastHandled = handledInviteRoomCodes[invite.roomCode] ?: 0L
-                val isRecentlyHandled = (now - lastHandled) < 60_000L
-                if (!isJoiningRoom && !isRecentlyHandled && roomCode != invite.roomCode && (now - invite.timestamp) < 120_000L) {
-                    val currentDest = navController.currentDestination?.route
-                    val isActivelyPlaying = (currentDest == Screen.Game.route || currentDest == Screen.ManualBoardDesign.route) && !isGameOver
-                    if (!isActivelyPlaying) {
-                        incomingInvite = invite
-                        if (com.bingo.multiplayer.domain.network.AppLifecycleObserver.isAppInForeground.value) {
-                            com.bingo.multiplayer.domain.network.BingoNotificationManager.cancelInviteNotification(context)
-                        } else {
-                            com.bingo.multiplayer.domain.network.BingoNotificationManager.showInviteNotification(context, invite)
-                        }
-                    }
-                }
+            val inviteListener = com.bingo.multiplayer.domain.network.GameInviteManager.startInviteListener(username) {
+                NotificationRuntime.account(context)?.let { NotificationWork.sync(context, it) }
             }
             val requestListener = friendsRepository.startListeningForRequests(
                 myUsername = username,
-                onNewRequest = { req ->
-                    coroutineScope.launch(kotlinx.coroutines.Dispatchers.Main) {
-                        Toast.makeText(context, "👥 @${req.fromUsername} sent you a friend request!", Toast.LENGTH_LONG).show()
-                    }
-                },
-                onFriendAccepted = { f ->
-                    coroutineScope.launch(kotlinx.coroutines.Dispatchers.Main) {
-                        Toast.makeText(context, "🎉 @${f.username} accepted your friend request! You are now friends.", Toast.LENGTH_LONG).show()
-                    }
-                }
+                onNewRequest = { req -> NotificationRuntime.account(context)?.let {
+                    NotificationWork.sync(context, it, NotificationPolicy.eventId("friend_request", req.id))
+                } },
+                onFriendAccepted = { NotificationRuntime.account(context)?.let { NotificationWork.sync(context, it) } }
             )
             // Start presence and presence watcher for real-time friend status
             com.bingo.multiplayer.domain.network.PresenceManager.startPresence(username)
@@ -562,20 +544,7 @@ fun RootNavGraph(
             friendsRepository.syncFriendsAndRequests(u)
             while (isActive) {
                 try {
-                    val pendingInvites = com.bingo.multiplayer.domain.network.GameInviteManager.fetchInvitesForUser(u)
-                    val now = System.currentTimeMillis()
-                    val validInvite = pendingInvites.firstOrNull { inv ->
-                        val lastHandled = handledInviteRoomCodes[inv.roomCode] ?: 0L
-                        val isRecentlyHandled = (now - lastHandled) < 60_000L
-                        !isJoiningRoom && !isRecentlyHandled && inv.roomCode != roomCode && (now - inv.timestamp) < 120_000L
-                    }
-                    if (validInvite != null && (incomingInvite == null || incomingInvite?.roomCode != validInvite.roomCode)) {
-                        val currentDest = navController.currentDestination?.route
-                        val isActivelyPlaying = (currentDest == Screen.Game.route || currentDest == Screen.ManualBoardDesign.route) && !isGameOver
-                        if (!isActivelyPlaying) {
-                            incomingInvite = validInvite
-                        }
-                    }
+                    NotificationRuntime.account(context)?.let { NotificationWork.sync(context, it) }
                     friendsRepository.syncFriendsAndRequests(u)
                 } catch (_: Exception) {}
                 delay(2000L)
@@ -583,20 +552,32 @@ fun RootNavGraph(
         }
     }
 
-    fun acceptAndJoinRoom(targetRoomCode: String) {
+    fun acceptAndJoinRoom(targetRoomCode: String, sourceInvite: com.bingo.multiplayer.domain.network.GameInvite? = null) {
         if (isJoiningRoom) return
         val cleanCode = targetRoomCode.trim().uppercase()
+        val account = NotificationRuntime.account(context)
+        val activeMatch = ((navController.currentDestination?.route == Screen.Game.route ||
+            navController.currentDestination?.route == Screen.ManualBoardDesign.route) && !isGameOver) || NotificationRuntime.isBusy(context)
+        if (!NotificationPolicy.canJoinInvite(activeMatch, roomCode == cleanCode, account != null)) {
+            if (activeMatch) Toast.makeText(context, "Finish your current match before accepting another invitation.", Toast.LENGTH_LONG).show()
+            return
+        }
+        if (sourceInvite != null && (NotificationRuntime.ledger(context).handled(account!!.uid, sourceInvite.eventId) || !NotificationPolicy.eligible(sourceInvite.toEvent(), account, System.currentTimeMillis()) ||
+            !NotificationRuntime.finishInvite(context, sourceInvite))) {
+            Toast.makeText(context, "This invitation has expired or is no longer available.", Toast.LENGTH_SHORT).show()
+            return
+        }
         isJoiningRoom = true
         incomingInvite = null
         com.bingo.multiplayer.domain.network.GameInviteManager.clearForegroundInvite()
-        com.bingo.multiplayer.domain.network.BingoNotificationManager.cancelInviteNotification(context)
-        handledInviteRoomCodes[cleanCode] = System.currentTimeMillis()
+        com.bingo.multiplayer.domain.network.BingoNotificationManager.cancelInvites(context)
         Toast.makeText(context, "Joining room #$cleanCode...", Toast.LENGTH_SHORT).show()
 
         coroutineScope.launch {
             try {
                 // Ensure auth has settled to prevent guest fallback
-                val user = authRepository.awaitAuthenticatedUser(2500L) ?: getEffectiveUser()
+                val user = authRepository.awaitAuthenticatedUser(2500L)
+                if (user?.uid != account?.uid || NotificationRuntime.account(context) != account) return@launch
                 val uid = user?.uid?.takeIf { it.isNotBlank() && it != "local_player" }
                     ?: user?.username?.takeIf { it.isNotBlank() }?.let { "u_$it" }
                     ?: getLocalUid()
@@ -623,13 +604,10 @@ fun RootNavGraph(
                     kotlinx.coroutines.delay(500L)
                     result = com.bingo.multiplayer.domain.network.OnlineRoomRegistry.validateAndJoinRoom(cleanCode, localJoiner)
                 }
+                if (NotificationRuntime.account(context) != account || NotificationRuntime.isBusy(context)) return@launch
                 when (result) {
                     is com.bingo.multiplayer.domain.network.RoomJoinResult.Success -> {
                         incomingInvite = null
-                        val myU = user?.username?.trim()?.lowercase()?.removePrefix("@")
-                        if (!myU.isNullOrBlank()) {
-                            launch { com.bingo.multiplayer.domain.network.GameInviteManager.removeInvite(myU, cleanCode) }
-                        }
                         roomCode = cleanCode
                         currentGameMode = GameMode.ONLINE_ROOM
                         isUsingP2p = false
@@ -644,7 +622,6 @@ fun RootNavGraph(
                         navController.navigate(Screen.Lobby.route)
                     }
                     is com.bingo.multiplayer.domain.network.RoomJoinResult.NotFound -> {
-                        handledInviteRoomCodes.remove(cleanCode)
                         Toast.makeText(context, result.message, Toast.LENGTH_LONG).show()
                     }
                     is com.bingo.multiplayer.domain.network.RoomJoinResult.AlreadyFull -> {
@@ -657,7 +634,6 @@ fun RootNavGraph(
                         Toast.makeText(context, result.message, Toast.LENGTH_LONG).show()
                     }
                     is com.bingo.multiplayer.domain.network.RoomJoinResult.Error -> {
-                        handledInviteRoomCodes.remove(cleanCode)
                         Toast.makeText(context, result.message, Toast.LENGTH_LONG).show()
                     }
                 }
@@ -667,77 +643,61 @@ fun RootNavGraph(
         }
     }
 
-    // Listen to notification actions (e.g. Accept invite clicked from status bar, or Invite Friend clicked)
-    val pendingJoinCode by com.bingo.multiplayer.domain.network.BingoNotificationManager.pendingJoinRoomCode.collectAsState()
-    LaunchedEffect(pendingJoinCode) {
-        val code = pendingJoinCode
-        if (!code.isNullOrBlank()) {
-            com.bingo.multiplayer.domain.network.BingoNotificationManager.pendingJoinRoomCode.value = null
-            com.bingo.multiplayer.domain.network.BingoNotificationManager.cancelInviteNotification(context)
-            acceptAndJoinRoom(code)
-        }
+    LaunchedEffect(currentAuthUser?.uid, currentAuthUser?.username) {
+        incomingInvite = null
+        NotificationRuntime.bind(context, currentAuthUser?.uid, currentAuthUser?.username)
     }
-
-    val pendingInviteFriend by com.bingo.multiplayer.domain.network.BingoNotificationManager.pendingInviteFriendUsername.collectAsState()
-    LaunchedEffect(pendingInviteFriend) {
-        val friend = pendingInviteFriend
-        if (!friend.isNullOrBlank()) {
-            com.bingo.multiplayer.domain.network.BingoNotificationManager.pendingInviteFriendUsername.value = null
-            navController.navigate(Screen.Dashboard.route) {
-                launchSingleTop = true
+    LaunchedEffect(currentRoute, isGameOver, currentMatchSeed) {
+        val active = (currentRoute == Screen.Game.route || currentRoute == Screen.ManualBoardDesign.route) && !isGameOver
+        NotificationRuntime.updateMatchActive(context, active)
+        if (active) incomingInvite = null
+    }
+    val notificationAction by com.bingo.multiplayer.domain.network.BingoNotificationManager.pendingAction.collectAsState()
+    var notificationFriendTarget by remember { mutableStateOf<String?>(null) }
+    var notificationRequestsTarget by remember { mutableStateOf(false) }
+    LaunchedEffect(notificationAction, currentAuthUser?.uid, currentRoute) {
+        val action = notificationAction ?: return@LaunchedEffect
+        val account = NotificationRuntime.account(context) ?: return@LaunchedEffect
+        if (currentAuthUser?.uid != account.uid || currentRoute in listOf(Screen.AuthGate.route, Screen.Login.route)) return@LaunchedEffect
+        com.bingo.multiplayer.domain.network.BingoNotificationManager.pendingAction.value = null
+        if (account.generation != action.generation || !NotificationPolicy.eligible(action.event, account, System.currentTimeMillis())) return@LaunchedEffect
+        if (NotificationRuntime.isBusy(context)) {
+            Toast.makeText(context, "Finish your current match before opening this notification.", Toast.LENGTH_LONG).show()
+            return@LaunchedEffect
+        }
+        when (action.action) {
+            com.bingo.multiplayer.domain.network.BingoNotificationManager.ACTION_ACCEPT_INVITE -> acceptAndJoinRoom(action.event.roomCode, action.event.toInvite())
+            com.bingo.multiplayer.domain.network.BingoNotificationManager.ACTION_VIEW_INVITE -> {
+                notificationRequestsTarget = true
+                navController.navigate(Screen.Dashboard.route) { launchSingleTop = true }
+                NotificationWork.sync(context, account, action.event.id)
             }
-        }
-    }
-
-    val pendingNavigateFriends by com.bingo.multiplayer.domain.network.BingoNotificationManager.pendingNavigateToFriends.collectAsState()
-    LaunchedEffect(pendingNavigateFriends) {
-        if (pendingNavigateFriends) {
-            com.bingo.multiplayer.domain.network.BingoNotificationManager.pendingNavigateToFriends.value = false
-            navController.navigate(Screen.Dashboard.route) {
-                launchSingleTop = true
-            }
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        val staged = com.bingo.multiplayer.domain.network.GameInviteManager.consumeStagedInvite()
-        if (staged != null) {
-            val now = System.currentTimeMillis()
-            val lastHandled = handledInviteRoomCodes[staged.roomCode] ?: 0L
-            val isRecentlyHandled = (now - lastHandled) < 60_000L
-            val canShowInApp = com.bingo.multiplayer.core.designsystem.NotificationPreferences.canShowInAppInvite(context)
-            if (canShowInApp && !isJoiningRoom && !isRecentlyHandled && roomCode != staged.roomCode && (now - staged.timestamp) < 120_000L) {
-                val currentDest = navController.currentDestination?.route
-                val isActivelyPlaying = (currentDest == Screen.Game.route || currentDest == Screen.ManualBoardDesign.route) && !isGameOver
-                if (!isActivelyPlaying) {
-                    incomingInvite = staged
+            com.bingo.multiplayer.domain.network.BingoNotificationManager.ACTION_INVITE_FRIEND -> {
+                if (NotificationRuntime.isFriend(context, action.event.senderUsername)) {
+                    notificationFriendTarget = action.event.senderUsername
+                    navController.navigate(Screen.Dashboard.route) { launchSingleTop = true }
                 }
             }
+            com.bingo.multiplayer.domain.network.BingoNotificationManager.ACTION_VIEW_FRIENDS -> {
+                notificationRequestsTarget = true
+                navController.navigate(Screen.Dashboard.route) { launchSingleTop = true }
+            }
         }
-
+    }
+    LaunchedEffect(Unit) {
         com.bingo.multiplayer.domain.network.GameInviteManager.foregroundInviteFlow.collect { invite ->
-            val now = System.currentTimeMillis()
-            val lastHandled = handledInviteRoomCodes[invite.roomCode] ?: 0L
-            val isRecentlyHandled = (now - lastHandled) < 60_000L
-            val canShowInApp = com.bingo.multiplayer.core.designsystem.NotificationPreferences.canShowInAppInvite(context)
-            if (canShowInApp && !isJoiningRoom && !isRecentlyHandled && roomCode != invite.roomCode && (now - invite.timestamp) < 120_000L) {
-                val currentDest = navController.currentDestination?.route
-                val isActivelyPlaying = (currentDest == Screen.Game.route || currentDest == Screen.ManualBoardDesign.route) && !isGameOver
-                if (!isActivelyPlaying) {
-                    incomingInvite = invite
-                }
-            }
+            val account = NotificationRuntime.account(context) ?: return@collect
+            if (!NotificationRuntime.isBusy(context) &&
+                com.bingo.multiplayer.core.designsystem.NotificationPreferences.canShowInAppInvite(context) &&
+                NotificationPolicy.eligible(invite.toEvent(), account, System.currentTimeMillis()) &&
+                !NotificationRuntime.ledger(context).handled(account.uid, invite.eventId)) incomingInvite = invite
         }
     }
-
-    LaunchedEffect(Unit) {
-        com.bingo.multiplayer.domain.network.PresenceManager.friendOnlineAlertFlow.collect { friendName ->
-            try {
-                if (com.bingo.multiplayer.core.designsystem.NotificationPreferences.canShowInAppPlayerOnline(context)) {
-                    android.widget.Toast.makeText(context.applicationContext, "🟢 $friendName is online", android.widget.Toast.LENGTH_SHORT).show()
-                }
-            } catch (_: Exception) {}
-        }
+    LaunchedEffect(incomingInvite?.eventId) {
+        val invite = incomingInvite ?: return@LaunchedEffect
+        delay((invite.expiresAt - System.currentTimeMillis()).coerceAtLeast(0))
+        NotificationRuntime.finishInvite(context, invite)
+        if (incomingInvite?.eventId == invite.eventId) incomingInvite = null
     }
 
     fun handlePauseAction(pause: Boolean) {
@@ -3348,17 +3308,13 @@ fun RootNavGraph(
                                 roomCode = roomCode
                             )
                         )
-                        if (success) {
-                            Toast.makeText(context, "Inviting @${friend.username} to room $roomCode...", Toast.LENGTH_SHORT).show()
-                        } else {
-                            Toast.makeText(context, "Invite dispatched to @${friend.username}!", Toast.LENGTH_SHORT).show()
-                        }
+                        Toast.makeText(context, success.message, Toast.LENGTH_SHORT).show()
                     }
                     onlineRoomSync.connectToRoom(roomCode, localHost)
                     navController.navigate(Screen.Lobby.route)
                 },
                 onAcceptInviteToMatch = { invite ->
-                    acceptAndJoinRoom(invite.roomCode)
+                    acceptAndJoinRoom(invite.roomCode, invite)
                 },
                 onRejoinMatch = { matchData ->
                     restoreAndRejoinOngoingMatch(matchData)
@@ -3437,17 +3393,13 @@ fun RootNavGraph(
                                 roomCode = roomCode
                             )
                         )
-                        if (success) {
-                            Toast.makeText(context, "Inviting @${friend.username} to room $roomCode...", Toast.LENGTH_SHORT).show()
-                        } else {
-                            Toast.makeText(context, "Invite dispatched to @${friend.username}!", Toast.LENGTH_SHORT).show()
-                        }
+                        Toast.makeText(context, success.message, Toast.LENGTH_SHORT).show()
                     }
                     onlineRoomSync.connectToRoom(roomCode, localHost)
                     navController.navigate(Screen.Lobby.route)
                 },
                 onAcceptInviteToMatch = { invite ->
-                    acceptAndJoinRoom(invite.roomCode)
+                    acceptAndJoinRoom(invite.roomCode, invite)
                 },
                 initialPage = 2
             )
@@ -3523,18 +3475,17 @@ fun RootNavGraph(
                                 roomCode = roomCode
                             )
                         )
-                        if (success) {
-                            Toast.makeText(context, "Inviting @${friend.username} to room $roomCode...", Toast.LENGTH_SHORT).show()
-                        } else {
-                            Toast.makeText(context, "Invite dispatched to @${friend.username}!", Toast.LENGTH_SHORT).show()
-                        }
+                        Toast.makeText(context, success.message, Toast.LENGTH_SHORT).show()
                     }
                     onlineRoomSync.connectToRoom(roomCode, localHost)
                     navController.navigate(Screen.Lobby.route)
                 },
                 onAcceptInviteToMatch = { invite ->
-                    acceptAndJoinRoom(invite.roomCode)
+                    acceptAndJoinRoom(invite.roomCode, invite)
                 },
+                notificationFriendUsername = notificationFriendTarget,
+                notificationRequests = notificationRequestsTarget,
+                onNotificationTargetConsumed = { notificationFriendTarget = null; notificationRequestsTarget = false },
                 initialPage = 1
             )
         }
@@ -5193,21 +5144,16 @@ fun RootNavGraph(
         }
     }
 
-    LaunchedEffect(incomingInvite?.roomCode) {
-        if (incomingInvite != null) {
-            try {
-                com.bingo.multiplayer.core.designsystem.BingoSoundEffects.playVibration(context, durationMs = 200L)
-            } catch (_: Exception) {}
-        }
+    val currentInvite = incomingInvite?.takeIf { invite ->
+        val account = NotificationRuntime.account(context)
+        com.bingo.multiplayer.core.designsystem.NotificationPreferences.canShowInAppInvite(context) &&
+            NotificationPolicy.eligible(invite.toEvent(), account, System.currentTimeMillis()) &&
+            account != null && !NotificationRuntime.ledger(context).handled(account.uid, invite.eventId)
     }
-
-    val currentInvite = incomingInvite
     if (currentInvite != null) {
         AlertDialog(
             onDismissRequest = {
-                currentInvite.let { handledInviteRoomCodes[it.roomCode] = System.currentTimeMillis() }
-                com.bingo.multiplayer.domain.network.GameInviteManager.clearForegroundInvite()
-                com.bingo.multiplayer.domain.network.BingoNotificationManager.cancelInviteNotification(context)
+                NotificationRuntime.finishInvite(context, currentInvite)
                 incomingInvite = null
             },
             title = {
@@ -5226,17 +5172,7 @@ fun RootNavGraph(
             confirmButton = {
                 Button(
                     onClick = {
-                        val inviteToJoin = currentInvite
-                        incomingInvite = null
-                        com.bingo.multiplayer.domain.network.GameInviteManager.clearForegroundInvite()
-                        com.bingo.multiplayer.domain.network.BingoNotificationManager.cancelInviteNotification(context)
-                        handledInviteRoomCodes[inviteToJoin.roomCode] = System.currentTimeMillis()
-                        coroutineScope.launch {
-                            currentAuthUser?.let { u ->
-                                com.bingo.multiplayer.domain.network.GameInviteManager.removeInvite(u.username, inviteToJoin.roomCode)
-                            }
-                        }
-                        acceptAndJoinRoom(inviteToJoin.roomCode)
+                        acceptAndJoinRoom(currentInvite.roomCode, currentInvite)
                     },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = BingoTheme.colors.primaryButtonBg,
@@ -5249,16 +5185,8 @@ fun RootNavGraph(
             dismissButton = {
                 OutlinedButton(
                     onClick = {
-                        val inviteToDecline = currentInvite
+                        NotificationRuntime.finishInvite(context, currentInvite)
                         incomingInvite = null
-                        com.bingo.multiplayer.domain.network.GameInviteManager.clearForegroundInvite()
-                        com.bingo.multiplayer.domain.network.BingoNotificationManager.cancelInviteNotification(context)
-                        handledInviteRoomCodes[inviteToDecline.roomCode] = System.currentTimeMillis()
-                        coroutineScope.launch {
-                            currentAuthUser?.let { u ->
-                                com.bingo.multiplayer.domain.network.GameInviteManager.removeInvite(u.username, inviteToDecline.roomCode)
-                            }
-                        }
                     },
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = BingoTheme.colors.textPrimary)
                 ) {

@@ -224,7 +224,7 @@ fun RequestsTabContent(
                                 OutlinedButton(
                                     onClick = {
                                         coroutineScope.launch {
-                                            GameInviteManager.removeInvite(user.username, invite.roomCode)
+                                            GameInviteManager.removeInvite(user.username, invite)
                                         }
                                         invites = invites.filter { it.roomCode != invite.roomCode }
                                     },
@@ -238,10 +238,6 @@ fun RequestsTabContent(
                                 }
                                 Button(
                                     onClick = {
-                                        coroutineScope.launch {
-                                            GameInviteManager.removeInvite(user.username, invite.roomCode)
-                                        }
-                                        invites = invites.filter { it.roomCode != invite.roomCode }
                                         if (onAcceptInvite != null) {
                                             onAcceptInvite(invite)
                                         } else {

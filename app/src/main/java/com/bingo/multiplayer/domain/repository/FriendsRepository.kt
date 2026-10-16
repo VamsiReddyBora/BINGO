@@ -156,6 +156,7 @@ class FriendsRepository internal constructor(
         prefs.edit().putString(key(active, KEY_FRIENDS), json.encodeToString(_friends.value))
             .putStringSet(key(active, "removed"), removedKeys)
             .putString(key(active, "removal_ids"), json.encodeToString(removalIds)).apply()
+        context?.let { com.bingo.multiplayer.domain.notifications.NotificationRuntime.syncFriends(it, _friends.value.toList()) }
     }
 
     fun syncFriendsAndRequests(username: String) {
@@ -218,6 +219,12 @@ class FriendsRepository internal constructor(
             friendUsername(req.fromUsername).isNotBlank() && friendUsername(req.fromUsername) != active.username &&
             req.id !in handledRequests && !_friends.value.any { sameFriend(it, fromRequest(req)) }
 
+    @Synchronized
+    fun notificationFriends(uid: String): List<Friend>? {
+        val active = activeAccount() ?: return null
+        return if (active.uid == uid) _friends.value.toList() else null
+    }
+
     fun isFriend(uidOrUsername: String): Boolean {
         activeAccount()
         return _friends.value.any { it.uid == uidOrUsername || friendUsername(it.username) == friendUsername(uidOrUsername) }
@@ -253,6 +260,7 @@ class FriendsRepository internal constructor(
         synchronized(this) {
             if (!isCurrent(active)) return@withLock false
             markHandled(active, request.id)
+            context?.let { com.bingo.multiplayer.domain.notifications.NotificationRuntime.finishFriendRequest(it, request) }
             val friend = fromRequest(request)
             removedKeys = removedKeys - friendKeys(friend)
             removalIds = removalIds.filterKeys { it !in friendKeys(friend) }
@@ -271,6 +279,7 @@ class FriendsRepository internal constructor(
         synchronized(this) {
             if (!isCurrent(active)) return@withLock false
             markHandled(active, request.id)
+            context?.let { com.bingo.multiplayer.domain.notifications.NotificationRuntime.finishFriendRequest(it, request) }
             _pendingRequests.value = _pendingRequests.value.filterNot { it.id == request.id }
         }
         true

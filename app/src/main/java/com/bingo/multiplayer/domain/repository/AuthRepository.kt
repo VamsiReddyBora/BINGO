@@ -273,7 +273,7 @@ class AuthRepository(
      * Guest login — no account needed, instant access.
      */
     fun onGuestLogin(customName: String? = null, customUsername: String? = null) {
-        val guestId = "guest_${System.currentTimeMillis()}"
+        val guestId = if (context != null) com.bingo.multiplayer.domain.notifications.NotificationIdentity.guestUid() else "guest_${System.currentTimeMillis()}"
         val existing = loadExistingStats()
         val finalName = customName?.trim()?.ifEmpty { null } ?: "Guest"
         val cleanUser = customUsername?.trim()?.lowercase()?.removePrefix("@")
@@ -847,6 +847,7 @@ class AuthRepository(
         if (context != null) {
             com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(context).stopRealtimeProfileListener()
         }
+        if (context != null) com.bingo.multiplayer.domain.notifications.NotificationRuntime.bind(context, null, null)
         prefs.edit()
             .remove(KEY_UID)
             .remove(KEY_AUTH_TOKEN)
@@ -901,6 +902,7 @@ class AuthRepository(
         editor.apply()
 
         if (context != null && profile.username.isNotBlank()) {
+            com.bingo.multiplayer.domain.notifications.NotificationRuntime.bind(context, profile.uid, profile.username)
             com.bingo.multiplayer.domain.network.BingoFcmManager.syncCurrentUserToken(context, profile.username)
         }
 

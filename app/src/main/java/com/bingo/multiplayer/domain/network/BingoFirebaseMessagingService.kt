@@ -1,79 +1,22 @@
 package com.bingo.multiplayer.domain.network
 
-import android.util.Log
+import com.bingo.multiplayer.domain.notifications.*
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
+import kotlinx.serialization.json.Json
 
 class BingoFirebaseMessagingService : FirebaseMessagingService() {
-
-    override fun onNewToken(token: String) {
-        super.onNewToken(token)
-        Log.i(TAG, "New FCM registration token received: ${token.take(15)}...")
-        BingoFcmManager.saveToken(applicationContext, token)
-
-        val localUser = BroadcastMessageManager.getLocalUsername(applicationContext)
-        if (localUser.isNotBlank()) {
-            BingoFcmManager.syncTokenToCloud(localUser, token)
-        }
+    override fun onNewToken(token: String) { BingoFcmManager.saveToken(applicationContext, token) }
+    override fun onMessageReceived(message: RemoteMessage) {
+        // FCM is a wake-up hint. Durable work verifies the canonical inbox before presenting any kind.
+        if (message.data["version"] != "2") return
+        val event = runCatching { Json { ignoreUnknownKeys = true }.decodeFromString<NotificationEvent>(message.data["event"] ?: return) }.getOrNull() ?: return
+        val account = NotificationRuntime.account(applicationContext) ?: return
+        if (!NotificationPolicy.eligible(event, account, System.currentTimeMillis(), push = true)) return
+        if (NotificationRuntime.ledger(applicationContext).handled(account.uid, event.id)) return
+        NotificationWork.sync(applicationContext, account, event.id)
     }
-
-    override fun onMessageReceived(remoteMessage: RemoteMessage) {
-        super.onMessageReceived(remoteMessage)
-        Log.i(TAG, "FCM message received from: ${remoteMessage.from}")
-
-        val data = remoteMessage.data
-        if (data.isNotEmpty()) {
-            val type = data["type"].orEmpty()
-            Log.d(TAG, "FCM message data type: $type")
-
-            when (type) {
-                "GAME_INVITE" -> {
-                    val roomCode = data["roomCode"].orEmpty()
-                    val fromUsername = data["fromUsername"].orEmpty()
-                    val fromDisplayName = data["fromDisplayName"].orEmpty().ifBlank { fromUsername }
-                    val fromAvatarUrl = data["fromAvatarUrl"] ?: data["avatarUrl"]
-                    val timestamp = data["timestamp"]?.toLongOrNull() ?: System.currentTimeMillis()
-
-                    if (roomCode.isNotBlank() && fromUsername.isNotBlank()) {
-                        val invite = GameInvite(
-                            fromUsername = fromUsername,
-                            fromDisplayName = fromDisplayName,
-                            fromAvatarUrl = fromAvatarUrl,
-                            roomCode = roomCode,
-                            timestamp = timestamp
-                        )
-                        val inForeground = AppLifecycleObserver.isAppInForeground.value
-
-                        if (inForeground) {
-                            if (com.bingo.multiplayer.core.designsystem.NotificationPreferences.canShowInAppInvite(applicationContext)) {
-                                Log.d(TAG, "Game invite received via FCM while app in foreground — delivering in-app only")
-                                GameInviteManager.deliverForegroundInvite(invite)
-                            }
-                        } else {
-                            if (com.bingo.multiplayer.core.designsystem.NotificationPreferences.canShowSystemInviteNotification(applicationContext)) {
-                                BingoNotificationManager.showInviteNotification(applicationContext, invite)
-                            }
-                            if (com.bingo.multiplayer.core.designsystem.NotificationPreferences.canShowInAppInvite(applicationContext)) {
-                                GameInviteManager.deliverForegroundInvite(invite)
-                            }
-                        }
-                    }
-                }
-                "FRIEND_ONLINE" -> {
-                    val username = data["username"].orEmpty()
-                    val displayName = data["displayName"].orEmpty().ifBlank { username }
-                    if (username.isNotBlank()) {
-                        BingoNotificationManager.notifyFriendOnline(applicationContext, username, displayName)
-                    }
-                }
-                else -> {
-                    Log.d(TAG, "FCM message type '$type' unhandled")
-                }
-            }
-        }
-    }
-
-    companion object {
-        private const val TAG = "BingoFcmService"
+    override fun onDeletedMessages() {
+        NotificationRuntime.account(applicationContext)?.let { NotificationWork.sync(applicationContext, it, "deleted-messages") }
     }
 }

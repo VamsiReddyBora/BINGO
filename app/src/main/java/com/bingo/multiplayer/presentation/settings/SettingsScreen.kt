@@ -2410,13 +2410,30 @@ private fun NotificationSettingsContent(
     val onlineInAppEnabled = NotificationPreferences.inAppPlayerOnlineEnabled.value
     val invitesInAppEnabled = NotificationPreferences.inAppPlayerInvitesEnabled.value
 
-    val areOsNotificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
+    var areOsNotificationsEnabled by remember { mutableStateOf(NotificationManagerCompat.from(context).areNotificationsEnabled()) }
+    val notificationLifecycle = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(notificationLifecycle, context) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) areOsNotificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
+        }
+        notificationLifecycle.lifecycle.addObserver(observer)
+        onDispose { notificationLifecycle.lifecycle.removeObserver(observer) }
+    }
+    val deliveryMessage by com.bingo.multiplayer.domain.notifications.NotificationDeliveryStatus.message.collectAsState()
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(start = 14.dp, end = 14.dp, bottom = 14.dp)
     ) {
+        deliveryMessage?.let { message ->
+            Text(message, fontSize = 12.sp, color = tokens.textSecondary, modifier = Modifier.padding(vertical = 6.dp))
+            TextButton(onClick = {
+                com.bingo.multiplayer.domain.notifications.NotificationRuntime.account(context)?.let {
+                    com.bingo.multiplayer.domain.notifications.NotificationWork.register(context, it)
+                }
+            }) { Text("Retry notifications") }
+        }
         if (!areOsNotificationsEnabled) {
             Surface(
                 shape = RoundedCornerShape(8.dp),

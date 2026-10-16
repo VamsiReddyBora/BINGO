@@ -1,300 +1,67 @@
 package com.bingo.multiplayer.domain.network
 
 import android.content.Context
-import android.util.Log
 import com.bingo.multiplayer.domain.model.FriendRequest
+import com.bingo.multiplayer.domain.notifications.*
 import com.google.firebase.messaging.FirebaseMessaging
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
-import java.net.URLEncoder
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.tasks.await
 
+/** Device registrations are private to the relay. No public username → token directory is used. */
 object BingoFcmManager {
-    private const val TAG = "BingoFcmManager"
-    private const val PREFS_NAME = "bingo_fcm_prefs"
-    private const val KEY_FCM_TOKEN = "fcm_device_token"
-
-    private val httpClient = NetworkConfig.httpClient
-    private val appKey = NetworkConfig.KEYVALUE_APP_KEY
-    private val scope = CoroutineScope(Dispatchers.IO)
-
+    private const val PREFS = "bingo_fcm_prefs"
+    private val tokenRefresh = Mutex()
     fun init(context: Context) {
-        try {
-            FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
-                if (task.isSuccessful) {
-                    val token = task.result
-                    Log.i(TAG, "Fetched FCM registration token: ${token.take(15)}...")
-                    saveToken(context, token)
-                    val localUser = BroadcastMessageManager.getLocalUsername(context)
-                    if (localUser.isNotBlank()) {
-                        syncTokenToCloud(localUser, token)
-                    }
-                } else {
-                    Log.w(TAG, "Failed to fetch FCM registration token: ${task.exception?.message}")
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "FirebaseMessaging init warning: ${e.message}")
+        NotificationRuntime.account(context)?.let { NotificationWork.register(context, it) }
+    }
+    suspend fun ensureCurrentToken(context: Context, forceRefresh: Boolean = false): Pair<String, Long> = tokenRefresh.withLock {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val previous = tokenSnapshot(context)
+        val rotate = forceRefresh || !prefs.getBoolean("private_directory_migrated", false)
+        if (rotate) FirebaseMessaging.getInstance().deleteToken().await()
+        val fetched = FirebaseMessaging.getInstance().token.await()
+        synchronized(this) {
+            // A service callback may have received a newer token while this request was in flight.
+            if (tokenSnapshot(context).second == previous.second) saveToken(context, fetched)
+            if (rotate) prefs.edit().putBoolean("private_directory_migrated", true).commit()
+            tokenSnapshot(context)
         }
     }
-
-    fun saveToken(context: Context, token: String) {
-        try {
-            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .edit()
-                .putString(KEY_FCM_TOKEN, token.trim())
-                .apply()
-        } catch (_: Exception) {}
+    @Synchronized fun saveToken(context: Context, token: String) {
+        if (token.isBlank()) return
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val revision = prefs.getLong("token_revision", 0) + if (prefs.getString("fcm_device_token", null) == token) 0 else 1
+        if (!prefs.edit().putString("fcm_device_token", token).putLong("token_revision", revision).commit()) return
+        NotificationRuntime.account(context)?.let { NotificationWork.register(context, it, NotificationPolicy.eventId("token", token)) }
     }
-
-    fun getSavedToken(context: Context): String? {
-        return try {
-            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .getString(KEY_FCM_TOKEN, null)
-        } catch (_: Exception) {
-            null
-        }
+    fun getSavedToken(context: Context): String? = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("fcm_device_token", null)
+    @Synchronized fun tokenSnapshot(context: Context): Pair<String, Long> {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        return prefs.getString("fcm_device_token", "").orEmpty() to prefs.getLong("token_revision", 0)
     }
-
-    /**
-     * Publishes this user's FCM device token to the Cloud Key-Value store.
-     * This enables any opponent or friend to look up this device's token and send a push.
-     */
-    fun syncTokenToCloud(username: String, token: String) {
-        val clean = username.trim().lowercase().removePrefix("@")
-        if (clean.isBlank() || token.isBlank()) return
-
-        scope.launch {
-            try {
-                val encKey = URLEncoder.encode("fcm_$clean", "UTF-8")
-                val encVal = URLEncoder.encode(token.trim(), "UTF-8")
-                val url = "${NetworkConfig.KEYVALUE_API_URL}/UpdateValue/$appKey/$encKey?value=$encVal"
-                val request = Request.Builder()
-                    .url(url)
-                    .post("".toRequestBody(null))
-                    .header("Content-Length", "0")
-                    .build()
-                httpClient.newCall(request).execute().close()
-                Log.d(TAG, "Synced FCM token to cloud directory for @$clean")
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to sync FCM token to cloud: ${e.message}")
-            }
-        }
-    }
-
-    /**
-     * Ensures this user's FCM device token is synced to the Cloud Key-Value store.
-     * Can be safely called upon login, resume, presence start, or account switch.
-     */
     fun syncCurrentUserToken(context: Context, username: String) {
-        val clean = username.trim().lowercase().removePrefix("@")
-        if (clean.isBlank()) return
-        val saved = getSavedToken(context)
-        if (!saved.isNullOrBlank()) {
-            syncTokenToCloud(clean, saved)
-        } else {
-            try {
-                FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
-                    if (task.isSuccessful && !task.result.isNullOrBlank()) {
-                        val token = task.result
-                        saveToken(context, token)
-                        syncTokenToCloud(clean, token)
-                    }
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Could not fetch fresh token for sync: ${e.message}")
-            }
-        }
+        val account = NotificationRuntime.account(context) ?: return
+        if (notificationUsername(username) == account.username) NotificationWork.register(context, account)
     }
-
-    /**
-     * Fetches the FCM device token for a specific user from Cloud Key-Value store.
-     */
-    suspend fun fetchTokenForUser(username: String): String? = withContext(Dispatchers.IO) {
-        val clean = username.trim().lowercase().removePrefix("@")
-        if (clean.isBlank()) return@withContext null
-        try {
-            val encKey = URLEncoder.encode("fcm_$clean", "UTF-8")
-            val url = "${NetworkConfig.KEYVALUE_API_URL}/GetValue/$appKey/$encKey"
-            val request = Request.Builder().url(url).get().build()
-            httpClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@withContext null
-                val body = response.body?.string()?.trim()?.removeSurrounding("\"")
-                if (!body.isNullOrBlank() && body != "null") body else null
-            }
-        } catch (_: Exception) {
-            null
-        }
+    private fun queue(kind: NotificationKind, target: String, id: String, createdAt: Long, extra: JSONObject = JSONObject()) {
+        val context = NotificationRuntime.context() ?: return
+        val account = NotificationRuntime.account(context) ?: return
+        val payload = extra.put("id", id).put("kind", kind.name).put("toUsername", notificationUsername(target))
+            .put("createdAt", createdAt).put("expiresAt", createdAt + kind.lifetimeMillis)
+        NotificationWork.send(context, account, payload)
     }
-
-    /**
-     * Sends a High-Priority Data-Only FCM push notification via the Cloudflare Worker relay.
-     * Keeps all Google Cloud Service Account credentials securely off client binaries.
-     */
-    fun sendPushNotification(
-        targetToken: String,
-        type: String,
-        title: String,
-        body: String,
-        data: Map<String, String> = emptyMap(),
-        onComplete: ((Boolean, String) -> Unit)? = null
-    ) {
-        if (targetToken.isBlank()) {
-            onComplete?.invoke(false, "Target device token is empty")
-            return
-        }
-
-        scope.launch {
-            try {
-                val dataObj = JSONObject().apply {
-                    put("type", type)
-                    put("title", title)
-                    put("body", body)
-                    data.forEach { (k, v) -> put(k, v) }
-                }
-
-                val payload = JSONObject().apply {
-                    put("token", targetToken)
-                    put("type", type)
-                    put("title", title)
-                    put("body", body)
-                    put("data", dataObj)
-                }
-
-                val mediaType = "application/json; charset=utf-8".toMediaType()
-                val requestBody = payload.toString().toRequestBody(mediaType)
-                val request = Request.Builder()
-                    .url(NetworkConfig.FCM_RELAY_URL)
-                    .post(requestBody)
-                    .build()
-
-                httpClient.newCall(request).execute().use { resp ->
-                    val isSuccess = resp.isSuccessful
-                    val respBody = resp.body?.string().orEmpty()
-                    if (isSuccess) {
-                        Log.i(TAG, "FCM push dispatched successfully via relay: $type")
-                        withContext(Dispatchers.Main) {
-                            onComplete?.invoke(true, "Sent successfully via FCM relay")
-                        }
-                    } else {
-                        Log.e(TAG, "FCM dispatch error HTTP ${resp.code}: $respBody")
-                        withContext(Dispatchers.Main) {
-                            onComplete?.invoke(false, "FCM relay returned HTTP ${resp.code}")
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "FCM dispatch exception: ${e.message}", e)
-                withContext(Dispatchers.Main) {
-                    onComplete?.invoke(false, e.message ?: "Unknown error")
-                }
-            }
-        }
-    }
-
-    fun sendInvitePush(targetUsername: String, invite: GameInvite) {
-        scope.launch {
-            val token = fetchTokenForUser(targetUsername)
-            if (!token.isNullOrBlank()) {
-                sendPushNotification(
-                    targetToken = token,
-                    type = "GAME_INVITE",
-                    title = "🎮 Game Invite from ${invite.fromDisplayName}",
-                    body = "@${invite.fromUsername} invited you to play a Bingo match! (Room ${invite.roomCode})",
-                    data = mapOf(
-                        "roomCode" to invite.roomCode,
-                        "fromUsername" to invite.fromUsername,
-                        "fromDisplayName" to invite.fromDisplayName,
-                        "timestamp" to invite.timestamp.toString()
-                    )
-                )
-            } else {
-                Log.d(TAG, "No FCM token registered for @$targetUsername; opponent must be online via MQTT")
-            }
-        }
-    }
-
-    /**
-     * Sends an FCM friend request push to target user.
-     */
     fun sendFriendRequestPush(targetUsername: String, request: FriendRequest) {
-        scope.launch {
-            val token = fetchTokenForUser(targetUsername)
-            if (!token.isNullOrBlank()) {
-                val displayName = request.fromDisplayName.ifBlank { request.fromUsername }
-                sendPushNotification(
-                    targetToken = token,
-                    type = "FRIEND_REQUEST",
-                    title = "👥 Friend Request from $displayName",
-                    body = "@${request.fromUsername} sent you a friend request!",
-                    data = mapOf(
-                        "fromUsername" to request.fromUsername,
-                        "fromDisplayName" to displayName,
-                        "fromUid" to request.fromUid,
-                        "type" to "FRIEND_REQUEST"
-                    )
-                )
-            } else {
-                Log.d(TAG, "No FCM token for @$targetUsername; friend request delivered via MQTT/Cloud")
-            }
-        }
+        queue(NotificationKind.FRIEND_REQUEST, targetUsername, NotificationPolicy.eventId("friend_request", request.id), request.timestamp,
+            JSONObject().put("requestId", request.id).put("requestTimestamp", request.timestamp))
     }
-
-    /**
-     * Sends an FCM friend accepted push to target user.
-     */
-    fun sendFriendAcceptedPush(targetUsername: String, myUsername: String, myDisplayName: String) {
-        scope.launch {
-            val token = fetchTokenForUser(targetUsername)
-            if (!token.isNullOrBlank()) {
-                val displayName = myDisplayName.ifBlank { myUsername }
-                sendPushNotification(
-                    targetToken = token,
-                    type = "FRIEND_ACCEPTED",
-                    title = "🎉 Friend Request Accepted",
-                    body = "$displayName accepted your friend request!",
-                    data = mapOf(
-                        "fromUsername" to myUsername,
-                        "fromDisplayName" to displayName,
-                        "type" to "FRIEND_ACCEPTED"
-                    )
-                )
-            } else {
-                Log.d(TAG, "No FCM token for @$targetUsername; acceptance delivered via MQTT/Cloud")
-            }
-        }
+    fun sendFriendAcceptedPush(targetUsername: String, request: FriendRequest) {
+        queue(NotificationKind.FRIEND_ACCEPTED, targetUsername, NotificationPolicy.eventId("friend_accepted", request.id), System.currentTimeMillis(),
+            JSONObject().put("requestId", request.id).put("requestTimestamp", request.timestamp))
     }
-
-    /**
-     * Sends an FCM push to a friend notifying them that this user is online.
-     */
-    fun sendFriendOnlinePush(targetUsername: String, myUsername: String, myDisplayName: String) {
-        scope.launch {
-            val token = fetchTokenForUser(targetUsername)
-            if (!token.isNullOrBlank()) {
-                val displayName = myDisplayName.ifBlank { myUsername }
-                sendPushNotification(
-                    targetToken = token,
-                    type = "FRIEND_ONLINE",
-                    title = "🟢 $displayName is online",
-                    body = "Your friend is online. Tap to challenge them to a match!",
-                    data = mapOf(
-                        "username" to myUsername,
-                        "displayName" to displayName,
-                        "timestamp" to System.currentTimeMillis().toString(),
-                        "type" to "FRIEND_ONLINE"
-                    )
-                )
-            } else {
-                Log.d(TAG, "No FCM token for @$targetUsername; presence delivered via MQTT")
-            }
-        }
+    fun sendFriendOnlinePush(targetUsername: String, myUsername: String, sessionId: String, timestamp: Long) {
+        queue(NotificationKind.FRIEND_ONLINE, targetUsername, NotificationPolicy.eventId("friend_online", myUsername, sessionId), timestamp,
+            JSONObject().put("presenceSessionId", sessionId))
     }
-
-
 }

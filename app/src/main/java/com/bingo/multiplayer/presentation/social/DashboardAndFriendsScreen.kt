@@ -41,7 +41,10 @@ fun DashboardAndFriendsScreen(
     friendsRepository: FriendsRepository,
     onInviteFriendToMatch: (Friend) -> Unit,
     onAcceptInviteToMatch: ((com.bingo.multiplayer.domain.network.GameInvite) -> Unit)? = null,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    notificationFriendUsername: String? = null,
+    notificationRequests: Boolean = false,
+    onNotificationTargetConsumed: () -> Unit = {}
 ) {
     val tokens = BingoTheme.colors
     val context = LocalContext.current
@@ -68,6 +71,22 @@ fun DashboardAndFriendsScreen(
             (localMatches + firestoreMatches)
                 .distinctBy { it.id }
                 .sortedByDescending { it.timestamp }
+        }
+    }
+
+    LaunchedEffect(notificationFriendUsername, notificationRequests, friends) {
+        if (notificationRequests) {
+            selectedTab = 2
+            onNotificationTargetConsumed()
+        } else if (notificationFriendUsername != null) {
+            val friend = friends.firstOrNull { it.username.equals(notificationFriendUsername, ignoreCase = true) }
+            selectedTab = 1
+            if (friend != null) {
+                selectedProfilePlayer = PlayerProfileData(playerId = friend.uid, username = friend.username,
+                    displayName = friend.displayName, avatarUrl = friend.avatarUrl,
+                    gamesPlayed = friend.gamesPlayed, gamesWon = friend.gamesWon, currentStreak = friend.currentStreak, level = friend.level)
+                onNotificationTargetConsumed()
+            }
         }
     }
 

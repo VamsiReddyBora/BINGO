@@ -158,48 +158,17 @@ class MainActivity : ComponentActivity() {
 
     private fun handleNotificationIntent(intent: Intent?) {
         if (intent == null) return
-        BingoNotificationManager.onAppForeground(applicationContext)
-
-        val action = intent.getStringExtra(BingoNotificationManager.EXTRA_ACTION)
-        val roomCode = intent.getStringExtra(BingoNotificationManager.EXTRA_ROOM_CODE)
-            ?: intent.getStringExtra("roomCode")
-        val fromUsername = intent.getStringExtra(BingoNotificationManager.EXTRA_FROM_USERNAME)
-            ?: intent.getStringExtra("fromUsername").orEmpty()
-        val fromDisplayName = intent.getStringExtra(BingoNotificationManager.EXTRA_FROM_DISPLAY_NAME)
-            ?: intent.getStringExtra("fromDisplayName").orEmpty()
-        val timestamp = intent.getLongExtra(BingoNotificationManager.EXTRA_TIMESTAMP, System.currentTimeMillis())
-
-        when (action) {
-            BingoNotificationManager.ACTION_ACCEPT_INVITE -> {
-                // Rule 3A: User tapped "Accept" on notification.
-                // Cancel notification, clear any popup, queue direct lobby join.
-                BingoNotificationManager.cancelInviteNotification(applicationContext)
-                com.bingo.multiplayer.domain.network.GameInviteManager.clearForegroundInvite()
-                if (!roomCode.isNullOrBlank()) {
-                    BingoNotificationManager.pendingJoinRoomCode.value = roomCode
-                }
-            }
-            BingoNotificationManager.ACTION_VIEW_INVITE -> {
-                // Rule 3B: User tapped notification body without clicking Accept or Decline.
-                // Cancel OS tray notification, but show the in-app popup dialog!
-                BingoNotificationManager.cancelInviteNotification(applicationContext)
-                BingoNotificationManager.pendingJoinRoomCode.value = null
-                if (!roomCode.isNullOrBlank()) {
-                    val invite = com.bingo.multiplayer.domain.network.GameInvite(
-                        fromUsername = fromUsername.ifBlank { "Friend" },
-                        fromDisplayName = fromDisplayName.ifBlank { fromUsername.ifBlank { "Friend" } },
-                        roomCode = roomCode,
-                        timestamp = timestamp
-                    )
-                    com.bingo.multiplayer.domain.network.GameInviteManager.deliverForegroundInvite(invite)
-                }
-            }
-            BingoNotificationManager.ACTION_VIEW_FRIENDS -> {
-                BingoNotificationManager.pendingNavigateToFriends.value = true
-            }
-            else -> {
-                // Normal app launch: do not auto-queue join room.
-            }
+        val action = BingoNotificationManager.decodeAction(applicationContext, intent)
+        // Consume launch extras once. Activity recreation cannot repeat an already handled action.
+        intent.removeExtra(BingoNotificationManager.EXTRA_EVENT)
+        if (action != null) BingoNotificationManager.pendingAction.value = action
+        val account = com.bingo.multiplayer.domain.notifications.NotificationRuntime.account(applicationContext)
+        val noticeAccount = intent.getStringExtra(BingoNotificationManager.EXTRA_ACCOUNT)
+        val noticeGeneration = intent.getStringExtra(BingoNotificationManager.EXTRA_GENERATION)
+        if (intent.getBooleanExtra(BingoNotificationManager.EXTRA_SHOW_UPDATE, false) &&
+            (noticeAccount == null || (account?.uid == noticeAccount && account.generation == noticeGeneration))) {
+            intent.removeExtra(BingoNotificationManager.EXTRA_SHOW_UPDATE)
+            AppUpdateManager.checkForUpdates(applicationContext, manual = true)
         }
     }
 }

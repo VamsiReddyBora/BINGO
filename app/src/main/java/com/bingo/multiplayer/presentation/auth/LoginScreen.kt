@@ -186,6 +186,10 @@ fun LoginScreen(
         val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
             .requestEmail()
             .requestProfile()
+            .apply {
+                val clientId = com.bingo.multiplayer.domain.network.NetworkConfig.NOTIFICATION_GOOGLE_CLIENT_ID
+                if (clientId.isNotBlank()) requestIdToken(clientId)
+            }
             .build()
         GoogleSignIn.getClient(activity, gso)
     }

@@ -29,3 +29,11 @@ cloudflare_worker/service-account.json
 # Python
 __pycache__/
 *.pyc
+
+# Notification relay local dependencies, state and secrets
+cloudflare_worker/node_modules/
+cloudflare_worker/.wrangler/
+cloudflare_worker/.dev.vars
+cloudflare_worker/.dev.vars.*
+cloudflare_worker/dist/
+/.wrangler/

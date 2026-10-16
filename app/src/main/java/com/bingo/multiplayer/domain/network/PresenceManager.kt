@@ -53,7 +53,8 @@ data class PlayerPresence(
     val appVersion: String = NetworkConfig.APP_VERSION_NAME,
     val appVersionCode: Int = NetworkConfig.APP_VERSION_CODE,
     val activityDetail: String = "",
-    val currentRoomCode: String = ""
+    val currentRoomCode: String = "",
+    val onlineSessionId: String = ""
 ) {
     /**
      * A player is considered active in the app if their status is ONLINE, IN_LOBBY, or PLAYING,
@@ -91,7 +92,8 @@ object PresenceManager {
     private var presenceClient: MqttAsyncClient? = null
     private var heartbeatJob: Job? = null
     private var watcherStartTime: Long = 0L
-    val friendOnlineAlertFlow = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 5)
+    private var onlineSessionId = UUID.randomUUID().toString()
+    private var onlineSessionStartedAt = System.currentTimeMillis()
     var currentActiveUsername: String? = null
         private set
 
@@ -366,6 +368,8 @@ object PresenceManager {
         }
 
         disconnectPresenceClient()
+        onlineSessionId = UUID.randomUUID().toString()
+        onlineSessionStartedAt = System.currentTimeMillis()
 
         val now = System.currentTimeMillis()
         presenceMap[clean] = PlayerPresence(clean, currentStatus, now)
@@ -452,9 +456,6 @@ object PresenceManager {
 
                 if (friends.isEmpty()) return@launch
 
-                val authPrefs = ctx.getSharedPreferences("bingo_auth_prefs", Context.MODE_PRIVATE)
-                val myDisplayName = authPrefs.getString("display_name", null)?.takeIf { it.isNotBlank() } ?: cleanUsername
-
                 val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 val now = System.currentTimeMillis()
 
@@ -464,7 +465,7 @@ object PresenceManager {
                         val lastNotified = prefs.getLong("fcm_notified_online_$fClean", 0L)
                         if ((now - lastNotified) >= 120_000L) {
                             prefs.edit().putLong("fcm_notified_online_$fClean", now).apply()
-                            BingoFcmManager.sendFriendOnlinePush(fClean, cleanUsername, myDisplayName)
+                            BingoFcmManager.sendFriendOnlinePush(fClean, cleanUsername, onlineSessionId, onlineSessionStartedAt)
                         }
                     }
                 }
@@ -499,7 +500,8 @@ object PresenceManager {
                     status = status,
                     timestamp = now,
                     activityDetail = detail,
-                    currentRoomCode = roomCode
+                    currentRoomCode = roomCode,
+                    onlineSessionId = onlineSessionId
                 )
             )
             val message = MqttMessage(payload.toByteArray(StandardCharsets.UTF_8)).apply {
@@ -542,7 +544,10 @@ object PresenceManager {
      */
     fun onAppForeground() {
         val clean = currentActiveUsername ?: return
+        onlineSessionId = UUID.randomUUID().toString()
+        onlineSessionStartedAt = System.currentTimeMillis()
         val currentStatus = currentActivityState.name
+        notifyFriendsOnlineViaFcm(clean)
         Log.d(TAG, "App foregrounded — publishing $currentStatus for @$clean")
         val now = System.currentTimeMillis()
         presenceMap[clean] = PlayerPresence(clean, currentStatus, now, activityDetail = currentActivityDetail, currentRoomCode = currentRoomCode)
@@ -564,6 +569,8 @@ object PresenceManager {
         heartbeatJob?.cancel()
         heartbeatJob = null
         disconnectPresenceClient()
+        currentActiveUsername = null
+        prefs?.edit()?.remove(KEY_ACTIVE_USER)?.apply()
         if (clean != null) {
             val now = System.currentTimeMillis()
             presenceMap[clean] = PlayerPresence(clean, "OFFLINE", now)
@@ -687,6 +694,9 @@ object PresenceManager {
         if (cleanUser.isNotBlank()) {
             val previous = presenceMap[cleanUser]
             val now = System.currentTimeMillis()
+            if (presence.timestamp > now + 5000L) return
+            if (presence.timestamp > 0L && previous != null && (previous.timestamp > presence.timestamp ||
+                (previous.timestamp == presence.timestamp && previous.status.equals("OFFLINE", true) && !presence.status.equals("OFFLINE", true)))) return
             val effectiveTimestamp = if (presence.status.equals("OFFLINE", ignoreCase = true) && presence.timestamp <= 0L) {
                 // If previous was active and online, their last known heartbeat is their last seen time
                 if (previous != null && previous.isOnline && previous.timestamp > 0L) {
@@ -715,18 +725,12 @@ object PresenceManager {
             val myUser = currentActiveUsername
             val isSettled = (System.currentTimeMillis() - watcherStartTime) > 4000L
 
-            if (isSettled && isNowOnline && !wasOnline && cleanUser != myUser) {
+            if (isSettled && isNowOnline && presence.isOnline && !wasOnline && cleanUser != myUser) {
                 val ctx = appContext
                 if (ctx != null && BingoNotificationManager.isFriend(ctx, cleanUser)) {
-                    val displayName = BingoNotificationManager.getFriendDisplayName(ctx, cleanUser)
-
-                    // 1. Post system notification if app in background
-                    BingoNotificationManager.notifyFriendOnline(ctx, cleanUser, displayName)
-
-                    // 2. Deliver in-app alert if app in foreground and setting is ON
-                    if (com.bingo.multiplayer.domain.network.AppLifecycleObserver.isAppInForeground.value &&
-                        com.bingo.multiplayer.core.designsystem.NotificationPreferences.canShowInAppPlayerOnline(ctx)) {
-                        friendOnlineAlertFlow.tryEmit(displayName)
+                    // Presence packets are hints. Only authenticated inbox events may alert.
+                    com.bingo.multiplayer.domain.notifications.NotificationRuntime.account(ctx)?.let {
+                        com.bingo.multiplayer.domain.notifications.NotificationWork.sync(ctx, it)
                     }
                 }
             }

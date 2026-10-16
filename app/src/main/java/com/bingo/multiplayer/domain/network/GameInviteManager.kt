@@ -1,6 +1,5 @@
 package com.bingo.multiplayer.domain.network
 
-import android.util.Base64
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -8,8 +7,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import org.eclipse.paho.client.mqttv3.MqttAsyncClient
 import org.eclipse.paho.client.mqttv3.MqttConnectOptions
 import org.eclipse.paho.client.mqttv3.MqttMessage
@@ -17,219 +14,72 @@ import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
 import java.nio.charset.StandardCharsets
 import java.util.UUID
 
+import com.bingo.multiplayer.domain.notifications.*
+import kotlinx.coroutines.CancellationException
+import org.json.JSONObject
+
 @Serializable
 data class GameInvite(
     val fromUsername: String,
     val fromDisplayName: String,
     val fromAvatarUrl: String? = null,
     val roomCode: String,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val eventId: String = NotificationPolicy.eventId("game_invite", fromUsername, roomCode, timestamp.toString()),
+    val recipientUid: String = "",
+    val recipientUsername: String = "",
+    val senderUid: String = "",
+    val expiresAt: Long = timestamp + 120_000L
 )
 
+fun NotificationEvent.toInvite() = GameInvite(senderUsername, senderDisplayName, roomCode = roomCode,
+    timestamp = createdAt, eventId = id, recipientUid = recipientUid, recipientUsername = recipientUsername,
+    senderUid = senderUid, expiresAt = expiresAt)
+fun GameInvite.toEvent() = NotificationEvent(eventId, NotificationKind.GAME_INVITE,
+    senderUid, fromUsername, fromDisplayName, recipientUid, recipientUsername, timestamp, expiresAt, roomCode = roomCode)
+
+enum class InviteSendResult(val message: String) {
+    QUEUED("Invitation queued. It will be sent when connected."),
+    SENT("Invitation sent."), FAILED("Could not queue invitation. Please try again.")
+}
+
 object GameInviteManager {
-    private val client = NetworkConfig.httpClient
     private val json = Json { ignoreUnknownKeys = true; isLenient = true; encodeDefaults = true }
-    private val BASE_URL = NetworkConfig.KEYVALUE_API_URL
-    private val API_KEY = NetworkConfig.KEYVALUE_APP_KEY
     private val BROKER_URL = NetworkConfig.BROKER_URL
+    @Volatile var stagedInvite: GameInvite? = null
+    val foregroundInviteFlow = kotlinx.coroutines.flow.MutableSharedFlow<GameInvite>(replay = 1, extraBufferCapacity = 5,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)
+    internal fun stageInvite(invite: GameInvite) { stagedInvite = invite; foregroundInviteFlow.tryEmit(invite) }
+    fun consumeStagedInvite(): GameInvite? = stagedInvite.also { stagedInvite = null }
+    fun clearForegroundInvite() { stagedInvite = null; foregroundInviteFlow.resetReplayCache() }
 
-    @Volatile
-    var stagedInvite: GameInvite? = null
-
-    val foregroundInviteFlow = kotlinx.coroutines.flow.MutableSharedFlow<GameInvite>(
-        replay = 1,
-        extraBufferCapacity = 5,
-        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST
-    )
-
-    fun deliverForegroundInvite(invite: GameInvite) {
-        stagedInvite = invite
-        foregroundInviteFlow.tryEmit(invite)
-    }
-
-    fun consumeStagedInvite(): GameInvite? {
-        val inv = stagedInvite
-        stagedInvite = null
-        return inv
-    }
-
-    fun clearForegroundInvite() {
-        stagedInvite = null
-        foregroundInviteFlow.resetReplayCache()
-    }
-
-    private fun encodeBase64Url(raw: String): String {
-        return Base64.encodeToString(raw.toByteArray(StandardCharsets.UTF_8), Base64.URL_SAFE or Base64.NO_WRAP).trim()
-    }
-
-    private fun decodeBase64Url(b64: String): String {
-        val clean = b64.trim().removeSurrounding("\"")
-        if (clean.startsWith("[")) return clean
-        val padded = clean + "=".repeat((4 - clean.length % 4) % 4)
-        return try {
-            val bytes = Base64.decode(padded, Base64.URL_SAFE or Base64.NO_WRAP)
-            String(bytes, StandardCharsets.UTF_8)
-        } catch (_: Exception) {
-            clean
-        }
-    }
-
-    /**
-     * Sends an in-game match invitation to target user.
-     * Broadcasts via retained MQTT immediately for sub-second delivery,
-     * then asynchronously persists to cloud storage backup.
-     */
-    suspend fun sendInvite(targetUsername: String, invite: GameInvite): Boolean = withContext(Dispatchers.IO) {
-        val clean = targetUsername.trim().lowercase().removePrefix("@")
-        if (clean.isBlank()) return@withContext false
-
+    suspend fun sendInvite(targetUsername: String, invite: GameInvite): InviteSendResult = withContext(Dispatchers.IO) {
+        val context = NotificationRuntime.context() ?: return@withContext InviteSendResult.FAILED
+        val account = NotificationRuntime.account(context) ?: return@withContext InviteSendResult.FAILED
+        val clean = notificationUsername(targetUsername)
+        if (clean.isBlank() || clean == account.username) return@withContext InviteSendResult.FAILED
+        val payload = JSONObject().put("id", invite.eventId).put("kind", "GAME_INVITE").put("toUsername", clean)
+            .put("createdAt", invite.timestamp).put("expiresAt", invite.expiresAt).put("roomCode", invite.roomCode.trim().uppercase())
         try {
-            // Sanitize invite to ensure no large base64 avatars inflate payload beyond limits
-            val sanitizedInvite = if ((invite.fromAvatarUrl?.length ?: 0) > 120) {
-                invite.copy(fromAvatarUrl = null)
-            } else {
-                invite
-            }
-
-            // 1. INSTANT real-time dispatch via retained MQTT (delivers in < 100ms)
-            publishMqttInvite(clean, sanitizedInvite)
-
-            // 2. High-priority FCM Cloud Push to wake the target device if the app was killed
-            BingoFcmManager.sendInvitePush(clean, sanitizedInvite)
-
-            // 2. Cloud KeyValue persistence backup (purge invites older than 2 minutes)
-            val now = System.currentTimeMillis()
-            val existingList = fetchInvitesForUser(clean).filter { (now - it.timestamp) < 120_000L }.toMutableList()
-            existingList.removeAll { it.roomCode.equals(sanitizedInvite.roomCode, ignoreCase = true) || it.fromUsername.equals(sanitizedInvite.fromUsername, ignoreCase = true) }
-            existingList.add(0, sanitizedInvite) // latest first
-
-            val jsonString = json.encodeToString(existingList)
-            val b64 = encodeBase64Url(jsonString)
-            val encVal = java.net.URLEncoder.encode(b64, "UTF-8")
-
-            val request = Request.Builder()
-                .url("$BASE_URL/UpdateValue/$API_KEY/inv_$clean?value=$encVal")
-                .post("".toRequestBody(null))
-                .header("Content-Length", "0")
-                .build()
-
-            val response = client.newCall(request).execute()
-            response.use { it.isSuccessful }
-        } catch (e: Exception) {
-            Log.e("GameInviteManager", "Failed to send invite: ${e.message}", e)
-            false
+            NotificationApi.call(context, account, "/v2/events", payload)
+            publishMqttInvite(clean, invite.copy(fromAvatarUrl = null, recipientUsername = clean, senderUid = account.uid))
+            InviteSendResult.SENT
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (e: NotificationApiException) {
+            if ((e.retryable || e.status == 401) && NotificationWork.send(context, account, payload)) InviteSendResult.QUEUED else InviteSendResult.FAILED
         }
     }
-
-    /**
-     * Fetches pending game invites for a specific username (only valid if < 2 minutes old).
-     */
-    suspend fun fetchInvitesForUser(username: String): List<GameInvite> = withContext(Dispatchers.IO) {
-        val clean = username.trim().lowercase().removePrefix("@")
-        if (clean.isBlank()) return@withContext emptyList()
-
-        try {
-            // Primary key: inv_{clean}
-            val request = Request.Builder()
-                .url("$BASE_URL/GetValue/$API_KEY/inv_$clean")
-                .get()
-                .build()
-
-            val raw = client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) null
-                else response.body?.string()?.trim()?.removeSurrounding("\"")
-            }
-
-            if (!raw.isNullOrBlank() && raw != "null") {
-                val jsonStr = try {
-                    decodeBase64Url(raw)
-                } catch (_: Exception) {
-                    raw
-                }
-                if (jsonStr.startsWith("[")) {
-                    val list = json.decodeFromString<List<GameInvite>>(jsonStr)
-                    val now = System.currentTimeMillis()
-                    return@withContext list.filter { (now - it.timestamp) < 120_000L && it.roomCode.isNotBlank() }
-                }
-            }
-        } catch (e: Exception) {
-            Log.w("GameInviteManager", "Failed to fetch invites from inv_$clean: ${e.message}")
-        }
-
-        // Fallback: check legacy key invites_{clean}
-        try {
-            val reqLegacy = Request.Builder()
-                .url("$BASE_URL/GetValue/$API_KEY/invites_$clean")
-                .get()
-                .build()
-            val rawLegacy = client.newCall(reqLegacy).execute().use { response ->
-                if (!response.isSuccessful) null
-                else response.body?.string()?.trim()?.removeSurrounding("\"")
-            }
-            if (!rawLegacy.isNullOrBlank() && rawLegacy != "null") {
-                val unescaped = rawLegacy.replace("\\\"", "\"")
-                if (unescaped.startsWith("[")) {
-                    val list = json.decodeFromString<List<GameInvite>>(unescaped)
-                    val now = System.currentTimeMillis()
-                    return@withContext list.filter { (now - it.timestamp) < 120_000L && it.roomCode.isNotBlank() }
-                }
-            }
-        } catch (_: Exception) {}
-
-        emptyList()
+    suspend fun fetchInvitesForUser(username: String): List<GameInvite> {
+        val context = NotificationRuntime.context() ?: return emptyList()
+        val account = NotificationRuntime.account(context) ?: return emptyList()
+        if (notificationUsername(username) != account.username) return emptyList()
+        return NotificationApi.inbox(context, account).filter { it.kind == NotificationKind.GAME_INVITE &&
+            NotificationPolicy.eligible(it, account, System.currentTimeMillis()) && !NotificationRuntime.ledger(context).handled(account.uid, it.id) }.map { it.toInvite() }
     }
-
-    /**
-     * Removes an accepted or declined invite from cloud storage and clears retained MQTT.
-     */
-    suspend fun removeInvite(targetUsername: String, roomCode: String) = withContext(Dispatchers.IO) {
-        val clean = targetUsername.trim().lowercase().removePrefix("@")
-        if (clean.isBlank()) return@withContext
-
-        try {
-            clearMqttRetainedInvite(clean)
-            val existingList = fetchInvitesForUser(clean).toMutableList()
-            existingList.removeAll { it.roomCode.equals(roomCode.trim(), ignoreCase = true) }
-            val jsonString = json.encodeToString(existingList)
-            val b64 = encodeBase64Url(jsonString)
-            val encVal = java.net.URLEncoder.encode(b64, "UTF-8")
-            val request = Request.Builder()
-                .url("$BASE_URL/UpdateValue/$API_KEY/inv_$clean?value=$encVal")
-                .post("".toRequestBody(null))
-                .header("Content-Length", "0")
-                .build()
-            client.newCall(request).execute().close()
-        } catch (e: Exception) {
-            Log.e("GameInviteManager", "Failed to remove invite", e)
-        }
-    }
-
-
-    /**
-     * Clears retained MQTT invite message for a user.
-     */
-    fun clearMqttRetainedInvite(username: String) {
-        val clean = username.trim().lowercase().removePrefix("@")
-        if (clean.isBlank()) return
-        kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val clientId = "inv_clr_${UUID.randomUUID().toString().take(8)}"
-                val mqttClient = MqttAsyncClient(BROKER_URL, clientId, MemoryPersistence())
-                val options = MqttConnectOptions().apply {
-                    isCleanSession = true
-                    connectionTimeout = 3
-                    NetworkConfig.applyMqttOptions(this)
-                }
-                mqttClient.connect(options).waitForCompletion(2000L)
-                val emptyMsg = MqttMessage(ByteArray(0)).apply {
-                    qos = 1
-                    isRetained = true
-                }
-                mqttClient.publish("bingo/v3/invites/$clean", emptyMsg).waitForCompletion(2000L)
-                mqttClient.disconnect()
-                mqttClient.close()
-            } catch (_: Exception) {}
-        }
+    fun removeInvite(targetUsername: String, invite: GameInvite) {
+        val context = NotificationRuntime.context() ?: return
+        val account = NotificationRuntime.account(context) ?: return
+        if (notificationUsername(targetUsername) == account.username) NotificationRuntime.finishInvite(context, invite)
     }
 
     /**
@@ -289,7 +139,7 @@ object GameInviteManager {
                                 val payload = String(message.payload, StandardCharsets.UTF_8)
                                 val invite = json.decodeFromString<GameInvite>(payload)
                                 val now = System.currentTimeMillis()
-                                if (now - invite.timestamp < 120_000L) {
+                                if (invite.timestamp > 0 && invite.timestamp <= now + 5000L && now - invite.timestamp < 120_000L) {
                                     try {
                                         android.os.Handler(android.os.Looper.getMainLooper()).post {
                                             onInviteReceived(invite)

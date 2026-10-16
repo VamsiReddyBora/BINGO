@@ -1,5 +1,16 @@
 # 1.4.2 release preparation
 
+## Notification candidate — build 43, 2026-10-16
+
+- Implement authenticated notification sessions and private token/inbox storage with account/generation isolation, durable revocation, strict event types and original expiry.
+- Centralize FCM, MQTT and polling presentation; deduplicate system/in-app alerts, enforce notification preferences and guard invitation actions against replacing a running game.
+- Support request/acceptance pushes and useful online-alert navigation; add native notification actions and update/broadcast OS notices; remove unused custom layouts.
+- Add durable background retry, ACK tombstones, concurrent-invite storage, token/session race protection and actionable Settings status.
+- Confirm the Web OAuth audience with the user. New protocol-2 notification service is isolated from the older live match-controller Worker; legacy retirement and old guest/web migration limits remain explicit in the hardening report.
+- Preserve the existing host-disconnection policy, game engines, number-pick transport and all previous UI/social changes. Read `TEST_REPORT.md` and `ReleaseManifest.json` for final validation and deployment state. Source baseline and original signed deliverables are backed up.
+
+## Previous UI candidate — build 42
+
 Completed 2026-10-15T23:35:33+05:30. Branch `release/1.4.2`; source fixes `04102f2` (based on UI-polish commit `1943cb8`).
 
 - Centered game/status chat is now compact coloured text with emojis. Filled surfaces, outlines and bubble padding were removed from system notices; player chat bubbles are unchanged.

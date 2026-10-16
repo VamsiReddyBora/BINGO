@@ -990,7 +990,7 @@ fun LobbyScreen(
 
                                             if (roomCode.isNotBlank()) {
                                                 coroutineScope.launch {
-                                                    com.bingo.multiplayer.domain.network.GameInviteManager.sendInvite(
+                                                    val sendResult = com.bingo.multiplayer.domain.network.GameInviteManager.sendInvite(
                                                         targetUsername = friend.username,
                                                         invite = com.bingo.multiplayer.domain.network.GameInvite(
                                                             fromUsername = fromUser,
@@ -999,7 +999,7 @@ fun LobbyScreen(
                                                             roomCode = roomCode
                                                         )
                                                     )
-                                                    Toast.makeText(context, "Invite sent to @${friend.username}!", Toast.LENGTH_SHORT).show()
+                                                    Toast.makeText(context, sendResult.message, Toast.LENGTH_SHORT).show()
                                                 }
                                             }
                                         },
@@ -1236,7 +1236,7 @@ fun LobbyScreen(
 
                                             if (roomCode.isNotBlank()) {
                                                 coroutineScope.launch {
-                                                    com.bingo.multiplayer.domain.network.GameInviteManager.sendInvite(
+                                                    val sendResult = com.bingo.multiplayer.domain.network.GameInviteManager.sendInvite(
                                                         targetUsername = result.username,
                                                         invite = com.bingo.multiplayer.domain.network.GameInvite(
                                                             fromUsername = fromUser,
@@ -1245,7 +1245,7 @@ fun LobbyScreen(
                                                             roomCode = roomCode
                                                         )
                                                     )
-                                                    Toast.makeText(context, "Invite sent to @${result.username}!", Toast.LENGTH_SHORT).show()
+                                                    Toast.makeText(context, sendResult.message, Toast.LENGTH_SHORT).show()
                                                 }
                                             }
                                         },

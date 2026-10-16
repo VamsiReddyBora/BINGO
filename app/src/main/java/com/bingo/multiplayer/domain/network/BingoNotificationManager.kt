@@ -5,84 +5,50 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.util.Log
-import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import com.bingo.multiplayer.MainActivity
 import com.bingo.multiplayer.R
+import com.bingo.multiplayer.core.designsystem.NotificationPreferences
+import com.bingo.multiplayer.domain.notifications.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
 object BingoNotificationManager {
     private const val TAG = "BingoNotificationMgr"
-
     const val CHANNEL_INVITES = "bingo_channel_invites_v5"
     const val CHANNEL_SOCIAL = "bingo_channel_social_v2"
     const val CHANNEL_BROADCASTS = "bingo_channel_broadcasts"
     const val CHANNEL_UPDATES = "bingo_channel_updates"
-
     const val NOTIFICATION_ID_INVITE = 1001
     const val NOTIFICATION_ID_FRIEND_ONLINE = 1002
     const val NOTIFICATION_ID_BROADCAST = 1003
     const val NOTIFICATION_ID_UPDATE = 1004
     const val NOTIFICATION_ID_FRIEND_REQUEST = 1005
     const val NOTIFICATION_ID_FRIEND_ACCEPTED = 1006
-
-    const val EXTRA_ACTION = "extra_notification_action"
-    const val EXTRA_ROOM_CODE = "extra_room_code"
-    const val EXTRA_TARGET_USER = "extra_target_user"
-    const val EXTRA_FROM_USERNAME = "extra_from_username"
-    const val EXTRA_FROM_DISPLAY_NAME = "extra_from_display_name"
-    const val EXTRA_TIMESTAMP = "extra_timestamp"
-    const val EXTRA_SHOW_UPDATE = "extra_show_update"
-
     const val ACTION_ACCEPT_INVITE = "action_accept_invite"
     const val ACTION_DECLINE_INVITE = "action_decline_invite"
     const val ACTION_VIEW_INVITE = "action_view_invite"
     const val ACTION_INVITE_FRIEND = "action_invite_friend"
     const val ACTION_VIEW_FRIENDS = "action_view_friends"
-
-    private const val PREFS_NAME = "bingo_notification_prefs"
-
-    val pendingJoinRoomCode = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
-    val pendingInviteFriendUsername = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
-    val pendingNavigateToFriends = kotlinx.coroutines.flow.MutableStateFlow<Boolean>(false)
-
+    const val EXTRA_ACTION = "extra_notification_action"
+    const val EXTRA_EVENT = "extra_notification_event_v2"
+    const val EXTRA_ACCOUNT = "extra_notification_account"
+    const val EXTRA_GENERATION = "extra_notification_generation"
+    const val EXTRA_SHOW_UPDATE = "extra_show_update"
     private var isInitialized = false
-
-    fun isFriend(context: Context, username: String): Boolean {
-        return try {
-            val clean = username.trim().lowercase().removePrefix("@")
-            if (clean.isBlank()) return false
-            val activeRepo = com.bingo.multiplayer.domain.repository.FriendsRepository.activeInstance
-            if (activeRepo != null && activeRepo.isFriend(clean)) {
-                return true
-            }
-            val prefs = context.getSharedPreferences("bingo_friends_prefs", Context.MODE_PRIVATE)
-            val stored = prefs.getString("friends_list", null) ?: return false
-            val regex = "\"username\"\\s*:\\s*\"$clean\"".toRegex(RegexOption.IGNORE_CASE)
-            regex.containsMatchIn(stored)
-        } catch (_: Exception) {
-            false
-        }
-    }
-
+    data class Action(val action: String, val event: NotificationEvent, val generation: String)
+    val pendingAction = MutableStateFlow<Action?>(null)
+    fun clearPendingActions() { pendingAction.value = null }
+    fun isFriend(context: Context, username: String) = NotificationRuntime.isFriend(context, username)
     fun getFriendDisplayName(context: Context, username: String): String {
-        return try {
-            val clean = username.trim().lowercase().removePrefix("@")
-            val activeRepo = com.bingo.multiplayer.domain.repository.FriendsRepository.activeInstance
-            val friend = activeRepo?.friends?.value?.find { it.username.trim().lowercase().removePrefix("@") == clean }
-            if (friend != null && friend.displayName.isNotBlank()) {
-                return friend.displayName
-            }
-            val prefs = context.getSharedPreferences("bingo_friends_prefs", Context.MODE_PRIVATE)
-            val stored = prefs.getString("friends_list", null) ?: return username
-            val regex = "\"username\"\\s*:\\s*\"$clean\"[^{}]*?\"displayName\"\\s*:\\s*\"([^\"]+)\"".toRegex(RegexOption.IGNORE_CASE)
-            regex.find(stored)?.groupValues?.getOrNull(1) ?: username
-        } catch (_: Exception) {
-            username
-        }
+        val account = NotificationRuntime.account(context) ?: return username
+        return NotificationRuntime.friends(context, account).firstOrNull { notificationUsername(it.username) == notificationUsername(username) }?.displayName ?: username
     }
-
     @Synchronized
     fun init(context: Context) {
         if (isInitialized) return
@@ -90,15 +56,6 @@ object BingoNotificationManager {
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
-
-            // Clean up legacy channels if present so Android creates fresh high-importance channels
-            try {
-                nm.deleteNotificationChannel("bingo_channel_social")
-                nm.deleteNotificationChannel("bingo_channel_invites")
-                nm.deleteNotificationChannel("bingo_channel_invites_v2")
-                nm.deleteNotificationChannel("bingo_channel_invites_v3")
-                nm.deleteNotificationChannel("bingo_channel_invites_v4")
-            } catch (_: Exception) {}
 
             val inviteChannel = NotificationChannel(
                 CHANNEL_INVITES,
@@ -148,221 +105,148 @@ object BingoNotificationManager {
         }
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // RULE 1: Friend Online Status Notification
-    // ─────────────────────────────────────────────────────────────
-    /**
-     * Notifies user that a friend is online.
-     * Respects notification preferences and suppresses system alerts in the foreground.
-     */
-    fun notifyFriendOnline(
-        context: Context,
-        friendUsername: String,
-        friendDisplayName: String
-    ) {
+
+    private fun tag(event: NotificationEvent) = "bingo:${event.recipientUid}:${event.kind}:${event.id}"
+    private fun id(kind: NotificationKind) = when (kind) {
+        NotificationKind.GAME_INVITE -> NOTIFICATION_ID_INVITE
+        NotificationKind.FRIEND_ONLINE -> NOTIFICATION_ID_FRIEND_ONLINE
+        NotificationKind.FRIEND_REQUEST -> NOTIFICATION_ID_FRIEND_REQUEST
+        NotificationKind.FRIEND_ACCEPTED -> NOTIFICATION_ID_FRIEND_ACCEPTED
+    }
+    private fun intent(context: Context, event: NotificationEvent, action: String, receiver: Boolean = false): PendingIntent {
+        val account = NotificationRuntime.account(context)!!
+        val target = if (receiver) NotificationActionReceiver::class.java else MainActivity::class.java
+        val intent = Intent(context, target).apply {
+            this.action = action
+            data = Uri.Builder().scheme("bingo").authority("notification").appendPath(account.uid).appendPath(account.generation)
+                .appendPath(event.id).appendPath(action).build()
+            if (!receiver) flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra(EXTRA_ACTION, action); putExtra(EXTRA_EVENT, Json.encodeToString(event))
+            putExtra(EXTRA_ACCOUNT, account.uid); putExtra(EXTRA_GENERATION, account.generation)
+        }
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        return if (receiver) PendingIntent.getBroadcast(context, 0, intent, flags) else PendingIntent.getActivity(context, 0, intent, flags)
+    }
+    fun decodeAction(context: Context, intent: Intent): Action? {
+        val account = NotificationRuntime.account(context) ?: return null
+        if (intent.getStringExtra(EXTRA_ACCOUNT) != account.uid || intent.getStringExtra(EXTRA_GENERATION) != account.generation) return null
+        val event = runCatching { Json { ignoreUnknownKeys = true }.decodeFromString<NotificationEvent>(intent.getStringExtra(EXTRA_EVENT) ?: return null) }.getOrNull() ?: return null
+        if (!NotificationPolicy.eligible(event, account, System.currentTimeMillis()) || NotificationRuntime.ledger(context).handled(account.uid, event.id)) return null
+        val action = intent.getStringExtra(EXTRA_ACTION) ?: return null
+        val valid = when(event.kind) {
+            NotificationKind.GAME_INVITE -> action in setOf(ACTION_ACCEPT_INVITE, ACTION_DECLINE_INVITE, ACTION_VIEW_INVITE)
+            NotificationKind.FRIEND_ONLINE -> action == ACTION_INVITE_FRIEND
+            else -> action == ACTION_VIEW_FRIENDS
+        }
+        return if (valid) Action(action, event, account.generation) else null
+    }
+    fun canPost(context: Context, channel: String): Boolean {
+        if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) return false
+        if (Build.VERSION.SDK_INT >= 26) {
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return false
+            if (manager.getNotificationChannel(channel)?.importance == NotificationManager.IMPORTANCE_NONE) return false
+        }
+        return true
+    }
+    fun showEvent(context: Context, event: NotificationEvent) {
         init(context)
-        if (!com.bingo.multiplayer.core.designsystem.NotificationPreferences.canShowSystemPlayerOnlineNotification(context)) {
-            Log.d(TAG, "Friend online notification suppressed by NotificationPreferences")
-            return
+        val account = NotificationRuntime.account(context) ?: return
+        if (!NotificationPolicy.eligible(event, account, System.currentTimeMillis()) || AppLifecycleObserver.isAppInForeground.value) return
+        if (event.kind == NotificationKind.GAME_INVITE && NotificationRuntime.isBusy(context)) return
+        if (event.kind == NotificationKind.FRIEND_ONLINE && !isFriend(context, event.senderUsername)) return
+        val enabled = when(event.kind) {
+            NotificationKind.GAME_INVITE -> NotificationPreferences.canShowSystemInviteNotification(context)
+            NotificationKind.FRIEND_ONLINE -> NotificationPreferences.canShowSystemPlayerOnlineNotification(context)
+            else -> { NotificationPreferences.init(context); NotificationPreferences.systemNotificationsEnabled.value }
         }
-        if (AppLifecycleObserver.isAppInForeground.value) {
-            Log.d(TAG, "Friend online status suppressed: app in foreground")
-            return
+        val channel = if (event.kind == NotificationKind.GAME_INVITE) CHANNEL_INVITES else CHANNEL_SOCIAL
+        if (!enabled || !canPost(context, channel)) return
+        val ledger = NotificationRuntime.ledger(context)
+        val claim = ledger.present(event, system = true)
+        if (!claim.show) return
+        val action = when(event.kind) {
+            NotificationKind.GAME_INVITE -> ACTION_VIEW_INVITE
+            NotificationKind.FRIEND_ONLINE -> ACTION_INVITE_FRIEND
+            else -> ACTION_VIEW_FRIENDS
         }
+        val title = when(event.kind) {
+            NotificationKind.GAME_INVITE -> "🎮 Match invite from ${event.senderDisplayName}"
+            NotificationKind.FRIEND_ONLINE -> "🟢 ${event.senderDisplayName} is online"
+            NotificationKind.FRIEND_REQUEST -> "👥 New friend request"
+            NotificationKind.FRIEND_ACCEPTED -> "🎉 Friend request accepted"
+        }
+        try {
+            val builder = NotificationCompat.Builder(context, channel).setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle(title).setContentText(NotificationRuntime.eventText(event))
+                .setStyle(NotificationCompat.BigTextStyle().bigText(NotificationRuntime.eventText(event)))
+                .setContentIntent(intent(context, event, action)).setAutoCancel(true).setOnlyAlertOnce(true)
+                .setTimeoutAfter((event.expiresAt - System.currentTimeMillis()).coerceAtLeast(1))
+                .setPriority(NotificationCompat.PRIORITY_HIGH).setCategory(NotificationCompat.CATEGORY_SOCIAL)
+                .setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setSilent(!claim.alert)
+            if (event.kind == NotificationKind.GAME_INVITE) {
+                builder.setCategory(NotificationCompat.CATEGORY_EVENT)
+                    .addAction(R.drawable.ic_notification, "Accept", intent(context, event, ACTION_ACCEPT_INVITE))
+                    .addAction(R.drawable.ic_notification, "Decline", intent(context, event, ACTION_DECLINE_INVITE, receiver = true))
+                    .setDeleteIntent(intent(context, event, ACTION_DECLINE_INVITE, receiver = true))
+            }
+            if (!NotificationRuntime.withAccount(context, account) {
+                (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(tag(event), id(event.kind), builder.build())
+            }) ledger.presentationFailed(event, true, !claim.alert)
+        } catch (_: RuntimeException) { ledger.presentationFailed(event, true, !claim.alert) }
+    }
+    fun cancelEvent(context: Context, event: NotificationEvent) {
+        (context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager)?.cancel(tag(event), id(event.kind))
+    }
+    fun cancelInvites(context: Context) {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+        if (Build.VERSION.SDK_INT >= 23) manager.activeNotifications.filter { it.id == NOTIFICATION_ID_INVITE }.forEach { manager.cancel(it.tag, it.id) }
+        manager.cancel(NOTIFICATION_ID_INVITE)
+    }
+    fun cancelAccountNotifications(context: Context) {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+        manager.activeNotifications.filter { it.tag?.startsWith("bingo:") == true }.forEach { manager.cancel(it.tag, it.id) }
+        listOf(NOTIFICATION_ID_INVITE, NOTIFICATION_ID_FRIEND_ONLINE, NOTIFICATION_ID_FRIEND_REQUEST, NOTIFICATION_ID_FRIEND_ACCEPTED,
+            NOTIFICATION_ID_BROADCAST).forEach { manager.cancel(it) }
+    }
+    fun cancelBroadcastNotification(context: Context) { (context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager)?.cancel(NOTIFICATION_ID_BROADCAST) }
+    fun cancelUpdateNotification(context: Context) { (context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager)?.cancel(NOTIFICATION_ID_UPDATE) }
+    fun onAppForeground(context: Context) { NotificationRuntime.onForeground(context) }
 
-        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
-        val title = "🟢 $friendDisplayName is online"
-        val body = "Challenge @$friendUsername to a Bingo match!"
-
+    fun showUpdate(context: Context, info: AppUpdateInfo) {
+        if (AppLifecycleObserver.isAppInForeground.value || !info.hasUpdate) return
+        showNotice(context, "update:${info.latestVersionTag}", CHANNEL_UPDATES, NOTIFICATION_ID_UPDATE,
+            "Bingo ${info.latestVersionName} is available", "Tap to see what's new and update.", showUpdate = true)
+    }
+    fun showBroadcast(context: Context, message: BroadcastMessage) {
+        val expected = NotificationRuntime.account(context) ?: return
+        if (AppLifecycleObserver.isAppInForeground.value || !message.active || message.id.isBlank() ||
+            !BroadcastMessageManager.isTargetMatch(message, context) || BroadcastMessageManager.hasMessageBeenSeen(context, message.id)) return
+        showNotice(context, "broadcast:${message.id}", CHANNEL_BROADCASTS, NOTIFICATION_ID_BROADCAST, message.title, message.message, expected = expected)
+    }
+    private fun showNotice(context: Context, key: String, channel: String, id: Int, title: String, body: String, showUpdate: Boolean = false,
+        expected: NotificationAccount? = NotificationRuntime.account(context)) {
+        init(context); NotificationPreferences.init(context)
+        if (!NotificationPreferences.systemNotificationsEnabled.value || !canPost(context, channel)) return
+        val account = expected
+        val prefs = context.getSharedPreferences("bingo_notice_prefs_v2", Context.MODE_PRIVATE)
+        val scopedKey = "${account?.uid ?: "public"}:$key"
+        if (prefs.getBoolean(scopedKey, false)) return
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            putExtra(EXTRA_ACTION, ACTION_INVITE_FRIEND)
-            putExtra(EXTRA_TARGET_USER, friendUsername)
+            data = Uri.Builder().scheme("bingo").authority("notice").appendPath(scopedKey).build()
+            putExtra(EXTRA_SHOW_UPDATE, showUpdate)
+            if (account != null) { putExtra(EXTRA_ACCOUNT, account.uid); putExtra(EXTRA_GENERATION, account.generation) }
         }
-        val pi = PendingIntent.getActivity(
-            context,
-            NOTIFICATION_ID_FRIEND_ONLINE,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val notif = NotificationCompat.Builder(context, CHANNEL_SOCIAL)
-            .setSmallIcon(R.drawable.ic_notification)
-            .setColor(0xFF10B981.toInt())
-            .setContentTitle(title)
-            .setContentText(body)
-            .setContentIntent(pi)
-            .setAutoCancel(true)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .build()
-
         try {
-            nm.notify(NOTIFICATION_ID_FRIEND_ONLINE, notif)
-            Log.i(TAG, "Posted friend online notification for $friendUsername")
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to post friend online notification: ${e.message}")
-        }
+            val notification = NotificationCompat.Builder(context, channel).setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle(title.take(150)).setContentText(body.take(1000))
+                .setStyle(NotificationCompat.BigTextStyle().bigText(body.take(1000)))
+                .setContentIntent(PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
+                .setAutoCancel(true).setOnlyAlertOnce(true).setPriority(NotificationCompat.PRIORITY_DEFAULT).build()
+            NotificationRuntime.withAccount(context, account) {
+                (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(id, notification)
+                prefs.edit().putBoolean(scopedKey, true).apply()
+            }
+        } catch (_: RuntimeException) { }
     }
-
-
-    // ─────────────────────────────────────────────────────────────
-    // RULE 2 & 3: Game Invitation Notification
-    // ─────────────────────────────────────────────────────────────
-    /**
-     * Shows an OS status bar notification when an invite is received while the app is in background or closed.
-     * Tapping notification body opens app to display in-app popup dialog (Rule 3B).
-     * Tapping "✅ Accept" opens app and joins room directly (Rule 3A).
-     * Tapping "❌ Decline" dismisses notification and removes invite.
-     */
-    fun showInviteNotification(context: Context, invite: GameInvite) {
-        init(context)
-
-        // 1. Check user notification settings
-        if (!com.bingo.multiplayer.core.designsystem.NotificationPreferences.canShowSystemInviteNotification(context)) {
-            Log.d(TAG, "Invite notification suppressed from status bar: disabled in NotificationPreferences")
-            return
-        }
-
-        // 2. Foreground suppression: If user is inside app, in-app modal takes priority (Rule 1)
-        if (AppLifecycleObserver.isAppInForeground.value) {
-            Log.d(TAG, "Invite notification suppressed from status bar: app is in foreground")
-            return
-        }
-
-        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
-        val baseCode = (invite.roomCode.hashCode() and 0x7FFFFFFF) % 100000 + 1000
-        val acceptCode = baseCode * 10 + 1
-        val viewCode = baseCode * 10 + 2
-        val declineCode = baseCode * 10 + 3
-
-        // Action: Accept button -> Opens app directly into room lobby (Rule 3A)
-        val acceptIntent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            putExtra(EXTRA_ACTION, ACTION_ACCEPT_INVITE)
-            putExtra(EXTRA_ROOM_CODE, invite.roomCode)
-            putExtra(EXTRA_FROM_USERNAME, invite.fromUsername)
-            putExtra(EXTRA_FROM_DISPLAY_NAME, invite.fromDisplayName)
-            putExtra(EXTRA_TIMESTAMP, invite.timestamp)
-        }
-        val acceptPendingIntent = PendingIntent.getActivity(
-            context,
-            acceptCode,
-            acceptIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        // Action: Body Tap (View Invite) -> Opens app and presents in-app popup dialog (Rule 3B)
-        val viewIntent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            putExtra(EXTRA_ACTION, ACTION_VIEW_INVITE)
-            putExtra(EXTRA_ROOM_CODE, invite.roomCode)
-            putExtra(EXTRA_FROM_USERNAME, invite.fromUsername)
-            putExtra(EXTRA_FROM_DISPLAY_NAME, invite.fromDisplayName)
-            putExtra(EXTRA_TIMESTAMP, invite.timestamp)
-        }
-        val viewPendingIntent = PendingIntent.getActivity(
-            context,
-            viewCode,
-            viewIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        // Action: Decline button -> Clears notification and informs GameInviteManager
-        val declineIntent = Intent(context, NotificationActionReceiver::class.java).apply {
-            action = ACTION_DECLINE_INVITE
-            putExtra(EXTRA_ROOM_CODE, invite.roomCode)
-            putExtra(EXTRA_FROM_USERNAME, invite.fromUsername)
-        }
-        val declinePendingIntent = PendingIntent.getBroadcast(
-            context,
-            declineCode,
-            declineIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val hostName = invite.fromDisplayName.ifBlank { invite.fromUsername }
-        val titleText = "🎮 Match Invite: $hostName"
-        val bodyText = "$hostName (@${invite.fromUsername}) invited you to play Bingo in Room #${invite.roomCode}!"
-
-        // RemoteViews for Collapsed View (renders visible Accept & Decline buttons even without expanding)
-        val collapsedViews = RemoteViews(context.packageName, R.layout.notification_invite_collapsed).apply {
-            setTextViewText(R.id.tv_notification_title, titleText)
-            setTextViewText(R.id.tv_notification_body, "@${invite.fromUsername} • Room #${invite.roomCode}")
-            setOnClickPendingIntent(R.id.btn_accept, acceptPendingIntent)
-            setOnClickPendingIntent(R.id.btn_decline, declinePendingIntent)
-            setOnClickPendingIntent(R.id.notification_root, viewPendingIntent)
-        }
-
-        // RemoteViews for Expanded View (larger, detailed card with prominent buttons)
-        val expandedViews = RemoteViews(context.packageName, R.layout.notification_invite_expanded).apply {
-            setTextViewText(R.id.tv_notification_title, titleText)
-            setTextViewText(R.id.tv_notification_body, bodyText)
-            setOnClickPendingIntent(R.id.btn_accept, acceptPendingIntent)
-            setOnClickPendingIntent(R.id.btn_decline, declinePendingIntent)
-            setOnClickPendingIntent(R.id.notification_root, viewPendingIntent)
-        }
-
-        val notification = NotificationCompat.Builder(context, CHANNEL_INVITES)
-            .setSmallIcon(R.drawable.ic_notification)
-            .setColor(0xFF4F46E5.toInt())
-            .setContentTitle(titleText)
-            .setContentText(bodyText)
-            .setContentIntent(viewPendingIntent)
-            .setCustomContentView(collapsedViews)
-            .setCustomBigContentView(expandedViews)
-            .setStyle(NotificationCompat.DecoratedCustomViewStyle())
-            .addAction(R.drawable.ic_notification, "✅ Accept", acceptPendingIntent)
-            .addAction(R.drawable.ic_notification, "❌ Decline", declinePendingIntent)
-            .setAutoCancel(true)
-            .setTimeoutAfter(60_000L) // Auto-vanish after 60 seconds if unhandled
-            .setPriority(NotificationCompat.PRIORITY_MAX)
-            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setDefaults(NotificationCompat.DEFAULT_ALL)
-            .setVibrate(longArrayOf(0, 350, 200, 350))
-            .build()
-
-        try {
-            nm.notify(NOTIFICATION_ID_INVITE, notification)
-            Log.i(TAG, "Posted background invite notification for room ${invite.roomCode}")
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to post invite notification: ${e.message}")
-        }
-    }
-
-    fun cancelInviteNotification(context: Context) {
-        try {
-            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-            nm?.cancel(NOTIFICATION_ID_INVITE)
-            Log.d(TAG, "Cancelled invite notification")
-        } catch (_: Exception) {}
-    }
-
-
-    fun cancelBroadcastNotification(context: Context) {
-        try {
-            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-            nm?.cancel(NOTIFICATION_ID_BROADCAST)
-        } catch (_: Exception) {}
-    }
-
-
-    fun cancelUpdateNotification(context: Context) {
-        try {
-            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-            nm?.cancel(NOTIFICATION_ID_UPDATE)
-        } catch (_: Exception) {}
-    }
-
-    /**
-     * Called whenever the user opens/foregrounds the app:
-     * Does NOT auto-cancel game invite notifications so users returning from background
-     * can still interact via status bar or in-app dialog (Rule 2).
-     */
-    fun onAppForeground(context: Context) {
-        cancelBroadcastNotification(context)
-        cancelUpdateNotification(context)
-    }
-
-
 }

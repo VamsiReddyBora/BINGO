@@ -75,7 +75,7 @@ object FriendRequestManager {
         if (!store.saveRequests(target, existing)) return@withLock false
         publishMqttPacket(sender, FriendRequestPacket("FRIEND_ACCEPT",
             request.copy(status = FriendRequestStatus.ACCEPTED), acceptor))
-        BingoFcmManager.sendFriendAcceptedPush(sender, myProfile.username, myProfile.displayName)
+        BingoFcmManager.sendFriendAcceptedPush(sender, request)
         true
     }
 
