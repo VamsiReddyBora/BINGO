@@ -1,36 +1,116 @@
 {
-  "timestamp": "2026-10-15T23:35:33+05:30",
-  "status": "local release candidate; not published",
+  "timestamp": "2026-10-16T08:17:44+05:30",
+  "status": "signed local candidate; not published to GitHub",
   "versionName": "1.4.2",
-  "versionCode": 42,
+  "versionCode": 43,
   "sourceFolder": "/home/bob/workspace/bingo_multiplayer",
-  "branch": "release/1.4.2",
-  "sourceFixCommit": "04102f23431e78583962b1adc2a1ec95042fe5cf",
+  "branch": "fix/notifications-1.4.2",
+  "baselineCommit": "422ee84c911a1c2226a6eb3e4a17d2d5c0a740ce",
+  "sourceFixCommit": "1e954987b0c1a1ff8f1cba9ade9824fc4423f281",
   "apk": {
     "file": "Bingo-1.4.2.apk",
-    "bytes": 7096410,
-    "sha256": "fae9910f3bdfe54dd70e8ba6eed4581dd6becb350b9c3069fc22e7fe0d5e7f79",
+    "bytes": 7117554,
+    "sha256": "80236de25e712c2844b35f7d0e80313d8df08ebabdc6005de1aa553cae96e8c9",
     "certificateSHA256": "39a428942c3c2629ff3490c944b8b82c7625b22d660b7a2cdf682456d81f60a4"
   },
   "unitTests": {
-    "suites": 46,
-    "tests": 481,
+    "suites": 47,
+    "tests": 512,
     "failures": 0,
     "errors": 0,
     "skipped": 0
   },
   "lint": {
-    "Warning": 36
+    "Warning": 32
+  },
+  "relayTests": {
+    "tests": 54,
+    "passed": 54,
+    "failed": 0
+  },
+  "sqliteSmoke": {
+    "checks": 5,
+    "result": "PASS",
+    "externalNetworkRequests": 0
+  },
+  "fcmPreflight": {
+    "timestamp": "2026-10-16T02:02:08.738Z",
+    "validateOnly": true,
+    "realNotificationSent": false,
+    "oauthHttpStatus": 200,
+    "fcmValidationHttpStatus": 200,
+    "result": "PASS",
+    "registrationError": null
+  },
+  "notificationBackend": {
+    "timestamp": "2026-10-16T08:17:22+05:30",
+    "status": "deployed; live health and rejection checks passed",
+    "worker": "bingo-notifications-v2",
+    "url": "https://bingo-notifications-v2.vamsireddy2534.workers.dev",
+    "version": "7c5ae124-f2b8-4476-8eb0-e94158a7f57f",
+    "serviceAccountSecretUploaded": true,
+    "realNotificationsSent": false,
+    "checks": [
+      {
+        "method": "GET",
+        "path": "/health",
+        "status": 200,
+        "expected": 200,
+        "passed": true,
+        "body": {
+          "status": "ok",
+          "service": "Bingo notifications",
+          "protocol": 2,
+          "identityConfigured": true
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/v2/inbox",
+        "status": 401,
+        "expected": 401,
+        "passed": true,
+        "body": {
+          "error": "Authentication required"
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/send",
+        "status": 401,
+        "expected": 401,
+        "passed": true,
+        "body": {
+          "error": "Authenticated notification protocol v2 is required"
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/internal/enroll",
+        "status": 404,
+        "expected": 404,
+        "passed": true,
+        "body": {
+          "error": "Not found"
+        }
+      }
+    ],
+    "legacyWorkerModified": false,
+    "legacyVersionBefore": "2df41829-59de-480d-8f6a-e65b06043a18",
+    "legacyVersionAfter": "2df41829-59de-480d-8f6a-e65b06043a18"
+  },
+  "legacyBackend": {
+    "name": "bingo-fcm-relay",
+    "unchanged": true,
+    "version": "2df41829-59de-480d-8f6a-e65b06043a18",
+    "retirement": "Separate open item; existing old match-controller binding and notification consumers require inventory."
   },
   "checks": {
-    "systemNoticeTextOnly": true,
-    "popupAvatarUsernameForwarded": true,
-    "opponentAvatarIdentityForwarded": true,
-    "hostAvatarIdentityForwarded": true,
-    "domainSourcesUnchanged": true,
-    "oneActiveBingoFolder": true,
-    "originalBaselineVerified": true
+    "gameplayEnginesUnchanged": true,
+    "serviceAccountExcludedFromBundle": true,
+    "sameSigningCertificate": true
   },
-  "backupFolder": "/home/bob/backups/bingo-release-preparation-2026-10-15",
-  "physicalTesting": "User will test on phones; popup rendering/photos were not exercised on a device in this task."
+  "backupFolder": "/home/bob/backups/bingo-notification-hardening-2026-10-16",
+  "physicalTesting": "Not performed; real Google sign-in, device delivery, permissions, lockscreen and OEM behavior remain acceptance checks.",
+  "compatibility": "Both Android players need build 43. Older unsigned guests need supported identity for secure notifications. Unchanged web/older APK clients use the legacy endpoint."
 }
