@@ -1,7 +1,42 @@
-# Current Android deliverable
+# Bingo Multiplayer — Releases
 
-The active release candidate is `Bingo-1.4.2.apk` (version code 43), built from this repository. The `pre-release-ver-1.5` branch tracks this APK, its exact R8 mapping, current validation archive and the original notification-review evidence. Other generated APKs and archives remain ignored. Validation, backend deployment state and SHA256 are recorded in `ReleaseManifest.json` and `docs/release/TEST_REPORT.md`.
+### Latest Release: **v1.5.0 (Build 44)**
 
-Install the same candidate on both phones for physical acceptance testing. The branch name marks the checkpoint for future 1.5 work; the included APK's version remains 1.4.2 / 43. A public GitHub release or app-store release is separate from this branch backup.
+| Asset | Description | Size | Checksum (SHA-256) |
+| :--- | :--- | :--- | :--- |
+| **[Bingo-1.5.0.apk](Bingo-1.5.0.apk)** | Signed Release APK | 7.12 MB | `8cce8fa8f3998ad7bb0ea95e95f497e517dab3a4d8623893c53dc8b12a4892ac` |
+| **[Bingo-1.5.0.apk.sha256](Bingo-1.5.0.apk.sha256)** | SHA-256 Checksum | 82 B | — |
+| **[Bingo-1.5.0-mapping.zip](Bingo-1.5.0-mapping.zip)** | R8 ProGuard Mapping | 6.85 MB | — |
 
-Read `docs/release/NotificationHardeningReport-2026-10-16.md` before rollout: build 43 uses a separate authenticated notification service; old APK/web clients do not interoperate with it. Older unsigned guest profiles need a supported sign-in for secure notifications. No app data is automatically wiped or reassigned.
+---
+
+### Quick Installation
+
+```bash
+adb install -r releases/Bingo-1.5.0.apk
+```
+
+---
+
+### Key Highlights in v1.5.0
+
+- **1v1 Heartbeat & Disconnection Recovery**: Automatic reconnection during active 1v1 matches without losing board state. Host-disconnected banner and pause states accurately preserve remaining turn time.
+- **Durable Match Continuity**: Ongoing matches are durably stored locally, allowing players to rejoin their match if the app is temporarily backgrounded.
+- **Hardened Notifications (Protocol 2)**: Cryptographically authenticated push notifications via `bingo-notifications-v2`, with persistent deduplication and protection against accidental room overrides while in an active game.
+- **Social & Friends Polish**: Fixed roster loading on launch, suppressed stale friend requests, and improved avatar username resolution.
+- **Sound & Haptics Control**: Full volume sliders and vibration muting that persist reliably across sessions.
+
+---
+
+### Known Issues & Notes
+
+- **Legacy Guest Notification Authentication**: Older guest profiles created prior to hardware P-256 key generation will not receive push notifications until signing in with Google or creating a new guest profile. Existing game data and statistics remain unaffected.
+- **OEM Battery Restrictions**: Devices with aggressive background task killers (e.g., Xiaomi MIUI, Samsung OneUI) may delay background push notifications until the app is opened. The app will automatically sync all pending invites on resume.
+
+---
+
+### Related Links
+
+- [Main Documentation](../README.md)
+- [Release Manifest](ReleaseManifest.json)
+- [GitHub Repository](https://github.com/VamsiReddyBora/BINGO)

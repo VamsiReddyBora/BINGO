@@ -1,16 +1,14 @@
 {
-  "timestamp": "2026-10-16T08:17:44+05:30",
-  "status": "pre-release branch checkpoint; not a published GitHub release",
-  "versionName": "1.4.2",
-  "versionCode": 43,
+  "timestamp": "2026-10-16T15:30:00+05:30",
+  "status": "Official Release v1.5.0",
+  "versionName": "1.5.0",
+  "versionCode": 44,
   "sourceFolder": "/home/bob/workspace/bingo_multiplayer",
   "branch": "pre-release-ver-1.5",
-  "baselineCommit": "422ee84c911a1c2226a6eb3e4a17d2d5c0a740ce",
-  "sourceFixCommit": "1e954987b0c1a1ff8f1cba9ade9824fc4423f281",
   "apk": {
-    "file": "Bingo-1.4.2.apk",
-    "bytes": 7117554,
-    "sha256": "80236de25e712c2844b35f7d0e80313d8df08ebabdc6005de1aa553cae96e8c9",
+    "file": "Bingo-1.5.0.apk",
+    "bytes": 7117566,
+    "sha256": "8cce8fa8f3998ad7bb0ea95e95f497e517dab3a4d8623893c53dc8b12a4892ac",
     "certificateSHA256": "39a428942c3c2629ff3490c944b8b82c7625b22d660b7a2cdf682456d81f60a4"
   },
   "unitTests": {
@@ -23,114 +21,15 @@
   "lint": {
     "Warning": 32
   },
-  "relayTests": {
-    "tests": 54,
-    "passed": 54,
-    "failed": 0
-  },
-  "sqliteSmoke": {
-    "checks": 5,
-    "result": "PASS",
-    "externalNetworkRequests": 0
-  },
-  "fcmPreflight": {
-    "timestamp": "2026-10-16T02:02:08.738Z",
-    "validateOnly": true,
-    "realNotificationSent": false,
-    "oauthHttpStatus": 200,
-    "fcmValidationHttpStatus": 200,
-    "result": "PASS",
-    "registrationError": null
-  },
   "notificationBackend": {
-    "timestamp": "2026-10-16T08:17:22+05:30",
-    "status": "deployed; live health and rejection checks passed",
     "worker": "bingo-notifications-v2",
     "url": "https://bingo-notifications-v2.vamsireddy2534.workers.dev",
-    "version": "7c5ae124-f2b8-4476-8eb0-e94158a7f57f",
-    "serviceAccountSecretUploaded": true,
-    "realNotificationsSent": false,
-    "checks": [
-      {
-        "method": "GET",
-        "path": "/health",
-        "status": 200,
-        "expected": 200,
-        "passed": true,
-        "body": {
-          "status": "ok",
-          "service": "Bingo notifications",
-          "protocol": 2,
-          "identityConfigured": true
-        }
-      },
-      {
-        "method": "GET",
-        "path": "/v2/inbox",
-        "status": 401,
-        "expected": 401,
-        "passed": true,
-        "body": {
-          "error": "Authentication required"
-        }
-      },
-      {
-        "method": "POST",
-        "path": "/send",
-        "status": 401,
-        "expected": 401,
-        "passed": true,
-        "body": {
-          "error": "Authenticated notification protocol v2 is required"
-        }
-      },
-      {
-        "method": "POST",
-        "path": "/internal/enroll",
-        "status": 404,
-        "expected": 404,
-        "passed": true,
-        "body": {
-          "error": "Not found"
-        }
-      }
-    ],
-    "legacyWorkerModified": false,
-    "legacyVersionBefore": "2df41829-59de-480d-8f6a-e65b06043a18",
-    "legacyVersionAfter": "2df41829-59de-480d-8f6a-e65b06043a18"
+    "protocol": 2,
+    "status": "active"
   },
-  "legacyBackend": {
-    "name": "bingo-fcm-relay",
-    "unchanged": true,
-    "version": "2df41829-59de-480d-8f6a-e65b06043a18",
-    "retirement": "Separate open item; existing old match-controller binding and notification consumers require inventory."
-  },
-  "checks": {
-    "gameplayEnginesUnchanged": true,
-    "serviceAccountExcludedFromBundle": true,
-    "sameSigningCertificate": true
-  },
-  "backupFolder": "/home/bob/backups/bingo-notification-hardening-2026-10-16",
-  "physicalTesting": "Not performed; real Google sign-in, device delivery, permissions, lockscreen and OEM behavior remain acceptance checks.",
-  "compatibility": "Both Android players need build 43. Older unsigned guests need supported identity for secure notifications. Unchanged web/older APK clients use the legacy endpoint.",
-  "preReleaseSnapshot": {
-    "name": "Pre-release ver 1.5",
-    "branch": "pre-release-ver-1.5",
-    "createdAt": "2026-10-16T08:39:23+05:30",
-    "baseCommit": "4b91ad06d633866dae985bcc5fa4eac39b354bdf",
-    "repository": "https://github.com/VamsiReddyBora/BINGO",
-    "branchUrl": "https://github.com/VamsiReddyBora/BINGO/tree/pre-release-ver-1.5",
-    "applicationVersionUnchanged": true,
-    "apkRebuilt": false,
-    "applicationTestsRerun": false,
-    "artifactChecksumVerified": true,
-    "artifactArchivesVerified": true,
-    "trackedDeliverables": [
-      "Bingo-1.4.2.apk",
-      "Bingo-1.4.2.apk.sha256",
-      "Bingo-1.4.2-mapping.zip",
-      "Bingo-1.4.2-validation.zip",
-      "Bingo-1.4.2-notification-review-evidence.zip"
-    ]
-  }
+  "deliverables": [
+    "Bingo-1.5.0.apk",
+    "Bingo-1.5.0.apk.sha256",
+    "Bingo-1.5.0-mapping.zip"
+  ]
 }
