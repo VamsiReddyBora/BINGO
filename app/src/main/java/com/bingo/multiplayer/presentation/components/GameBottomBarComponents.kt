@@ -2,7 +2,11 @@ package com.bingo.multiplayer.presentation.components
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -130,7 +134,8 @@ fun BottomTurnProfileVsProfile(
     opponentName: String,
     opponentUsername: String?,
     modifier: Modifier = Modifier,
-    isOpponentDisconnected: Boolean = false
+    isOpponentDisconnected: Boolean = false,
+    isOpponentAway: Boolean = false
 ) {
     val tokens = BingoTheme.colors
 
@@ -145,19 +150,43 @@ fun BottomTurnProfileVsProfile(
         label = "oppAvatarZoom"
     )
 
+    val infiniteTransition = rememberInfiniteTransition(label = "pulseRing")
+    val pulseAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.55f,
+        targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(900, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulseAlpha"
+    )
+
+    val myRingColor = Color(0xFF22C55E)
+    val oppRingColor = when {
+        isOpponentDisconnected -> Color(0xFFEF4444)
+        isOpponentAway -> Color(0xFFEAB308)
+        else -> Color(0xFF22C55E)
+    }
+
     Row(
         modifier = modifier,
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         // Player A (You)
+        val myBorderColor = if (isMyTurn && !isGameOver) {
+            myRingColor.copy(alpha = pulseAlpha)
+        } else {
+            myRingColor.copy(alpha = 0.85f)
+        }
+
         Box(
             modifier = Modifier
                 .size(mySize)
                 .clip(CircleShape)
                 .border(
-                    width = if (isMyTurn && !isGameOver) 2.dp else 1.dp,
-                    color = if (isMyTurn && !isGameOver) tokens.accentBrand else tokens.surfaceBorder,
+                    width = if (isMyTurn && !isGameOver) 2.5.dp else 1.5.dp,
+                    color = myBorderColor,
                     shape = CircleShape
                 ),
             contentAlignment = Alignment.Center
@@ -178,14 +207,21 @@ fun BottomTurnProfileVsProfile(
         )
 
         // Player B (Opponent)
+        val isOppActive = !isMyTurn && !isGameOver
+        val oppBorderColor = if (isOppActive && !isOpponentDisconnected && !isOpponentAway) {
+            oppRingColor.copy(alpha = pulseAlpha)
+        } else {
+            oppRingColor
+        }
+
         Box(contentAlignment = Alignment.Center) {
             Box(
                 modifier = Modifier
                     .size(oppSize)
                     .clip(CircleShape)
                     .border(
-                        width = if (!isMyTurn && !isGameOver) 2.dp else 1.dp,
-                        color = if (!isMyTurn && !isGameOver) tokens.accentOpponent else tokens.surfaceBorder,
+                        width = if (isOppActive) 2.5.dp else 1.5.dp,
+                        color = oppBorderColor,
                         shape = CircleShape
                     )
                     .graphicsLayer { alpha = if (isOpponentDisconnected) 0.55f else 1.0f },
@@ -198,12 +234,12 @@ fun BottomTurnProfileVsProfile(
                     size = oppSize
                 )
             }
-            if (isOpponentDisconnected) {
+            if (isOpponentDisconnected || isOpponentAway) {
                 Box(
                     modifier = Modifier
-                        .size(8.dp)
+                        .size(9.dp)
                         .align(Alignment.BottomEnd)
-                        .background(Color(0xFFEF4444), CircleShape)
+                        .background(if (isOpponentDisconnected) Color(0xFFEF4444) else Color(0xFFEAB308), CircleShape)
                         .border(1.dp, tokens.surface, CircleShape)
                 )
             }
@@ -235,6 +271,7 @@ fun MultiplayerTurnSpotlightBar(
     opponentUsername: String?,
     modifier: Modifier = Modifier,
     disconnectedPlayerIds: List<String> = emptyList(),
+    awayPlayerIds: List<String> = emptyList(),
     eliminatedPlayerIds: Set<String> = emptySet()
 ) {
     val activePlayers = remember(players) {
@@ -247,6 +284,9 @@ fun MultiplayerTurnSpotlightBar(
         val isOppDisconnected = oppPlayer?.let { p ->
             disconnectedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, p.id) }
         } ?: false
+        val isOppAway = oppPlayer?.let { p ->
+            awayPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, p.id) }
+        } ?: false
 
         BottomTurnProfileVsProfile(
             isMyTurn = isMyTurn,
@@ -258,7 +298,8 @@ fun MultiplayerTurnSpotlightBar(
             opponentName = opponentName,
             opponentUsername = opponentUsername,
             modifier = modifier,
-            isOpponentDisconnected = isOppDisconnected
+            isOpponentDisconnected = isOppDisconnected,
+            isOpponentAway = isOppAway
         )
     } else {
         val tokens = BingoTheme.colors
@@ -272,6 +313,27 @@ fun MultiplayerTurnSpotlightBar(
         val prevPlayer = activePlayers[prevIdx]
         val currPlayer = activePlayers[currIdx]
         val nextPlayer = activePlayers[nextIdx]
+
+        val infiniteTransition = rememberInfiniteTransition(label = "spotlightPulseRing")
+        val pulseAlpha by infiniteTransition.animateFloat(
+            initialValue = 0.55f,
+            targetValue = 1.0f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(900, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "spotlightPulseAlpha"
+        )
+
+        fun getPlayerRingColor(p: Player): Color {
+            val isDisc = disconnectedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, p.id) }
+            val isAway = awayPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, p.id) }
+            return when {
+                isDisc -> Color(0xFFEF4444)
+                isAway -> Color(0xFFEAB308)
+                else -> Color(0xFF22C55E)
+            }
+        }
 
         Row(
             modifier = modifier,
@@ -290,15 +352,17 @@ fun MultiplayerTurnSpotlightBar(
             ) { targetId ->
                 val p = activePlayers.firstOrNull { it.id == targetId } ?: prevPlayer
                 val isDisconnected = disconnectedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, p.id) }
+                val isAway = awayPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, p.id) }
                 val isEliminated = eliminatedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, p.id) }
+                val ringColor = getPlayerRingColor(p)
 
                 Box(contentAlignment = Alignment.Center) {
                     Box(
                         modifier = Modifier
                             .size(28.dp)
                             .clip(CircleShape)
-                            .border(1.dp, tokens.surfaceBorder, CircleShape)
-                            .graphicsLayer { alpha = if (isEliminated) 0.35f else if (isDisconnected) 0.5f else 0.65f },
+                            .border(1.5.dp, ringColor, CircleShape)
+                            .graphicsLayer { alpha = if (isEliminated) 0.35f else if (isDisconnected) 0.5f else 0.85f },
                         contentAlignment = Alignment.Center
                     ) {
                         PlayerAvatar(
@@ -308,12 +372,12 @@ fun MultiplayerTurnSpotlightBar(
                             size = 28.dp
                         )
                     }
-                    if (isDisconnected || isEliminated) {
+                    if (isDisconnected || isAway || isEliminated) {
                         Box(
                             modifier = Modifier
                                 .size(7.dp)
                                 .align(Alignment.BottomEnd)
-                                .background(if (isEliminated) Color.Gray else Color(0xFFEF4444), CircleShape)
+                                .background(if (isEliminated) Color.Gray else if (isDisconnected) Color(0xFFEF4444) else Color(0xFFEAB308), CircleShape)
                                 .border(1.dp, tokens.surface, CircleShape)
                         )
                     }
@@ -331,9 +395,12 @@ fun MultiplayerTurnSpotlightBar(
                 label = "currPlayerSpotlightAnim"
             ) { targetId ->
                 val p = activePlayers.firstOrNull { it.id == targetId } ?: currPlayer
-                val isCurrentMe = (p.id == myPlayerId)
                 val isDisconnected = disconnectedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, p.id) }
+                val isAway = awayPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, p.id) }
                 val isEliminated = eliminatedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, p.id) }
+                val ringColor = getPlayerRingColor(p)
+                val isCurrentActiveAndOnline = !isGameOver && !isDisconnected && !isAway
+                val currBorderColor = if (isCurrentActiveAndOnline) ringColor.copy(alpha = pulseAlpha) else ringColor
 
                 Box(contentAlignment = Alignment.Center) {
                     Box(
@@ -342,7 +409,7 @@ fun MultiplayerTurnSpotlightBar(
                             .clip(CircleShape)
                             .border(
                                 width = 2.5.dp,
-                                color = if (isCurrentMe) tokens.accentBrand else tokens.accentOpponent,
+                                color = currBorderColor,
                                 shape = CircleShape
                             )
                             .graphicsLayer { alpha = if (isEliminated) 0.4f else if (isDisconnected) 0.65f else 1.0f },
@@ -355,12 +422,12 @@ fun MultiplayerTurnSpotlightBar(
                             size = 44.dp
                         )
                     }
-                    if (isDisconnected || isEliminated) {
+                    if (isDisconnected || isAway || isEliminated) {
                         Box(
                             modifier = Modifier
                                 .size(10.dp)
                                 .align(Alignment.BottomEnd)
-                                .background(if (isEliminated) Color.Gray else Color(0xFFEF4444), CircleShape)
+                                .background(if (isEliminated) Color.Gray else if (isDisconnected) Color(0xFFEF4444) else Color(0xFFEAB308), CircleShape)
                                 .border(1.5.dp, tokens.surface, CircleShape)
                         )
                     }
@@ -379,15 +446,17 @@ fun MultiplayerTurnSpotlightBar(
             ) { targetId ->
                 val p = activePlayers.firstOrNull { it.id == targetId } ?: nextPlayer
                 val isDisconnected = disconnectedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, p.id) }
+                val isAway = awayPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, p.id) }
                 val isEliminated = eliminatedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, p.id) }
+                val ringColor = getPlayerRingColor(p)
 
                 Box(contentAlignment = Alignment.Center) {
                     Box(
                         modifier = Modifier
                             .size(28.dp)
                             .clip(CircleShape)
-                            .border(1.dp, tokens.surfaceBorder, CircleShape)
-                            .graphicsLayer { alpha = if (isEliminated) 0.35f else if (isDisconnected) 0.5f else 0.65f },
+                            .border(1.5.dp, ringColor, CircleShape)
+                            .graphicsLayer { alpha = if (isEliminated) 0.35f else if (isDisconnected) 0.5f else 0.85f },
                         contentAlignment = Alignment.Center
                     ) {
                         PlayerAvatar(
@@ -397,12 +466,12 @@ fun MultiplayerTurnSpotlightBar(
                             size = 28.dp
                         )
                     }
-                    if (isDisconnected || isEliminated) {
+                    if (isDisconnected || isAway || isEliminated) {
                         Box(
                             modifier = Modifier
                                 .size(7.dp)
                                 .align(Alignment.BottomEnd)
-                                .background(if (isEliminated) Color.Gray else Color(0xFFEF4444), CircleShape)
+                                .background(if (isEliminated) Color.Gray else if (isDisconnected) Color(0xFFEF4444) else Color(0xFFEAB308), CircleShape)
                                 .border(1.dp, tokens.surface, CircleShape)
                         )
                     }

@@ -172,6 +172,7 @@ fun RootNavGraph(
     var matchParticipants by remember { mutableStateOf<List<Player>>(emptyList()) }
     var randomizedTurnOrder by remember { mutableStateOf<List<Player>>(emptyList()) }
     val disconnectedPlayerIds = remember { mutableStateListOf<String>() }
+    val awayPlayerIds = remember { mutableStateListOf<String>() }
     val consecutiveMissedTurns = remember { mutableStateMapOf<String, Int>() }
     var isStartingCountdown by remember { mutableStateOf(false) }
     var manualStartJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
@@ -296,6 +297,11 @@ fun RootNavGraph(
         return disconnectedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, playerId) }
     }
 
+    fun isPlayerAway(playerId: String): Boolean {
+        if (playerId.isBlank()) return false
+        return awayPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, playerId) }
+    }
+
     fun markPlayerDisconnected(playerId: String) {
         if (playerId.isBlank()) return
         if (!isPlayerDisconnected(playerId)) {
@@ -303,9 +309,25 @@ fun RootNavGraph(
         }
     }
 
+    fun markPlayerAway(playerId: String) {
+        if (playerId.isBlank()) return
+        if (!isPlayerAway(playerId)) {
+            awayPlayerIds.add(playerId)
+        }
+    }
+
+    fun markPlayerOnline(playerId: String) {
+        if (playerId.isBlank()) return
+        val toRemove = awayPlayerIds.filter { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, playerId) }
+        if (toRemove.isNotEmpty()) {
+            awayPlayerIds.removeAll(toRemove.toSet())
+        }
+    }
+
     fun markPlayerReconnected(playerId: String): Boolean {
         if (playerId.isBlank() || playerId in multiplayerSnapshotCheckpoint.surrenderedPlayerIds) return false
         consecutiveMissedTurns.remove(playerId)
+        markPlayerOnline(playerId)
         val toRemove = disconnectedPlayerIds.filter { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, playerId) }
         if (toRemove.isNotEmpty()) {
             disconnectedPlayerIds.removeAll(toRemove.toSet())
@@ -572,14 +594,31 @@ fun RootNavGraph(
                     onlineRoomSync.onForegroundResume()
                     // 2. Clear stale disconnect records accumulated while local device was asleep
                     disconnectedPlayerIds.clear()
+                    awayPlayerIds.clear()
+                    val myUid = getLocalUid()
+                    val myName = getPlayerDisplayName()
+                    markPlayerOnline(myUid)
+                    markPlayerReconnected(myUid)
                     // 3. Refresh heartbeat timestamps on local side for all active participants
                     val activeIds = (matchParticipants.ifEmpty { realTimePlayers }).map { it.id }.filter { it.isNotBlank() }
                     onlineRoomSync.resetInGameHeartbeats(activeIds)
                     lanP2pSync.resetInGameHeartbeats(activeIds)
 
-                    val myUid = getLocalUid()
-                    val myName = getPlayerDisplayName()
                     val user = (authRepository.authState.value as? AuthState.Authenticated)?.user
+
+                    // Broadcast ONLINE presence
+                    broadcastPacket(
+                        RoomMessagePacket(
+                            type = "PLAYER_PRESENCE",
+                            playerId = myUid,
+                            readyStatus = "ONLINE",
+                            displayName = myName,
+                            username = user?.username ?: "",
+                            isHost = isHosting,
+                            seed = currentMatchSeed,
+                            timestamp = now
+                        )
+                    )
 
                     // 4. Announce rejoin and request game sync to catch up on any turns missed while asleep
                     broadcastPacket(
@@ -618,6 +657,23 @@ fun RootNavGraph(
                     }
                 }
             } else {
+                val currentDest = navController.currentDestination?.route
+                val isInGame = currentDest == Screen.Game.route || currentDest == Screen.ManualBoardDesign.route
+                if (isInGame && !isGameOver && (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK)) {
+                    val myUid = getLocalUid()
+                    markPlayerAway(myUid)
+                    broadcastPacket(
+                        RoomMessagePacket(
+                            type = "PLAYER_PRESENCE",
+                            playerId = myUid,
+                            readyStatus = "AWAY",
+                            displayName = getPlayerDisplayName(),
+                            isHost = isHosting,
+                            seed = currentMatchSeed,
+                            timestamp = System.currentTimeMillis()
+                        )
+                    )
+                }
                 if (isHosting && (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) && !isGameOver) {
                     frozenRemainingTurnMillis = (turnTimer * 1000L)
                     persistMultiplayerControl()
@@ -1426,6 +1482,7 @@ fun RootNavGraph(
         }
 
         disconnectedPlayerIds.clear()
+        awayPlayerIds.clear()
         consecutiveMissedTurns.clear()
         pickedNumbersHistory.clear()
         pickedByPlayerHistory.clear()
@@ -1784,6 +1841,7 @@ fun RootNavGraph(
         activeWinReason = ""
         activeRunnerPlayerIds = emptyList()
         disconnectedPlayerIds.clear()
+        awayPlayerIds.clear()
         consecutiveMissedTurns.clear()
         lastForegroundResumeTimestamp = System.currentTimeMillis()
 
@@ -2478,6 +2536,7 @@ fun RootNavGraph(
                         .sortedWith(compareByDescending<Player> { it.isHost }.thenBy { it.id })
                     matchParticipants = activeList
                     disconnectedPlayerIds.clear()
+                    awayPlayerIds.clear()
                     consecutiveMissedTurns.clear()
                     matchChatHistory = emptyList()
                     latestIncomingChatMessage = null
@@ -2569,6 +2628,7 @@ fun RootNavGraph(
                         .sortedWith(compareByDescending<Player> { it.isHost }.thenBy { it.id })
                     matchParticipants = activeList
                     disconnectedPlayerIds.clear()
+                    awayPlayerIds.clear()
                     consecutiveMissedTurns.clear()
                     matchChatHistory = emptyList()
                     latestIncomingChatMessage = null
@@ -3481,6 +3541,66 @@ fun RootNavGraph(
                     }
                     saveGameplayState()
                     if (isHosting) broadcastAcceptedGameplayState()
+                }
+            }
+
+            "PLAYER_PRESENCE" -> {
+                if (packet.playerId.isNotBlank() && packet.playerId != myUid) {
+                    val destinationRoute = navController.currentDestination?.route
+                    val inGame = (destinationRoute == Screen.Game.route || destinationRoute == Screen.ManualBoardDesign.route)
+                    val name = packet.displayName.ifBlank {
+                        matchParticipants.find { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it.id, packet.playerId) }?.displayName
+                            ?: realTimePlayers.find { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it.id, packet.playerId) }?.displayName
+                            ?: packet.username.ifBlank { "Player" }
+                    }
+                    when (packet.readyStatus) {
+                        "ONLINE" -> {
+                            markPlayerOnline(packet.playerId)
+                            markPlayerReconnected(packet.playerId)
+                            if (inGame && !isGameOver) {
+                                val msg = "🟢 $name returned"
+                                val alreadyHasMsg = matchChatHistory.any {
+                                    it.text == msg && (System.currentTimeMillis() - it.timestamp) < 5000L
+                                }
+                                if (!alreadyHasMsg) {
+                                    val sysMsg = InGameChatMessage(
+                                        id = System.currentTimeMillis() + (0..1000).random(),
+                                        text = msg,
+                                        isSelf = false,
+                                        senderName = null,
+                                        timestamp = System.currentTimeMillis(),
+                                        isSystemMessage = true
+                                    )
+                                    matchChatHistory = matchChatHistory + sysMsg
+                                    latestIncomingChatMessage = sysMsg
+                                }
+                            }
+                        }
+                        "AWAY" -> {
+                            markPlayerAway(packet.playerId)
+                            if (inGame && !isGameOver) {
+                                val msg = "🟡 $name minimized the game"
+                                val alreadyHasMsg = matchChatHistory.any {
+                                    it.text == msg && (System.currentTimeMillis() - it.timestamp) < 5000L
+                                }
+                                if (!alreadyHasMsg) {
+                                    val sysMsg = InGameChatMessage(
+                                        id = System.currentTimeMillis() + (0..1000).random(),
+                                        text = msg,
+                                        isSelf = false,
+                                        senderName = null,
+                                        timestamp = System.currentTimeMillis(),
+                                        isSystemMessage = true
+                                    )
+                                    matchChatHistory = matchChatHistory + sysMsg
+                                    latestIncomingChatMessage = sysMsg
+                                }
+                            }
+                        }
+                        "OFFLINE" -> {
+                            markPlayerDisconnected(packet.playerId)
+                        }
+                    }
                 }
             }
 
@@ -5032,34 +5152,26 @@ fun RootNavGraph(
                 }
             }
 
-            // Turn Countdown Timer
+            // Turn Countdown Timer (Simplified Friendly Zero-Stress Rules)
             LaunchedEffect(turnNumber, isMyTurn, isGameOver, isGamePaused, isMultiplayerSuspended) {
-                if (currentGameMode == GameMode.ONLINE_ROOM && matchParticipants.size == 2) return@LaunchedEffect
                 if (!isGameOver && !isGamePaused && !isMultiplayerSuspended) {
-                    val isTwoPlayerOnline = (currentGameMode == GameMode.ONLINE_ROOM && matchParticipants.size == 2)
-                    if (multiplayerLifecyclePolicy?.shouldInstantlySkipTurn(currentTurnPlayerId) == true && isHosting) {
-                        val skippedId = currentTurnPlayerId
-                        val closedTurn = turnNumber
-                        val nextId = calculateNextTurnPlayerId(skippedId)
-                        currentTurnPlayerId = nextId
-                        turnNumber += 1
-                        turnTimer = 30
-                        frozenRemainingTurnSeconds = null
-                        frozenRemainingTurnMillis = null
-                        isMyTurn = (currentTurnPlayerId == getLocalUid())
-                        multiplayerLifecyclePolicy?.onTurnStarted(
-                            newTurnPlayerId = nextId,
-                            turnNumber = turnNumber,
-                            forceReset = true
-                        )
-                        broadcastPacket(
-                            MultiplayerGameplayReducer.timeoutPacket(currentMatchSeed, getLocalUid(), skippedId, closedTurn, nextId).copy(
-                                pickedHistory = pickedNumbersHistory.toList(),
-                                pickedByHistory = pickedByPlayerHistory.toList(), turnIds = pickedTurnIdsHistory.toList()
-                            )
-                        )
-                        return@LaunchedEffect
+                    val activePicker = currentTurnPlayerId.ifBlank {
+                        if (isMyTurn) getLocalUid()
+                        else {
+                            val activeList = if (isUsingP2p) lanP2pSync.players.value else onlineRoomSync.players.value
+                            activeList.firstOrNull { it.id != getLocalUid() }?.id
+                                ?: opponentPlayerId.takeIf { it.isNotBlank() }
+                                ?: "opponent"
+                        }
                     }
+
+                    fun getPickerStatus(): com.bingo.multiplayer.domain.model.PlayerConnectionStatus {
+                        if (activePicker.isBlank()) return com.bingo.multiplayer.domain.model.PlayerConnectionStatus.ONLINE
+                        if (isPlayerDisconnected(activePicker)) return com.bingo.multiplayer.domain.model.PlayerConnectionStatus.OFFLINE
+                        if (isPlayerAway(activePicker)) return com.bingo.multiplayer.domain.model.PlayerConnectionStatus.AWAY
+                        return com.bingo.multiplayer.domain.model.PlayerConnectionStatus.ONLINE
+                    }
+
                     if (frozenRemainingTurnSeconds != null) {
                         if (frozenTurnNumber == turnNumber && frozenMatchSeed == currentMatchSeed) {
                             turnTimer = frozenRemainingTurnSeconds!!
@@ -5068,10 +5180,13 @@ fun RootNavGraph(
                         frozenRemainingTurnMillis = null
                         frozenTurnNumber = -1
                         frozenMatchSeed = 0L
-                    } else if (turnTimer <= 0) {
-                        turnTimer = 30
+                    } else {
+                        val initStatus = getPickerStatus()
+                        turnTimer = if (initStatus != com.bingo.multiplayer.domain.model.PlayerConnectionStatus.ONLINE) 3 else 30
                     }
-                    var skippedDueToDisconnect = false
+
+                    var wasAwayOrOffline = (getPickerStatus() != com.bingo.multiplayer.domain.model.PlayerConnectionStatus.ONLINE)
+
                     while (turnTimer > 0 && !isGamePaused && !isGameOver && !isMultiplayerSuspended) {
                         delay(1000L)
                         if (!isGamePaused && !isGameOver && !isMultiplayerSuspended) {
@@ -5079,135 +5194,45 @@ fun RootNavGraph(
                             if (!isForeground && isHosting && (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK)) {
                                 continue
                             }
-                            if (isTwoPlayerOnline && !onlineRoomSync.isConnected) {
-                                // Suspend turn timer if local transport is disconnected
+                            val currentStatus = getPickerStatus()
+                            // "Welcome Back!" rule: if returning online with time left, immediately grant full 30s
+                            if (wasAwayOrOffline && currentStatus == com.bingo.multiplayer.domain.model.PlayerConnectionStatus.ONLINE) {
+                                wasAwayOrOffline = false
+                                turnTimer = 30
                                 continue
+                            } else if (!wasAwayOrOffline && currentStatus != com.bingo.multiplayer.domain.model.PlayerConnectionStatus.ONLINE) {
+                                wasAwayOrOffline = true
+                                if (turnTimer > 3) {
+                                    turnTimer = 3
+                                }
                             }
                             turnTimer -= 1
-                            // Check if current active player's connection is dead (> 10s of silence)
-                            val now = System.currentTimeMillis()
-                            val isWithinResumeGracePeriod = (now - lastForegroundResumeTimestamp) < 12_000L
-
-                            if (multiplayerLifecyclePolicy == null && !isTwoPlayerOnline && isForeground && !isWithinResumeGracePeriod && !isMyTurn && (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK)) {
-                                val activePicker = currentTurnPlayerId.ifBlank {
-                                    val activeList = if (isUsingP2p) lanP2pSync.players.value else onlineRoomSync.players.value
-                                    activeList.firstOrNull { it.id != getLocalUid() }?.id
-                                }
-                                if (!activePicker.isNullOrBlank()) {
-                                    val lastHeartbeat = if (isUsingP2p) {
-                                        lanP2pSync.getLastDirectHeartbeat(activePicker)
-                                    } else {
-                                        onlineRoomSync.getLastDirectHeartbeat(activePicker)
-                                    }
-                                    // If picker already in disconnected list (fast 2s skip) or heartbeat timed out >= 15s
-                                    if (isPlayerDisconnected(activePicker) || (lastHeartbeat > 0L && (now - lastHeartbeat) >= 15_000L)) {
-                                        val maxWaitSeconds = if (isPlayerDisconnected(activePicker)) 28 else 15
-                                        if (turnTimer <= maxWaitSeconds) {
-                                            skippedDueToDisconnect = true
-                                            break
-                                        }
-                                    }
-                                }
-                            }
                         }
                     }
-                    if (skippedDueToDisconnect && !isGameOver && !isGamePaused && !isMultiplayerSuspended) {
-                        val activeList = if (isUsingP2p) lanP2pSync.players.value else onlineRoomSync.players.value
-                        val activePicker = currentTurnPlayerId.ifBlank {
-                            activeList.firstOrNull { it.id != getLocalUid() }?.id ?: "opponent"
-                        }
-                        markPlayerDisconnected(activePicker)
 
-                        val participants = matchParticipants.ifEmpty { realTimePlayers }
-                        val activeRemaining = participants.filter {
-                            it.id.isNotBlank() && !isPlayerDisconnected(it.id)
-                        }
-
-                        val misses = (consecutiveMissedTurns[activePicker] ?: 0) + 1
-                        consecutiveMissedTurns[activePicker] = misses
-
-                        if (activeRemaining.size <= 1 && misses >= 3) {
-                            // Turn skipping stops: opponent missed 3 consecutive turns without reconnecting
-                            isGameOver = true
-                            val wonByForfeit = activeRemaining.any { it.id == getLocalUid() } || participants.size <= 2
-                            didPlayerWin = wonByForfeit
-                            isDrawMatch = false
-                            isRunnerMatch = false
-                            winnerPlayerId = if (wonByForfeit) getLocalUid() else ""
-                            activeWinReason = "Opponent Disconnected"
-                            activeRunnerPlayerIds = emptyList()
-                            recordFinishedMatch(wonByForfeit)
-                            com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context, getLocalUid())
-                            opponentDisconnectMessage = "Opponent disconnected. You win by forfeit!"
+                    // Turn timeout at 0s: Smooth pure turn pass (no auto-picks, no forfeits, no player removal)
+                    if (turnTimer == 0 && !isGameOver && !isGamePaused && !isMultiplayerSuspended) {
+                        if (isMyTurn) {
+                            executePick(
+                                number = -1,
+                                isOwnPick = true,
+                                pickerId = getLocalUid(),
+                                shouldBroadcast = true
+                            )
                         } else {
-                            val hostUid = activeList.find { it.isHost }?.id ?: ""
-                            val isLegacyHostTurn = com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(activePicker, hostUid)
+                            val activeList = if (isUsingP2p) lanP2pSync.players.value else onlineRoomSync.players.value
+                            val participants = matchParticipants.ifEmpty { realTimePlayers }
+                            val hostUid = participants.find { it.isHost }?.id ?: activeList.find { it.isHost }?.id ?: ""
                             val isHostGone = isHostLeftGame || isPlayerDisconnected(hostUid)
+                            val activeRemaining = participants.filter { it.id.isNotBlank() && !isPlayerDisconnected(it.id) }
                             val isActingHost = isHostGone && activeRemaining.firstOrNull()?.id == getLocalUid()
-                            val isAuthorizedSkipper = (isHosting || isLegacyHostTurn || isActingHost || activeRemaining.size <= 2) && !isMultiplayerSuspended
-                            if (isAuthorizedSkipper) {
-                                val pickerName = activeList.find { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it.id, activePicker) }?.displayName ?: "Player"
-                                val skipText = "📢 Turn skipped ($pickerName reconnecting...)"
-                                broadcastSystemChatMessage(skipText)
+                            if (isHosting || isActingHost || activeRemaining.size <= 2) {
                                 executePick(
                                     number = -1,
                                     isOwnPick = false,
                                     pickerId = activePicker,
                                     shouldBroadcast = true
                                 )
-                            }
-                        }
-                    } else if (isMyTurn && !isGameOver && !isGamePaused && !isMultiplayerSuspended && turnTimer == 0) {
-                        // Pass the turn cleanly with no auto-picked number
-                        executePick(
-                            number = -1,
-                            isOwnPick = true,
-                            pickerId = getLocalUid(),
-                            shouldBroadcast = true
-                        )
-                    } else if (!isMyTurn && !isGameOver && !isGamePaused && !isMultiplayerSuspended && turnTimer == 0) {
-                        if (isTwoPlayerOnline) {
-                            // F001: For 1v1 online, eliminate 2000ms delay and activeRemaining <= 2 shortcut. Turn expires at exactly 30s.
-                            val activeList = onlineRoomSync.players.value
-                            val hostUid = activeList.find { it.isHost }?.id ?: ""
-                            val isHostGone = isHostLeftGame || isPlayerDisconnected(hostUid)
-                            val isActingHost = isHostGone
-                            if (isHosting || isActingHost) {
-                                val activePicker = currentTurnPlayerId.ifBlank {
-                                    activeList.firstOrNull { it.id != getLocalUid() }?.id
-                                        ?: opponentPlayerId.takeIf { it.isNotBlank() }
-                                        ?: "opponent"
-                                }
-                                executePick(
-                                    number = -1,
-                                    isOwnPick = false,
-                                    pickerId = activePicker,
-                                    shouldBroadcast = true
-                                )
-                            }
-                        } else {
-                            // Non-1v1 multi-player / LAN fail-safe grace period
-                            delay(2000L)
-                            if (!isMyTurn && !isGameOver && !isGamePaused && !isMultiplayerSuspended && turnTimer == 0) {
-                                val activeList = if (isUsingP2p) lanP2pSync.players.value else onlineRoomSync.players.value
-                                val participants = matchParticipants.ifEmpty { realTimePlayers }
-                                val hostUid = activeList.find { it.isHost }?.id ?: ""
-                                val isHostGone = isHostLeftGame || isPlayerDisconnected(hostUid)
-                                val activeRemaining = participants.filter { it.id.isNotBlank() && !isPlayerDisconnected(it.id) }
-                                val isActingHost = isHostGone && activeRemaining.firstOrNull()?.id == getLocalUid()
-                                if (isHosting || isActingHost || activeRemaining.size <= 2) {
-                                    val activePicker = currentTurnPlayerId.ifBlank {
-                                        activeList.firstOrNull { it.id != getLocalUid() }?.id
-                                            ?: opponentPlayerId.takeIf { it.isNotBlank() }
-                                            ?: "opponent"
-                                    }
-                                    executePick(
-                                        number = -1,
-                                        isOwnPick = false,
-                                        pickerId = activePicker,
-                                        shouldBroadcast = true
-                                    )
-                                }
                             }
                         }
                     }
@@ -5457,6 +5482,16 @@ fun RootNavGraph(
                 }
             }
 
+            val isLobbyAvailable = when (currentGameMode) {
+                GameMode.AI_EASY, GameMode.AI_HARD -> true
+                GameMode.ONLINE_ROOM -> {
+                    roomCode.isNotBlank() && !isHostLeftGame && (matchParticipants.ifEmpty { realTimePlayers }).count { it.id.isNotBlank() && !isPlayerDisconnected(it.id) } >= 2
+                }
+                GameMode.NEARBY_NETWORK -> {
+                    !isHostLeftGame && (matchParticipants.ifEmpty { realTimePlayers }).count { it.id.isNotBlank() && !isPlayerDisconnected(it.id) } >= 2
+                }
+            }
+
             GameScreen(
                 hostDisconnected = currentGameMode == GameMode.ONLINE_ROOM && matchParticipants.size == 2 && isHostDisconnected && !isGameOver,
                 gameplaySuspended = isMultiplayerSuspended,
@@ -5473,6 +5508,8 @@ fun RootNavGraph(
                 players = gamePlayers,
                 currentTurnPlayerId = currentTurnPlayerId,
                 disconnectedPlayerIds = disconnectedPlayerIds.toList(),
+                awayPlayerIds = awayPlayerIds.toList(),
+                isLobbyAvailable = isLobbyAvailable,
                 typingPlayerName = currentTypingPlayerName,
                 onSetTyping = { typing ->
                     if (!isGameOver && (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK)) {
@@ -5978,6 +6015,7 @@ fun RootNavGraph(
                     isReconcilingMatch = false
                     frozenRemainingTurnMillis = null
                     disconnectedPlayerIds.clear()
+                    awayPlayerIds.clear()
                     isProcessingTurn = false
                     isMyTurn = false
                     turnNumber = 1

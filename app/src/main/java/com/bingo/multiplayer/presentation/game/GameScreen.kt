@@ -171,6 +171,8 @@ fun GameScreen(
     allPlayerBoards: Map<String, Board> = emptyMap(),
     currentTurnPlayerId: String = "",
     disconnectedPlayerIds: List<String> = emptyList(),
+    awayPlayerIds: List<String> = emptyList(),
+    isLobbyAvailable: Boolean = true,
     typingPlayerName: String? = null,
     onSetTyping: (Boolean) -> Unit = {},
     isOpponentUnreachable: Boolean = false,
@@ -805,22 +807,6 @@ fun GameScreen(
         }
     }
 
-    if (canControlPause && !isGameOver && !hostDisconnected && !isGamePaused) {
-        InterruptionDecisionDialog(
-            prompt = interruptionPrompt,
-            opponentName = opponentName,
-            opponentAvatarUrl = opponentAvatarUrl,
-            opponentUsername = opponentUsername,
-            opponentUnreachable = isOpponentUnreachable,
-            connectionStatus = opponentConnectionStatus,
-            pauseEnabled = !gameplaySuspended,
-            claimEligible = isClaimVictoryEligible,
-            onPause = onPauseGame,
-            onContinue = onContinueCountdown,
-            onClaim = { onClaimVictory(); onContinueCountdown() }
-        )
-    }
-
     Scaffold(
         containerColor = tokens.background,
         topBar = {
@@ -830,38 +816,6 @@ fun GameScreen(
                     .padding(top = 10.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Rule 3: Host Absence 50s Countdown Banner
-                if (!isHost && hostAbsenceHoldSeconds > 0 && !isGameOver) {
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 4.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        color = if (tokens.isDark) Color(0xFF3B1E1E) else Color(0xFFFFECEC),
-                        border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.5f))
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(8.dp)
-                                    .background(Color(0xFFEF4444), CircleShape)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "📡 Host connection paused. Waiting for host to return (${hostAbsenceHoldSeconds}s)…",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = if (tokens.isDark) Color(0xFFFCA5A5) else Color(0xFFB91C1C),
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                    }
-                }
-
                 // Modern Aesthetic Top Bar (Items 1, 2, 3)
                 Box(
                     modifier = Modifier
@@ -1170,42 +1124,44 @@ fun GameScreen(
                                     Text("Main Menu", color = tokens.textPrimary, fontWeight = FontWeight.SemiBold)
                                 }
 
-                                if (isHost) {
-                                    Button(
-                                        onClick = onPlayAgain,
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .height(46.dp),
-                                        shape = RoundedCornerShape(12.dp),
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = tokens.primaryButtonBg
-                                        )
-                                    ) {
-                                        Text("Play Again", color = tokens.primaryButtonText, fontWeight = FontWeight.Bold)
-                                    }
-                                } else {
-                                    Button(
-                                        onClick = {
-                                            if (!hasRequestedPlayAgain) {
-                                                hasRequestedPlayAgain = true
-                                                onRequestPlayAgain()
-                                            }
-                                        },
-                                        enabled = !hasRequestedPlayAgain,
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .height(46.dp),
-                                        shape = RoundedCornerShape(12.dp),
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = tokens.primaryButtonBg,
-                                            disabledContainerColor = tokens.surfaceBorder
-                                        )
-                                    ) {
-                                        Text(
-                                            text = if (hasRequestedPlayAgain) "Requested" else "Play Again",
-                                            color = if (hasRequestedPlayAgain) tokens.textMuted else tokens.primaryButtonText,
-                                            fontWeight = FontWeight.Bold
-                                        )
+                                if (isLobbyAvailable) {
+                                    if (isHost) {
+                                        Button(
+                                            onClick = onPlayAgain,
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .height(46.dp),
+                                            shape = RoundedCornerShape(12.dp),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = tokens.primaryButtonBg
+                                            )
+                                        ) {
+                                            Text("Play Again", color = tokens.primaryButtonText, fontWeight = FontWeight.Bold)
+                                        }
+                                    } else {
+                                        Button(
+                                            onClick = {
+                                                if (!hasRequestedPlayAgain) {
+                                                    hasRequestedPlayAgain = true
+                                                    onRequestPlayAgain()
+                                                }
+                                            },
+                                            enabled = !hasRequestedPlayAgain,
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .height(46.dp),
+                                            shape = RoundedCornerShape(12.dp),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = tokens.primaryButtonBg,
+                                                disabledContainerColor = tokens.surfaceBorder
+                                            )
+                                        ) {
+                                            Text(
+                                                text = if (hasRequestedPlayAgain) "Requested" else "Play Again",
+                                                color = if (hasRequestedPlayAgain) tokens.textMuted else tokens.primaryButtonText,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -1228,6 +1184,7 @@ fun GameScreen(
                     currentTurnPlayerId = currentTurnPlayerId,
                     myPlayerId = myPlayerId,
                     disconnectedPlayerIds = disconnectedPlayerIds,
+                    awayPlayerIds = awayPlayerIds,
                     eliminatedPlayerIds = eliminatedPlayerIds
                 )
             }
@@ -1281,25 +1238,47 @@ fun GameScreen(
                             animateStampDrop = animateStampDrop
                         )
                     } else if (!isGameOver) {
-                        // Dynamic humorous / informative turn status message
-                        val isYou = activePlayerName.equals("You", ignoreCase = true)
-                        val statusMessage = when {
-                            isYou -> when {
-                                turnTimeRemaining > 20 -> "You are choosing$animatedDots"
-                                turnTimeRemaining in 11..20 -> "You are cooking something..."
-                                else -> "let's have some coffee, you are sleeping I think..."
+                        // Dynamic status message & color based on player connection state
+                        val isYou = isMyTurn || activePlayerName.equals("You", ignoreCase = true)
+                        val isActiveDisconnected = disconnectedPlayerIds.any {
+                            com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, currentTurnPlayerId)
+                        }
+                        val isActiveAway = awayPlayerIds.any {
+                            com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, currentTurnPlayerId)
+                        }
+
+                        val (statusMessage, statusColor) = when {
+                            isActiveDisconnected -> {
+                                val msg = if (isYou) "You are disconnected" else "$activePlayerName is disconnected"
+                                msg to Color(0xFFEF4444)
                             }
-                            else -> when {
-                                turnTimeRemaining > 20 -> "$activePlayerName is choosing$animatedDots"
-                                turnTimeRemaining in 11..20 -> "$activePlayerName is cooking something..."
-                                else -> "let's have some coffee, $activePlayerName is sleeping I think..."
+                            isActiveAway -> {
+                                val msg = if (isYou) "You minimized the game" else "$activePlayerName minimized the game"
+                                msg to Color(0xFFEAB308)
+                            }
+                            else -> {
+                                val msg = if (isYou) {
+                                    when {
+                                        turnTimeRemaining > 20 -> "You are choosing$animatedDots"
+                                        turnTimeRemaining in 11..20 -> "You are cooking something..."
+                                        else -> "let's have some coffee, you are sleeping I think..."
+                                    }
+                                } else {
+                                    when {
+                                        turnTimeRemaining > 20 -> "$activePlayerName is choosing$animatedDots"
+                                        turnTimeRemaining in 11..20 -> "$activePlayerName is cooking something..."
+                                        else -> "let's have some coffee, $activePlayerName is sleeping I think..."
+                                    }
+                                }
+                                msg to Color(0xFF22C55E)
                             }
                         }
+
                         Text(
                             text = statusMessage,
                             fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = tokens.cellNeutralText.copy(alpha = 0.85f),
+                            fontWeight = FontWeight.SemiBold,
+                            color = statusColor,
                             textAlign = TextAlign.Center,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -1672,6 +1651,7 @@ private fun InGameBottomBar(
     currentTurnPlayerId: String = "",
     myPlayerId: String = "",
     disconnectedPlayerIds: List<String> = emptyList(),
+    awayPlayerIds: List<String> = emptyList(),
     eliminatedPlayerIds: Set<String> = emptySet()
 ) {
     val tokens = BingoTheme.colors
@@ -1716,6 +1696,7 @@ private fun InGameBottomBar(
                 opponentUsername = opponentUsername,
                 modifier = Modifier.align(Alignment.Center),
                 disconnectedPlayerIds = disconnectedPlayerIds,
+                awayPlayerIds = awayPlayerIds,
                 eliminatedPlayerIds = eliminatedPlayerIds
             )
 
