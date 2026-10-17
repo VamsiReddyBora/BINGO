@@ -828,4 +828,70 @@ class TurnRotationAndCodecTest {
         val hashMarkedB = engine.computeBoardHash(markedB)
         assertEquals("Identical marks must yield identical hash", hashMarkedA, hashMarkedB)
     }
+
+    @Test
+    fun testFastPacketCodec_pauseExtendAndElimination_preservesSeedAndMatchId() {
+        val seed = 42L
+        val matchId = "42"
+
+        // 1. PAUSE_EXTEND
+        val pauseExtend = RoomMessagePacket(
+            type = "PAUSE_EXTEND",
+            playerId = "host_uid",
+            remainingTurnMillis = 30_000L,
+            timestamp = 1_000L,
+            seed = seed,
+            matchId = matchId
+        )
+        val wirePauseExtend = FastPacketCodec.encode(pauseExtend)
+        val decodedPauseExtend = FastPacketCodec.decode(wirePauseExtend)
+        assertEquals("PAUSE_EXTEND", decodedPauseExtend.type)
+        assertEquals("host_uid", decodedPauseExtend.playerId)
+        assertEquals(seed, decodedPauseExtend.seed)
+        assertEquals(matchId, decodedPauseExtend.matchId)
+        assertTrue(decodedPauseExtend.seed == seed || decodedPauseExtend.matchId == matchId)
+
+        // 2. PLAYER_ELIMINATED
+        val elim = RoomMessagePacket(
+            type = "PLAYER_ELIMINATED",
+            targetPlayerId = "player_bob",
+            playerId = "host_uid",
+            timestamp = 2_000L,
+            seed = seed,
+            matchId = matchId
+        )
+        val wireElim = FastPacketCodec.encode(elim)
+        val decodedElim = FastPacketCodec.decode(wireElim)
+        assertEquals("PLAYER_ELIMINATED", decodedElim.type)
+        assertEquals("player_bob", decodedElim.targetPlayerId)
+        assertEquals("host_uid", decodedElim.playerId)
+        assertEquals(seed, decodedElim.seed)
+        assertEquals(matchId, decodedElim.matchId)
+        assertTrue(decodedElim.seed == seed || decodedElim.matchId == matchId)
+
+        // 3. HOST_HOLD and HOST_RESUMED
+        val hold = RoomMessagePacket(
+            type = "HOST_HOLD",
+            playerId = "host_uid",
+            remainingTurnMillis = 50_000L,
+            timestamp = 3_000L,
+            seed = seed,
+            matchId = matchId
+        )
+        val decodedHold = FastPacketCodec.decode(FastPacketCodec.encode(hold))
+        assertEquals(seed, decodedHold.seed)
+        assertEquals(matchId, decodedHold.matchId)
+
+        val resumed = RoomMessagePacket(
+            type = "HOST_RESUMED",
+            playerId = "host_uid",
+            remainingTurnMillis = 3_000L,
+            timestamp = 4_000L,
+            seed = seed,
+            matchId = matchId
+        )
+        val decodedResumed = FastPacketCodec.decode(FastPacketCodec.encode(resumed))
+        assertEquals(seed, decodedResumed.seed)
+        assertEquals(matchId, decodedResumed.matchId)
+    }
 }

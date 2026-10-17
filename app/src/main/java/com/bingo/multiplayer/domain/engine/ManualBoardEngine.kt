@@ -127,13 +127,18 @@ object ManualBoardEngine {
      */
     fun buildBoard(grid: List<Int?>, size: Int): Board {
         val total = size * size
-        val numbers = if (isBoardComplete(grid, size)) {
-            grid.map { it!! }
+        val paddedGrid = if (grid.size < total) {
+            grid + List(total - grid.size) { null }
+        } else {
+            grid.take(total)
+        }
+        val numbers = if (isBoardComplete(paddedGrid, size)) {
+            paddedGrid.map { it!! }
         } else {
             // Fallback safety: fill missing sequentially
-            val used = grid.filterNotNull().toSet()
+            val used = paddedGrid.filterNotNull().toSet()
             val remaining = (1..total).filter { it !in used }.toMutableList()
-            grid.map { it ?: remaining.removeAt(0) }
+            paddedGrid.map { it ?: if (remaining.isNotEmpty()) remaining.removeAt(0) else 1 }
         }
 
         val cells = mutableListOf<Cell>()
@@ -161,7 +166,9 @@ object ManualBoardEngine {
      */
     fun determineRandomFirstTurn(seed: Long, playerIds: List<String>): String {
         if (playerIds.isEmpty()) return ""
-        val index = Random(seed).nextInt(playerIds.size)
-        return playerIds[index]
+        val candidates = playerIds.filter { it.isNotBlank() }.distinct().sorted()
+        if (candidates.size <= 1 || seed == 0L) return candidates.firstOrNull() ?: ""
+        val index = kotlin.random.Random(seed).nextInt(candidates.size)
+        return candidates[index]
     }
 }

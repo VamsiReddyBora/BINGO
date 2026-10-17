@@ -122,25 +122,46 @@ class AuthRepositoryTest {
 
     @Test
     fun testCloudBackupAndRestore_survivesAppUninstallAndWipe() = runBlocking {
-        val googleId = "test_user_gid_${System.currentTimeMillis()}"
-        fakePrefs.edit().putString("avatar_base64", "fake_base64_avatar_string").apply()
-        repository.onGoogleSignInSuccess(
-            googleId = googleId,
-            displayName = "Persistent Hero",
-            email = "hero@example.com",
-            customUsername = "super_hero"
-        )
-        // Simulate playing games and winning
-        repository.recordGameFinished(didWin = true)
-        repository.recordGameFinished(didWin = true)
+        val kvStore = java.util.concurrent.ConcurrentHashMap<String, String>()
+        val binStore = java.util.concurrent.ConcurrentHashMap<String, String>()
+        val fakeGateway = object : com.bingo.multiplayer.domain.network.AccountSessionManager.CloudStorageGateway {
+            override suspend fun getKeyValue(key: String): String? = kvStore[key]
+            override suspend fun setKeyValue(key: String, value: String): Boolean {
+                kvStore[key] = value
+                return true
+            }
+            override suspend fun createJsonBin(jsonPayload: String): String? {
+                val id = "bin_${java.util.UUID.randomUUID()}"
+                binStore[id] = jsonPayload
+                return id
+            }
+            override suspend fun updateJsonBin(binId: String, jsonPayload: String): Boolean {
+                binStore[binId] = jsonPayload
+                return true
+            }
+            override suspend fun getJsonBin(binId: String): String? = binStore[binId]
+        }
+        com.bingo.multiplayer.domain.network.AccountSessionManager.customCloudGateway = fakeGateway
+        try {
+            val googleId = "test_user_gid_${System.currentTimeMillis()}"
+            fakePrefs.edit().putString("avatar_base64", "fake_base64_avatar_string").apply()
+            repository.onGoogleSignInSuccess(
+                googleId = googleId,
+                displayName = "Persistent Hero",
+                email = "hero@example.com",
+                customUsername = "super_hero"
+            )
+            // Simulate playing games and winning
+            repository.recordGameFinished(didWin = true)
+            repository.recordGameFinished(didWin = true)
 
-        val currentProfile = (repository.authState.value as AuthState.Authenticated).user
-        assertEquals("super_hero", currentProfile.username)
-        assertEquals(2, currentProfile.gamesPlayed)
-        assertEquals(2, currentProfile.gamesWon)
+            val currentProfile = (repository.authState.value as AuthState.Authenticated).user
+            assertEquals("super_hero", currentProfile.username)
+            assertEquals(2, currentProfile.gamesPlayed)
+            assertEquals(2, currentProfile.gamesWon)
 
-        // Wait for in-flight async backups from recordGameFinished to settle
-        kotlinx.coroutines.delay(3000L)
+            // Wait for in-flight async backups from recordGameFinished to settle
+            kotlinx.coroutines.delay(1000L)
 
         // Force synchronous backup
         val backup = com.bingo.multiplayer.domain.model.CloudUserDataBackup(
@@ -182,6 +203,9 @@ class AuthRepositoryTest {
         assertEquals("Persistent Hero", freshRepository.getSavedGoogleDisplayName(googleId))
         assertEquals("super_hero", freshRepository.getSavedGoogleUsername(googleId))
         freshRepository.sessionManager.stopSessionWatcher()
+        } finally {
+            com.bingo.multiplayer.domain.network.AccountSessionManager.customCloudGateway = null
+        }
     }
 
     @Test

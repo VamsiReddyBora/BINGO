@@ -179,7 +179,7 @@ class OnlineMatchHeartbeatPolicy(
         savedEpisodeId: String?,
         generation: String,
         observationTime: Long = clock.elapsedRealtime()
-    ) {
+    ): HeartbeatDecision {
         committedEpisodeCount = savedEpisodeCount
         isEpisodeOpen = savedEpisodeOpen
         currentEpisodeId = savedEpisodeId
@@ -189,12 +189,18 @@ class OnlineMatchHeartbeatPolicy(
         isStateSynchronized = true
         recoveryStartedAt = null
         lastRecoveryProbeAt = null
-        if (isEpisodeOpen) {
+        return if (isEpisodeOpen) {
             state = PeerAvailabilityState.UNREACHABLE
             isClaimVictoryEligible = (committedEpisodeCount >= 3)
+            HeartbeatDecision.BecameUnreachable(
+                episodeId = currentEpisodeId ?: "ep_${matchId}_${committedEpisodeCount}_$observationTime",
+                episodeCount = committedEpisodeCount,
+                isClaimEligible = isClaimVictoryEligible
+            )
         } else {
             state = PeerAvailabilityState.RESPONSIVE
             isClaimVictoryEligible = false
+            HeartbeatDecision.NoOp
         }
     }
 

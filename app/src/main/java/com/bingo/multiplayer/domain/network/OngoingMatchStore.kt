@@ -44,7 +44,14 @@ data class OngoingMatchData(
     val matchRevision: Long = 0L,
     val isPaused: Boolean = false,
     val remainingTurnMillis: Long? = null,
+    val pauseRemainingSeconds: Int? = null,
+    val pauseDeadlineTimestamp: Long? = null,
+    val pauseControlRevision: Int = 0,
+    val versionedPauseControl: Boolean = false,
+    val pauseControlTimestamp: Long = 0L,
+    val multiplayerSnapshotCheckpoint: MultiplayerSnapshotCheckpoint = MultiplayerSnapshotCheckpoint(),
     val pauseOwnerId: String? = null,
+    val eliminatedPlayerIds: List<String> = emptyList(),
     val committedEpisodeCount: Int = 0,
     val currentEpisodeId: String? = null,
     val isEpisodeOpen: Boolean = false,
@@ -52,7 +59,12 @@ data class OngoingMatchData(
     val reliableSnapshot: ReliableMatchSnapshot? = null,
     val reliablePending: Boolean = false,
     // Local frozen display checkpoint, never a second authority or accepted shared revision.
-    val hostWaitSnapshot: ReliableMatchSnapshot? = null
+    val hostWaitSnapshot: ReliableMatchSnapshot? = null,
+    val hostHoldRemainingSeconds: Int? = null,
+    val runnerPlayerIds: List<String> = emptyList(),
+    val isMatchFinished: Boolean = false,
+    val winnerPlayerId: String = "",
+    val winReason: String = ""
 )
 
 @Keep
@@ -64,7 +76,8 @@ data class MatchResultTombstone(
     val winReason: String,
     val episodeCount: Int,
     val recordedAt: Long = System.currentTimeMillis(),
-    val accountUid: String = ""
+    val accountUid: String = "",
+    val runnerPlayerIds: List<String> = emptyList()
 )
 
 /**
@@ -180,7 +193,14 @@ object OngoingMatchStore {
         turnIds: List<Int>? = null,
         isPaused: Boolean? = null,
         remainingTurnMillis: Long? = null,
+        pauseRemainingSeconds: Int? = null,
+        pauseDeadlineTimestamp: Long? = null,
+        pauseControlRevision: Int? = null,
+        versionedPauseControl: Boolean? = null,
+        pauseControlTimestamp: Long? = null,
+        multiplayerSnapshotCheckpoint: MultiplayerSnapshotCheckpoint? = null,
         pauseOwnerId: String? = null,
+        eliminatedPlayerIds: List<String>? = null,
         committedEpisodeCount: Int? = null,
         currentEpisodeId: String? = null,
         isEpisodeOpen: Boolean? = null,
@@ -188,12 +208,18 @@ object OngoingMatchStore {
         matchRevision: Long? = null,
         clearNullableEpisodeFields: Boolean = false,
         expectedMatchSeed: Long? = null,
-        accountUid: String? = null
+        accountUid: String? = null,
+        hostHoldRemainingSeconds: Int? = null
     ): Boolean {
         if (accountUid.isNullOrBlank()) return false
         return try {
             val current = getOngoingMatch(context, accountUid) ?: return false
             if (expectedMatchSeed != null && current.matchSeed != expectedMatchSeed) return false
+            val effectivePaused = isPaused ?: current.isPaused
+            val nowMs = System.currentTimeMillis()
+            val effectiveDeadline = if (effectivePaused) {
+                pauseDeadlineTimestamp ?: if (pauseRemainingSeconds != null) (nowMs + (pauseRemainingSeconds * 1000L)) else current.pauseDeadlineTimestamp
+            } else null
             val updated = current.copy(
                 playerBoard = playerBoard ?: current.playerBoard,
                 opponentBoard = opponentBoard ?: current.opponentBoard,
@@ -204,15 +230,23 @@ object OngoingMatchStore {
                 turnNumber = turnNumber ?: current.turnNumber,
                 currentTurnPlayerId = currentTurnPlayerId ?: current.currentTurnPlayerId,
                 chatMessages = chatMessages ?: current.chatMessages,
-                isPaused = isPaused ?: current.isPaused,
+                isPaused = effectivePaused,
                 remainingTurnMillis = remainingTurnMillis ?: current.remainingTurnMillis,
+                pauseRemainingSeconds = if (effectivePaused && effectiveDeadline != null) (((effectiveDeadline - nowMs + 999L) / 1000L).toInt().coerceAtLeast(0)) else (pauseRemainingSeconds ?: current.pauseRemainingSeconds),
+                pauseDeadlineTimestamp = effectiveDeadline,
+                pauseControlRevision = pauseControlRevision ?: current.pauseControlRevision,
+                versionedPauseControl = versionedPauseControl ?: current.versionedPauseControl,
+                pauseControlTimestamp = pauseControlTimestamp ?: current.pauseControlTimestamp,
+                multiplayerSnapshotCheckpoint = multiplayerSnapshotCheckpoint ?: current.multiplayerSnapshotCheckpoint,
                 pauseOwnerId = pauseOwnerId ?: current.pauseOwnerId,
+                eliminatedPlayerIds = eliminatedPlayerIds ?: current.eliminatedPlayerIds,
                 committedEpisodeCount = committedEpisodeCount ?: current.committedEpisodeCount,
                 currentEpisodeId = if (clearNullableEpisodeFields) currentEpisodeId else (currentEpisodeId ?: current.currentEpisodeId),
                 isEpisodeOpen = isEpisodeOpen ?: current.isEpisodeOpen,
                 peerAvailabilityState = peerAvailabilityState ?: current.peerAvailabilityState,
                 matchRevision = matchRevision ?: if (current.reliableSnapshot == null) current.matchRevision + 1 else current.matchRevision,
-                lastUpdatedAt = System.currentTimeMillis()
+                hostHoldRemainingSeconds = hostHoldRemainingSeconds ?: current.hostHoldRemainingSeconds,
+                lastUpdatedAt = nowMs
             )
             saveOngoingMatch(context, updated)
         } catch (_: Exception) {
@@ -267,12 +301,7 @@ object OngoingMatchStore {
             }
 
             val age = System.currentTimeMillis() - data.lastUpdatedAt
-            val isTwoPlayer = data.is1v1Match || data.participants.size == 2
-            val isExpired = if (isTwoPlayer) {
-                false
-            } else {
-                age >= MAX_MATCH_AGE_MS
-            }
+            val isExpired = age >= (24 * 60 * 60 * 1000L) // Active ongoing matches do not prematurely expire
             if (!isExpired && data.roomCode.isNotBlank()) {
                 data
             } else {
@@ -311,12 +340,13 @@ object OngoingMatchStore {
     @Synchronized
     fun recordMatchResultTombstone(
         context: Context?,
-        roomCode: String,
+        roomCode: String = "",
         matchSeed: Long,
         winnerUid: String,
         winReason: String,
-        episodeCount: Int,
-        accountUid: String? = null
+        episodeCount: Int = 0,
+        accountUid: String? = null,
+        runnerPlayerIds: List<String> = emptyList()
     ): Boolean {
         if (matchSeed == 0L) return false
         val existing = getMatchResultTombstone(context, matchSeed)
@@ -335,7 +365,8 @@ object OngoingMatchStore {
                 winnerUid = winnerUid,
                 winReason = winReason,
                 episodeCount = episodeCount,
-                accountUid = accountUid ?: ""
+                accountUid = accountUid ?: "",
+                runnerPlayerIds = runnerPlayerIds
             )
             val serialized = json.encodeToString(tombstone)
             val committed = getPrefs(context).edit().putString(getTombstoneKey(matchSeed), serialized).commit()
@@ -347,6 +378,7 @@ object OngoingMatchStore {
             false
         }
     }
+
 
     /**
      * Retrieves an immutable final result tombstone if one exists for this match seed (HB11, F002).

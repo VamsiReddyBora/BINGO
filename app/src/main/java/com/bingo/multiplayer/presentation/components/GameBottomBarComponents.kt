@@ -129,7 +129,8 @@ fun BottomTurnProfileVsProfile(
     opponentAvatarUrl: String?,
     opponentName: String,
     opponentUsername: String?,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isOpponentDisconnected: Boolean = false
 ) {
     val tokens = BingoTheme.colors
 
@@ -177,23 +178,35 @@ fun BottomTurnProfileVsProfile(
         )
 
         // Player B (Opponent)
-        Box(
-            modifier = Modifier
-                .size(oppSize)
-                .clip(CircleShape)
-                .border(
-                    width = if (!isMyTurn && !isGameOver) 2.dp else 1.dp,
-                    color = if (!isMyTurn && !isGameOver) tokens.accentOpponent else tokens.surfaceBorder,
-                    shape = CircleShape
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            PlayerAvatar(
-                avatarPathOrUri = opponentAvatarUrl,
-                displayName = opponentName,
-                username = opponentUsername,
-                size = oppSize
-            )
+        Box(contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier
+                    .size(oppSize)
+                    .clip(CircleShape)
+                    .border(
+                        width = if (!isMyTurn && !isGameOver) 2.dp else 1.dp,
+                        color = if (!isMyTurn && !isGameOver) tokens.accentOpponent else tokens.surfaceBorder,
+                        shape = CircleShape
+                    )
+                    .graphicsLayer { alpha = if (isOpponentDisconnected) 0.55f else 1.0f },
+                contentAlignment = Alignment.Center
+            ) {
+                PlayerAvatar(
+                    avatarPathOrUri = opponentAvatarUrl,
+                    displayName = opponentName,
+                    username = opponentUsername,
+                    size = oppSize
+                )
+            }
+            if (isOpponentDisconnected) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .align(Alignment.BottomEnd)
+                        .background(Color(0xFFEF4444), CircleShape)
+                        .border(1.dp, tokens.surface, CircleShape)
+                )
+            }
         }
     }
 }
@@ -220,7 +233,9 @@ fun MultiplayerTurnSpotlightBar(
     opponentAvatarUrl: String?,
     opponentName: String,
     opponentUsername: String?,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    disconnectedPlayerIds: List<String> = emptyList(),
+    eliminatedPlayerIds: Set<String> = emptySet()
 ) {
     val activePlayers = remember(players) {
         players.filter { it.id.isNotBlank() }
@@ -228,6 +243,11 @@ fun MultiplayerTurnSpotlightBar(
     }
 
     if (activePlayers.size <= 2) {
+        val oppPlayer = activePlayers.firstOrNull { it.id != myPlayerId }
+        val isOppDisconnected = oppPlayer?.let { p ->
+            disconnectedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, p.id) }
+        } ?: false
+
         BottomTurnProfileVsProfile(
             isMyTurn = isMyTurn,
             isGameOver = isGameOver,
@@ -237,7 +257,8 @@ fun MultiplayerTurnSpotlightBar(
             opponentAvatarUrl = opponentAvatarUrl,
             opponentName = opponentName,
             opponentUsername = opponentUsername,
-            modifier = modifier
+            modifier = modifier,
+            isOpponentDisconnected = isOppDisconnected
         )
     } else {
         val tokens = BingoTheme.colors
@@ -268,20 +289,34 @@ fun MultiplayerTurnSpotlightBar(
                 label = "prevPlayerAnim"
             ) { targetId ->
                 val p = activePlayers.firstOrNull { it.id == targetId } ?: prevPlayer
-                Box(
-                    modifier = Modifier
-                        .size(28.dp)
-                        .clip(CircleShape)
-                        .border(1.dp, tokens.surfaceBorder, CircleShape)
-                        .graphicsLayer { alpha = 0.65f },
-                    contentAlignment = Alignment.Center
-                ) {
-                    PlayerAvatar(
-                        avatarPathOrUri = p.avatarUrl,
-                        displayName = p.displayName,
-                        username = p.username,
-                        size = 28.dp
-                    )
+                val isDisconnected = disconnectedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, p.id) }
+                val isEliminated = eliminatedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, p.id) }
+
+                Box(contentAlignment = Alignment.Center) {
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .border(1.dp, tokens.surfaceBorder, CircleShape)
+                            .graphicsLayer { alpha = if (isEliminated) 0.35f else if (isDisconnected) 0.5f else 0.65f },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        PlayerAvatar(
+                            avatarPathOrUri = p.avatarUrl,
+                            displayName = p.displayName,
+                            username = p.username,
+                            size = 28.dp
+                        )
+                    }
+                    if (isDisconnected || isEliminated) {
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .align(Alignment.BottomEnd)
+                                .background(if (isEliminated) Color.Gray else Color(0xFFEF4444), CircleShape)
+                                .border(1.dp, tokens.surface, CircleShape)
+                        )
+                    }
                 }
             }
 
@@ -297,23 +332,38 @@ fun MultiplayerTurnSpotlightBar(
             ) { targetId ->
                 val p = activePlayers.firstOrNull { it.id == targetId } ?: currPlayer
                 val isCurrentMe = (p.id == myPlayerId)
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(CircleShape)
-                        .border(
-                            width = 2.5.dp,
-                            color = if (isCurrentMe) tokens.accentBrand else tokens.accentOpponent,
-                            shape = CircleShape
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    PlayerAvatar(
-                        avatarPathOrUri = p.avatarUrl,
-                        displayName = p.displayName,
-                        username = p.username,
-                        size = 44.dp
-                    )
+                val isDisconnected = disconnectedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, p.id) }
+                val isEliminated = eliminatedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, p.id) }
+
+                Box(contentAlignment = Alignment.Center) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .border(
+                                width = 2.5.dp,
+                                color = if (isCurrentMe) tokens.accentBrand else tokens.accentOpponent,
+                                shape = CircleShape
+                            )
+                            .graphicsLayer { alpha = if (isEliminated) 0.4f else if (isDisconnected) 0.65f else 1.0f },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        PlayerAvatar(
+                            avatarPathOrUri = p.avatarUrl,
+                            displayName = p.displayName,
+                            username = p.username,
+                            size = 44.dp
+                        )
+                    }
+                    if (isDisconnected || isEliminated) {
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .align(Alignment.BottomEnd)
+                                .background(if (isEliminated) Color.Gray else Color(0xFFEF4444), CircleShape)
+                                .border(1.5.dp, tokens.surface, CircleShape)
+                        )
+                    }
                 }
             }
 
@@ -328,20 +378,34 @@ fun MultiplayerTurnSpotlightBar(
                 label = "nextPlayerAnim"
             ) { targetId ->
                 val p = activePlayers.firstOrNull { it.id == targetId } ?: nextPlayer
-                Box(
-                    modifier = Modifier
-                        .size(28.dp)
-                        .clip(CircleShape)
-                        .border(1.dp, tokens.surfaceBorder, CircleShape)
-                        .graphicsLayer { alpha = 0.65f },
-                    contentAlignment = Alignment.Center
-                ) {
-                    PlayerAvatar(
-                        avatarPathOrUri = p.avatarUrl,
-                        displayName = p.displayName,
-                        username = p.username,
-                        size = 28.dp
-                    )
+                val isDisconnected = disconnectedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, p.id) }
+                val isEliminated = eliminatedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, p.id) }
+
+                Box(contentAlignment = Alignment.Center) {
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .border(1.dp, tokens.surfaceBorder, CircleShape)
+                            .graphicsLayer { alpha = if (isEliminated) 0.35f else if (isDisconnected) 0.5f else 0.65f },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        PlayerAvatar(
+                            avatarPathOrUri = p.avatarUrl,
+                            displayName = p.displayName,
+                            username = p.username,
+                            size = 28.dp
+                        )
+                    }
+                    if (isDisconnected || isEliminated) {
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .align(Alignment.BottomEnd)
+                                .background(if (isEliminated) Color.Gray else Color(0xFFEF4444), CircleShape)
+                                .border(1.dp, tokens.surface, CircleShape)
+                        )
+                    }
                 }
             }
         }

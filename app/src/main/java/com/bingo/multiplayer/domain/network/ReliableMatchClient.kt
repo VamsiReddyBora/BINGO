@@ -24,7 +24,9 @@ data class ReliableMatchView(
     val remainingMillis: Long = 30_000,
     val waiting: Boolean = true,
     val message: String = "Synchronizing match…",
-    val hostDisconnected: Boolean = false
+    val hostDisconnected: Boolean = false,
+    val hasPendingIntent: Boolean = false,
+    val pendingPickNumber: Int? = null
 )
 
 /** Actual application protocol, also exercised with independent transports/stores in integration tests.
@@ -122,9 +124,13 @@ class ReliableMatchClient(
     )
 
     fun receive(packet: RoomMessagePacket) { events.trySend { received(packet) } }
+    fun canRequestPick(): Boolean = !mutableView.value.waiting && coordinator.state.final == null && transport.healthy && (isHost || pendingIntent == null)
     fun request(kind: String, number: Int = 0, text: String = "", episodeId: String = "") {
         events.trySend {
-            if (mutableView.value.waiting || coordinator.state.final != null || !transport.healthy) return@trySend
+            if (mutableView.value.waiting || coordinator.state.final != null || !transport.healthy) {
+                updateView()
+                return@trySend
+            }
             if (!isHost && kind in setOf("PAUSE", "RESUME")) return@trySend
             val intent = MatchIntent(UUID.randomUUID().toString(), activeMatchId, localUid, coordinator.state.revision,
                 coordinator.state.turn, kind, number, text, System.currentTimeMillis(), episodeId)
@@ -135,6 +141,7 @@ class ReliableMatchClient(
             } else if (pendingIntent == null) {
                 pendingIntent = intent
                 sendIntent()
+                updateView()
             }
         }
     }
@@ -438,7 +445,7 @@ class ReliableMatchClient(
                 if (isHost || p.playerId != s.hostId || p.matchIntent?.id != pendingIntent?.id) return
                 pendingIntent = null
                 p.reliableSnapshot?.let { applySnapshot(it, false) }
-                mutableView.value = mutableView.value.copy(message = "Match advanced. Choose again on your next turn.")
+                updateView("Match advanced. Choose again on your next turn.")
             }
         }
     }
@@ -449,7 +456,14 @@ class ReliableMatchClient(
             if (isHost) "Synchronizing match…" else "Waiting for the match host to reconnect…"
         } else ""
         val displayed = if (hostDisconnected) hostWaitSnapshot ?: coordinator.sampled() else coordinator.sampled()
-        mutableView.value = ReliableMatchView(displayed, displayed.remainingMillis, waiting,
-            overrideMessage.ifEmpty { message }, hostDisconnected)
+        mutableView.value = ReliableMatchView(
+            snapshot = displayed,
+            remainingMillis = displayed.remainingMillis,
+            waiting = waiting,
+            message = overrideMessage.ifEmpty { message },
+            hostDisconnected = hostDisconnected,
+            hasPendingIntent = (pendingIntent != null),
+            pendingPickNumber = pendingIntent?.takeIf { it.kind == "PICK" }?.number
+        )
     }
 }

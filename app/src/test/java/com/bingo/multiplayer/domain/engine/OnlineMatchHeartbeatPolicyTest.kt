@@ -557,4 +557,19 @@ class OnlineMatchHeartbeatPolicyTest {
         assertEquals(2, localPolicy.committedEpisodeCount) // Incremented to 2!
         assertTrue(localPolicy.isEpisodeOpen)
     }
+
+    @Test
+    fun `HB05 - restoreCheckpoint returns BecameUnreachable when episode open and NoOp when closed`() {
+        val decisionOpen = policy.restoreCheckpoint(savedEpisodeCount = 3, savedEpisodeOpen = true, savedEpisodeId = "ep_open_3", generation = generation)
+        assertTrue(decisionOpen is HeartbeatDecision.BecameUnreachable)
+        val unreach = decisionOpen as HeartbeatDecision.BecameUnreachable
+        assertEquals("ep_open_3", unreach.episodeId)
+        assertEquals(3, unreach.episodeCount)
+        assertTrue(unreach.isClaimEligible)
+
+        val decisionClosed = policy.restoreCheckpoint(savedEpisodeCount = 2, savedEpisodeOpen = false, savedEpisodeId = null, generation = generation)
+        assertTrue(decisionClosed is HeartbeatDecision.NoOp)
+        assertEquals(PeerAvailabilityState.RESPONSIVE, policy.state)
+        assertFalse(policy.isClaimVictoryEligible)
+    }
 }

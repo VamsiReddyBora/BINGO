@@ -537,4 +537,108 @@ object LobbyLifecycleEngine {
             }
         }
     }
+
+    /**
+     * Validates and reconciles recovered candidate moves from a peer snapshot before modifying boards or history.
+     * Enforces:
+     * 1. Legal number bounds (1..boardSize*boardSize) and not previously accepted.
+     * 2. Turn identity validation: Move must correspond to the currently open active turn.
+     * 3. Expected picker validation: Move must be made by the player whose turn it currently is.
+     * 4. Closed turn rejection: Moves tagged with past turns (already closed by timeout, pass, or prior pick) are strictly rejected.
+     * 5. Monotonic sequential progression: Evaluates candidate moves in chronological order, advancing turns deterministically.
+     */
+    @JvmOverloads
+    fun reconcileRecoveredPicks(
+        candidatePickedHistory: List<Int>,
+        candidatePickedByHistory: List<String>,
+        candidateTurnIds: List<Int>,
+        senderPlayerId: String,
+        currentTurnNumber: Int,
+        currentTurnPlayerId: String,
+        existingPickedNumbers: Collection<Int>,
+        existingTurnIds: Collection<Int> = emptySet(),
+        allParticipants: List<Player> = emptyList(),
+        disconnectedPlayerIds: Set<String> = emptySet(),
+        fallbackPlayerId: String = "",
+        matchSeed: Long = 0L,
+        customTurnOrder: List<Player>? = null,
+        boardSize: Int = 5
+    ): RecoveredPickResult {
+        val acceptedPicks = mutableListOf<AcceptedPick>()
+        val acceptedNumbers = existingPickedNumbers.toMutableSet()
+        val acceptedTurns = existingTurnIds.toMutableSet()
+        var runningTurnNumber = currentTurnNumber
+        var runningTurnPlayerId = currentTurnPlayerId
+        var turnAdvanced = false
+
+        val maxNumber = boardSize * boardSize
+
+        for (idx in candidatePickedHistory.indices) {
+            val num = candidatePickedHistory[idx]
+            if (num <= 0 || num > maxNumber) continue
+            if (num in acceptedNumbers) continue
+
+            val origPickerId = candidatePickedByHistory.getOrNull(idx)?.takeIf { it.isNotBlank() } ?: senderPlayerId
+            val pickTurn = candidateTurnIds.getOrNull(idx) ?: (idx + 1)
+
+            // 1. Move cannot belong to a turn that already had an accepted move
+            if (pickTurn in acceptedTurns) {
+                continue
+            }
+
+            // 2. Move cannot belong to an expired/closed turn from the past
+            if (pickTurn < runningTurnNumber) {
+                continue
+            }
+
+            // 3. Move must match the currently open active turn
+            if (pickTurn == runningTurnNumber) {
+                // Check if the picker is the expected active player for this turn
+                if (!isPlayerIdMatch(origPickerId, runningTurnPlayerId)) {
+                    continue
+                }
+
+                // Move is legal and valid for current open turn: accept it!
+                acceptedPicks.add(AcceptedPick(number = num, pickerId = origPickerId, turnNumber = pickTurn))
+                acceptedNumbers.add(num)
+                acceptedTurns.add(pickTurn)
+
+                // Advance turn deterministically
+                val nextPlayer = calculateNextTurnPlayerId(
+                    allParticipants = allParticipants,
+                    disconnectedPlayerIds = disconnectedPlayerIds,
+                    currentPickerId = origPickerId,
+                    fallbackPlayerId = fallbackPlayerId,
+                    matchSeed = matchSeed,
+                    customTurnOrder = customTurnOrder
+                )
+                runningTurnPlayerId = nextPlayer
+                runningTurnNumber += 1
+                turnAdvanced = true
+            } else {
+                // pickTurn > runningTurnNumber (gap in turn sequence)
+                continue
+            }
+        }
+
+        return RecoveredPickResult(
+            acceptedPicks = acceptedPicks,
+            nextTurnNumber = runningTurnNumber,
+            nextTurnPlayerId = runningTurnPlayerId,
+            turnAdvanced = turnAdvanced
+        )
+    }
 }
+
+data class AcceptedPick(
+    val number: Int,
+    val pickerId: String,
+    val turnNumber: Int
+)
+
+data class RecoveredPickResult(
+    val acceptedPicks: List<AcceptedPick>,
+    val nextTurnNumber: Int,
+    val nextTurnPlayerId: String,
+    val turnAdvanced: Boolean
+)

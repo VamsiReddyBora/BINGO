@@ -198,16 +198,23 @@ class AuthRepository(
                 }
 
                 firestoreSync.startRealtimeProfileListener(user.uid) { _, remoteSettings ->
-                    // Preserve local dark theme and sound/vibration preferences to prevent remote echo from reverting local settings
+                    // Preserve local dark theme, sound/vibration, and notification preferences to prevent remote echo from reverting local settings
                     val localDark = com.bingo.multiplayer.core.designsystem.ThemePreferences.isDarkTheme.value
                     val localSound = com.bingo.multiplayer.core.designsystem.SoundPreferences.soundEnabled.value
                     val localHaptics = com.bingo.multiplayer.core.designsystem.SoundPreferences.hapticsEnabled.value
                     val localPreset = com.bingo.multiplayer.core.designsystem.SoundPreferences.pickSoundPresetId.value
+                    val isNotifsConfigured = com.bingo.multiplayer.core.designsystem.NotificationPreferences.isLocallyConfigured(context)
                     val consistentSettings = remoteSettings.copy(
                         darkTheme = localDark,
                         soundEnabled = localSound,
                         hapticsEnabled = localHaptics,
-                        pickSoundPresetId = localPreset
+                        pickSoundPresetId = localPreset,
+                        systemNotificationsEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.systemNotificationsEnabled.value else remoteSettings.systemNotificationsEnabled,
+                        playerOnlineNotificationsEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.playerOnlineNotificationsEnabled.value else remoteSettings.playerOnlineNotificationsEnabled,
+                        playerInvitesNotificationsEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.playerInvitesNotificationsEnabled.value else remoteSettings.playerInvitesNotificationsEnabled,
+                        inAppNotificationsEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.inAppNotificationsEnabled.value else remoteSettings.inAppNotificationsEnabled,
+                        inAppPlayerOnlineEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.inAppPlayerOnlineEnabled.value else remoteSettings.inAppPlayerOnlineEnabled,
+                        inAppPlayerInvitesEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.inAppPlayerInvitesEnabled.value else remoteSettings.inAppPlayerInvitesEnabled
                     )
                     updateSettings(consistentSettings, syncToCloud = false)
                 }
@@ -557,6 +564,12 @@ class AuthRepository(
             .putString("settings_pick_sound_preset", settings.pickSoundPresetId)
             .putInt("settings_board_size", settings.preferredBoardSize)
             .putBoolean("settings_dark_theme", settings.darkTheme)
+            .putBoolean("settings_system_notifs", settings.systemNotificationsEnabled)
+            .putBoolean("settings_player_online_notifs", settings.playerOnlineNotificationsEnabled)
+            .putBoolean("settings_player_invites_notifs", settings.playerInvitesNotificationsEnabled)
+            .putBoolean("settings_in_app_notifs", settings.inAppNotificationsEnabled)
+            .putBoolean("settings_in_app_online", settings.inAppPlayerOnlineEnabled)
+            .putBoolean("settings_in_app_invites", settings.inAppPlayerInvitesEnabled)
             .apply()
         context?.let { ctx ->
             com.bingo.multiplayer.core.designsystem.SoundPreferences.applySettings(
@@ -797,12 +810,19 @@ class AuthRepository(
         val localSound = com.bingo.multiplayer.core.designsystem.SoundPreferences.soundEnabled.value
         val localHaptics = com.bingo.multiplayer.core.designsystem.SoundPreferences.hapticsEnabled.value
         val localPreset = com.bingo.multiplayer.core.designsystem.SoundPreferences.pickSoundPresetId.value
+        val isNotifsConfigured = context?.let { com.bingo.multiplayer.core.designsystem.NotificationPreferences.isLocallyConfigured(it) } ?: false
         updateSettings(
             cloudData.settings.copy(
                 darkTheme = localDark,
                 soundEnabled = localSound,
                 hapticsEnabled = localHaptics,
-                pickSoundPresetId = localPreset
+                pickSoundPresetId = localPreset,
+                systemNotificationsEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.systemNotificationsEnabled.value else cloudData.settings.systemNotificationsEnabled,
+                playerOnlineNotificationsEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.playerOnlineNotificationsEnabled.value else cloudData.settings.playerOnlineNotificationsEnabled,
+                playerInvitesNotificationsEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.playerInvitesNotificationsEnabled.value else cloudData.settings.playerInvitesNotificationsEnabled,
+                inAppNotificationsEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.inAppNotificationsEnabled.value else cloudData.settings.inAppNotificationsEnabled,
+                inAppPlayerOnlineEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.inAppPlayerOnlineEnabled.value else cloudData.settings.inAppPlayerOnlineEnabled,
+                inAppPlayerInvitesEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.inAppPlayerInvitesEnabled.value else cloudData.settings.inAppPlayerInvitesEnabled
             ),
             syncToCloud = false
         )

@@ -2,6 +2,7 @@ package com.bingo.multiplayer.domain.network
 
 import com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine
 import com.bingo.multiplayer.domain.model.Player
+import com.bingo.multiplayer.domain.model.InGameChatMessage
 import androidx.compose.ui.graphics.asImageBitmap
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
@@ -47,6 +48,9 @@ data class RoomMessagePacket(
     val isManualBoard: Boolean = false,
     val isDynamicBoard: Boolean = false,
     val senderInstanceId: String = "",
+    // Originating device account; playerId can instead identify a skipped player.
+    val senderPlayerId: String = "",
+    val closedTurnNumber: Int = 0,
     val winnerPlayerId: String = "",
     val winReason: String = "",
     val runnerPlayerIds: List<String> = emptyList(),
@@ -73,7 +77,16 @@ data class RoomMessagePacket(
     val ownerId: String = "",
     val reliableSnapshot: com.bingo.multiplayer.domain.engine.ReliableMatchSnapshot? = null,
     val hostWaitSnapshot: com.bingo.multiplayer.domain.engine.ReliableMatchSnapshot? = null,
-    val matchIntent: com.bingo.multiplayer.domain.engine.MatchIntent? = null
+    val matchIntent: com.bingo.multiplayer.domain.engine.MatchIntent? = null,
+    val pauseRemainingSeconds: Int = 0,
+    val pauseEpisode: Int = 0,
+    val eliminatedPlayerIds: List<String> = emptyList(),
+    val surrenderedPlayerIds: List<String> = emptyList(),
+    // Transport disconnect hints never represent an explicit match exit.
+    val transportOnly: Boolean = false,
+    val lifecycleSequence: Long = 0L,
+    val isMatchFinished: Boolean = false,
+    val chatMessages: List<InGameChatMessage> = emptyList()
 )
 
 class OnlineRoomSyncManager(
@@ -106,6 +119,7 @@ class OnlineRoomSyncManager(
 
     private data class LobbyChallenge(val room: String, val generation: String, val uid: String, val createdAt: Long)
     private val lobbyChallenges = ConcurrentHashMap<String, LobbyChallenge>()
+    val roomSessionId: String get() = "$roomConnectionId/$activeMatchConnectionGeneration"
     @Volatile private var roomConnectionId = UUID.randomUUID().toString()
 
     /** Small avatar-free MQTT exchange; no HTTP or guessed app-version comparison. */
@@ -251,6 +265,19 @@ class OnlineRoomSyncManager(
         )
         lastBrokerReceiveEchoAt = android.os.SystemClock.elapsedRealtime()
         outstandingChallenges.clear()
+
+        // If a restored policy was already UNREACHABLE, emit decision immediately so UI is updated on frame 1
+        val activePolicy = matchHeartbeatPolicy
+        if (activePolicy != null && activePolicy.state == com.bingo.multiplayer.domain.engine.PeerAvailabilityState.UNREACHABLE) {
+            val snap = activePolicy.toSnapshot()
+            _matchHeartbeatDecisions.tryEmit(
+                com.bingo.multiplayer.domain.engine.HeartbeatDecision.BecameUnreachable(
+                    episodeId = snap.currentEpisodeId ?: "ep_${matchId}_${snap.committedEpisodeCount}_${android.os.SystemClock.elapsedRealtime()}",
+                    episodeCount = snap.committedEpisodeCount,
+                    isClaimEligible = snap.isClaimVictoryEligible
+                )
+            )
+        }
 
         // Dedicated 2.5s probe loop decoupled from cloud reconciliation
         matchHeartbeatJob = scope.launch(Dispatchers.IO) {
@@ -505,6 +532,8 @@ class OnlineRoomSyncManager(
                     try {
                         val willPacket = RoomMessagePacket(
                             type = "LEAVE",
+                            transportOnly = true, roomCode = cleanCode,
+                            connectionGeneration = connectionId, senderInstanceId = instanceId,
                             playerId = player.id,
                             displayName = player.displayName,
                             username = player.username,
@@ -688,6 +717,7 @@ class OnlineRoomSyncManager(
             if (client.isConnected) {
                 client.subscribe(getTopic(roomCode), 1).waitForCompletion(2000L)
                 isSubscribed = true
+                lastBrokerReceiveEchoAt = android.os.SystemClock.elapsedRealtime()
             }
         } catch (_: Exception) {
             isSubscribed = false
@@ -768,35 +798,71 @@ class OnlineRoomSyncManager(
     fun broadcastPacket(packet: RoomMessagePacket) {
         val code = currentRoomCode ?: return
         val generation = roomConnectionId
+        val scopedPacket = packet.copy(roomCode = packet.roomCode.ifBlank { code })
 
         scope.launch(Dispatchers.IO) {
             try {
                 if (roomConnectionId != generation || currentRoomCode != code) return@launch
                 var retryCount = 0
                 var client = mqttClient
-                val maxRetries = if (packet.type == "MATCH_HEARTBEAT") 0 else if (packet.type == "PICK_NUMBER" || packet.type == "PING" || packet.type == "PONG") 5 else 30
+                val maxRetries = if (packet.type in setOf("MATCH_HEARTBEAT", "MULTIPLAYER_PRESENCE_REQUEST", "MULTIPLAYER_PRESENCE_RESPONSE")) 0 else if (packet.type == "PICK_NUMBER" || packet.type == "PING" || packet.type == "PONG") 5 else 30
                 while ((client == null || !client.isConnected) && retryCount < maxRetries) {
                     delay(100L)
                     retryCount++
                     client = mqttClient
                 }
                 if (client != null && client.isConnected && roomConnectionId == generation && currentRoomCode == code) {
-                    val outgoing = packet.copy(senderInstanceId = packet.senderInstanceId.ifBlank { instanceId },
+                    val outgoing = scopedPacket.copy(senderInstanceId = packet.senderInstanceId.ifBlank { instanceId },
                         reliablePolicyVersion = com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.VERSION,
                         hostWaitVersion = 1,
                         protocolVersion = if (packet.type in setOf("START_GAME", "PLAY_AGAIN") && packet.players.size == 2) 2 else packet.protocolVersion)
                     val payload = FastPacketCodec.encode(outgoing)
                     val qosLevel = when (packet.type) {
-                        "PICK_NUMBER", "PING", "PONG", "MATCH_HEARTBEAT" -> 0 // Instant line-rate flight, zero ACK wait, non-retained, disposable
+                        "PICK_NUMBER", "PING", "PONG", "MATCH_HEARTBEAT", "MULTIPLAYER_PRESENCE_REQUEST", "MULTIPLAYER_PRESENCE_RESPONSE" -> 0 // Instant line-rate flight, zero ACK wait, non-retained, disposable
                         "TURN_TIMEOUT", "GAME_SYNC", "START_GAME", "PLAY_AGAIN", "ROOM_STATE", "SURRENDER", "LEAVE" -> 1 // Guaranteed delivery
                         else -> 1 // Guaranteed delivery for room control & state (START_GAME, PLAY_AGAIN, BOARD_READY, ROOM_STATE, etc.)
                     }
                     val message = MqttMessage(payload.toByteArray(StandardCharsets.UTF_8)).apply {
                         qos = qosLevel
+                        if (packet.isMatchFinished || packet.winnerPlayerId.isNotBlank()) {
+                            isRetained = true
+                        }
                     }
                     client.publish(getTopic(code), message)
                 }
             } catch (_: Exception) { }
+        }
+    }
+
+    /**
+     * Publishes a message immediately and awaits confirmation/acknowledgment.
+     * Guaranteed delivery for permanent departures (SURRENDER, HOST_LEFT).
+     */
+    suspend fun sendImmediateAndAcknowledge(packet: RoomMessagePacket, timeoutMs: Long = 800L): Boolean = withContext(Dispatchers.IO) {
+        val code = currentRoomCode ?: return@withContext false
+        val generation = roomConnectionId
+        val scopedPacket = packet.copy(roomCode = packet.roomCode.ifBlank { code })
+        try {
+            val client = mqttClient ?: return@withContext false
+            if (!client.isConnected || roomConnectionId != generation || currentRoomCode != code) return@withContext false
+            val outgoing = scopedPacket.copy(
+                senderInstanceId = packet.senderInstanceId.ifBlank { instanceId },
+                reliablePolicyVersion = com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.VERSION,
+                hostWaitVersion = 1,
+                protocolVersion = if (packet.type in setOf("START_GAME", "PLAY_AGAIN") && packet.players.size == 2) 2 else packet.protocolVersion
+            )
+            val payload = FastPacketCodec.encode(outgoing)
+            val message = MqttMessage(payload.toByteArray(StandardCharsets.UTF_8)).apply {
+                qos = 1
+                if (packet.isMatchFinished || packet.winnerPlayerId.isNotBlank()) {
+                    isRetained = true
+                }
+            }
+            val token = client.publish(getTopic(code), message)
+            token?.waitForCompletion(timeoutMs)
+            true
+        } catch (_: Exception) {
+            false
         }
     }
 
@@ -1034,6 +1100,7 @@ class OnlineRoomSyncManager(
     }
 
     internal fun handleIncomingPacket(packet: RoomMessagePacket) {
+        if (packet.roomCode.isNotBlank() && packet.roomCode != currentRoomCode) return
         if (packet.type in setOf("LOBBY_CAPS_REQUEST", "LOBBY_CAPS_RESPONSE")) {
             val code = currentRoomCode ?: return
             val me = localPlayer ?: return
@@ -1087,7 +1154,8 @@ class OnlineRoomSyncManager(
             return
         }
 
-        // Live Heartbeat/Packet Touch: Any incoming packet confirms player is actively communicating
+        // Live Heartbeat/Packet Touch: Any incoming packet confirms player is actively communicating and broker connection is healthy
+        lastBrokerReceiveEchoAt = android.os.SystemClock.elapsedRealtime()
         val isDepartOrTimeout = packet.type in listOf("TURN_TIMEOUT", "LEAVE", "HOST_LEFT", "SURRENDER", "KICK_PLAYER")
         if (!isDepartOrTimeout && packet.playerId.isNotBlank() && packet.playerId != localPlayer?.id) {
             val now = System.currentTimeMillis()
@@ -1441,6 +1509,7 @@ class OnlineRoomSyncManager(
             try {
                 val leavePacket = RoomMessagePacket(
                     type = "LEAVE",
+                    transportOnly = true, roomCode = code,
                     playerId = p.id,
                     senderInstanceId = instanceId,
                     timestamp = System.currentTimeMillis()

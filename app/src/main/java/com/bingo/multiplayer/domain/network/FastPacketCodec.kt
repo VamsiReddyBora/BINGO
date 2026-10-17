@@ -28,7 +28,9 @@ object FastPacketCodec {
     fun encode(packet: RoomMessagePacket): String {
         return when (packet.type) {
             "PICK_NUMBER" -> {
-                if (packet.winnerPlayerId.isNotBlank() || packet.turnIds.isNotEmpty()) {
+                if (packet.senderPlayerId.isNotBlank() || packet.closedTurnNumber > 0) {
+                    encodeCompact(packet)
+                } else if (packet.winnerPlayerId.isNotBlank() || packet.turnIds.isNotEmpty()) {
                     json.encodeToString(packet)
                 } else {
                     val historyStr = packet.pickedHistory.joinToString(",")
@@ -45,7 +47,9 @@ object FastPacketCodec {
                 }
             }
             "TURN_TIMEOUT" -> {
-                if (packet.turnIds.isNotEmpty()) {
+                if (packet.senderPlayerId.isNotBlank() || packet.closedTurnNumber > 0) {
+                    encodeCompact(packet)
+                } else if (packet.turnIds.isNotEmpty()) {
                     json.encodeToString(packet)
                 } else {
                     val historyStr = packet.pickedHistory.joinToString(",")
@@ -86,7 +90,19 @@ object FastPacketCodec {
                     "R|${packet.playerId}|${packet.readyStatus}|${packet.username}|${packet.displayName}"
                 }
             }
-            "KICK_PLAYER" -> "K|${packet.targetPlayerId}|${packet.playerId}"
+            "KICK_PLAYER" -> {
+                if (packet.seed != 0L || packet.roomCode.isNotBlank() || packet.matchId.isNotBlank()) {
+                    "K|${packet.targetPlayerId}|${packet.playerId}|${packet.seed}|${packet.roomCode}|${packet.matchId}"
+                } else {
+                    "K|${packet.targetPlayerId}|${packet.playerId}"
+                }
+            }
+            // Versioned control must preserve its revision and match identity end to end.
+            "PAUSE_EXTEND" -> if (packet.pauseEpisode > 0) json.encodeToString(packet) else
+                "PEX|${packet.playerId}|${packet.remainingTurnMillis}|${packet.timestamp}|${packet.seed}|${packet.matchId.ifBlank { if (packet.seed != 0L) packet.seed.toString() else "" }}"
+            "HOST_HOLD" -> "HH|${packet.playerId}|${packet.remainingTurnMillis}|${packet.timestamp}|${packet.seed}|${packet.matchId.ifBlank { if (packet.seed != 0L) packet.seed.toString() else "" }}"
+            "HOST_RESUMED" -> "HR|${packet.playerId}|${packet.remainingTurnMillis}|${packet.timestamp}|${packet.seed}|${packet.matchId.ifBlank { if (packet.seed != 0L) packet.seed.toString() else "" }}"
+            "PLAYER_ELIMINATED" -> "ELIM|${packet.targetPlayerId}|${packet.playerId}|${packet.timestamp}|${packet.seed}|${packet.matchId.ifBlank { if (packet.seed != 0L) packet.seed.toString() else "" }}"
             "START_GAME" -> json.encodeToString(packet)
             "PLAY_AGAIN" -> json.encodeToString(packet)
             "HEARTBEAT" -> {
@@ -105,7 +121,7 @@ object FastPacketCodec {
             "MATCH_HEARTBEAT" -> {
                 "MHB|${packet.protocolVersion}|${packet.matchId}|${packet.heartbeatAction}|${packet.playerId}|${packet.peerUid}|${packet.connectionGeneration}|${packet.sequence}|${packet.challengeId}|${packet.timestamp}"
             }
-            "LOBBY_CAPS_REQUEST", "LOBBY_CAPS_RESPONSE" -> encodeCompact(packet)
+            "LOBBY_CAPS_REQUEST", "LOBBY_CAPS_RESPONSE", "MULTIPLAYER_PRESENCE_REQUEST", "MULTIPLAYER_PRESENCE_RESPONSE" -> encodeCompact(packet)
             else -> json.encodeToString(packet)
         }
     }
@@ -236,7 +252,66 @@ object FastPacketCodec {
                     RoomMessagePacket(
                         type = "KICK_PLAYER",
                         targetPlayerId = parts.getOrNull(1) ?: "",
-                        playerId = parts.getOrNull(2) ?: ""
+                        playerId = parts.getOrNull(2) ?: "",
+                        seed = parts.getOrNull(3)?.toLongOrNull() ?: 0L,
+                        roomCode = parts.getOrNull(4) ?: "",
+                        matchId = parts.getOrNull(5) ?: ""
+                    )
+                }
+
+                trimmed.startsWith("PEX|") -> {
+                    val parts = trimmed.split("|")
+                    val seedVal = parts.getOrNull(4)?.toLongOrNull() ?: 0L
+                    val matchIdVal = parts.getOrNull(5)?.takeIf { it.isNotBlank() } ?: (if (seedVal != 0L) seedVal.toString() else "")
+                    RoomMessagePacket(
+                        type = "PAUSE_EXTEND",
+                        playerId = parts.getOrNull(1) ?: "",
+                        remainingTurnMillis = parts.getOrNull(2)?.toLongOrNull() ?: 0L,
+                        timestamp = parts.getOrNull(3)?.toLongOrNull() ?: System.currentTimeMillis(),
+                        seed = seedVal,
+                        matchId = matchIdVal
+                    )
+                }
+
+                trimmed.startsWith("HH|") -> {
+                    val parts = trimmed.split("|")
+                    val seedVal = parts.getOrNull(4)?.toLongOrNull() ?: 0L
+                    val matchIdVal = parts.getOrNull(5)?.takeIf { it.isNotBlank() } ?: (if (seedVal != 0L) seedVal.toString() else "")
+                    RoomMessagePacket(
+                        type = "HOST_HOLD",
+                        playerId = parts.getOrNull(1) ?: "",
+                        remainingTurnMillis = parts.getOrNull(2)?.toLongOrNull() ?: 0L,
+                        timestamp = parts.getOrNull(3)?.toLongOrNull() ?: System.currentTimeMillis(),
+                        seed = seedVal,
+                        matchId = matchIdVal
+                    )
+                }
+
+                trimmed.startsWith("HR|") -> {
+                    val parts = trimmed.split("|")
+                    val seedVal = parts.getOrNull(4)?.toLongOrNull() ?: 0L
+                    val matchIdVal = parts.getOrNull(5)?.takeIf { it.isNotBlank() } ?: (if (seedVal != 0L) seedVal.toString() else "")
+                    RoomMessagePacket(
+                        type = "HOST_RESUMED",
+                        playerId = parts.getOrNull(1) ?: "",
+                        remainingTurnMillis = parts.getOrNull(2)?.toLongOrNull() ?: 0L,
+                        timestamp = parts.getOrNull(3)?.toLongOrNull() ?: System.currentTimeMillis(),
+                        seed = seedVal,
+                        matchId = matchIdVal
+                    )
+                }
+
+                trimmed.startsWith("ELIM|") -> {
+                    val parts = trimmed.split("|")
+                    val seedVal = parts.getOrNull(4)?.toLongOrNull() ?: 0L
+                    val matchIdVal = parts.getOrNull(5)?.takeIf { it.isNotBlank() } ?: (if (seedVal != 0L) seedVal.toString() else "")
+                    RoomMessagePacket(
+                        type = "PLAYER_ELIMINATED",
+                        targetPlayerId = parts.getOrNull(1) ?: "",
+                        playerId = parts.getOrNull(2) ?: "",
+                        timestamp = parts.getOrNull(3)?.toLongOrNull() ?: System.currentTimeMillis(),
+                        seed = seedVal,
+                        matchId = matchIdVal
                     )
                 }
 

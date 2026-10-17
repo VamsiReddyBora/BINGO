@@ -87,6 +87,31 @@ class BingoEngine {
     }
 
     /**
+     * Unmarks a cell (e.g. when rolling back a rejected optimistic move or syncing with authoritative host).
+     */
+    fun unmarkCell(board: Board, number: Int): Board {
+        val updatedCells = board.cells.map { cell ->
+            if (cell.number == number) {
+                cell.copy(markState = CellMarkState.Unmarked, isRecentPick = false)
+            } else {
+                cell
+            }
+        }.toMutableList()
+
+        val tempBoard = board.copy(cells = updatedCells)
+        val (completedLines, winningIndices) = detectCompletedLines(tempBoard)
+
+        val finalCells = updatedCells.mapIndexed { index, cell ->
+            cell.copy(isPartOfCompletedLine = index in winningIndices)
+        }
+
+        return board.copy(
+            cells = finalCells,
+            completedLines = completedLines
+        )
+    }
+
+    /**
      * Scans rows, columns, and diagonals for full completion.
      */
     private fun detectCompletedLines(board: Board): Pair<Set<LineCoordinate>, Set<Int>> {

@@ -59,20 +59,40 @@ object NotificationPreferences {
     fun init(context: Context) {
         if (isInitialized) return
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val authPrefs = context.getSharedPreferences("bingo_auth_prefs", Context.MODE_PRIVATE)
+        initWithPrefs(prefs, authPrefs)
+    }
 
-        systemNotificationsEnabled.value = prefs.getBoolean(KEY_SYSTEM_NOTIFS, true)
-        playerOnlineNotificationsEnabled.value = prefs.getBoolean(KEY_PLAYER_ONLINE_NOTIFS, true)
-        playerInvitesNotificationsEnabled.value = prefs.getBoolean(KEY_PLAYER_INVITES_NOTIFS, true)
+    fun initWithPrefs(prefs: SharedPreferences, authPrefs: SharedPreferences? = null) {
+        systemNotificationsEnabled.value = prefs.getBoolean(KEY_SYSTEM_NOTIFS, authPrefs?.getBoolean("settings_system_notifs", true) ?: true)
+        playerOnlineNotificationsEnabled.value = prefs.getBoolean(KEY_PLAYER_ONLINE_NOTIFS, authPrefs?.getBoolean("settings_player_online_notifs", true) ?: true)
+        playerInvitesNotificationsEnabled.value = prefs.getBoolean(KEY_PLAYER_INVITES_NOTIFS, authPrefs?.getBoolean("settings_player_invites_notifs", true) ?: true)
 
-        inAppNotificationsEnabled.value = prefs.getBoolean(KEY_IN_APP_NOTIFS, true)
-        inAppPlayerOnlineEnabled.value = prefs.getBoolean(KEY_IN_APP_ONLINE, true)
-        inAppPlayerInvitesEnabled.value = prefs.getBoolean(KEY_IN_APP_INVITES, true)
+        inAppNotificationsEnabled.value = prefs.getBoolean(KEY_IN_APP_NOTIFS, authPrefs?.getBoolean("settings_in_app_notifs", true) ?: true)
+        inAppPlayerOnlineEnabled.value = prefs.getBoolean(KEY_IN_APP_ONLINE, authPrefs?.getBoolean("settings_in_app_online", true) ?: true)
+        inAppPlayerInvitesEnabled.value = prefs.getBoolean(KEY_IN_APP_INVITES, authPrefs?.getBoolean("settings_in_app_invites", true) ?: true)
 
         isInitialized = true
     }
 
+    fun resetForTesting() {
+        isInitialized = false
+        systemNotificationsEnabled.value = true
+        playerOnlineNotificationsEnabled.value = true
+        playerInvitesNotificationsEnabled.value = true
+        inAppNotificationsEnabled.value = true
+        inAppPlayerOnlineEnabled.value = true
+        inAppPlayerInvitesEnabled.value = true
+    }
+
     private fun getPrefs(context: Context): SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    fun isLocallyConfigured(context: Context): Boolean {
+        val prefs = getPrefs(context)
+        val authPrefs = context.getSharedPreferences("bingo_auth_prefs", Context.MODE_PRIVATE)
+        return prefs.contains(KEY_SYSTEM_NOTIFS) || authPrefs.contains("settings_system_notifs")
+    }
 
     // ── Mutators with automatic persistence and debounced Cloud sync ──
 
@@ -80,6 +100,8 @@ object NotificationPreferences {
         if (systemNotificationsEnabled.value == enabled) return
         systemNotificationsEnabled.value = enabled
         getPrefs(context).edit().putBoolean(KEY_SYSTEM_NOTIFS, enabled).apply()
+        context.getSharedPreferences("bingo_auth_prefs", Context.MODE_PRIVATE)
+            .edit().putBoolean("settings_system_notifs", enabled).apply()
         if (syncToCloud) triggerCloudSync(context)
     }
 
@@ -87,6 +109,8 @@ object NotificationPreferences {
         if (playerOnlineNotificationsEnabled.value == enabled) return
         playerOnlineNotificationsEnabled.value = enabled
         getPrefs(context).edit().putBoolean(KEY_PLAYER_ONLINE_NOTIFS, enabled).apply()
+        context.getSharedPreferences("bingo_auth_prefs", Context.MODE_PRIVATE)
+            .edit().putBoolean("settings_player_online_notifs", enabled).apply()
         if (syncToCloud) triggerCloudSync(context)
     }
 
@@ -94,6 +118,8 @@ object NotificationPreferences {
         if (playerInvitesNotificationsEnabled.value == enabled) return
         playerInvitesNotificationsEnabled.value = enabled
         getPrefs(context).edit().putBoolean(KEY_PLAYER_INVITES_NOTIFS, enabled).apply()
+        context.getSharedPreferences("bingo_auth_prefs", Context.MODE_PRIVATE)
+            .edit().putBoolean("settings_player_invites_notifs", enabled).apply()
         if (syncToCloud) triggerCloudSync(context)
     }
 
@@ -101,6 +127,8 @@ object NotificationPreferences {
         if (inAppNotificationsEnabled.value == enabled) return
         inAppNotificationsEnabled.value = enabled
         getPrefs(context).edit().putBoolean(KEY_IN_APP_NOTIFS, enabled).apply()
+        context.getSharedPreferences("bingo_auth_prefs", Context.MODE_PRIVATE)
+            .edit().putBoolean("settings_in_app_notifs", enabled).apply()
         if (syncToCloud) triggerCloudSync(context)
     }
 
@@ -108,6 +136,8 @@ object NotificationPreferences {
         if (inAppPlayerOnlineEnabled.value == enabled) return
         inAppPlayerOnlineEnabled.value = enabled
         getPrefs(context).edit().putBoolean(KEY_IN_APP_ONLINE, enabled).apply()
+        context.getSharedPreferences("bingo_auth_prefs", Context.MODE_PRIVATE)
+            .edit().putBoolean("settings_in_app_online", enabled).apply()
         if (syncToCloud) triggerCloudSync(context)
     }
 
@@ -115,6 +145,8 @@ object NotificationPreferences {
         if (inAppPlayerInvitesEnabled.value == enabled) return
         inAppPlayerInvitesEnabled.value = enabled
         getPrefs(context).edit().putBoolean(KEY_IN_APP_INVITES, enabled).apply()
+        context.getSharedPreferences("bingo_auth_prefs", Context.MODE_PRIVATE)
+            .edit().putBoolean("settings_in_app_invites", enabled).apply()
         if (syncToCloud) triggerCloudSync(context)
     }
 
@@ -155,6 +187,15 @@ object NotificationPreferences {
             .putBoolean(KEY_IN_APP_NOTIFS, inAppNotifs)
             .putBoolean(KEY_IN_APP_ONLINE, inAppOnline)
             .putBoolean(KEY_IN_APP_INVITES, inAppInvites)
+            .apply()
+
+        context.getSharedPreferences("bingo_auth_prefs", Context.MODE_PRIVATE).edit()
+            .putBoolean("settings_system_notifs", systemNotifs)
+            .putBoolean("settings_player_online_notifs", playerOnlineNotifs)
+            .putBoolean("settings_player_invites_notifs", playerInvitesNotifs)
+            .putBoolean("settings_in_app_notifs", inAppNotifs)
+            .putBoolean("settings_in_app_online", inAppOnline)
+            .putBoolean("settings_in_app_invites", inAppInvites)
             .apply()
 
         if (syncToCloud) {
@@ -207,6 +248,8 @@ object NotificationPreferences {
                         val currentSettings = repo.getSettings()
                         com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(context)
                             .syncUserProfile(user, currentSettings)
+                        repo.backupUserDataToCloud()
+                        Log.d(TAG, "Notification preferences synced to Firestore and cloud backup successfully.")
                     }
                 }
             } catch (e: Exception) {

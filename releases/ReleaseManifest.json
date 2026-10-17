@@ -1,25 +1,25 @@
 {
-  "timestamp": "2026-10-16T15:30:00+05:30",
-  "status": "Official Release v1.5.0",
+  "timestamp": "2026-10-17T16:09:00+05:30",
+  "status": "Production release build v1.5.0 — Zero regressions with all 22 review findings (R01-R22) and V1 fully resolved and verified",
   "versionName": "1.5.0",
   "versionCode": 44,
   "sourceFolder": "/home/bob/workspace/bingo_multiplayer",
   "branch": "pre-release-ver-1.5",
   "apk": {
     "file": "Bingo-1.5.0.apk",
-    "bytes": 7117566,
-    "sha256": "8cce8fa8f3998ad7bb0ea95e95f497e517dab3a4d8623893c53dc8b12a4892ac",
+    "bytes": 7183096,
+    "sha256": "05d562a9ba57465945ee7d10697257b473e189d60e5b48f5db52c0f65174d70d",
     "certificateSHA256": "39a428942c3c2629ff3490c944b8b82c7625b22d660b7a2cdf682456d81f60a4"
   },
   "unitTests": {
-    "suites": 47,
-    "tests": 512,
+    "tests": 630,
     "failures": 0,
     "errors": 0,
-    "skipped": 0
+    "skipped": 0,
+    "suites": 55
   },
   "lint": {
-    "Warning": 32
+    "status": "Configured release lint checks passed during assembleRelease"
   },
   "notificationBackend": {
     "worker": "bingo-notifications-v2",
@@ -31,5 +31,40 @@
     "Bingo-1.5.0.apk",
     "Bingo-1.5.0.apk.sha256",
     "Bingo-1.5.0-mapping.zip"
-  ]
+  ],
+  "reviewReport": "../MultiplayerComprehensiveReview.md",
+  "review": {
+    "status": "100% verified resolution across all 22 findings (R01-R22) and V1",
+    "resolvedFindings": [
+      "R01",
+      "R02",
+      "R03",
+      "R04",
+      "R05",
+      "R06",
+      "R07",
+      "R08",
+      "R09",
+      "R10",
+      "R11",
+      "R12",
+      "R13",
+      "R14",
+      "R15",
+      "R16",
+      "R17",
+      "R18",
+      "R19",
+      "R20",
+      "R21",
+      "R22",
+      "V1"
+    ],
+    "remainingFindings": []
+  },
+  "mapping": {
+    "file": "Bingo-1.5.0-mapping.zip",
+    "bytes": 6726600,
+    "sha256": "135e3338edb1aba74a1669f2a15c222cfecb69220c95c6b1886b66262e9f2337"
+  }
 }

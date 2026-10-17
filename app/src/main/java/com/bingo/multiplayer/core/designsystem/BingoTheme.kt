@@ -230,12 +230,12 @@ fun buildAmoledDarkColors(palette: AppAccentPalette): BingoColors = BingoColors(
     completedLetterText = Color(0xFFFFFFFF),
     completedLetterGlow = Color(0x30F59E0B),
 
-    // App Accents: In AMOLED Dark, all cards, badges, and elements are pure white-to-black monochrome
-    turnBannerPlayer = Color(0xFFFFFFFF),
+    // App Accents: In AMOLED Dark, brand elements follow the user's selected accent tone
+    turnBannerPlayer = palette.primaryDark,
     turnBannerOpponent = Color(0xFFF97316),
-    accentBrand = Color(0xFFFFFFFF),
-    accentPlayGames = Color(0xFFFFFFFF),
-    accentGoogle = Color(0xFFFFFFFF),
+    accentBrand = palette.primaryDark,
+    accentPlayGames = Color(0xFF22C55E),
+    accentGoogle = Color(0xFF3B82F6),
 
     // Subtle tactile depth
     faux3dBevelBottom = Color(0xFF080808),

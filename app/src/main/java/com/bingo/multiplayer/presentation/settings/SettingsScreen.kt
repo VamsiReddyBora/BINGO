@@ -2709,6 +2709,12 @@ private fun SlimToggleRow(
     onCheckedChange: (Boolean) -> Unit
 ) {
     val tokens = BingoTheme.colors
+    val toggleAccent = if (tokens.isDark) {
+        if (tokens.accentBrand != Color.White) tokens.accentBrand
+        else ThemePreferences.getPalette(ThemePreferences.accentColorId.value).primaryDark
+    } else {
+        tokens.accentBrand
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -2733,9 +2739,11 @@ private fun SlimToggleRow(
             },
             colors = androidx.compose.material3.SwitchDefaults.colors(
                 checkedThumbColor = Color.White,
-                checkedTrackColor = tokens.accentBrand,
+                checkedTrackColor = toggleAccent,
+                checkedBorderColor = Color.Transparent,
                 uncheckedThumbColor = tokens.textMuted,
-                uncheckedTrackColor = tokens.cellNeutralBorder.copy(alpha = 0.25f)
+                uncheckedTrackColor = tokens.cellNeutralBorder.copy(alpha = 0.25f),
+                uncheckedBorderColor = tokens.cellNeutralBorder.copy(alpha = 0.35f)
             )
         )
     }

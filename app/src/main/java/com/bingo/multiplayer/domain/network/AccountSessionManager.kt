@@ -130,7 +130,16 @@ class AccountSessionManager(
     // HTTPS Cloud Storage Engine (KeyVal + ExtendsClass)
     // ─────────────────────────────────────────────────────────────
 
+    interface CloudStorageGateway {
+        suspend fun getKeyValue(key: String): String?
+        suspend fun setKeyValue(key: String, value: String): Boolean
+        suspend fun createJsonBin(jsonPayload: String): String?
+        suspend fun updateJsonBin(binId: String, jsonPayload: String): Boolean
+        suspend fun getJsonBin(binId: String): String?
+    }
+
     private suspend fun setKeyValue(key: String, value: String): Boolean = withContext(Dispatchers.IO) {
+        customCloudGateway?.let { return@withContext it.setKeyValue(key, value) }
         try {
             val encKey = URLEncoder.encode(key.trim(), "UTF-8")
             val encVal = URLEncoder.encode(value.trim(), "UTF-8")
@@ -151,6 +160,7 @@ class AccountSessionManager(
     }
 
     private suspend fun getKeyValue(key: String): String? = withContext(Dispatchers.IO) {
+        customCloudGateway?.let { return@withContext it.getKeyValue(key) }
         val encKey = URLEncoder.encode(key.trim(), "UTF-8")
         val clean = fetchKeyValueInternal("$appKey/$encKey")
         if (!clean.isNullOrBlank()) return@withContext clean
@@ -175,6 +185,7 @@ class AccountSessionManager(
     }
 
     private suspend fun createJsonBin(jsonPayload: String): String? = withContext(Dispatchers.IO) {
+        customCloudGateway?.let { return@withContext it.createJsonBin(jsonPayload) }
         try {
             val mediaType = "application/json; charset=utf-8".toMediaType()
             val body = jsonPayload.toRequestBody(mediaType)
@@ -202,6 +213,7 @@ class AccountSessionManager(
     }
 
     private suspend fun updateJsonBin(binId: String, jsonPayload: String): Boolean = withContext(Dispatchers.IO) {
+        customCloudGateway?.let { return@withContext it.updateJsonBin(binId, jsonPayload) }
         try {
             val mediaType = "application/json; charset=utf-8".toMediaType()
             val body = jsonPayload.toRequestBody(mediaType)
@@ -226,6 +238,7 @@ class AccountSessionManager(
     }
 
     private suspend fun getJsonBin(binId: String): String? = withContext(Dispatchers.IO) {
+        customCloudGateway?.let { return@withContext it.getJsonBin(binId) }
         try {
             val request = Request.Builder()
                 .url("https://extendsclass.com/api/json-storage/bin/$binId")
@@ -259,9 +272,15 @@ class AccountSessionManager(
         val mutex = getUserMutex(gid)
         mutex.withLock {
             try {
+                val cleanUser = backup.profile.username.trim().lowercase().removePrefix("@")
+                val existing = backupMemoryCache[gid] ?: (if (cleanUser.isNotBlank()) backupMemoryCache["user_$cleanUser"] else null)
+                if (existing != null && (backup.lastBackupTimestamp < existing.lastBackupTimestamp || backup.profile.gamesPlayed < existing.profile.gamesPlayed)) {
+                    Log.w("AccountSessionManager", "Ignoring stale backup for $gid: incoming games=${backup.profile.gamesPlayed}, ts=${backup.lastBackupTimestamp} vs existing games=${existing.profile.gamesPlayed}, ts=${existing.lastBackupTimestamp}")
+                    return@withLock true
+                }
+
                 val jsonPayload = json.encodeToString(backup)
 
-                val cleanUser = backup.profile.username.trim().lowercase().removePrefix("@")
                 var binId = binIdCache[gid]
                 if (binId.isNullOrBlank() && cleanUser.isNotBlank()) {
                     binId = binIdCache["user_$cleanUser"]
@@ -320,10 +339,10 @@ class AccountSessionManager(
                 } catch (_: Exception) {}
 
                 Log.i("AccountSessionManager", "Cloud backup result for $gid: success=$success, binId=$binId, user=$cleanUser")
-                success || backupMemoryCache.containsKey(gid)
+                success
             } catch (e: Exception) {
                 Log.w("AccountSessionManager", "backupUserDataSync failed for $gid: ${e.message}", e)
-                backupMemoryCache.containsKey(gid)
+                false
             }
         }
     }
@@ -1284,6 +1303,8 @@ class AccountSessionManager(
         }
         private val userMutexes = ConcurrentHashMap<String, Mutex>()
         private val backupMemoryCache = ConcurrentHashMap<String, com.bingo.multiplayer.domain.model.CloudUserDataBackup>()
+        @androidx.annotation.VisibleForTesting
+        var customCloudGateway: CloudStorageGateway? = null
 
         val defaultInstance by lazy { AccountSessionManager() }
 

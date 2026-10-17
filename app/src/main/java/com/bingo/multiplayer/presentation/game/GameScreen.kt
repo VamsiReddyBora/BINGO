@@ -11,6 +11,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -176,7 +177,19 @@ fun GameScreen(
     isClaimVictoryEligible: Boolean = false,
     onPauseGame: () -> Unit = {},
     onResumeGame: () -> Unit = {},
-    onClaimVictory: () -> Unit = {}
+    onClaimVictory: () -> Unit = {},
+    hostAbsenceHoldSeconds: Int = 0,
+    hostReturningCountdown: Int? = null,
+    pauseRemainingSeconds: Int = 0,
+    canExtendPause: Boolean = false,
+    onExtendPause: () -> Unit = {},
+    turnInactivityPlayerId: String? = null,
+    turnInactivityPlayerName: String = "",
+    turnInactivityAutoSkipSeconds: Int = 0,
+    onHostSkipInactivePlayer: () -> Unit = {},
+    onHostPauseInactivePlayer: () -> Unit = {},
+    onKickPlayer: (String) -> Unit = {},
+    eliminatedPlayerIds: Set<String> = emptySet()
 ) {
     val tokens = BingoTheme.colors
     val haptic = LocalHapticFeedback.current
@@ -302,7 +315,7 @@ fun GameScreen(
             incomingChatMessage.id != lastHandledChatId
         ) {
             lastHandledChatId = incomingChatMessage.id
-            if (!chatMessages.any { it.id == incomingChatMessage.id || (it.text == incomingChatMessage.text && kotlin.math.abs(it.timestamp - incomingChatMessage.timestamp) < 2000L) }) {
+            if (!chatMessages.any { it.id == incomingChatMessage.id || (it.senderName == incomingChatMessage.senderName && it.text == incomingChatMessage.text && kotlin.math.abs(it.timestamp - incomingChatMessage.timestamp) < 2000L) }) {
                 chatMessages = chatMessages + incomingChatMessage
             }
 
@@ -482,10 +495,79 @@ fun GameScreen(
     BackHandler(enabled = !isGameOver && (hostDisconnected || isGamePaused ||
         (canControlPause && interruptionPrompt.episodeId.isNotBlank() && !interruptionPrompt.decided))) {}
 
-    if (hostDisconnected && !isGameOver) HostDisconnectedDialog(
+    if (hostDisconnected && !isGameOver && players.size <= 2) HostDisconnectedDialog(
         hostName = hostName,
         avatarUrl = players.firstOrNull { it.isHost }?.avatarUrl?.takeIf { it.isNotBlank() } ?: opponentAvatarUrl,
         username = players.firstOrNull { it.isHost }?.username?.takeIf { it.isNotBlank() } ?: opponentUsername)
+
+    // Rule 1: Inactive Turn Player Host Decision Dialog
+    if (canControlPause && !isGameOver && !isGamePaused && !turnInactivityPlayerId.isNullOrBlank()) {
+        AlertDialog(
+            onDismissRequest = {},
+            properties = MatchDecisionDialogSpec.properties,
+            shape = RoundedCornerShape(24.dp),
+            containerColor = tokens.surface,
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = Color(0xFFEAB308),
+                    modifier = Modifier.size(40.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = "⚠️ Player Inactive",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    color = tokens.cellNeutralText,
+                    textAlign = TextAlign.Center
+                )
+            },
+            text = {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                    val inactiveName = turnInactivityPlayerName.ifBlank { "Player" }
+                    Text(
+                        text = "$inactiveName is not responding on their turn.",
+                        fontSize = 14.sp,
+                        color = tokens.cellNeutralText.copy(alpha = 0.85f),
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        text = "Auto-skipping in ${turnInactivityAutoSkipSeconds}s…",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = tokens.accentOpponent,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            },
+            confirmButton = {
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = onHostPauseInactivePlayer,
+                        colors = ButtonDefaults.buttonColors(containerColor = tokens.accentBrand),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(12.dp)
+                    ) {
+                        Text("⏸️ Pause Match", fontWeight = FontWeight.Bold, color = Color.White)
+                    }
+                    OutlinedButton(
+                        onClick = onHostSkipInactivePlayer,
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, tokens.cellNeutralBorder.copy(alpha = 0.5f)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = tokens.cellNeutralText),
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(12.dp)
+                    ) {
+                        Text("⏩ Skip Turn", fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+        )
+    }
 
     if (showSurrenderDialog && !hostDisconnected) {
         val isMultiplayerLobbyGame = (onReturnToLobby != null)
@@ -546,6 +628,8 @@ fun GameScreen(
     }
 
     if (isGamePaused && !hostDisconnected && !isGameOver) {
+        var confirmingClaimInPause by remember { mutableStateOf(false) }
+        val dangerColor = MatchNoticeTone.DISCONNECTED.color(tokens.isDark)
         AlertDialog(
             onDismissRequest = {},
             properties = MatchDecisionDialogSpec.properties,
@@ -561,7 +645,7 @@ fun GameScreen(
             },
             title = {
                 Text(
-                    text = "⏸️ Match paused",
+                    text = if (confirmingClaimInPause && isClaimVictoryEligible) "🏆 Claim victory?" else "⏸️ Match paused",
                     fontWeight = FontWeight.Bold,
                     fontSize = 18.sp,
                     color = tokens.cellNeutralText,
@@ -570,33 +654,145 @@ fun GameScreen(
             },
             text = {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = if (pausedByPlayerName.isNotBlank()) "$pausedByPlayerName paused the match." else "Your match is on hold.",
-                        fontSize = 14.sp, color = tokens.cellNeutralText.copy(alpha = 0.8f),
-                        textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()
-                    )
-                    if (opponentConnectionStatus.isNotBlank()) {
-                        Spacer(Modifier.height(12.dp))
-                        val status = MatchStatusPresentation.notice(opponentConnectionStatus)
-                        MatchStatusChip(status.text, status.tone, Modifier.fillMaxWidth())
-                    }
-                    if (!canControlPause) {
-                        Spacer(Modifier.height(12.dp))
-                        Text("⏳ Waiting for $hostName to resume…", color = tokens.cellNeutralText, textAlign = TextAlign.Center)
+                    if (confirmingClaimInPause && isClaimVictoryEligible) {
+                        Text(
+                            text = "Opponent has disconnected multiple times and remains unreachable. Claim victory now?",
+                            fontSize = 14.sp, color = tokens.cellNeutralText.copy(alpha = 0.8f),
+                            textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()
+                        )
+                    } else {
+                        Text(
+                            text = if (pausedByPlayerName.isNotBlank()) "$pausedByPlayerName paused the match." else "Your match is on hold.",
+                            fontSize = 14.sp, color = tokens.cellNeutralText.copy(alpha = 0.8f),
+                            textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()
+                        )
+                        if (pauseRemainingSeconds > 0) {
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                text = "⏳ Resumes in ${pauseRemainingSeconds}s…",
+                                fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                                color = tokens.accentBrand, textAlign = TextAlign.Center
+                            )
+                        }
+                        if (opponentConnectionStatus.isNotBlank() && players.size <= 2) {
+                            Spacer(Modifier.height(12.dp))
+                            val status = MatchStatusPresentation.notice(opponentConnectionStatus)
+                            MatchStatusChip(status.text, status.tone, Modifier.fillMaxWidth())
+                        }
+                        // Rule 6: Disconnected players list with Kick / Eliminate for Host
+                        if (canControlPause && players.size > 2) {
+                            val disconnectedPeers = players.filter { p ->
+                                p.id != myPlayerId && disconnectedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, p.id) } &&
+                                    !eliminatedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, p.id) }
+                            }
+                            if (disconnectedPeers.isNotEmpty()) {
+                                Spacer(Modifier.height(12.dp))
+                                Text("Offline Players", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = tokens.cellNeutralText.copy(alpha = 0.65f))
+                                Spacer(Modifier.height(4.dp))
+                                disconnectedPeers.forEach { dp ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(dp.displayName, fontSize = 13.sp, color = tokens.cellNeutralText)
+                                        OutlinedButton(
+                                            onClick = { onKickPlayer(dp.id) },
+                                            shape = RoundedCornerShape(8.dp),
+                                            border = BorderStroke(1.dp, dangerColor.copy(alpha = 0.6f)),
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                        ) {
+                                            Text("Kick", fontSize = 11.sp, color = dangerColor, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if (!canControlPause) {
+                            Spacer(Modifier.height(12.dp))
+                            Text("⏳ Waiting for $hostName to resume…", color = tokens.cellNeutralText, textAlign = TextAlign.Center)
+                        }
                     }
                 }
             },
             confirmButton = {
-                if (canControlPause) Button(
-                    onClick = onResumeGame,
-                    enabled = canResumeGame,
-                    colors = ButtonDefaults.buttonColors(containerColor = tokens.primaryButtonBg, contentColor = tokens.primaryButtonText),
-                    shape = RoundedCornerShape(12.dp)
-                ) { Text("▶️ Resume match", fontWeight = FontWeight.Bold) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showSurrenderDialog = true }) {
-                    Text("Exit Match", color = tokens.cellNeutralText)
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (confirmingClaimInPause && isClaimVictoryEligible) {
+                        Button(
+                            onClick = {
+                                onClaimVictory()
+                                confirmingClaimInPause = false
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = dangerColor),
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(12.dp)
+                        ) {
+                            Text("🏆 Confirm claim", fontWeight = FontWeight.Bold)
+                        }
+                        TextButton(
+                            onClick = { confirmingClaimInPause = false },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Back", color = tokens.cellNeutralText)
+                        }
+                    } else if (canControlPause) {
+                        Button(
+                            onClick = onResumeGame,
+                            enabled = canResumeGame,
+                            colors = ButtonDefaults.buttonColors(containerColor = tokens.primaryButtonBg, contentColor = tokens.primaryButtonText),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                            contentPadding = PaddingValues(12.dp)
+                        ) { Text("▶️ Resume match", fontWeight = FontWeight.Bold) }
+
+                        // Rule 4: Extend (+30s) button appears only when timer <= 5s
+                        if (canExtendPause) {
+                            Button(
+                                onClick = onExtendPause,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (tokens.isDark) Color(0xFFF59E0B) else Color(0xFFD97706)
+                                ),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth(),
+                                contentPadding = PaddingValues(12.dp)
+                            ) {
+                                Text("⏳ Extend (+30s)", fontWeight = FontWeight.Bold, color = Color.White)
+                            }
+                        }
+
+                        if (isClaimVictoryEligible) {
+                            OutlinedButton(
+                                onClick = { confirmingClaimInPause = true },
+                                modifier = Modifier.fillMaxWidth(),
+                                border = BorderStroke(1.dp, dangerColor.copy(alpha = 0.45f)),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = dangerColor),
+                                shape = RoundedCornerShape(12.dp),
+                                contentPadding = PaddingValues(12.dp)
+                            ) {
+                                Text("🏆 Claim victory", fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+
+                        TextButton(
+                            onClick = { showSurrenderDialog = true },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Exit Match", color = tokens.cellNeutralText)
+                        }
+                    } else {
+                        // Player side: host paused the match. Full-width cleanly aligned button.
+                        OutlinedButton(
+                            onClick = { showSurrenderDialog = true },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, tokens.cellNeutralBorder.copy(alpha = 0.5f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = tokens.cellNeutralText),
+                            contentPadding = PaddingValues(12.dp)
+                        ) {
+                            Text("Exit Match", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                        }
+                    }
                 }
             }
         )
@@ -634,6 +830,38 @@ fun GameScreen(
                     .padding(top = 10.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                // Rule 3: Host Absence 50s Countdown Banner
+                if (!isHost && hostAbsenceHoldSeconds > 0 && !isGameOver) {
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (tokens.isDark) Color(0xFF3B1E1E) else Color(0xFFFFECEC),
+                        border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.5f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .background(Color(0xFFEF4444), CircleShape)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "📡 Host connection paused. Waiting for host to return (${hostAbsenceHoldSeconds}s)…",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (tokens.isDark) Color(0xFFFCA5A5) else Color(0xFFB91C1C),
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                }
+
                 // Modern Aesthetic Top Bar (Items 1, 2, 3)
                 Box(
                     modifier = Modifier
@@ -998,7 +1226,9 @@ fun GameScreen(
                     onSyncGame = onSyncGame,
                     players = players,
                     currentTurnPlayerId = currentTurnPlayerId,
-                    myPlayerId = myPlayerId
+                    myPlayerId = myPlayerId,
+                    disconnectedPlayerIds = disconnectedPlayerIds,
+                    eliminatedPlayerIds = eliminatedPlayerIds
                 )
             }
         }
@@ -1089,7 +1319,7 @@ fun GameScreen(
                 ) {
                     BingoBoardView(
                         board = displayedBoard,
-                        isInteractive = isMyTurn && !isGameOver && !isGamePaused,
+                        isInteractive = isMyTurn && !isGameOver && !isGamePaused && !gameplaySuspended,
                         onCellClicked = onCellPicked,
                         isWinningBoard = isWinningBoard,
                         onBoardWidthMeasured = { measuredWidth ->
@@ -1381,6 +1611,49 @@ fun GameScreen(
             }
         }
     }
+
+    // Rule 3 & Rule 5: Ready Countdown Overlay (3... 2... 1... ▶️)
+    if (hostReturningCountdown != null && !isGameOver) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.55f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = tokens.surface,
+                border = BorderStroke(2.dp, tokens.accentBrand),
+                shadowElevation = 12.dp
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 36.dp, vertical = 24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = "▶️ GET READY!",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = tokens.accentBrand
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "$hostReturningCountdown",
+                        fontSize = 58.sp,
+                        fontWeight = FontWeight.Black,
+                        color = tokens.cellNeutralText
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Resuming match…",
+                        fontSize = 12.sp,
+                        color = tokens.cellNeutralText.copy(alpha = 0.7f)
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -1397,7 +1670,9 @@ private fun InGameBottomBar(
     onSyncGame: () -> Unit,
     players: List<Player> = emptyList(),
     currentTurnPlayerId: String = "",
-    myPlayerId: String = ""
+    myPlayerId: String = "",
+    disconnectedPlayerIds: List<String> = emptyList(),
+    eliminatedPlayerIds: Set<String> = emptySet()
 ) {
     val tokens = BingoTheme.colors
 
@@ -1439,7 +1714,9 @@ private fun InGameBottomBar(
                 opponentAvatarUrl = opponentAvatarUrl,
                 opponentName = opponentName,
                 opponentUsername = opponentUsername,
-                modifier = Modifier.align(Alignment.Center)
+                modifier = Modifier.align(Alignment.Center),
+                disconnectedPlayerIds = disconnectedPlayerIds,
+                eliminatedPlayerIds = eliminatedPlayerIds
             )
 
 
