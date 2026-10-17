@@ -531,7 +531,7 @@ class OnlineRoomSyncManager(
                     NetworkConfig.applyMqttOptions(this)
                     try {
                         val willPacket = RoomMessagePacket(
-                            type = "LEAVE",
+                            type = "PLAYER_DISCONNECTED",
                             transportOnly = true, roomCode = cleanCode,
                             connectionGeneration = connectionId, senderInstanceId = instanceId,
                             playerId = player.id,

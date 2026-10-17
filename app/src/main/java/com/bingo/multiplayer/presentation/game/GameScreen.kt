@@ -120,14 +120,11 @@ import com.bingo.multiplayer.presentation.components.RecentPicksQueuePill
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun GameScreen(
-    hostDisconnected: Boolean = false,
     gameplaySuspended: Boolean = false,
     canControlPause: Boolean = true,
     canResumeGame: Boolean = true,
     opponentConnectionStatus: String = "",
     hostName: String = "Host",
-    interruptionPrompt: com.bingo.multiplayer.domain.engine.InterruptionPromptState = com.bingo.multiplayer.domain.engine.InterruptionPromptState(),
-    onContinueCountdown: () -> Unit = {},
     useAcceptedChatHistory: Boolean = false,
     board: Board,
     opponentBoard: Board? = null,
@@ -175,23 +172,10 @@ fun GameScreen(
     isLobbyAvailable: Boolean = true,
     typingPlayerName: String? = null,
     onSetTyping: (Boolean) -> Unit = {},
-    isOpponentUnreachable: Boolean = false,
-    isClaimVictoryEligible: Boolean = false,
-    onPauseGame: () -> Unit = {},
-    onResumeGame: () -> Unit = {},
-    onClaimVictory: () -> Unit = {},
-    hostAbsenceHoldSeconds: Int = 0,
-    hostReturningCountdown: Int? = null,
+    onResumeGame: () -> Unit = onTogglePause,
     pauseRemainingSeconds: Int = 0,
     canExtendPause: Boolean = false,
-    onExtendPause: () -> Unit = {},
-    turnInactivityPlayerId: String? = null,
-    turnInactivityPlayerName: String = "",
-    turnInactivityAutoSkipSeconds: Int = 0,
-    onHostSkipInactivePlayer: () -> Unit = {},
-    onHostPauseInactivePlayer: () -> Unit = {},
-    onKickPlayer: (String) -> Unit = {},
-    eliminatedPlayerIds: Set<String> = emptySet()
+    onExtendPause: () -> Unit = {}
 ) {
     val tokens = BingoTheme.colors
     val haptic = LocalHapticFeedback.current
@@ -494,84 +478,9 @@ fun GameScreen(
     }
 
 
-    BackHandler(enabled = !isGameOver && (hostDisconnected || isGamePaused ||
-        (canControlPause && interruptionPrompt.episodeId.isNotBlank() && !interruptionPrompt.decided))) {}
+    BackHandler(enabled = !isGameOver && isGamePaused) {}
 
-    if (hostDisconnected && !isGameOver && players.size <= 2) HostDisconnectedDialog(
-        hostName = hostName,
-        avatarUrl = players.firstOrNull { it.isHost }?.avatarUrl?.takeIf { it.isNotBlank() } ?: opponentAvatarUrl,
-        username = players.firstOrNull { it.isHost }?.username?.takeIf { it.isNotBlank() } ?: opponentUsername)
-
-    // Rule 1: Inactive Turn Player Host Decision Dialog
-    if (canControlPause && !isGameOver && !isGamePaused && !turnInactivityPlayerId.isNullOrBlank()) {
-        AlertDialog(
-            onDismissRequest = {},
-            properties = MatchDecisionDialogSpec.properties,
-            shape = RoundedCornerShape(24.dp),
-            containerColor = tokens.surface,
-            icon = {
-                Icon(
-                    imageVector = Icons.Default.Warning,
-                    contentDescription = null,
-                    tint = Color(0xFFEAB308),
-                    modifier = Modifier.size(40.dp)
-                )
-            },
-            title = {
-                Text(
-                    text = "⚠️ Player Inactive",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
-                    color = tokens.cellNeutralText,
-                    textAlign = TextAlign.Center
-                )
-            },
-            text = {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                    val inactiveName = turnInactivityPlayerName.ifBlank { "Player" }
-                    Text(
-                        text = "$inactiveName is not responding on their turn.",
-                        fontSize = 14.sp,
-                        color = tokens.cellNeutralText.copy(alpha = 0.85f),
-                        textAlign = TextAlign.Center
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    Text(
-                        text = "Auto-skipping in ${turnInactivityAutoSkipSeconds}s…",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = tokens.accentOpponent,
-                        textAlign = TextAlign.Center
-                    )
-                }
-            },
-            confirmButton = {
-                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = onHostPauseInactivePlayer,
-                        colors = ButtonDefaults.buttonColors(containerColor = tokens.accentBrand),
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                        contentPadding = PaddingValues(12.dp)
-                    ) {
-                        Text("⏸️ Pause Match", fontWeight = FontWeight.Bold, color = Color.White)
-                    }
-                    OutlinedButton(
-                        onClick = onHostSkipInactivePlayer,
-                        shape = RoundedCornerShape(12.dp),
-                        border = BorderStroke(1.dp, tokens.cellNeutralBorder.copy(alpha = 0.5f)),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = tokens.cellNeutralText),
-                        modifier = Modifier.fillMaxWidth(),
-                        contentPadding = PaddingValues(12.dp)
-                    ) {
-                        Text("⏩ Skip Turn", fontWeight = FontWeight.SemiBold)
-                    }
-                }
-            }
-        )
-    }
-
-    if (showSurrenderDialog && !hostDisconnected) {
+    if (showSurrenderDialog) {
         val isMultiplayerLobbyGame = (onReturnToLobby != null)
         AlertDialog(
             onDismissRequest = { showSurrenderDialog = false },
@@ -629,9 +538,7 @@ fun GameScreen(
         )
     }
 
-    if (isGamePaused && !hostDisconnected && !isGameOver) {
-        var confirmingClaimInPause by remember { mutableStateOf(false) }
-        val dangerColor = MatchNoticeTone.DISCONNECTED.color(tokens.isDark)
+    if (isGamePaused && !isGameOver) {
         AlertDialog(
             onDismissRequest = {},
             properties = MatchDecisionDialogSpec.properties,
@@ -647,7 +554,7 @@ fun GameScreen(
             },
             title = {
                 Text(
-                    text = if (confirmingClaimInPause && isClaimVictoryEligible) "🏆 Claim victory?" else "⏸️ Match paused",
+                    text = "⏸️ Match paused",
                     fontWeight = FontWeight.Bold,
                     fontSize = 18.sp,
                     color = tokens.cellNeutralText,
@@ -656,89 +563,33 @@ fun GameScreen(
             },
             text = {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    if (confirmingClaimInPause && isClaimVictoryEligible) {
+                    Text(
+                        text = if (pausedByPlayerName.isNotBlank()) "$pausedByPlayerName paused the match." else "Your match is on hold.",
+                        fontSize = 14.sp, color = tokens.cellNeutralText.copy(alpha = 0.8f),
+                        textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()
+                    )
+                    if (pauseRemainingSeconds > 0) {
+                        Spacer(Modifier.height(8.dp))
                         Text(
-                            text = "Opponent has disconnected multiple times and remains unreachable. Claim victory now?",
-                            fontSize = 14.sp, color = tokens.cellNeutralText.copy(alpha = 0.8f),
-                            textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()
+                            text = "⏳ Resumes in ${pauseRemainingSeconds}s…",
+                            fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                            color = tokens.accentBrand, textAlign = TextAlign.Center
                         )
-                    } else {
-                        Text(
-                            text = if (pausedByPlayerName.isNotBlank()) "$pausedByPlayerName paused the match." else "Your match is on hold.",
-                            fontSize = 14.sp, color = tokens.cellNeutralText.copy(alpha = 0.8f),
-                            textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()
-                        )
-                        if (pauseRemainingSeconds > 0) {
-                            Spacer(Modifier.height(8.dp))
-                            Text(
-                                text = "⏳ Resumes in ${pauseRemainingSeconds}s…",
-                                fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
-                                color = tokens.accentBrand, textAlign = TextAlign.Center
-                            )
-                        }
-                        if (opponentConnectionStatus.isNotBlank() && players.size <= 2) {
-                            Spacer(Modifier.height(12.dp))
-                            val status = MatchStatusPresentation.notice(opponentConnectionStatus)
-                            MatchStatusChip(status.text, status.tone, Modifier.fillMaxWidth())
-                        }
-                        // Rule 6: Disconnected players list with Kick / Eliminate for Host
-                        if (canControlPause && players.size > 2) {
-                            val disconnectedPeers = players.filter { p ->
-                                p.id != myPlayerId && disconnectedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, p.id) } &&
-                                    !eliminatedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, p.id) }
-                            }
-                            if (disconnectedPeers.isNotEmpty()) {
-                                Spacer(Modifier.height(12.dp))
-                                Text("Offline Players", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = tokens.cellNeutralText.copy(alpha = 0.65f))
-                                Spacer(Modifier.height(4.dp))
-                                disconnectedPeers.forEach { dp ->
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Text(dp.displayName, fontSize = 13.sp, color = tokens.cellNeutralText)
-                                        OutlinedButton(
-                                            onClick = { onKickPlayer(dp.id) },
-                                            shape = RoundedCornerShape(8.dp),
-                                            border = BorderStroke(1.dp, dangerColor.copy(alpha = 0.6f)),
-                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                                        ) {
-                                            Text("Kick", fontSize = 11.sp, color = dangerColor, fontWeight = FontWeight.Bold)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        if (!canControlPause) {
-                            Spacer(Modifier.height(12.dp))
-                            Text("⏳ Waiting for $hostName to resume…", color = tokens.cellNeutralText, textAlign = TextAlign.Center)
-                        }
+                    }
+                    if (opponentConnectionStatus.isNotBlank() && players.size <= 2) {
+                        Spacer(Modifier.height(12.dp))
+                        val status = MatchStatusPresentation.notice(opponentConnectionStatus)
+                        MatchStatusChip(status.text, status.tone, Modifier.fillMaxWidth())
+                    }
+                    if (!canControlPause) {
+                        Spacer(Modifier.height(12.dp))
+                        Text("⏳ Waiting for $hostName to resume…", color = tokens.cellNeutralText, textAlign = TextAlign.Center)
                     }
                 }
             },
             confirmButton = {
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (confirmingClaimInPause && isClaimVictoryEligible) {
-                        Button(
-                            onClick = {
-                                onClaimVictory()
-                                confirmingClaimInPause = false
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.buttonColors(containerColor = dangerColor),
-                            shape = RoundedCornerShape(12.dp),
-                            contentPadding = PaddingValues(12.dp)
-                        ) {
-                            Text("🏆 Confirm claim", fontWeight = FontWeight.Bold)
-                        }
-                        TextButton(
-                            onClick = { confirmingClaimInPause = false },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("Back", color = tokens.cellNeutralText)
-                        }
-                    } else if (canControlPause) {
+                    if (canControlPause) {
                         Button(
                             onClick = onResumeGame,
                             enabled = canResumeGame,
@@ -748,7 +599,6 @@ fun GameScreen(
                             contentPadding = PaddingValues(12.dp)
                         ) { Text("▶️ Resume match", fontWeight = FontWeight.Bold) }
 
-                        // Rule 4: Extend (+30s) button appears only when timer <= 5s
                         if (canExtendPause) {
                             Button(
                                 onClick = onExtendPause,
@@ -763,19 +613,6 @@ fun GameScreen(
                             }
                         }
 
-                        if (isClaimVictoryEligible) {
-                            OutlinedButton(
-                                onClick = { confirmingClaimInPause = true },
-                                modifier = Modifier.fillMaxWidth(),
-                                border = BorderStroke(1.dp, dangerColor.copy(alpha = 0.45f)),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = dangerColor),
-                                shape = RoundedCornerShape(12.dp),
-                                contentPadding = PaddingValues(12.dp)
-                            ) {
-                                Text("🏆 Claim victory", fontWeight = FontWeight.SemiBold)
-                            }
-                        }
-
                         TextButton(
                             onClick = { showSurrenderDialog = true },
                             modifier = Modifier.fillMaxWidth()
@@ -783,7 +620,6 @@ fun GameScreen(
                             Text("Exit Match", color = tokens.cellNeutralText)
                         }
                     } else {
-                        // Player side: host paused the match. Full-width cleanly aligned button.
                         OutlinedButton(
                             onClick = { showSurrenderDialog = true },
                             modifier = Modifier.fillMaxWidth(),
@@ -798,13 +634,6 @@ fun GameScreen(
                 }
             }
         )
-    }
-
-    LaunchedEffect(hostDisconnected) {
-        if (hostDisconnected) {
-            showSurrenderDialog = false
-            showQuickChat = false
-        }
     }
 
     Scaffold(
@@ -1184,8 +1013,7 @@ fun GameScreen(
                     currentTurnPlayerId = currentTurnPlayerId,
                     myPlayerId = myPlayerId,
                     disconnectedPlayerIds = disconnectedPlayerIds,
-                    awayPlayerIds = awayPlayerIds,
-                    eliminatedPlayerIds = eliminatedPlayerIds
+                    awayPlayerIds = awayPlayerIds
                 )
             }
         }
@@ -1591,48 +1419,6 @@ fun GameScreen(
         }
     }
 
-    // Rule 3 & Rule 5: Ready Countdown Overlay (3... 2... 1... ▶️)
-    if (hostReturningCountdown != null && !isGameOver) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.55f)),
-            contentAlignment = Alignment.Center
-        ) {
-            Surface(
-                shape = RoundedCornerShape(24.dp),
-                color = tokens.surface,
-                border = BorderStroke(2.dp, tokens.accentBrand),
-                shadowElevation = 12.dp
-            ) {
-                Column(
-                    modifier = Modifier.padding(horizontal = 36.dp, vertical = 24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    Text(
-                        text = "▶️ GET READY!",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = tokens.accentBrand
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "$hostReturningCountdown",
-                        fontSize = 58.sp,
-                        fontWeight = FontWeight.Black,
-                        color = tokens.cellNeutralText
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Resuming match…",
-                        fontSize = 12.sp,
-                        color = tokens.cellNeutralText.copy(alpha = 0.7f)
-                    )
-                }
-            }
-        }
-    }
 }
 
 @Composable
@@ -1651,8 +1437,7 @@ private fun InGameBottomBar(
     currentTurnPlayerId: String = "",
     myPlayerId: String = "",
     disconnectedPlayerIds: List<String> = emptyList(),
-    awayPlayerIds: List<String> = emptyList(),
-    eliminatedPlayerIds: Set<String> = emptySet()
+    awayPlayerIds: List<String> = emptyList()
 ) {
     val tokens = BingoTheme.colors
 
@@ -1696,8 +1481,7 @@ private fun InGameBottomBar(
                 opponentUsername = opponentUsername,
                 modifier = Modifier.align(Alignment.Center),
                 disconnectedPlayerIds = disconnectedPlayerIds,
-                awayPlayerIds = awayPlayerIds,
-                eliminatedPlayerIds = eliminatedPlayerIds
+                awayPlayerIds = awayPlayerIds
             )
 
 
