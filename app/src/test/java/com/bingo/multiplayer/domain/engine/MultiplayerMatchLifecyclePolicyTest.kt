@@ -1188,4 +1188,63 @@ class MultiplayerMatchLifecyclePolicyTest {
         guest.syncRemotePause(isPaused = true, remainingSeconds = 30, now = clock.elapsedRealtime(), timestamp = 26_000L, remotePauseEpisode = 2)
         assertEquals("Duplicate episode 2 must not overwrite active countdown", 25, guest.pauseRemainingSeconds)
     }
+
+    @Test
+    fun testTransferHostAuthority_actingHostBecomesHostAndCancelsHoldWatchdog() {
+        val policy = MultiplayerMatchLifecyclePolicy(
+            matchId = "m_group",
+            localUid = guestUid,
+            isHost = false,
+            hostUid = hostUid,
+            initialParticipants = participants,
+            clock = clock
+        )
+
+        // Advance 15s - enters HOLD because original host is silent
+        clock.advance(15_000L)
+        policy.onTick()
+        assertEquals(HostAbsenceState.HOLD, policy.hostAbsenceState)
+
+        // Original host left, transfer host authority to guestUid (local player)
+        policy.transferHostAuthority(guestUid)
+
+        assertTrue(policy.isHost)
+        assertEquals(guestUid, policy.hostUid)
+        assertEquals(HostAbsenceState.NORMAL, policy.hostAbsenceState)
+        assertTrue(policy.isPlayerEliminated(hostUid))
+
+        // Next tick as host should NOT trigger guest hold or termination actions
+        clock.advance(65_000L)
+        val actions = policy.onTick()
+        assertFalse(actions.any { it is LifecycleAction.HostTerminated })
+        assertFalse(actions.any { it is LifecycleAction.HostAbsenceHold })
+    }
+
+    @Test
+    fun testHostDeparture_whenHostInSurrenderedList_doesNotTriggerHostAbsenceWatchdog() {
+        val policy = MultiplayerMatchLifecyclePolicy(
+            matchId = "m_group",
+            localUid = guestCharlie,
+            isHost = false,
+            hostUid = hostUid,
+            initialParticipants = participants,
+            clock = clock
+        )
+
+        // Transfer host authority to guestUid (Bob)
+        policy.transferHostAuthority(guestUid)
+
+        assertFalse(policy.isHost)
+        assertEquals(guestUid, policy.hostUid)
+        assertEquals(HostAbsenceState.NORMAL, policy.hostAbsenceState)
+
+        // Bob sends heartbeat
+        policy.onHostHeartbeat()
+
+        // Advance 5 seconds - no hold
+        clock.advance(5_000L)
+        val actions = policy.onTick()
+        assertTrue(actions.isEmpty())
+        assertEquals(HostAbsenceState.NORMAL, policy.hostAbsenceState)
+    }
 }
