@@ -2897,6 +2897,24 @@ fun RootNavGraph(
                         }
                         "OFFLINE" -> {
                             markPlayerDisconnected(packet.playerId)
+                            if (inGame && !isGameOver) {
+                                val msg = "🔴 $name disconnected"
+                                val alreadyHasMsg = matchChatHistory.any {
+                                    it.text == msg && (System.currentTimeMillis() - it.timestamp) < 5000L
+                                }
+                                if (!alreadyHasMsg) {
+                                    val sysMsg = InGameChatMessage(
+                                        id = System.currentTimeMillis() + (0..1000).random(),
+                                        text = msg,
+                                        isSelf = false,
+                                        senderName = null,
+                                        timestamp = System.currentTimeMillis(),
+                                        isSystemMessage = true
+                                    )
+                                    matchChatHistory = matchChatHistory + sysMsg
+                                    latestIncomingChatMessage = sysMsg
+                                }
+                            }
                         }
                     }
                 }
