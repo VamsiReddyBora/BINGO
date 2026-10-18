@@ -1098,7 +1098,7 @@ fun GameScreen(
                                         else -> "let's have some coffee, $activePlayerName is sleeping I think..."
                                     }
                                 }
-                                msg to Color(0xFF22C55E)
+                                msg to (if (tokens.isDark) Color.White else Color.Black)
                             }
                         }
 

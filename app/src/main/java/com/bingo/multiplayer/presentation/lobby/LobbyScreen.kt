@@ -86,11 +86,12 @@ fun LobbyScreen(
     isNearbyNetwork: Boolean = false,
     hasActiveMatch: Boolean = false,
     isCheckingCompatibility: Boolean = false,
+    lobbyCountdownSeconds: Int = -1,
     onRejoinMatch: () -> Unit = {},
     onStartGame: () -> Unit,
     onBack: () -> Unit
 ) {
-    BackHandler {
+    BackHandler(enabled = lobbyCountdownSeconds < 0) {
         onBack()
     }
 
@@ -262,16 +263,16 @@ fun LobbyScreen(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(32.dp)
+                        .size(28.dp)
                         .clip(RoundedCornerShape(8.dp))
-                        .clickable(onClick = onBack),
+                        .clickable(enabled = lobbyCountdownSeconds < 0, onClick = onBack),
                     contentAlignment = Alignment.CenterStart
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = "Back",
                         tint = tokens.cellNeutralText,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(20.dp)
                     )
                 }
 
@@ -279,35 +280,15 @@ fun LobbyScreen(
 
                 Text(
                     text = if (isHost) "Host Lobby" else "Match Lobby",
-                    fontSize = 20.sp,
+                    fontSize = 17.sp,
                     fontWeight = FontWeight.Bold,
                     color = tokens.cellNeutralText
                 )
 
                 Spacer(modifier = Modifier.weight(1f))
 
-                // Refresh Button
-                IconButton(
-                    onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onRefresh()
-                        Toast.makeText(context, "Checking for players…", Toast.LENGTH_SHORT).show()
-                    }
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Refresh,
-                        contentDescription = "Refresh",
-                        tint = tokens.accentBrand,
-                        modifier = Modifier
-                            .size(22.dp)
-                            .then(if (isRefreshing) Modifier.rotate(rotationAngle) else Modifier)
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(8.dp))
-
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Wifi, contentDescription = "Ping", modifier = Modifier.size(17.dp), tint = tokens.cellNeutralText)
+                    Icon(Icons.Default.Wifi, contentDescription = "Ping", modifier = Modifier.size(16.dp), tint = tokens.cellNeutralText)
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
                         text = when {
@@ -334,61 +315,9 @@ fun LobbyScreen(
                 }
             }
 
-            if (hasActiveMatch) {
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = if (tokens.isDark) Color(0xFF1E242B) else Color(0xFFEFF6FF),
-                    border = BorderStroke(1.5.dp, if (tokens.isDark) Color(0xFF2563EB) else Color(0xFF3B82F6)),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 14.dp)
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(14.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(8.dp)
-                                        .background(Color(0xFF10B981), CircleShape)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "MATCH IN PROGRESS",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    letterSpacing = 0.5.sp,
-                                    color = Color(0xFF10B981)
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "Your game is running! Tap to return.",
-                                fontSize = 12.sp,
-                                color = tokens.cellNeutralText
-                            )
-                        }
-                        Button(
-                            onClick = onRejoinMatch,
-                            shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (tokens.isDark) Color(0xFF2563EB) else Color(0xFF1D4ED8),
-                                contentColor = Color.White
-                            ),
-                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
-                        ) {
-                            Text("Rejoin ➔", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                        }
-                    }
-                }
-            }
+            Spacer(modifier = Modifier.height(14.dp))
 
-            // ── Room Code Card ──
+            // ── Room Code Card (Redesigned Compact & Clean) ──
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
@@ -396,32 +325,36 @@ fun LobbyScreen(
                 border = BorderStroke(1.dp, tokens.surfaceBorder),
                 shadowElevation = 1.dp
             ) {
-                Column(
-                    modifier = Modifier.padding(18.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(
-                        text = if (isNearbyNetwork) "NEARBY LAN MATCH" else "ROOM CODE",
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.sp,
-                        color = tokens.accentBrand
-                    )
+                    Column(modifier = Modifier.weight(1f, fill = false)) {
+                        Text(
+                            text = if (isNearbyNetwork) "NEARBY LAN MATCH" else "ROOM CODE",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp,
+                            color = tokens.accentBrand
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = roomCode,
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Black,
+                            fontFamily = FontFamily.Monospace,
+                            letterSpacing = 3.sp,
+                            color = tokens.cellNeutralText
+                        )
+                    }
 
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    Text(
-                        text = roomCode,
-                        fontSize = 34.sp,
-                        fontWeight = FontWeight.Black,
-                        fontFamily = FontFamily.Monospace,
-                        letterSpacing = 6.sp,
-                        color = tokens.cellNeutralText
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         OutlinedButton(
                             onClick = {
                                 val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -430,18 +363,20 @@ fun LobbyScreen(
                             },
                             shape = RoundedCornerShape(8.dp),
                             border = BorderStroke(1.dp, tokens.surfaceBorder),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = tokens.textPrimary)
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = tokens.textPrimary),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                            modifier = Modifier.height(34.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.ContentCopy,
-                                contentDescription = null,
-                                modifier = Modifier.size(15.dp),
+                                contentDescription = "Copy Code",
+                                modifier = Modifier.size(14.dp),
                                 tint = tokens.textPrimary
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
                             Text(
                                 text = "Copy",
-                                fontSize = 12.sp,
+                                fontSize = 11.5.sp,
                                 color = tokens.textPrimary,
                                 fontWeight = FontWeight.SemiBold
                             )
@@ -454,18 +389,20 @@ fun LobbyScreen(
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = tokens.primaryButtonBg,
                                     contentColor = tokens.primaryButtonText
-                                )
+                                ),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                modifier = Modifier.height(34.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.QrCode,
                                     contentDescription = "Show QR Code",
-                                    modifier = Modifier.size(16.dp),
+                                    modifier = Modifier.size(15.dp),
                                     tint = tokens.primaryButtonText
                                 )
-                                Spacer(modifier = Modifier.width(6.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = "Show QR",
-                                    fontSize = 12.sp,
+                                    text = "QR",
+                                    fontSize = 11.5.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = tokens.primaryButtonText
                                 )
@@ -474,11 +411,13 @@ fun LobbyScreen(
                             OutlinedButton(
                                 onClick = { showOnlineQrDialog = true },
                                 shape = RoundedCornerShape(8.dp),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = tokens.textPrimary)
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = tokens.textPrimary),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                                modifier = Modifier.height(34.dp)
                             ) {
-                                Icon(Icons.Default.QrCode, contentDescription = "Show QR Code", modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("QR", fontSize = 12.sp)
+                                Icon(Icons.Default.QrCode, contentDescription = "Show QR Code", modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text("QR", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                             }
                             Button(
                                 onClick = {
@@ -493,18 +432,20 @@ fun LobbyScreen(
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = tokens.primaryButtonBg,
                                     contentColor = tokens.primaryButtonText
-                                )
+                                ),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                modifier = Modifier.height(34.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Share,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(15.dp),
+                                    contentDescription = "Share Code",
+                                    modifier = Modifier.size(14.dp),
                                     tint = tokens.primaryButtonText
                                 )
-                                Spacer(modifier = Modifier.width(6.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = "Share Code",
-                                    fontSize = 12.sp,
+                                    text = "Share",
+                                    fontSize = 11.5.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = tokens.primaryButtonText
                                 )
@@ -524,7 +465,7 @@ fun LobbyScreen(
                 border = BorderStroke(1.dp, tokens.surfaceBorder),
                 shadowElevation = 1.dp
             ) {
-                Column(modifier = Modifier.padding(18.dp)) {
+                Column(modifier = Modifier.padding(14.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -851,7 +792,7 @@ fun LobbyScreen(
                     border = BorderStroke(1.dp, tokens.surfaceBorder),
                     shadowElevation = 1.dp
                 ) {
-                    Column(modifier = Modifier.padding(18.dp)) {
+                    Column(modifier = Modifier.padding(14.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1046,7 +987,7 @@ fun LobbyScreen(
                     border = BorderStroke(1.dp, tokens.surfaceBorder),
                     shadowElevation = 1.dp
                 ) {
-                Column(modifier = Modifier.padding(18.dp)) {
+                Column(modifier = Modifier.padding(14.dp)) {
                     Text(
                         text = "FIND PLAYER BY USERNAME",
                         fontSize = 11.sp,
@@ -1418,7 +1359,7 @@ fun LobbyScreen(
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         onStartGame()
                     },
-                    enabled = allReady && !isCheckingCompatibility,
+                    enabled = allReady && !isCheckingCompatibility && lobbyCountdownSeconds < 0,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(50.dp),
@@ -1433,12 +1374,13 @@ fun LobbyScreen(
                         imageVector = Icons.Default.PlayArrow,
                         contentDescription = null,
                         modifier = Modifier.size(18.dp),
-                        tint = if (allReady) tokens.primaryButtonText else tokens.textMuted
+                        tint = if (allReady && lobbyCountdownSeconds < 0) tokens.primaryButtonText else tokens.textMuted
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     val activePlayerCount = effectivePlayers.count { it.lobbyReadyStatus != LobbyLifecycleEngine.STATUS_LEFT_LOBBY }
                     Text(
                         text = when {
+                            lobbyCountdownSeconds in 0..3 -> "Starting Match…"
                             isCheckingCompatibility -> "Checking connection…"
                             activePlayerCount < 2 -> "Need at least 2 Players"
                             !allReady -> "Waiting for Players to be Ready ($readyCount/$activePlayerCount)"
@@ -1446,7 +1388,7 @@ fun LobbyScreen(
                         },
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp,
-                        color = if (allReady) tokens.primaryButtonText else tokens.textMuted
+                        color = if (allReady && lobbyCountdownSeconds < 0) tokens.primaryButtonText else tokens.textMuted
                     )
                 }
             } else {
@@ -1710,4 +1652,58 @@ fun LobbyScreen(
             )
         }
     }
+
+    // ── Synchronized 3-Second Countdown Dialog (Lobby Match Starting) ──
+    if (lobbyCountdownSeconds in 0..3) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.55f))
+        ) {
+            AlertDialog(
+                onDismissRequest = { /* Modal: keep user in countdown */ },
+                shape = RoundedCornerShape(24.dp),
+                containerColor = tokens.surface,
+                icon = {
+                    Box(
+                        modifier = Modifier
+                            .size(64.dp)
+                            .background(tokens.accentBrand.copy(alpha = 0.15f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (lobbyCountdownSeconds > 0) "$lobbyCountdownSeconds" else "🚀",
+                            fontSize = 32.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = tokens.accentBrand
+                        )
+                    }
+                },
+                title = {
+                    Text(
+                        text = if (lobbyCountdownSeconds > 0) "Game begins in $lobbyCountdownSeconds" else "Game begins!",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 20.sp,
+                        color = tokens.cellNeutralText,
+                        textAlign = TextAlign.Center
+                    )
+                },
+                text = {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "Get ready! Synchronizing game boards…",
+                            fontSize = 14.sp,
+                            color = tokens.cellNeutralText.copy(alpha = 0.8f),
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                },
+                confirmButton = {}
+            )
+        }
+    }
 }
+

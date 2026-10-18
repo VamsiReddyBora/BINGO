@@ -301,7 +301,7 @@ object OngoingMatchStore {
             }
 
             val age = System.currentTimeMillis() - data.lastUpdatedAt
-            val isExpired = age >= (24 * 60 * 60 * 1000L) // Active ongoing matches do not prematurely expire
+            val isExpired = if (data.is1v1Match) age >= (24 * 60 * 60 * 1000L) else age >= MAX_MATCH_AGE_MS
             if (!isExpired && data.roomCode.isNotBlank()) {
                 data
             } else {

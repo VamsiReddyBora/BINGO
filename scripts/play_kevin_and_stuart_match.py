@@ -160,12 +160,13 @@ class SimulatedPlayer:
             time.sleep(0.02)
         return None
 
-    def wait_for_invite(self, timeout: float = 5.0) -> Optional[dict]:
+    def wait_for_invite(self, target_room_code: Optional[str] = None, timeout: float = 5.0) -> Optional[dict]:
         start = time.time()
         while time.time() - start < timeout:
             with self.lock:
-                if self.invites_received:
-                    return self.invites_received.pop(0)
+                for idx, inv in enumerate(self.invites_received):
+                    if target_room_code is None or inv.get("roomCode") == target_room_code:
+                        return self.invites_received.pop(idx)
             time.sleep(0.05)
         return None
 
@@ -203,7 +204,7 @@ def run_full_kevin_and_stuart_match():
     kevin.send_invite("stuart", room_code)
 
     # 3. Stuart receives invite
-    invite = stuart.wait_for_invite(timeout=4.0)
+    invite = stuart.wait_for_invite(target_room_code=room_code, timeout=4.0)
     assert invite is not None, "FAILED: Stuart did not receive Game Invite!"
     invite_latency = (time.time() - t_invite_send) * 1000.0
     print(f" -> Stuart received invite! Latency: {invite_latency:.1f} ms")

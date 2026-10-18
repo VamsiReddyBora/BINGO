@@ -98,6 +98,7 @@ fun MainMenuScreen(
     val currentAccountUid = userProfile.uid.takeIf { it.isNotBlank() && it != "guest" }
     var selectedAiDifficulty by remember { mutableStateOf(AiDifficulty.EASY) }
     var ongoingMatch by remember { mutableStateOf(OngoingMatchStore.getOngoingMatch(context, currentAccountUid)) }
+    var isMatchVerifiedActive by remember { mutableStateOf(false) }
 
     // ── Ping 1-Second Stabilized Display (Matches GameScreen exactly) ──
     val realtimePing by com.bingo.multiplayer.domain.network.NetworkPingMonitor.pingMs.collectAsState()
@@ -111,7 +112,11 @@ fun MainMenuScreen(
     }
 
     LaunchedEffect(currentAccountUid) {
-        ongoingMatch = OngoingMatchStore.getOngoingMatch(context, currentAccountUid)
+        val match = OngoingMatchStore.getOngoingMatch(context, currentAccountUid)
+        ongoingMatch = match
+        if (match == null) {
+            isMatchVerifiedActive = false
+        }
     }
 
     // Proactive background down-moment pre-fetching:
@@ -132,22 +137,30 @@ fun MainMenuScreen(
         }
     }
 
-    LaunchedEffect(ongoingMatch?.roomCode) {
-        val ongoing = ongoingMatch ?: return@LaunchedEffect
-        while (true) {
+    LaunchedEffect(ongoingMatch?.roomCode, currentAccountUid) {
+        val ongoing = ongoingMatch ?: run {
+            isMatchVerifiedActive = false
+            return@LaunchedEffect
+        }
+        while (isActive) {
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 try {
                     val session = com.bingo.multiplayer.domain.network.OnlineRoomRegistry.getRoom(ongoing.roomCode)
-                    // Only clear if the room was successfully queried AND is confirmed closed
-                    if (session != null && session.status == "CLOSED" && !ongoing.is1v1Match && ongoing.participants.size != 2) {
+                    // Strictly clear if room is missing or not currently in PLAYING status
+                    if (session == null || session.status != "PLAYING") {
                         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                             OngoingMatchStore.clearOngoingMatch(context, currentAccountUid)
                             ongoingMatch = null
+                            isMatchVerifiedActive = false
+                        }
+                    } else {
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            isMatchVerifiedActive = true
                         }
                     }
                 } catch (_: Exception) {}
             }
-            kotlinx.coroutines.delay(5000L)
+            kotlinx.coroutines.delay(4000L)
         }
     }
 
@@ -160,7 +173,7 @@ fun MainMenuScreen(
         // Estimated height of content up to bottom of Nearby Network card:
         // Top padding 20.dp + Top bar 36.dp + Spacers ~40.dp + AI card ~92.dp + Online card ~72.dp + Nearby card ~72.dp ~= 332.dp
         // If ongoing match is present, it adds ~88.dp.
-        val topContentHeight = if (ongoingMatch != null) 420.dp else 332.dp
+        val topContentHeight = if (ongoingMatch != null && isMatchVerifiedActive) 420.dp else 332.dp
         // Floating bottom navigation pill clearance from bottom: pill height (~52.dp) + bottom padding (16.dp) + margin = ~80.dp
         val navPillClearance = 80.dp
         val buttonHeight = 40.dp
@@ -265,7 +278,7 @@ fun MainMenuScreen(
             Spacer(modifier = Modifier.height(18.dp))
 
             // ── Ongoing Match Card (Rejoin) ──
-            if (ongoingMatch != null) {
+            if (ongoingMatch != null && isMatchVerifiedActive) {
                 val ongoing = ongoingMatch!!
                 Surface(
                     shape = RoundedCornerShape(16.dp),
@@ -317,6 +330,7 @@ fun MainMenuScreen(
                                 onClick = {
                                     OngoingMatchStore.clearOngoingMatch(context, currentAccountUid)
                                     ongoingMatch = null
+                                    isMatchVerifiedActive = false
                                 },
                                 modifier = Modifier
                                     .weight(1f)

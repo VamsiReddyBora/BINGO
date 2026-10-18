@@ -110,7 +110,12 @@ fun RootNavGraph(
     var isDynamicBoard by remember { mutableStateOf(false) }
     var selectedDynamicGridSize by remember { mutableIntStateOf(5) }
     var isHostLeftGame by remember { mutableStateOf(false) }
+    var lobbyCountdownSeconds by remember { mutableIntStateOf(-1) }
+    var lobbyStartJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val disconnectRoom: () -> Unit = { 
+        lobbyStartJob?.cancel()
+        lobbyStartJob = null
+        lobbyCountdownSeconds = -1
         if (isUsingP2p) {
             lanP2pSync.disconnect()
             com.bingo.multiplayer.domain.network.HotspotAndWifiManager.disconnectFromWifi(context)
@@ -934,7 +939,7 @@ fun RootNavGraph(
             expectedAccountUid = expectedAccountUid
         )
         if (!recorded) return false
-        if (stableResultId == null) com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context, getLocalUid())
+        com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context, getLocalUid())
         if (currentMatchSeed != 0L) {
             onlineRoomSync.recordCompletedSeed(currentMatchSeed)
         }
@@ -1200,7 +1205,19 @@ fun RootNavGraph(
         pickedNumbersHistory.clear()
         pickedByPlayerHistory.clear()
         pickedTurnIdsHistory.clear()
-        matchChatHistory = emptyList()
+        val hostPlayer = matchParticipants.firstOrNull { it.isHost } ?: matchParticipants.firstOrNull()
+        val isLocalHost = hostPlayer != null && isPlayerMe(hostPlayer)
+        val hostDisplay = if (isLocalHost) "You" else (hostPlayer?.displayName?.ifBlank { hostPlayer.username } ?: "Host")
+        val hostInitialMsgText = if (isLocalHost) "👑 You are the host" else "👑 $hostDisplay is the host"
+        val hostInitialChatMessage = InGameChatMessage(
+            id = System.currentTimeMillis() + (0..1000).random(),
+            text = hostInitialMsgText,
+            isSelf = false,
+            senderName = null,
+            timestamp = System.currentTimeMillis(),
+            isSystemMessage = true
+        )
+        matchChatHistory = listOf(hostInitialChatMessage)
         latestIncomingChatMessage = null
         isProcessingTurn = false
         isGameOver = false
@@ -1269,7 +1286,7 @@ fun RootNavGraph(
                     turnNumber = 1,
                     currentTurnPlayerId = currentTurnPlayerId,
                     randomizedTurnOrder = generatedOrder,
-                    chatMessages = emptyList(),
+                    chatMessages = matchChatHistory,
                     is1v1Match = (matchParticipants.size == 2),
                     accountUid = myUid
                 )
@@ -1970,14 +1987,29 @@ fun RootNavGraph(
                         isLocalBoardReady = true
                         isOpponentBoardReady = true
                         countdownSeconds = -1
-                        startNewGame(
-                            mode = if (isUsingP2p) GameMode.NEARBY_NETWORK else GameMode.ONLINE_ROOM,
-                            difficulty = AiDifficulty.EASY,
-                            size = packet.boardSize,
-                            firstTurnPlayerId = packet.currentTurnPlayerId.takeIf { it.isNotBlank() },
-                            hostSeed = packet.seed,
-                            incomingPlayersList = packet.players
-                        )
+                        lobbyStartJob?.cancel()
+                        lobbyStartJob = coroutineScope.launch {
+                            try {
+                                lobbyCountdownSeconds = 3
+                                delay(1000L)
+                                lobbyCountdownSeconds = 2
+                                delay(1000L)
+                                lobbyCountdownSeconds = 1
+                                delay(1000L)
+                                lobbyCountdownSeconds = 0
+                                delay(300L)
+                            } finally {
+                                lobbyCountdownSeconds = -1
+                            }
+                            startNewGame(
+                                mode = if (isUsingP2p) GameMode.NEARBY_NETWORK else GameMode.ONLINE_ROOM,
+                                difficulty = AiDifficulty.EASY,
+                                size = packet.boardSize,
+                                firstTurnPlayerId = packet.currentTurnPlayerId.takeIf { it.isNotBlank() },
+                                hostSeed = packet.seed,
+                                incomingPlayersList = packet.players
+                            )
+                        }
                     }
                 }
             }
@@ -3691,7 +3723,7 @@ fun RootNavGraph(
 
         // 5. Lobby Screen with Real-Time Presence & Refresh
         composable(Screen.Lobby.route) {
-            BackHandler {
+            BackHandler(enabled = lobbyCountdownSeconds < 0) {
                 if (isHosting) {
                     broadcastPacket(
                         RoomMessagePacket(
@@ -3745,6 +3777,7 @@ fun RootNavGraph(
                 inactivityResetToken = lobbyInactivityResetToken,
                 isNearbyNetwork = (currentGameMode == GameMode.NEARBY_NETWORK),
                 hasActiveMatch = hasActiveOngoing,
+                lobbyCountdownSeconds = lobbyCountdownSeconds,
                 onRejoinMatch = {
                     val data = ongoingMatchData ?: return@LobbyScreen
                     restoreAndRejoinOngoingMatch(data)
@@ -3959,14 +3992,29 @@ fun RootNavGraph(
                                 navController.navigate(Screen.ManualBoardDesign.route)
                             } else {
                                 boardSize = targetSize
-                                startNewGame(
-                                    mode = if (isUsingP2p) GameMode.NEARBY_NETWORK else GameMode.ONLINE_ROOM,
-                                    difficulty = AiDifficulty.EASY,
-                                    size = targetSize,
-                                    firstTurnPlayerId = chosenFirstTurnUid,
-                                    hostSeed = seed,
-                                    incomingPlayersList = sanitizedList
-                                )
+                                lobbyStartJob?.cancel()
+                                lobbyStartJob = coroutineScope.launch {
+                                    try {
+                                        lobbyCountdownSeconds = 3
+                                        delay(1000L)
+                                        lobbyCountdownSeconds = 2
+                                        delay(1000L)
+                                        lobbyCountdownSeconds = 1
+                                        delay(1000L)
+                                        lobbyCountdownSeconds = 0
+                                        delay(300L)
+                                    } finally {
+                                        lobbyCountdownSeconds = -1
+                                    }
+                                    startNewGame(
+                                        mode = if (isUsingP2p) GameMode.NEARBY_NETWORK else GameMode.ONLINE_ROOM,
+                                        difficulty = AiDifficulty.EASY,
+                                        size = targetSize,
+                                        firstTurnPlayerId = chosenFirstTurnUid,
+                                        hostSeed = seed,
+                                        incomingPlayersList = sanitizedList
+                                    )
+                                }
                             }
                         } finally {
                             isCheckingMatchCompatibility = false

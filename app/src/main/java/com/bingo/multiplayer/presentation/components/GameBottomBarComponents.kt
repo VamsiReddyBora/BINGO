@@ -19,6 +19,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -135,7 +136,9 @@ fun BottomTurnProfileVsProfile(
     opponentUsername: String?,
     modifier: Modifier = Modifier,
     isOpponentDisconnected: Boolean = false,
-    isOpponentAway: Boolean = false
+    isOpponentAway: Boolean = false,
+    isMeHost: Boolean = false,
+    isOpponentHost: Boolean = false
 ) {
     val tokens = BingoTheme.colors
 
@@ -180,23 +183,32 @@ fun BottomTurnProfileVsProfile(
             myRingColor.copy(alpha = 0.85f)
         }
 
-        Box(
-            modifier = Modifier
-                .size(mySize)
-                .clip(CircleShape)
-                .border(
-                    width = if (isMyTurn && !isGameOver) 2.5.dp else 1.5.dp,
-                    color = myBorderColor,
-                    shape = CircleShape
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            PlayerAvatar(
-                avatarPathOrUri = myAvatarUrl,
-                displayName = myDisplayName ?: "You",
-                username = myUsername,
-                size = mySize
-            )
+        Box(contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier
+                    .size(mySize)
+                    .clip(CircleShape)
+                    .border(
+                        width = if (isMyTurn && !isGameOver) 2.5.dp else 1.5.dp,
+                        color = myBorderColor,
+                        shape = CircleShape
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                PlayerAvatar(
+                    avatarPathOrUri = myAvatarUrl,
+                    displayName = myDisplayName ?: "You",
+                    username = myUsername,
+                    size = mySize
+                )
+            }
+            if (isMeHost) {
+                Text(
+                    text = "👑",
+                    fontSize = if (mySize > 35.dp) 16.sp else 12.sp,
+                    modifier = Modifier.align(Alignment.TopStart).offset(x = (-4).dp, y = (-6).dp)
+                )
+            }
         }
 
         Text(
@@ -232,6 +244,13 @@ fun BottomTurnProfileVsProfile(
                     displayName = opponentName,
                     username = opponentUsername,
                     size = oppSize
+                )
+            }
+            if (isOpponentHost) {
+                Text(
+                    text = "👑",
+                    fontSize = if (oppSize > 35.dp) 16.sp else 12.sp,
+                    modifier = Modifier.align(Alignment.TopStart).offset(x = (-4).dp, y = (-6).dp)
                 )
             }
             if (isOpponentDisconnected || isOpponentAway) {
@@ -281,6 +300,9 @@ fun MultiplayerTurnSpotlightBar(
 
     if (activePlayers.size <= 2) {
         val oppPlayer = activePlayers.firstOrNull { it.id != myPlayerId }
+        val myPlayer = activePlayers.firstOrNull { it.id == myPlayerId }
+        val isMeHost = myPlayer?.isHost ?: (players.find { it.id == myPlayerId }?.isHost ?: false)
+        val isOppHost = oppPlayer?.isHost ?: (players.find { it.id != myPlayerId }?.isHost ?: false)
         val isOppDisconnected = oppPlayer?.let { p ->
             disconnectedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, p.id) }
         } ?: false
@@ -299,7 +321,9 @@ fun MultiplayerTurnSpotlightBar(
             opponentUsername = opponentUsername,
             modifier = modifier,
             isOpponentDisconnected = isOppDisconnected,
-            isOpponentAway = isOppAway
+            isOpponentAway = isOppAway,
+            isMeHost = isMeHost,
+            isOpponentHost = isOppHost
         )
     } else {
         val tokens = BingoTheme.colors
@@ -372,6 +396,13 @@ fun MultiplayerTurnSpotlightBar(
                             size = 28.dp
                         )
                     }
+                    if (p.isHost) {
+                        Text(
+                            text = "👑",
+                            fontSize = 12.sp,
+                            modifier = Modifier.align(Alignment.TopStart).offset(x = (-4).dp, y = (-6).dp)
+                        )
+                    }
                     if (isDisconnected || isAway || isEliminated) {
                         Box(
                             modifier = Modifier
@@ -422,6 +453,13 @@ fun MultiplayerTurnSpotlightBar(
                             size = 44.dp
                         )
                     }
+                    if (p.isHost) {
+                        Text(
+                            text = "👑",
+                            fontSize = 16.sp,
+                            modifier = Modifier.align(Alignment.TopStart).offset(x = (-4).dp, y = (-6).dp)
+                        )
+                    }
                     if (isDisconnected || isAway || isEliminated) {
                         Box(
                             modifier = Modifier
@@ -464,6 +502,13 @@ fun MultiplayerTurnSpotlightBar(
                             displayName = p.displayName,
                             username = p.username,
                             size = 28.dp
+                        )
+                    }
+                    if (p.isHost) {
+                        Text(
+                            text = "👑",
+                            fontSize = 12.sp,
+                            modifier = Modifier.align(Alignment.TopStart).offset(x = (-4).dp, y = (-6).dp)
                         )
                     }
                     if (isDisconnected || isAway || isEliminated) {
