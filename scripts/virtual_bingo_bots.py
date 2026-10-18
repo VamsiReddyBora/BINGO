@@ -15,10 +15,10 @@ from typing import Dict, List, Optional, Set
 import paho.mqtt.client as mqtt
 
 # --- Configuration ---
-BROKER_HOST = "p0812f88.ala.asia-southeast1.emqxsl.com"
+BROKER_HOST = "broker.emqx.io"
 BROKER_PORT = 8883
-BROKER_USER = "Bora"
-BROKER_PASS = "bora7989"
+BROKER_USER = ""
+BROKER_PASS = ""
 
 # 5 Virtual Bots (Kevin is Host on emulator)
 BOTS_CONFIG = [
@@ -175,9 +175,9 @@ class BotRunner:
             self.publish(f"R|{b_id}|READY|{cfg['username']}|{cfg['name']}|1|bot_instance")
             print(f"  ➜ {cfg['name']} joined and set status to READY")
 
-    def on_disconnect(self, client, userdata, rc, properties=None):
+    def on_disconnect(self, client, userdata, *args, **kwargs):
         if self.running:
-            print(f"[Network] Disconnected from broker (rc={rc}). Attempting reconnect...")
+            print(f"[Network] Disconnected from broker. Attempting reconnect...")
 
     def on_message(self, client, userdata, msg):
         try:

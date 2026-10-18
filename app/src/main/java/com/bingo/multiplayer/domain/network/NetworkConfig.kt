@@ -13,11 +13,13 @@ object NetworkConfig {
     private const val TAG = "NetworkConfig"
 
     /**
-     * Primary low-latency MQTT broker endpoint with distributed global edge (EMQX Serverless Asia Pacific).
+     * Primary low-latency MQTT broker endpoint with distributed global edge.
+     * Uses EMQX public cluster with automatic failover between TLS (port 8883) and low-latency TCP (port 1883).
      */
-    const val BROKER_URL = "ssl://p0812f88.ala.asia-southeast1.emqxsl.com:8883"
-    const val MQTT_USERNAME = "Bora"
-    const val MQTT_PASSWORD = "bora7989"
+    const val BROKER_URL = "ssl://broker.emqx.io:8883"
+    const val BROKER_TCP_URL = "tcp://broker.emqx.io:1883"
+    const val MQTT_USERNAME = ""
+    const val MQTT_PASSWORD = ""
 
     /**
      * KeyValue cloud storage endpoint for user registry & backups.
@@ -49,6 +51,7 @@ object NetworkConfig {
             options.userName = MQTT_USERNAME
             options.password = MQTT_PASSWORD.toCharArray()
         }
+        options.serverURIs = arrayOf(BROKER_URL, BROKER_TCP_URL)
         options.socketFactory = if (BROKER_URL.startsWith("ssl://")) {
             LowLatencySSLSocketFactory()
         } else {

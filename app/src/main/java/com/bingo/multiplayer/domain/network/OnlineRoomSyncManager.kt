@@ -929,7 +929,7 @@ class OnlineRoomSyncManager(
                     }
 
                     // Prevent status toggling / clobbering via isolated LobbyLifecycleEngine:
-                    val isLiveMqttPeer = existing != null && (now - existing.lastSeenTimestamp) < 15_000L
+                    val isLiveMqttPeer = existing != null && (now - existing.lastSeenTimestamp) < 15_000L && existing.readyVersion >= p.readyVersion
                     val (effReady, effVer) = when {
                         isLocal -> Pair(localP.lobbyReadyStatus, localP.readyVersion)
                         isLiveMqttPeer -> Pair(existing!!.lobbyReadyStatus, existing.readyVersion)
@@ -962,8 +962,8 @@ class OnlineRoomSyncManager(
             _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
 
             // 3. Dual-Channel Cloud Room Status Fallback:
-            // ONLY if the host has started the game ("PLAYING"), local player is a guest,
-            // guest is actively in STATUS_READY in the lobby, and seed is valid, unstarted, and not completed!
+            // If the host has started the game ("PLAYING"), local player is a guest,
+            // and seed is valid, unstarted, and not completed, transition into game!
             if (cloudSession.status == "PLAYING" &&
                 !localP.isHost &&
                 cloudSession.currentSeed != 0L &&

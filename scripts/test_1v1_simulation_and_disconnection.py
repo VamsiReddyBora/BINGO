@@ -25,10 +25,10 @@ import threading
 from typing import Dict, List, Optional, Set
 import paho.mqtt.client as mqtt
 
-BROKER_HOST = "p0812f88.ala.asia-southeast1.emqxsl.com"
+BROKER_HOST = "broker.emqx.io"
 BROKER_PORT = 8883
-BROKER_USER = "Bora"
-BROKER_PASS = "bora7989"
+BROKER_USER = ""
+BROKER_PASS = ""
 
 passed_tests = 0
 failed_tests = 0
@@ -111,33 +111,48 @@ class SimulatedPeer:
         self.client.username_pw_set(BROKER_USER, BROKER_PASS)
         self.client.tls_set(cert_reqs=ssl.CERT_NONE)
         self.client.tls_insecure_set(True)
+        self.subscribed = threading.Event()
+        self.client.on_subscribe = self._on_sub
         self.client.on_message = self._on_msg
-        
+
+    def _on_sub(self, client, userdata, mid, rc, props=None):
+        self.subscribed.set()
+
     def _on_msg(self, client, userdata, msg):
         payload = msg.payload.decode("utf-8").strip()
         with self.lock:
             self.received_messages.append(payload)
-            
+
     def connect(self):
+        self.subscribed.clear()
         self.client.connect(BROKER_HOST, BROKER_PORT, 30)
         self.client.subscribe(self.topic, qos=1)
         self.client.loop_start()
-        time.sleep(0.3)
-        
+        self.subscribed.wait(3.0)
+
     def disconnect(self):
         self.client.loop_stop()
         self.client.disconnect()
-        
+
     def send(self, payload: str):
         self.client.publish(self.topic, payload, qos=1)
 
     def send_json(self, data: dict):
         self.send(json.dumps(data))
-        
+
     def get_messages(self) -> List[str]:
         with self.lock:
             return list(self.received_messages)
-            
+
+    def wait_for_packet(self, prefix: str, timeout: float = 3.0) -> bool:
+        start = time.time()
+        while time.time() - start < timeout:
+            with self.lock:
+                if any(prefix in m for m in self.received_messages):
+                    return True
+            time.sleep(0.05)
+        return False
+
     def clear_messages(self):
         with self.lock:
             self.received_messages.clear()
@@ -380,18 +395,13 @@ def test_scenario_6_temporary_host_disconnection():
     
     # Kevin backgrounds app: sends HOST HOLD
     kevin.send(f"HH|{kevin.player_id}|17500")
-    time.sleep(0.5)
-    
-    stuart_received = stuart.get_messages()
-    assert any("HH|" in m for m in stuart_received), "Guest must receive Host Hold packet"
+    assert stuart.wait_for_packet("HH|"), "Guest must receive Host Hold packet"
     record_pass("Host Temporary Absence Freeze", "Guest receives HH packet, freezes turn at remaining 17.5s")
     record_pass("Guest Blocking Waiting Dialog", "Guest displays non-dismissible 'Host Unavailable' waiting dialog")
-    
+
     # Kevin resumes app: sends HOST RESUME
     kevin.send(f"HR|{kevin.player_id}|17500")
-    time.sleep(0.5)
-    stuart_received_after = stuart.get_messages()
-    assert any("HR|" in m for m in stuart_received_after), "Guest must receive Host Resumed packet"
+    assert stuart.wait_for_packet("HR|"), "Guest must receive Host Resumed packet"
     record_pass("Host Return & State Resumption", "Guest dismisses waiting popup, resumes turn with exactly 17.5s remaining")
     
     kevin.disconnect()
@@ -459,21 +469,16 @@ def test_scenario_8_manual_pause_and_resume():
         "pauseReason": "OPPONENT_AWAY", "frozenTurnSeconds": 17,
         "timestamp": int(time.time()*1000)
     })
-    time.sleep(0.5)
-    
-    stuart_received = stuart.get_messages()
-    assert any("GAME_PAUSED" in m for m in stuart_received), "Guest must receive GAME_PAUSED packet"
+    assert stuart.wait_for_packet("GAME_PAUSED"), "Guest must receive GAME_PAUSED packet"
     record_pass("Host Manual Pause Broadcast", "Host paused game at 17s; countdown frozen")
     record_pass("Non-Host Resume Lockdown", "Non-host UI displays paused banner; resume button disabled for guest")
-    
+
     # Kevin resumes match
     kevin.send_json({
         "type": "GAME_RESUMED", "playerId": kevin.player_id,
         "remainingTurnSeconds": 17, "timestamp": int(time.time()*1000)
     })
-    time.sleep(0.5)
-    stuart_received_after = stuart.get_messages()
-    assert any("GAME_RESUMED" in m for m in stuart_received_after), "Guest must receive GAME_RESUMED packet"
+    assert stuart.wait_for_packet("GAME_RESUMED"), "Guest must receive GAME_RESUMED packet"
     record_pass("Turn Resume with Preserved Remainder", "Game unfreezes with exactly 17 seconds (does not reset to 30s)")
     
     kevin.disconnect()
