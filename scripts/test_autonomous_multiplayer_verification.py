@@ -17,10 +17,10 @@ import random
 import threading
 import paho.mqtt.client as mqtt
 
-BROKER_HOST = "broker.emqx.io"
+BROKER_HOST = "p0812f88.ala.asia-southeast1.emqxsl.com"
 BROKER_PORT = 8883
-BROKER_USER = ""
-BROKER_PASS = ""
+BROKER_USER = "Bora"
+BROKER_PASS = "bora7989"
 
 passed_tests = 0
 failed_tests = 0

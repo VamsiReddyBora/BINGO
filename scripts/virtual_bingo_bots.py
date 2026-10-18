@@ -15,10 +15,10 @@ from typing import Dict, List, Optional, Set
 import paho.mqtt.client as mqtt
 
 # --- Configuration ---
-BROKER_HOST = "broker.emqx.io"
+BROKER_HOST = "p0812f88.ala.asia-southeast1.emqxsl.com"
 BROKER_PORT = 8883
-BROKER_USER = ""
-BROKER_PASS = ""
+BROKER_USER = "Bora"
+BROKER_PASS = "bora7989"
 
 # 5 Virtual Bots (Kevin is Host on emulator)
 BOTS_CONFIG = [
