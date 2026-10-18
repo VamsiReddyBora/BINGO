@@ -81,6 +81,21 @@ android {
                         into "${rootDir}/releases/"
                         rename { "Bingo-${variant.versionName}.apk" }
                     }
+                    copy {
+                        from "${layout.buildDirectory.get()}/outputs/apk/release/Bingo.apk"
+                        into "${rootDir}/releases/"
+                        rename { "Bingo.apk" }
+                    }
+                    copy {
+                        from "${layout.buildDirectory.get()}/outputs/apk/release/Bingo.apk"
+                        into "${rootDir}/.."
+                        rename { "Bingo.apk" }
+                    }
+                    copy {
+                        from "${layout.buildDirectory.get()}/outputs/apk/release/Bingo.apk"
+                        into "${rootDir}/.."
+                        rename { "Bingo-${variant.versionName}.apk" }
+                    }
                 }
             }
         }
