@@ -41,7 +41,8 @@ object NotificationPolicy {
 
     fun eligible(event: NotificationEvent, account: NotificationAccount?, now: Long, push: Boolean = false): Boolean {
         if (account == null || !fresh(event, now)) return false
-        if (event.recipientUid != account.uid || notificationUsername(event.recipientUsername) != account.username) return false
+        if (event.recipientUid.isNotBlank() && event.recipientUid != account.uid) return false
+        if (notificationUsername(event.recipientUsername) != account.username) return false
         if (event.senderUid.isBlank() || event.senderUid == account.uid || notificationUsername(event.senderUsername) == account.username) return false
         if (event.id.isBlank() || event.id.length > 200 || event.senderDisplayName.length > 80) return false
         if (event.kind == NotificationKind.GAME_INVITE && !event.roomCode.matches(Regex("[A-Z0-9]{6}"))) return false

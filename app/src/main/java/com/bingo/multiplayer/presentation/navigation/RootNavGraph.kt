@@ -479,7 +479,10 @@ fun RootNavGraph(
         if (username.isNullOrBlank()) {
             onDispose {}
         } else {
-            val inviteListener = com.bingo.multiplayer.domain.network.GameInviteManager.startInviteListener(username) {
+            val inviteListener = com.bingo.multiplayer.domain.network.GameInviteManager.startInviteListener(username) { invite ->
+                val myUid = currentAuthUser?.uid.orEmpty()
+                val enriched = invite.copy(recipientUid = myUid, recipientUsername = username)
+                com.bingo.multiplayer.domain.network.GameInviteManager.stageInvite(enriched)
                 NotificationRuntime.account(context)?.let { NotificationWork.sync(context, it) }
             }
             val requestListener = friendsRepository.startListeningForRequests(
@@ -754,10 +757,17 @@ fun RootNavGraph(
     LaunchedEffect(Unit) {
         com.bingo.multiplayer.domain.network.GameInviteManager.foregroundInviteFlow.collect { invite ->
             val account = NotificationRuntime.account(context) ?: return@collect
-            if (!NotificationRuntime.isBusy(context) &&
+            val currentRoute = navController.currentDestination?.route
+            val inActiveGame = (currentRoute == Screen.Game.route || currentRoute == Screen.ManualBoardDesign.route) && !isGameOver
+            val myUid = account.uid
+            val myUser = account.username
+            val enriched = if (invite.recipientUid.isBlank() || invite.recipientUsername.isBlank()) {
+                invite.copy(recipientUid = myUid, recipientUsername = myUser)
+            } else invite
+            if (!inActiveGame &&
                 com.bingo.multiplayer.core.designsystem.NotificationPreferences.canShowInAppInvite(context) &&
-                NotificationPolicy.eligible(invite.toEvent(), account, System.currentTimeMillis()) &&
-                !NotificationRuntime.ledger(context).handled(account.uid, invite.eventId)) incomingInvite = invite
+                NotificationPolicy.eligible(enriched.toEvent(), account, System.currentTimeMillis()) &&
+                !NotificationRuntime.ledger(context).handled(account.uid, enriched.eventId)) incomingInvite = enriched
         }
     }
     LaunchedEffect(incomingInvite?.eventId) {
@@ -3847,26 +3857,10 @@ fun RootNavGraph(
                     val expectedRoom = roomCode
                     val expectedUid = getLocalUid()
                     val expectedMode = currentGameMode
-                    val expectedPlayers = realTimePlayers.map { it.id }.sorted()
                     isCheckingMatchCompatibility = true
                     coroutineScope.launch {
                         try {
-                            if (expectedMode == GameMode.ONLINE_ROOM && expectedPlayers.size == 2 &&
-                                !onlineRoomSync.awaitReliableCompatibility(expectedPlayers, expectedUid)) {
-                                if (roomCode != expectedRoom || getLocalUid() != expectedUid ||
-                                    navController.currentDestination?.route != Screen.Lobby.route) return@launch
-                                val message = when (onlineRoomSync.reliableCompatibilityStatus(expectedPlayers, expectedUid)) {
-                                    com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.Status.INCOMPATIBLE ->
-                                        "Both players need the updated multiplayer app."
-                                    com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.Status.INVALID_PARTICIPANTS ->
-                                        "The lobby changed. Please leave and rejoin the room."
-                                    else -> "Waiting for the opponent's connection. Please try Start Match again."
-                                }
-                                Toast.makeText(context, message, Toast.LENGTH_LONG).show()
-                                return@launch
-                            }
                             if (roomCode != expectedRoom || getLocalUid() != expectedUid || currentGameMode != expectedMode ||
-                                realTimePlayers.map { it.id }.sorted() != expectedPlayers ||
                                 navController.currentDestination?.route != Screen.Lobby.route ||
                                 !com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.canStartMatch(realTimePlayers)) return@launch
                             val targetSize = com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.resolveBoardSize(isDynamicBoard, selectedDynamicGridSize, realTimePlayers.size)

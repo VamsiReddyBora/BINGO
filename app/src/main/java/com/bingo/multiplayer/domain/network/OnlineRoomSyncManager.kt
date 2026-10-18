@@ -929,10 +929,11 @@ class OnlineRoomSyncManager(
                     }
 
                     // Prevent status toggling / clobbering via isolated LobbyLifecycleEngine:
-                    val (effReady, effVer) = if (isLocal) {
-                        Pair(localP.lobbyReadyStatus, localP.readyVersion)
-                    } else {
-                        LobbyLifecycleEngine.reconcileReadyStatus(
+                    val isLiveMqttPeer = existing != null && (now - existing.lastSeenTimestamp) < 15_000L
+                    val (effReady, effVer) = when {
+                        isLocal -> Pair(localP.lobbyReadyStatus, localP.readyVersion)
+                        isLiveMqttPeer -> Pair(existing!!.lobbyReadyStatus, existing.readyVersion)
+                        else -> LobbyLifecycleEngine.reconcileReadyStatus(
                             currentStatus = existing?.lobbyReadyStatus ?: LobbyLifecycleEngine.STATUS_NOT_READY,
                             currentVersion = existing?.readyVersion ?: 0L,
                             incomingStatus = p.lobbyReadyStatus,
@@ -1111,7 +1112,9 @@ class OnlineRoomSyncManager(
                 if (packet.requestId.isBlank() || packet.connectionGeneration.isBlank()) return
                 broadcastPacket(RoomMessagePacket(type = "LOBBY_CAPS_RESPONSE", playerId = me.id,
                     targetPlayerId = packet.playerId, roomCode = code, requestId = packet.requestId,
-                    connectionGeneration = packet.connectionGeneration, protocolVersion = 2))
+                    connectionGeneration = packet.connectionGeneration, protocolVersion = 2,
+                    reliablePolicyVersion = com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.VERSION,
+                    hostWaitVersion = 1))
             } else {
                 val expected = lobbyChallenges[packet.requestId] ?: return
                 if (expected.room != code || expected.generation != roomConnectionId || expected.uid != me.id ||
