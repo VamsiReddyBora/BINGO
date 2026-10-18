@@ -268,6 +268,10 @@ fun RootNavGraph(
         if (!isPlayerDisconnected(playerId)) {
             disconnectedPlayerIds.add(playerId)
         }
+        val toRemove = awayPlayerIds.filter { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, playerId) }
+        if (toRemove.isNotEmpty()) {
+            awayPlayerIds.removeAll(toRemove.toSet())
+        }
     }
 
     fun markPlayerAway(playerId: String) {
@@ -4466,7 +4470,7 @@ fun RootNavGraph(
                         frozenMatchSeed = 0L
                     } else {
                         val initStatus = getPickerStatus()
-                        turnTimer = if (initStatus != com.bingo.multiplayer.domain.model.PlayerConnectionStatus.ONLINE) 3 else 30
+                        turnTimer = if (initStatus != com.bingo.multiplayer.domain.model.PlayerConnectionStatus.ONLINE) 5 else 30
                     }
 
                     var wasAwayOrOffline = (getPickerStatus() != com.bingo.multiplayer.domain.model.PlayerConnectionStatus.ONLINE)
@@ -4486,9 +4490,8 @@ fun RootNavGraph(
                                 continue
                             } else if (!wasAwayOrOffline && currentStatus != com.bingo.multiplayer.domain.model.PlayerConnectionStatus.ONLINE) {
                                 wasAwayOrOffline = true
-                                if (turnTimer > 3) {
-                                    turnTimer = 3
-                                }
+                                // If player minimizes during their turn (at any second from 30s to 0s),
+                                // their entire countdown runs smoothly from 30 to 0 without dropping.
                             }
                             turnTimer -= 1
                         }
