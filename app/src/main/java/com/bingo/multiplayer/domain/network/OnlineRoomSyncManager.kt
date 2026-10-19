@@ -612,6 +612,11 @@ class OnlineRoomSyncManager(
         currentRoomCode = cleanCode
         activePeerSeed = resumeMatchSeed
         val connectionId = roomConnectionId
+        val hostFromInitial = initialPlayers.firstOrNull { it.isHost }?.id
+        val initialHostId = if (player.isHost) player.id else hostFromInitial
+        if (initialHostId != null) {
+            currentHostId = initialHostId
+        }
         val isPlayerHost = player.isHost || (currentHostId != null && player.id == currentHostId)
         val safePlayer = player.copy(isHost = isPlayerHost)
         localPlayer = safePlayer
@@ -735,6 +740,26 @@ class OnlineRoomSyncManager(
                         if (topic?.contains("/probe/") == true) return
                         try {
                             val payloadStr = String(payloadBytes, StandardCharsets.UTF_8)
+                            if (topic?.startsWith("bingo/v3/room_meta/") == true) {
+                                try {
+                                    val session = json.decodeFromString<OnlineRoomSession>(payloadStr)
+                                    if (session.status == "PLAYING" && session.currentSeed != 0L) {
+                                        val startPacket = RoomMessagePacket(
+                                            type = "START_GAME",
+                                            roomCode = session.roomCode,
+                                            seed = session.currentSeed,
+                                            matchId = session.currentSeed.toString(),
+                                            boardSize = session.boardSize,
+                                            isManualBoard = session.isManualBoard,
+                                            isDynamicBoard = session.isDynamicBoard,
+                                            playerId = session.hostId,
+                                            players = session.players
+                                        )
+                                        handleIncomingPacket(startPacket)
+                                    }
+                                } catch (_: Exception) {}
+                                return
+                            }
                             val decoded = FastPacketCodec.decode(payloadStr)
                             val isOutcome = topic?.contains("/outcome/") == true
                             val isAcceptedDeparture = topic?.contains("/accepted_exit/") == true
@@ -867,8 +892,9 @@ class OnlineRoomSyncManager(
         val client = mqttClient ?: return
         try {
             if (client.isConnected) {
-                client.subscribe(arrayOf(getTopic(roomCode), "bingo/v5/room/${roomCode.trim().uppercase()}/availability/#"),
-                    intArrayOf(1, 1)).waitForCompletion(2000L)
+                val clean = roomCode.trim().uppercase()
+                client.subscribe(arrayOf(getTopic(clean), "bingo/v5/room/$clean/availability/#", "bingo/v3/room_meta/$clean"),
+                    intArrayOf(1, 1, 1)).waitForCompletion(2000L)
                 isSubscribed = true
                 lastBrokerReceiveEchoAt = android.os.SystemClock.elapsedRealtime()
             }

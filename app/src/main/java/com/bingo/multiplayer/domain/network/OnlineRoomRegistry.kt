@@ -5,9 +5,11 @@ import android.util.Log
 import androidx.annotation.Keep
 import com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine
 import com.bingo.multiplayer.domain.model.Player
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
@@ -348,18 +350,22 @@ object OnlineRoomRegistry {
                 lastHeartbeat = now
             )
 
-            // Save updated session to cloud & MQTT
+            // Save updated session to MQTT immediately, and update cloud in background
             try {
-                val updatedJson = json.encodeToString(updatedSession)
-                val b64 = encodeBase64Url(updatedJson)
-                val encVal = URLEncoder.encode(b64, "UTF-8")
-                val updateReq = Request.Builder()
-                    .url("$BASE_URL/UpdateValue/$API_KEY/room_$cleanCode?value=$encVal")
-                    .post("".toRequestBody(null))
-                    .header("Content-Length", "0")
-                    .build()
-                client.newCall(updateReq).execute().close()
                 publishRoomMetaMqtt(updatedSession)
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        val updatedJson = json.encodeToString(updatedSession)
+                        val b64 = encodeBase64Url(updatedJson)
+                        val encVal = URLEncoder.encode(b64, "UTF-8")
+                        val updateReq = Request.Builder()
+                            .url("$BASE_URL/UpdateValue/$API_KEY/room_$cleanCode?value=$encVal")
+                            .post("".toRequestBody(null))
+                            .header("Content-Length", "0")
+                            .build()
+                        client.newCall(updateReq).execute().close()
+                    } catch (_: Exception) {}
+                }
             } catch (_: Exception) {}
 
             return@withContext RoomJoinResult.Success(updatedSession)
@@ -371,10 +377,24 @@ object OnlineRoomRegistry {
 
     /**
      * Fetches current snapshot of a room.
+     * High-speed path: checks MQTT retained metadata first (<150ms).
+     * Fallback: checks KeyValue HTTP cloud storage if MQTT times out or returns null.
      */
     suspend fun getRoom(roomCode: String): OnlineRoomSession? = withContext(Dispatchers.IO) {
         val cleanCode = roomCode.trim().uppercase()
         if (cleanCode.isBlank()) return@withContext null
+
+        // 1. Fast MQTT Retained Query (typically 100-300ms)
+        try {
+            val mqttSession = withTimeoutOrNull(600L) {
+                getRoomMqtt(cleanCode)
+            }
+            if (mqttSession != null && mqttSession.status != "CLOSED") {
+                return@withContext mqttSession
+            }
+        } catch (_: Exception) {}
+
+        // 2. Fallback to KeyValue HTTP Cloud Storage
         try {
             val request = Request.Builder()
                 .url("$BASE_URL/GetValue/$API_KEY/room_$cleanCode")
@@ -389,10 +409,15 @@ object OnlineRoomRegistry {
             if (!raw.isNullOrBlank() && raw != "null" && !raw.contains("error", ignoreCase = true)) {
                 val jsonStr = try { decodeBase64Url(raw) } catch (_: Exception) { raw }
                 if (jsonStr.startsWith("{")) {
-                    return@withContext json.decodeFromString<OnlineRoomSession>(jsonStr)
+                    val session = json.decodeFromString<OnlineRoomSession>(jsonStr)
+                    if (session.status != "CLOSED") {
+                        return@withContext session
+                    }
                 }
             }
         } catch (_: Exception) {}
+
+        // 3. Final fallback: retry MQTT retained topic without tight timeout
         return@withContext getRoomMqtt(cleanCode)
     }
 

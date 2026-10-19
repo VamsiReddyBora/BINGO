@@ -51,7 +51,8 @@ object NetworkConfig {
             options.userName = MQTT_USERNAME
             options.password = MQTT_PASSWORD.toCharArray()
         }
-        options.serverURIs = arrayOf(BROKER_URL, BACKUP_BROKER_URL)
+        // Strictly use the private dedicated EMQX cluster to ensure all clients remain on the same broker
+        options.serverURIs = arrayOf(BROKER_URL)
         options.socketFactory = if (BROKER_URL.startsWith("ssl://")) {
             LowLatencySSLSocketFactory()
         } else {

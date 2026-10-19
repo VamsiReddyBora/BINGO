@@ -238,6 +238,7 @@ fun RootNavGraph(
     var pendingHumanReturn by remember { mutableStateOf(false) }
     var pendingHumanReturnAt by remember { mutableLongStateOf(0L) }
     var recoveryFenceCompleted by remember { mutableStateOf(true) }
+    var pendingStartGamePacket by remember { mutableStateOf<RoomMessagePacket?>(null) }
     val bufferedReconciliationCommands = remember { mutableListOf<RoomMessagePacket>() }
     val pendingPeerWills = remember { mutableMapOf<String, RoomMessagePacket>() }
     val peerConnectionReady by onlineRoomSync.connectionReady.collectAsState()
@@ -2866,12 +2867,26 @@ fun RootNavGraph(
             val roster = if (route == Screen.Lobby.route) realTimePlayers else matchParticipants
             val expectedHost = roster.firstOrNull { it.isHost && it.id !in surrenderedPlayerIds }?.id
                 ?: onlineRoomSync.currentHostId
+            val isHostValid = (expectedHost != null && packet.playerId == expectedHost) ||
+                (packet.players.any { it.id == packet.playerId && it.isHost })
             if (packet.seed == 0L || onlineRoomSync.isSeedCompleted(packet.seed) ||
-                (packet.roomCode.isNotBlank() && packet.roomCode != roomCode) || packet.playerId != expectedHost ||
-                MultiplayerGameplayReducer.sender(packet) != expectedHost ||
-                (packet.type == "START_GAME" && route != Screen.Lobby.route) ||
-                (packet.type == "PLAY_AGAIN" && (route != Screen.Game.route || !isGameOver)) ||
-                packet.players.none { it.id == getLocalUid() }) return
+                (packet.roomCode.isNotBlank() && packet.roomCode != roomCode) || !isHostValid ||
+                (expectedHost != null && MultiplayerGameplayReducer.sender(packet) != expectedHost && !packet.players.any { it.id == MultiplayerGameplayReducer.sender(packet) && it.isHost })) return
+
+            val myUid = getLocalUid()
+            val myUsername = currentAuthUser?.username?.trim()?.lowercase()?.removePrefix("@") ?: ""
+            val isMeInPlayers = packet.players.isEmpty() || packet.players.any { p ->
+                p.id == myUid || (myUsername.isNotBlank() && p.username.trim().lowercase().removePrefix("@") == myUsername)
+            }
+            if (!isMeInPlayers) return
+
+            if (packet.type == "START_GAME" && route != Screen.Lobby.route) {
+                if (isJoiningRoom || packet.roomCode == roomCode) {
+                    pendingStartGamePacket = packet
+                }
+                return
+            }
+            if (packet.type == "PLAY_AGAIN" && (route != Screen.Game.route || !isGameOver)) return
         }
         if (packet.transportOnly && packet.type == "LEAVE") return
         if (currentGameMode == GameMode.ONLINE_ROOM && navController.currentDestination?.route == Screen.Lobby.route &&
@@ -2922,6 +2937,15 @@ fun RootNavGraph(
                         return
                     }
                     onlineRoomSync.recordStartedSeed(packet.seed)
+                    // Bulletproof start receipt: acknowledge start packet back to host
+                    val ackPacket = RoomMessagePacket(
+                        type = "START_GAME_ACK",
+                        roomCode = packet.roomCode,
+                        seed = packet.seed,
+                        playerId = getLocalUid(),
+                        targetPlayerId = packet.playerId
+                    )
+                    broadcastPacket(ackPacket)
                     pickedNumbersHistory.clear()
                     pickedByPlayerHistory.clear()
                     pickedTurnIdsHistory.clear()
@@ -4325,6 +4349,15 @@ fun RootNavGraph(
         launch { lanP2pSync.incomingPackets.collect { handleIncomingPacket(it) } }
     }
 
+    // Bulletproof match start: consumes any START_GAME packet that arrived while navigating to Lobby
+    LaunchedEffect(currentRoute, pendingStartGamePacket) {
+        val pending = pendingStartGamePacket
+        if (currentRoute == Screen.Lobby.route && pending != null) {
+            pendingStartGamePacket = null
+            handleIncomingPacket(pending)
+        }
+    }
+
     LaunchedEffect(currentRoute, currentMatchSeed, peerConnectionReady) {
         if (currentRoute == Screen.Game.route && currentGameMode == GameMode.ONLINE_ROOM && currentMatchSeed != 0L) {
             if (peerConnectionReady && onlineRoomSync.activePeerSeed != currentMatchSeed) {
@@ -4490,17 +4523,21 @@ fun RootNavGraph(
                     val fromUser = myUser
                     val fromName = myName
                     coroutineScope.launch {
-                        com.bingo.multiplayer.domain.network.OnlineRoomRegistry.createRoom(roomCode, localHost, 5)
-                        val success = com.bingo.multiplayer.domain.network.GameInviteManager.sendInvite(
-                            targetUsername = friend.username,
-                            invite = com.bingo.multiplayer.domain.network.GameInvite(
-                                fromUsername = fromUser,
-                                fromDisplayName = fromName,
-                                fromAvatarUrl = myAvatar,
-                                roomCode = roomCode
+                        launch {
+                            val success = com.bingo.multiplayer.domain.network.GameInviteManager.sendInvite(
+                                targetUsername = friend.username,
+                                invite = com.bingo.multiplayer.domain.network.GameInvite(
+                                    fromUsername = fromUser,
+                                    fromDisplayName = fromName,
+                                    fromAvatarUrl = myAvatar,
+                                    roomCode = roomCode
+                                )
                             )
-                        )
-                        Toast.makeText(context, success.message, Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, success.message, Toast.LENGTH_SHORT).show()
+                        }
+                        launch {
+                            com.bingo.multiplayer.domain.network.OnlineRoomRegistry.createRoom(roomCode, localHost, 5)
+                        }
                     }
                     onlineRoomSync.connectToRoom(roomCode, localHost)
                     navController.navigate(Screen.Lobby.route)
@@ -4575,17 +4612,21 @@ fun RootNavGraph(
                     val fromUser = myUser
                     val fromName = myName
                     coroutineScope.launch {
-                        com.bingo.multiplayer.domain.network.OnlineRoomRegistry.createRoom(roomCode, localHost, 5)
-                        val success = com.bingo.multiplayer.domain.network.GameInviteManager.sendInvite(
-                            targetUsername = friend.username,
-                            invite = com.bingo.multiplayer.domain.network.GameInvite(
-                                fromUsername = fromUser,
-                                fromDisplayName = fromName,
-                                fromAvatarUrl = myAvatar,
-                                roomCode = roomCode
+                        launch {
+                            val success = com.bingo.multiplayer.domain.network.GameInviteManager.sendInvite(
+                                targetUsername = friend.username,
+                                invite = com.bingo.multiplayer.domain.network.GameInvite(
+                                    fromUsername = fromUser,
+                                    fromDisplayName = fromName,
+                                    fromAvatarUrl = myAvatar,
+                                    roomCode = roomCode
+                                )
                             )
-                        )
-                        Toast.makeText(context, success.message, Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, success.message, Toast.LENGTH_SHORT).show()
+                        }
+                        launch {
+                            com.bingo.multiplayer.domain.network.OnlineRoomRegistry.createRoom(roomCode, localHost, 5)
+                        }
                     }
                     onlineRoomSync.connectToRoom(roomCode, localHost)
                     navController.navigate(Screen.Lobby.route)
@@ -4657,17 +4698,21 @@ fun RootNavGraph(
                     val fromUser = myUser
                     val fromName = myName
                     coroutineScope.launch {
-                        com.bingo.multiplayer.domain.network.OnlineRoomRegistry.createRoom(roomCode, localHost, 5)
-                        val success = com.bingo.multiplayer.domain.network.GameInviteManager.sendInvite(
-                            targetUsername = friend.username,
-                            invite = com.bingo.multiplayer.domain.network.GameInvite(
-                                fromUsername = fromUser,
-                                fromDisplayName = fromName,
-                                fromAvatarUrl = myAvatar,
-                                roomCode = roomCode
+                        launch {
+                            val success = com.bingo.multiplayer.domain.network.GameInviteManager.sendInvite(
+                                targetUsername = friend.username,
+                                invite = com.bingo.multiplayer.domain.network.GameInvite(
+                                    fromUsername = fromUser,
+                                    fromDisplayName = fromName,
+                                    fromAvatarUrl = myAvatar,
+                                    roomCode = roomCode
+                                )
                             )
-                        )
-                        Toast.makeText(context, success.message, Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, success.message, Toast.LENGTH_SHORT).show()
+                        }
+                        launch {
+                            com.bingo.multiplayer.domain.network.OnlineRoomRegistry.createRoom(roomCode, localHost, 5)
+                        }
                     }
                     onlineRoomSync.connectToRoom(roomCode, localHost)
                     navController.navigate(Screen.Lobby.route)
@@ -5052,10 +5097,12 @@ fun RootNavGraph(
                             )
                             broadcastPacket(startPacket)
                             coroutineScope.launch {
-                                delay(150L)
-                                broadcastPacket(startPacket)
-                                delay(250L)
-                                broadcastPacket(startPacket)
+                                val rebroadcastDelays = listOf(150L, 250L, 400L, 500L, 500L, 500L)
+                                for (d in rebroadcastDelays) {
+                                    delay(d)
+                                    if (currentMatchSeed != seed && lobbyCountdownSeconds < 0) break
+                                    broadcastPacket(startPacket)
+                                }
                             }
 
                             if (manualMode) {

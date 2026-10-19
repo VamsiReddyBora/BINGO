@@ -3,7 +3,7 @@
 ### Version 1.0
 
 - **APK**: [Bingo-1.0.apk](Bingo-1.0.apk) (~6.9 MB)
-- **SHA-256**: `b270562af49a990f256477125f7e1d9776d0a69601712853311be6f52a52d65a`
+- **SHA-256**: `0dd557aec84997979c717656131da35cffe24cbafdd5170d06989710717c1aa0`
 
 ### Quick Install
 ```bash

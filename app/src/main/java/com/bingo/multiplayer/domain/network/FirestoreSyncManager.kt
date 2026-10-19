@@ -578,7 +578,7 @@ class FirestoreSyncManager(
         try {
             cleanUids.chunked(30).forEach { chunk ->
                 try {
-                    val querySnapshot = kotlinx.coroutines.withTimeoutOrNull(1500L) {
+                    val querySnapshot = kotlinx.coroutines.withTimeoutOrNull(3500L) {
                         firestore.collection(COLLECTION_USERS)
                             .whereIn(com.google.firebase.firestore.FieldPath.documentId(), chunk)
                             .get()
