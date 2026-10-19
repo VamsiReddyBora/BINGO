@@ -6,8 +6,10 @@ import android.net.Uri
 import com.bingo.multiplayer.domain.model.AuthProvider
 import com.bingo.multiplayer.domain.model.AuthState
 import com.bingo.multiplayer.domain.model.UserProfile
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -40,7 +42,10 @@ class AuthRepository(
     )
     val authState: StateFlow<AuthState> = _authState.asStateFlow()
 
-    private val scope = CoroutineScope(Dispatchers.IO)
+    private val coroutineExceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        android.util.Log.e("AuthRepository", "Guarded background coroutine error", throwable)
+    }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + coroutineExceptionHandler)
 
     init {
         activeInstance = this
@@ -86,23 +91,30 @@ class AuthRepository(
         checkPersistedSession()
         if (context != null) scope.launch {
             while (true) {
-                val current = getPersistedUserSync()
-                if (current != null) {
-                    AdminControlClient.refresh(current.username, force = true)
-                    AdminControlClient.refreshDeletions()
-                    synchronized(this@AuthRepository) {
-                        val latest = getPersistedUserSync()
-                        if (latest?.uid == current.uid) {
-                            val updated = AdminControlClient.apply(latest)
-                            if (updated == null) signOut(backup = false)
-                            else if (updated != latest) {
-                                persistUser(updated)
-                                com.bingo.multiplayer.presentation.common.PlayerAvatarCache.evict(latest.username, latest.avatarUrl)
-                                com.bingo.multiplayer.presentation.common.PlayerAvatarCache.notifyAvatarChanged(latest.username)
-                                backupUserDataToCloud()
+                try {
+                    val current = getPersistedUserSync()
+                    if (current != null) {
+                        AdminControlClient.refresh(current.username, force = true)
+                        AdminControlClient.refreshDeletions()
+                        synchronized(this@AuthRepository) {
+                            val latest = getPersistedUserSync()
+                            if (latest?.uid == current.uid) {
+                                val updated = AdminControlClient.apply(latest)
+                                if (updated == null) {
+                                    if (AdminControlClient.removed(latest.username, latest.uid)) {
+                                        signOut(backup = false)
+                                    }
+                                } else if (updated != latest) {
+                                    persistUser(updated)
+                                    com.bingo.multiplayer.presentation.common.PlayerAvatarCache.evict(latest.username, latest.avatarUrl)
+                                    com.bingo.multiplayer.presentation.common.PlayerAvatarCache.notifyAvatarChanged(latest.username)
+                                    backupUserDataToCloud()
+                                }
                             }
                         }
                     }
+                } catch (t: Throwable) {
+                    android.util.Log.w("AuthRepository", "Admin sync polling safely caught error: ${t.message}")
                 }
                 delay(15_000L)
             }
@@ -114,7 +126,11 @@ class AuthRepository(
      */
     fun checkPersistedSession() {
         scope.launch {
-            verifyPersistedSession()
+            try {
+                verifyPersistedSession()
+            } catch (t: Throwable) {
+                android.util.Log.w("AuthRepository", "checkPersistedSession caught error: ${t.message}")
+            }
         }
     }
 
@@ -177,13 +193,24 @@ class AuthRepository(
     }
 
     suspend fun verifyPersistedSession(): AuthState = withContext(Dispatchers.IO) {
-        if (context != null) getPersistedUserSync()?.let { AdminControlClient.refresh(it.username) }
+        try {
+            if (context != null) getPersistedUserSync()?.let { AdminControlClient.refresh(it.username) }
+        } catch (t: Throwable) {
+            android.util.Log.w("AuthRepository", "verifyPersistedSession admin refresh caught error: ${t.message}")
+        }
         val state = synchronized(this@AuthRepository) {
             val persisted = getPersistedUserSync()
-            val profile = persisted?.let(AdminControlClient::apply)
-            if (persisted != null && profile == null) signOut(backup = false)
-            else if (profile != null && profile != persisted) persistUser(profile)
-            val resolved = if (profile != null) AuthState.Authenticated(profile) else AuthState.Unauthenticated
+            val profile = persisted?.let { AdminControlClient.apply(it) } ?: persisted
+            if (persisted != null && AdminControlClient.removed(persisted.username, persisted.uid)) {
+                signOut(backup = false)
+            } else if (profile != null && profile != persisted) {
+                persistUser(profile)
+            }
+            val resolved = if (profile != null && !AdminControlClient.removed(profile.username, profile.uid)) {
+                AuthState.Authenticated(profile)
+            } else {
+                AuthState.Unauthenticated
+            }
             _authState.value = resolved
             resolved
         }
@@ -934,7 +961,11 @@ class AuthRepository(
 
     @Synchronized
     private fun persistUser(input: UserProfile, token: String? = null) {
-        val profile = AdminControlClient.apply(input) ?: run { signOut(backup = false); return }
+        if (AdminControlClient.removed(input.username, input.uid)) {
+            signOut(backup = false)
+            return
+        }
+        val profile = AdminControlClient.apply(input) ?: input
         val editor = prefs.edit()
             .putString(KEY_UID, profile.uid)
             .putString(KEY_USERNAME, profile.username)

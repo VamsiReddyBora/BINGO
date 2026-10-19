@@ -40,7 +40,7 @@ object NetworkConfig {
     /**
      * Current client application version metadata.
      */
-    const val APP_VERSION_NAME = "1.0.0"
+    const val APP_VERSION_NAME = "1.0"
     const val APP_VERSION_CODE = 45
 
     /**

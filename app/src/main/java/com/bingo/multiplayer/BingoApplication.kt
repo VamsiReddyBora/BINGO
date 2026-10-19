@@ -7,9 +7,21 @@ import androidx.appcompat.app.AppCompatDelegate
 class BingoApplication : Application() {
     override fun onCreate() {
         super.onCreate()
-        com.bingo.multiplayer.domain.network.AdminControlClient.initialize(this)
-        com.bingo.multiplayer.core.diagnostics.AppExitDiagnostics.install(this)
-        com.bingo.multiplayer.domain.notifications.NotificationRuntime.init(this)
+        try {
+            com.bingo.multiplayer.core.diagnostics.AppExitDiagnostics.install(this)
+        } catch (_: Throwable) {
+            // Diagnostics installation failure must never prevent application startup
+        }
+        try {
+            com.bingo.multiplayer.domain.network.AdminControlClient.initialize(this)
+        } catch (_: Throwable) {
+            // Administrative channel failure must never block normal game launch
+        }
+        try {
+            com.bingo.multiplayer.domain.notifications.NotificationRuntime.init(this)
+        } catch (_: Throwable) {
+            // Notification initialization failure must never block normal game launch
+        }
         try {
             val prefs = getSharedPreferences("bingo_theme_prefs", Context.MODE_PRIVATE)
             val authPrefs = getSharedPreferences("bingo_auth_prefs", Context.MODE_PRIVATE)

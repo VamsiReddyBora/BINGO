@@ -14,17 +14,20 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
-import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.ConcurrentHashMap
 
 /** Administrative edits are applied once. Future match results remain ordinary player statistics. */
+@androidx.annotation.Keep
 @Serializable
 data class AdminField(val value: JsonElement = JsonNull, val revision: Long = 0)
 
+@androidx.annotation.Keep
 @Serializable
 data class AdminPlayerPolicy(
     val username: String = "",
@@ -38,13 +41,24 @@ data class AdminPlayerPolicy(
     fun apply(profile: UserProfile): UserProfile? {
         if (deleted || (uid != null && uid != profile.uid)) return null
         fun changed(key: String) = fields[key]?.takeIf { it.revision > profile.adminRevision }
-        fun number(key: String, fallback: Int) = changed(key)?.value?.jsonPrimitive?.intOrNull ?: fallback
+        fun number(key: String, fallback: Int): Int = try {
+            val el = changed(key)?.value
+            if (el is JsonPrimitive) el.intOrNull ?: fallback else fallback
+        } catch (_: Throwable) { fallback }
         fun photo(key: String, fallback: String?): String? {
             val change = changed(key) ?: return fallback
-            return change.value.jsonPrimitive.contentOrNull?.substringAfter("base64,")
+            return try {
+                val el = change.value
+                if (el is JsonPrimitive) el.contentOrNull?.substringAfter("base64,") else null
+            } catch (_: Throwable) { null }
         }
+        val newDisplayName = try {
+            val el = changed("displayName")?.value
+            if (el is JsonPrimitive) el.contentOrNull ?: profile.displayName else profile.displayName
+        } catch (_: Throwable) { profile.displayName }
+
         return profile.copy(
-            displayName = changed("displayName")?.value?.jsonPrimitive?.contentOrNull ?: profile.displayName,
+            displayName = newDisplayName,
             gamesPlayed = number("gamesPlayed", profile.gamesPlayed),
             gamesWon = number("gamesWon", profile.gamesWon),
             currentStreak = number("currentStreak", profile.currentStreak),
@@ -72,12 +86,22 @@ object AdminControlClient {
     private val mutex = Mutex()
     @Volatile private var deleted: Map<String, String> = emptyMap()
 
-    @Serializable private data class DeletedPlayer(val username: String, val uid: String)
-    @Serializable private data class Deletions(val deleted: List<DeletedPlayer> = emptyList())
+    @androidx.annotation.Keep
+    @Serializable internal data class DeletedPlayer(val username: String = "", val uid: String = "")
+    @androidx.annotation.Keep
+    @Serializable internal data class Deletions(val deleted: List<DeletedPlayer> = emptyList())
 
     fun initialize(context: Context) {
-        prefs = context.getSharedPreferences("bingo_admin_control", Context.MODE_PRIVATE)
-        runCatching { deleted = json.decodeFromString<Deletions>(prefs?.getString("deletions", null) ?: "{}").deleted.associate { it.username to it.uid } }
+        try {
+            prefs = context.getSharedPreferences("bingo_admin_control", Context.MODE_PRIVATE)
+            val raw = prefs?.getString("deletions", null)
+            if (!raw.isNullOrBlank()) {
+                val parsed = json.decodeFromString<Deletions>(raw)
+                deleted = parsed.deleted.associate { it.username to it.uid }
+            }
+        } catch (_: Throwable) {
+            // Safe fallback: preferences or deserialization errors must never crash startup
+        }
     }
 
     private fun clean(name: String) = name.trim().lowercase().removePrefix("@")
@@ -85,24 +109,31 @@ object AdminControlClient {
 
     fun cached(name: String): AdminPlayerPolicy? {
         val key = clean(name)
-        return policies[key] ?: runCatching {
+        if (key.isEmpty()) return null
+        return policies[key] ?: try {
             prefs?.getString("policy:$key", null)?.let { json.decodeFromString<AdminPlayerPolicy>(it) }?.also { policies[key] = it }
-        }.getOrNull()
+        } catch (_: Throwable) {
+            null
+        }
     }
 
     fun apply(profile: UserProfile): UserProfile? {
         if (removed(profile.username, profile.uid)) return null
         val policy = cached(profile.username) ?: return profile
-        return policy.apply(profile)
+        if (policy.deleted) return null
+        return policy.apply(profile) ?: profile
     }
     fun filter(name: String, matches: List<MatchRecord>) = cached(name)?.filter(matches) ?: matches
 
     internal fun accept(policy: AdminPlayerPolicy) {
         val key = clean(policy.username)
+        if (key.isEmpty()) return
         val previous = cached(key)
         if (previous != null && previous.revision > policy.revision) return
         policies[key] = policy
-        prefs?.edit()?.putString("policy:$key", json.encodeToString(policy))?.apply()
+        try {
+            prefs?.edit()?.putString("policy:$key", json.encodeToString(policy))?.apply()
+        } catch (_: Throwable) { }
     }
 
     internal fun resetForTests() { policies.clear(); checked.clear(); deleted = emptyMap(); prefs = null }
@@ -110,29 +141,40 @@ object AdminControlClient {
     suspend fun refresh(name: String, force: Boolean = false): AdminPlayerPolicy? = withContext(Dispatchers.IO) {
         val key = clean(name)
         if (prefs == null || key.isEmpty()) return@withContext cached(key)
-        mutex.withLock {
-            if (!force && System.currentTimeMillis() - (checked[key] ?: 0) < 15_000) return@withLock cached(key)
-            runCatching {
-                val policy = json.decodeFromString<AdminPlayerPolicy>(read("/client/policy/$key"))
-                accept(policy)
-                checked[key] = System.currentTimeMillis()
+        try {
+            mutex.withLock {
+                if (!force && System.currentTimeMillis() - (checked[key] ?: 0) < 15_000) return@withLock cached(key)
+                try {
+                    val raw = read("/client/policy/$key")
+                    if (raw.isNotBlank()) {
+                        val policy = json.decodeFromString<AdminPlayerPolicy>(raw)
+                        accept(policy)
+                        checked[key] = System.currentTimeMillis()
+                    }
+                } catch (_: Throwable) { }
+                cached(key)
             }
+        } catch (_: Throwable) {
             cached(key)
         }
     }
 
     suspend fun refreshDeletions() = withContext(Dispatchers.IO) {
         if (prefs == null) return@withContext
-        runCatching {
+        try {
             val raw = read("/client/deletions")
-            val result = json.decodeFromString<Deletions>(raw)
-            deleted = result.deleted.associate { it.username to it.uid }
-            prefs?.edit()?.putString("deletions", raw)?.apply()
-        }
+            if (raw.isNotBlank()) {
+                val result = json.decodeFromString<Deletions>(raw)
+                deleted = result.deleted.associate { it.username to it.uid }
+                prefs?.edit()?.putString("deletions", raw)?.apply()
+            }
+        } catch (_: Throwable) { }
     }
 
     suspend fun prepareBackup(backup: CloudUserDataBackup): CloudUserDataBackup? {
-        refresh(backup.profile.username)
+        try {
+            refresh(backup.profile.username)
+        } catch (_: Throwable) { }
         val profile = apply(backup.profile) ?: return null
         return backup.copy(profile = profile, matchHistory = filter(profile.username, backup.matchHistory))
     }
@@ -148,13 +190,25 @@ object AdminControlClient {
     }
 
     private fun read(path: String): String {
-        val connection = URL(BASE + path).openConnection() as HttpURLConnection
         return try {
-            connection.connectTimeout = 5_000
-            connection.readTimeout = 5_000
-            connection.useCaches = false
-            check(connection.responseCode == 200)
-            connection.inputStream.bufferedReader().use { it.readText() }
-        } finally { connection.disconnect() }
+            val encodedPath = path.split("/").joinToString("/") { java.net.URLEncoder.encode(it, "UTF-8").replace("+", "%20") }
+            val url = URL(BASE + encodedPath)
+            val connection = url.openConnection() as HttpURLConnection
+            try {
+                connection.connectTimeout = 5_000
+                connection.readTimeout = 5_000
+                connection.useCaches = false
+                val code = connection.responseCode
+                if (code == 200) {
+                    connection.inputStream.bufferedReader().use { it.readText() }
+                } else {
+                    ""
+                }
+            } finally {
+                connection.disconnect()
+            }
+        } catch (_: Throwable) {
+            ""
+        }
     }
 }

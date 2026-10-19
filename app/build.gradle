@@ -14,7 +14,7 @@ android {
         minSdk 24
         targetSdk 34
         versionCode 45
-        versionName "1.0.0"
+        versionName "1.0"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -70,31 +70,18 @@ android {
 
     applicationVariants.all { variant ->
         variant.outputs.all {
-            outputFileName = "Bingo.apk"
+            outputFileName = "Bingo-${variant.versionName}.apk"
         }
         if (variant.name == "release") {
             variant.assembleProvider.configure {
                 doLast {
-                    // Keep the signed deliverable separate from source and historical backups.
                     copy {
-                        from "${layout.buildDirectory.get()}/outputs/apk/release/Bingo.apk"
+                        from "${layout.buildDirectory.get()}/outputs/apk/release/Bingo-${variant.versionName}.apk"
                         into "${rootDir}/releases/"
-                        rename { "Bingo-${variant.versionName}.apk" }
                     }
                     copy {
-                        from "${layout.buildDirectory.get()}/outputs/apk/release/Bingo.apk"
-                        into "${rootDir}/releases/"
-                        rename { "Bingo.apk" }
-                    }
-                    copy {
-                        from "${layout.buildDirectory.get()}/outputs/apk/release/Bingo.apk"
+                        from "${layout.buildDirectory.get()}/outputs/apk/release/Bingo-${variant.versionName}.apk"
                         into "${rootDir}/.."
-                        rename { "Bingo.apk" }
-                    }
-                    copy {
-                        from "${layout.buildDirectory.get()}/outputs/apk/release/Bingo.apk"
-                        into "${rootDir}/.."
-                        rename { "Bingo-${variant.versionName}.apk" }
                     }
                 }
             }

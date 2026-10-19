@@ -102,4 +102,30 @@ class AdminControlClientTest {
         AdminControlClient.accept(AdminPlayerPolicy(username = player.username, uid = player.uid, revision = 5, deleted = true))
         assertFalse(AccountSessionManager().backupUserDataSync(player.uid, CloudUserDataBackup(player)))
     }
+
+    @Test fun mismatchedUidPolicyRetainsOriginalProfileInClientApply() {
+        AdminControlClient.accept(AdminPlayerPolicy(username = player.username, uid = "different_uid", revision = 1,
+            fields = mapOf("gamesPlayed" to AdminField(JsonPrimitive(0), 1))))
+        val result = AdminControlClient.apply(player)
+        assertNotNull(result)
+        assertEquals(player.uid, result!!.uid)
+        assertEquals(player.gamesPlayed, result.gamesPlayed)
+    }
+
+    @Test fun nonPrimitiveJsonElementInAdminFieldDoesNotCrashApply() {
+        val policyWithComplexJson = AdminPlayerPolicy(
+            username = player.username,
+            uid = player.uid,
+            revision = 1,
+            fields = mapOf(
+                "gamesPlayed" to AdminField(kotlinx.serialization.json.buildJsonObject { put("nested", JsonPrimitive(123)) }, 1),
+                "displayName" to AdminField(kotlinx.serialization.json.buildJsonArray { add(JsonPrimitive("bad")) }, 1),
+                "avatarUrl" to AdminField(kotlinx.serialization.json.buildJsonObject {}, 1)
+            )
+        )
+        val applied = policyWithComplexJson.apply(player)
+        assertNotNull(applied)
+        assertEquals(player.gamesPlayed, applied!!.gamesPlayed)
+        assertEquals(player.displayName, applied.displayName)
+    }
 }
