@@ -40,12 +40,6 @@ cloudflare_worker/.dev.vars
 cloudflare_worker/.dev.vars.*
 cloudflare_worker/dist/
 /.wrangler/
-admin_service/node_modules/
-admin_service/.wrangler/
-admin_service/.dev.vars*
-admin_service/dist/
-admin_service/*credentials*.json
-admin_service/service-account.json
 
 # Temporary archive, testing scratch, and simulation evidence
 temp_archive/
@@ -62,4 +56,3 @@ SimplifiedRulesFixLog.md
 SimplifiedRulesFixReport.md
 handover.md
 docs/
-admin_service/IMPLEMENTATION_LOG.md

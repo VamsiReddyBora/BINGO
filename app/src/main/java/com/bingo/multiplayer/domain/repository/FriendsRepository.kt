@@ -107,7 +107,7 @@ class FriendsRepository internal constructor(
         }.getOrDefault(emptyMap())
         handledRequests = prefs.getStringSet(key(active, "handled"), emptySet())?.toSet().orEmpty()
         notifiedRequests = prefs.getStringSet(key(active, "notified"), emptySet())?.toSet().orEmpty()
-        _friends.value = mergeFriends(_friends.value).filterNot { wasRemoved(it) || com.bingo.multiplayer.domain.network.AdminControlClient.removed(it.username, it.uid) }
+        _friends.value = mergeFriends(_friends.value).filterNot(::wasRemoved)
     }
 
     @Synchronized
@@ -180,7 +180,6 @@ class FriendsRepository internal constructor(
             val requestsJob = async { withTimeoutOrNull(8_000L) { remote.fetchRequests(active.username) } }
             Triple(friendsJob.await(), backupJob.await(), requestsJob.await())
         }
-        if (context != null) com.bingo.multiplayer.domain.network.AdminControlClient.refreshDeletions()
         val merged = synchronized(this) {
             if (!isCurrent(active)) return null
             if (refreshBackup && backup != null) {

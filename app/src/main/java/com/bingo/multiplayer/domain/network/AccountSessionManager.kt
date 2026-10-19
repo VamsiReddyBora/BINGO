@@ -56,8 +56,7 @@ data class PlayerRegistryEntry(
     val level: Int = 1,
     val lastSeenTimestamp: Long = System.currentTimeMillis(),
     val appVersion: String = NetworkConfig.APP_VERSION_NAME,
-    val appVersionCode: Int = NetworkConfig.APP_VERSION_CODE,
-    val adminRevision: Long = 0
+    val appVersionCode: Int = NetworkConfig.APP_VERSION_CODE
 ) {
     val isOnline: Boolean
         get() = (System.currentTimeMillis() - lastSeenTimestamp) < 120_000L
@@ -265,18 +264,17 @@ class AccountSessionManager(
      */
     suspend fun backupUserDataSync(
         googleId: String,
-        inputBackup: com.bingo.multiplayer.domain.model.CloudUserDataBackup
+        backup: com.bingo.multiplayer.domain.model.CloudUserDataBackup
     ): Boolean = withContext(Dispatchers.IO) {
         val gid = googleId.trim()
         if (gid.isBlank()) return@withContext false
 
         val mutex = getUserMutex(gid)
         mutex.withLock {
-            val backup = AdminControlClient.prepareBackup(inputBackup) ?: return@withLock false
             try {
                 val cleanUser = backup.profile.username.trim().lowercase().removePrefix("@")
                 val existing = backupMemoryCache[gid] ?: (if (cleanUser.isNotBlank()) backupMemoryCache["user_$cleanUser"] else null)
-                if (existing != null && backup.profile.adminRevision <= existing.profile.adminRevision && (backup.lastBackupTimestamp < existing.lastBackupTimestamp || backup.profile.gamesPlayed < existing.profile.gamesPlayed)) {
+                if (existing != null && (backup.lastBackupTimestamp < existing.lastBackupTimestamp || backup.profile.gamesPlayed < existing.profile.gamesPlayed)) {
                     Log.w("AccountSessionManager", "Ignoring stale backup for $gid: incoming games=${backup.profile.gamesPlayed}, ts=${backup.lastBackupTimestamp} vs existing games=${existing.profile.gamesPlayed}, ts=${existing.lastBackupTimestamp}")
                     return@withLock true
                 }
@@ -335,7 +333,6 @@ class AccountSessionManager(
                         currentStreak = backup.profile.currentStreak,
                         bestStreak = backup.profile.bestStreak,
                         level = backup.profile.level,
-                        adminRevision = backup.profile.adminRevision,
                         lastSeenTimestamp = backup.lastBackupTimestamp
                     )
                     claimUsernameMqtt(entry, gid)
@@ -415,8 +412,7 @@ class AccountSessionManager(
             }
         }
 
-        val found = result ?: backupMemoryCache[gid] ?: fetchUserDataBackupMqtt(gid, timeoutMs = 2000L)
-        found?.let { AdminControlClient.prepareBackup(it) }
+        result ?: backupMemoryCache[gid] ?: fetchUserDataBackupMqtt(gid, timeoutMs = 2000L)
     }
 
     /**
@@ -442,7 +438,6 @@ class AccountSessionManager(
                 currentStreak = p.currentStreak,
                 bestStreak = p.bestStreak,
                 level = p.level,
-                        adminRevision = p.adminRevision,
                 lastSeenTimestamp = backup.lastBackupTimestamp
             )
         }
@@ -459,16 +454,6 @@ class AccountSessionManager(
      * Searches for a player globally by their unique username (Player ID).
      */
     suspend fun searchPlayerByUsername(
-        username: String,
-        timeoutMs: Long = 6000L,
-        forceRefresh: Boolean = false
-    ): PlayerRegistryEntry? {
-        AdminControlClient.refresh(username, forceRefresh)
-        if (AdminControlClient.removed(username)) return null
-        return searchPlayerByUsernameRaw(username, timeoutMs, forceRefresh)?.let(AdminControlClient::apply)
-    }
-
-    private suspend fun searchPlayerByUsernameRaw(
         username: String,
         timeoutMs: Long = 6000L,
         forceRefresh: Boolean = false
@@ -655,7 +640,6 @@ class AccountSessionManager(
                     currentStreak = p.currentStreak,
                     bestStreak = p.bestStreak,
                     level = p.level,
-                        adminRevision = p.adminRevision,
                     lastSeenTimestamp = backup.lastBackupTimestamp
                 )
                 registryCache[clean] = Pair(System.currentTimeMillis(), entry)
@@ -678,9 +662,6 @@ class AccountSessionManager(
         currentUid: String,
         timeoutMs: Long = 5000L
     ): Boolean = withContext(Dispatchers.IO) {
-        AdminControlClient.refresh(username)
-        AdminControlClient.refreshDeletions()
-        if (AdminControlClient.removed(username, currentUid)) return@withContext false
         val clean = username.trim().lowercase().removePrefix("@")
         if (clean.length < 3 || clean.length > 20 || !clean.all { it.isLetterOrDigit() || it == '_' }) {
             return@withContext false
@@ -712,8 +693,7 @@ class AccountSessionManager(
      * Claims and registers a unique username (Player ID) globally.
      * Links the username to the Google ID so the account can be restored on any device.
      */
-    fun claimUsername(inputEntry: PlayerRegistryEntry, googleId: String? = null) {
-        val entry = AdminControlClient.apply(inputEntry) ?: return
+    fun claimUsername(entry: PlayerRegistryEntry, googleId: String? = null) {
         val clean = entry.username.trim().lowercase().removePrefix("@")
         if (clean.isBlank()) return
         val gid = googleId ?: entry.uid.removePrefix("google_").takeIf { entry.uid.startsWith("google_") }
@@ -722,8 +702,6 @@ class AccountSessionManager(
 
         scope.launch(Dispatchers.IO) {
             try {
-                AdminControlClient.refresh(clean)
-                val entry = AdminControlClient.apply(inputEntry) ?: return@launch
                 // If entry has a large avatarUrl (Base64) or local path, don't put 30KB into KeyValue query param URL!
                 val cleanAvatar = if (isLocalFilePath(entry.avatarUrl)) null else entry.avatarUrl
                 val compactEntry = if (cleanAvatar != null && cleanAvatar.length > 500) {
@@ -1099,7 +1077,6 @@ class AccountSessionManager(
     // ─────────────────────────────────────────────────────────────
 
     private fun claimUsernameMqtt(entry: PlayerRegistryEntry, googleId: String?) {
-        if (customCloudGateway != null) return // Tests route account storage through the injected gateway.
         val clean = entry.username.trim().lowercase().removePrefix("@")
         val topic = "bingo/v3/registry/$clean"
         try {

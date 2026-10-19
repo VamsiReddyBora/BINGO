@@ -4,7 +4,7 @@ An Android Bingo game built with Jetpack Compose to play with friends online or 
 
 ### Download
 - **[Bingo-1.0.apk](releases/Bingo-1.0.apk)** (~6.9 MB)
-- [SHA-256 Checksum](releases/Bingo-1.0.apk.sha256): `0655cf30e86de632ea99e2627fdd12c62e6a3354499ce9327740ed11a80058af`
+- [SHA-256 Checksum](releases/Bingo-1.0.apk.sha256): `b270562af49a990f256477125f7e1d9776d0a69601712853311be6f52a52d65a`
 
 ### Features
 - **Online Multiplayer**: Play with friends using 6-character room codes or direct invites.
@@ -18,4 +18,4 @@ Requirements: Android Studio / JDK 17, Android SDK 34.
 ```bash
 ./gradlew assembleRelease
 ```
-The APK will be generated at `app/build/outputs/apk/release/Bingo.apk`.
+The APK will be generated at `app/build/outputs/apk/release/Bingo-1.0.apk`.

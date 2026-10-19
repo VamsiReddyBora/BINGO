@@ -6,17 +6,14 @@ import android.net.Uri
 import com.bingo.multiplayer.domain.model.AuthProvider
 import com.bingo.multiplayer.domain.model.AuthState
 import com.bingo.multiplayer.domain.model.UserProfile
-import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import com.bingo.multiplayer.domain.network.AdminControlClient
 import com.bingo.multiplayer.domain.network.AccountSessionManager
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -42,10 +39,7 @@ class AuthRepository(
     )
     val authState: StateFlow<AuthState> = _authState.asStateFlow()
 
-    private val coroutineExceptionHandler = CoroutineExceptionHandler { _, throwable ->
-        android.util.Log.e("AuthRepository", "Guarded background coroutine error", throwable)
-    }
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + coroutineExceptionHandler)
+    private val scope = CoroutineScope(Dispatchers.IO)
 
     init {
         activeInstance = this
@@ -89,36 +83,6 @@ class AuthRepository(
 
     init {
         checkPersistedSession()
-        if (context != null) scope.launch {
-            while (true) {
-                try {
-                    val current = getPersistedUserSync()
-                    if (current != null) {
-                        AdminControlClient.refresh(current.username, force = true)
-                        AdminControlClient.refreshDeletions()
-                        synchronized(this@AuthRepository) {
-                            val latest = getPersistedUserSync()
-                            if (latest?.uid == current.uid) {
-                                val updated = AdminControlClient.apply(latest)
-                                if (updated == null) {
-                                    if (AdminControlClient.removed(latest.username, latest.uid)) {
-                                        signOut(backup = false)
-                                    }
-                                } else if (updated != latest) {
-                                    persistUser(updated)
-                                    com.bingo.multiplayer.presentation.common.PlayerAvatarCache.evict(latest.username, latest.avatarUrl)
-                                    com.bingo.multiplayer.presentation.common.PlayerAvatarCache.notifyAvatarChanged(latest.username)
-                                    backupUserDataToCloud()
-                                }
-                            }
-                        }
-                    }
-                } catch (t: Throwable) {
-                    android.util.Log.w("AuthRepository", "Admin sync polling safely caught error: ${t.message}")
-                }
-                delay(15_000L)
-            }
-        }
     }
 
     /**
@@ -126,11 +90,7 @@ class AuthRepository(
      */
     fun checkPersistedSession() {
         scope.launch {
-            try {
-                verifyPersistedSession()
-            } catch (t: Throwable) {
-                android.util.Log.w("AuthRepository", "checkPersistedSession caught error: ${t.message}")
-            }
+            verifyPersistedSession()
         }
     }
 
@@ -168,8 +128,7 @@ class AuthRepository(
             currentStreak = streak,
             bestStreak = bestStreak,
             level = level,
-            xp = xp,
-            adminRevision = prefs.getLong(KEY_ADMIN_REVISION, 0)
+            xp = xp
         )
     }
 
@@ -193,24 +152,9 @@ class AuthRepository(
     }
 
     suspend fun verifyPersistedSession(): AuthState = withContext(Dispatchers.IO) {
-        try {
-            if (context != null) getPersistedUserSync()?.let { AdminControlClient.refresh(it.username) }
-        } catch (t: Throwable) {
-            android.util.Log.w("AuthRepository", "verifyPersistedSession admin refresh caught error: ${t.message}")
-        }
         val state = synchronized(this@AuthRepository) {
-            val persisted = getPersistedUserSync()
-            val profile = persisted?.let { AdminControlClient.apply(it) } ?: persisted
-            if (persisted != null && AdminControlClient.removed(persisted.username, persisted.uid)) {
-                signOut(backup = false)
-            } else if (profile != null && profile != persisted) {
-                persistUser(profile)
-            }
-            val resolved = if (profile != null && !AdminControlClient.removed(profile.username, profile.uid)) {
-                AuthState.Authenticated(profile)
-            } else {
-                AuthState.Unauthenticated
-            }
+            val profile = getPersistedUserSync()
+            val resolved = if (profile != null) AuthState.Authenticated(profile) else AuthState.Unauthenticated
             _authState.value = resolved
             resolved
         }
@@ -229,8 +173,7 @@ class AuthRepository(
                     gamesWon = user.gamesWon,
                     currentStreak = user.currentStreak,
                     bestStreak = user.bestStreak,
-                    level = user.level,
-                    adminRevision = user.adminRevision
+                    level = user.level
                 ),
                 googleId = googleId
             )
@@ -312,8 +255,7 @@ class AuthRepository(
             gamesWon = existing.gamesWon,
             currentStreak = existing.currentStreak,
             level = existing.level,
-            xp = existing.xp,
-            adminRevision = if (getPersistedUserSync()?.uid == "google_$googleId") existing.adminRevision else 0
+            xp = existing.xp
         )
         persistUser(profile, "google_token_$googleId")
         sessionManager.claimUsername(
@@ -326,11 +268,11 @@ class AuthRepository(
                 gamesWon = profile.gamesWon,
                 currentStreak = profile.currentStreak,
                 bestStreak = profile.bestStreak,
-                level = profile.level,
-                    adminRevision = profile.adminRevision
+                level = profile.level
             ),
             googleId = googleId
         )
+        _authState.value = AuthState.Authenticated(profile)
         backupUserDataToCloud()
     }
 
@@ -355,8 +297,7 @@ class AuthRepository(
             gamesWon = existing.gamesWon,
             currentStreak = existing.currentStreak,
             level = existing.level,
-            xp = existing.xp,
-            adminRevision = if (getPersistedUserSync()?.uid == guestId) existing.adminRevision else 0
+            xp = existing.xp
         )
         persistUser(profile, "guest_token_$guestId")
         com.bingo.multiplayer.domain.network.PresenceManager.setCurrentUser(cleanUser)
@@ -371,10 +312,10 @@ class AuthRepository(
                 gamesWon = profile.gamesWon,
                 currentStreak = profile.currentStreak,
                 bestStreak = profile.bestStreak,
-                level = profile.level,
-                    adminRevision = profile.adminRevision
+                level = profile.level
             )
         )
+        _authState.value = AuthState.Authenticated(profile)
     }
 
     /**
@@ -399,11 +340,11 @@ class AuthRepository(
                 gamesWon = updated.gamesWon,
                 currentStreak = updated.currentStreak,
                 bestStreak = updated.bestStreak,
-                level = updated.level,
-                    adminRevision = updated.adminRevision
+                level = updated.level
             ),
             googleId = googleId
         )
+        _authState.value = AuthState.Authenticated(updated)
         com.bingo.multiplayer.domain.network.PresenceManager.setCurrentUser(clean)
         com.bingo.multiplayer.domain.network.PresenceManager.startPresence(clean)
         backupUserDataToCloud()
@@ -419,6 +360,7 @@ class AuthRepository(
         val current = (_authState.value as? AuthState.Authenticated)?.user ?: return false
         val updated = current.copy(displayName = trimmed)
         persistUser(updated, prefs.getString(KEY_AUTH_TOKEN, ""))
+        _authState.value = AuthState.Authenticated(updated)
         backupUserDataToCloud()
         return true
     }
@@ -489,6 +431,7 @@ class AuthRepository(
                 avatarBase64 = base64
             )
             persistUser(updated, prefs.getString(KEY_AUTH_TOKEN, ""))
+            _authState.value = AuthState.Authenticated(updated)
             backupUserDataToCloud()
             val googleId = if (updated.uid.startsWith("google_")) updated.uid.removePrefix("google_") else null
             sessionManager.claimUsername(
@@ -501,8 +444,7 @@ class AuthRepository(
                     gamesWon = updated.gamesWon,
                     currentStreak = updated.currentStreak,
                     bestStreak = updated.bestStreak,
-                    level = updated.level,
-                    adminRevision = updated.adminRevision
+                    level = updated.level
                 ),
                 googleId = googleId
             )
@@ -558,6 +500,7 @@ class AuthRepository(
 
         val updated = current.copy(avatarUrl = null, avatarBase64 = null)
         persistUser(updated, prefs.getString(KEY_AUTH_TOKEN, ""))
+        _authState.value = AuthState.Authenticated(updated)
         backupUserDataToCloud()
 
         val googleId = if (updated.uid.startsWith("google_")) updated.uid.removePrefix("google_") else null
@@ -571,8 +514,7 @@ class AuthRepository(
                 gamesWon = updated.gamesWon,
                 currentStreak = updated.currentStreak,
                 bestStreak = updated.bestStreak,
-                level = updated.level,
-                    adminRevision = updated.adminRevision
+                level = updated.level
             ),
             googleId = googleId
         )
@@ -670,7 +612,7 @@ class AuthRepository(
     fun getMatchHistory(): List<com.bingo.multiplayer.domain.model.MatchRecord> {
         val raw = prefs.getString("match_history", null) ?: return emptyList()
         return try {
-            AdminControlClient.filter(getPersistedUserSync()?.username.orEmpty(), kotlinx.serialization.json.Json.decodeFromString(raw))
+            kotlinx.serialization.json.Json.decodeFromString(raw)
         } catch (_: Exception) {
             emptyList()
         }
@@ -679,7 +621,7 @@ class AuthRepository(
     @Synchronized
     fun persistMatchHistory(matches: List<com.bingo.multiplayer.domain.model.MatchRecord>) {
         if (matches.isEmpty()) return
-        val merged = AdminControlClient.filter(getPersistedUserSync()?.username.orEmpty(), getMatchHistory() + matches).distinctBy { it.id }
+        val merged = (getMatchHistory() + matches).distinctBy { it.id }
             .sortedByDescending { it.timestamp }.take(1000)
         prefs.edit().putString("match_history", kotlinx.serialization.json.Json.encodeToString(merged)).apply()
     }
@@ -800,6 +742,7 @@ class AuthRepository(
             xp = newXp
         )
         persistUser(updated, prefs.getString(KEY_AUTH_TOKEN, ""))
+        _authState.value = AuthState.Authenticated(updated)
         publishCareerProfile(updated)
     }
 
@@ -820,8 +763,7 @@ class AuthRepository(
                 gamesWon = updated.gamesWon,
                 currentStreak = updated.currentStreak,
                 bestStreak = updated.bestStreak,
-                level = updated.level,
-                    adminRevision = updated.adminRevision
+                level = updated.level
             ),
             googleId = googleId
         )
@@ -843,14 +785,13 @@ class AuthRepository(
     }
 
     suspend fun restoreCloudUserData(googleId: String): Boolean {
-        val rawCloud = sessionManager.fetchUserDataBackup(googleId) ?: return false
-        val cloudData = AdminControlClient.prepareBackup(rawCloud) ?: run { signOut(backup = false); return false }
+        val cloudData = sessionManager.fetchUserDataBackup(googleId) ?: return false
         val cloudProfile = cloudData.profile
         val localAvatar = if (!cloudProfile.avatarBase64.isNullOrBlank()) {
             restoreAvatarFromBase64(cloudProfile.avatarBase64, cloudProfile.uid) ?: cloudProfile.avatarUrl
         } else cloudProfile.avatarUrl
 
-        val current = (_authState.value as? AuthState.Authenticated)?.user?.let(AdminControlClient::apply)
+        val current = (_authState.value as? AuthState.Authenticated)?.user
         val finalProfile = cloudProfile.copy(
             avatarUrl = localAvatar,
             avatarBase64 = cloudProfile.avatarBase64,
@@ -890,12 +831,13 @@ class AuthRepository(
         }
         if (cloudData.matchHistory.isNotEmpty()) {
             val localHistory = getMatchHistory()
-            val merged = AdminControlClient.filter(cloudProfile.username, localHistory + cloudData.matchHistory)
+            val merged = (localHistory + cloudData.matchHistory)
                 .distinctBy { it.id }
                 .sortedByDescending { it.timestamp }
                 .let { if (it.size > 1000) it.take(1000) else it }
             prefs.edit().putString("match_history", Json.encodeToString(merged)).apply()
         }
+        _authState.value = AuthState.Authenticated(finalProfile)
         sessionManager.startSessionWatcher(googleId, deviceId) {
             signOut()
         }
@@ -903,10 +845,10 @@ class AuthRepository(
     }
 
     @Synchronized
-    fun signOut(backup: Boolean = true) {
+    fun signOut() {
         com.bingo.multiplayer.domain.network.LeaderboardSyncManager.reset()
         val current = (_authState.value as? AuthState.Authenticated)?.user
-        if (current != null && backup) {
+        if (current != null) {
             val googleId = if (current.provider == AuthProvider.GOOGLE && current.uid.startsWith("google_")) {
                 current.uid.removePrefix("google_")
             } else current.uid
@@ -935,7 +877,6 @@ class AuthRepository(
             .remove(KEY_AVATAR)
             .remove(KEY_AVATAR_BASE64)
             .remove(KEY_PROVIDER)
-            .remove(KEY_ADMIN_REVISION)
             .apply()
         _authState.value = AuthState.Unauthenticated
     }
@@ -954,18 +895,12 @@ class AuthRepository(
             currentStreak = streak,
             bestStreak = bestStreak,
             level = prefs.getInt(KEY_LEVEL, 1),
-            xp = prefs.getInt(KEY_XP, 0),
-            adminRevision = prefs.getLong(KEY_ADMIN_REVISION, 0)
+            xp = prefs.getInt(KEY_XP, 0)
         )
     }
 
     @Synchronized
-    private fun persistUser(input: UserProfile, token: String? = null) {
-        if (AdminControlClient.removed(input.username, input.uid)) {
-            signOut(backup = false)
-            return
-        }
-        val profile = AdminControlClient.apply(input) ?: input
+    private fun persistUser(profile: UserProfile, token: String? = null) {
         val editor = prefs.edit()
             .putString(KEY_UID, profile.uid)
             .putString(KEY_USERNAME, profile.username)
@@ -980,13 +915,11 @@ class AuthRepository(
             .putInt(KEY_BEST_STREAK, profile.bestStreak)
             .putInt(KEY_LEVEL, profile.level)
             .putInt(KEY_XP, profile.xp)
-            .putLong(KEY_ADMIN_REVISION, profile.adminRevision)
 
         if (token != null) {
             editor.putString(KEY_AUTH_TOKEN, token)
         }
         editor.apply()
-        _authState.value = AuthState.Authenticated(profile)
 
         if (context != null && profile.username.isNotBlank()) {
             com.bingo.multiplayer.domain.notifications.NotificationRuntime.bind(context, profile.uid, profile.username)
@@ -1020,7 +953,6 @@ class AuthRepository(
         private const val KEY_BEST_STREAK = "best_streak"
         private const val KEY_LEVEL = "level"
         private const val KEY_XP = "xp"
-        private const val KEY_ADMIN_REVISION = "admin_revision"
         private const val KEY_DEVICE_ID = "device_id"
     }
 }

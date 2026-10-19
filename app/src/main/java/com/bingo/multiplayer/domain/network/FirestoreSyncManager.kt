@@ -62,12 +62,10 @@ class FirestoreSyncManager(
      * Uploads the full user profile and settings to Firestore: `users/{uid}`.
      * Also claims the username record in `usernames/{username}`.
      */
-    fun syncUserProfile(inputUser: UserProfile, settings: UserSettings) {
-        if (inputUser.uid.isBlank()) return
+    fun syncUserProfile(user: UserProfile, settings: UserSettings) {
+        if (user.uid.isBlank()) return
         scope.launch {
             try {
-                AdminControlClient.refresh(inputUser.username)
-                val user = AdminControlClient.apply(inputUser) ?: return@launch
                 val userDocRef = firestore.collection(COLLECTION_USERS).document(user.uid)
                 val payload = hashMapOf<String, Any?>(
                     "uid" to user.uid,
@@ -84,7 +82,6 @@ class FirestoreSyncManager(
                     "xp" to user.xp,
                     "lastSeenTimestamp" to FieldValue.serverTimestamp(),
                     "appVersion" to user.appVersion,
-                    "adminRevision" to user.adminRevision,
                     "settings" to hashMapOf(
                         "soundEnabled" to settings.soundEnabled,
                         "hapticsEnabled" to settings.hapticsEnabled,
@@ -183,8 +180,7 @@ class FirestoreSyncManager(
                             currentStreak = currentStreak,
                             bestStreak = bestStreak,
                             level = level,
-                            xp = xp,
-                            adminRevision = snapshot.getLong("adminRevision") ?: 0
+                            xp = xp
                         )
 
                         @Suppress("UNCHECKED_CAST")
@@ -238,9 +234,7 @@ class FirestoreSyncManager(
      * Appends a match record into the subcollection `users/{uid}/matches/{matchId}`.
      */
     fun recordMatch(uid: String, record: MatchRecord) {
-        if (uid.isBlank() || record.id.isBlank() || AdminControlClient.removed(uid = uid)) return
-        val owner = com.bingo.multiplayer.domain.repository.AuthRepository.activeInstance?.getPersistedUserSync()
-        if (owner?.uid == uid && AdminControlClient.filter(owner.username, listOf(record)).isEmpty()) return
+        if (uid.isBlank() || record.id.isBlank()) return
         scope.launch {
             try {
                 val matchDoc = firestore.collection(COLLECTION_USERS)
@@ -276,10 +270,8 @@ class FirestoreSyncManager(
     /**
      * Bulk uploads an entire list of match records to `users/{uid}/matches`.
      */
-    fun syncAllMatches(uid: String, inputMatches: List<MatchRecord>) {
-        if (uid.isBlank() || inputMatches.isEmpty() || AdminControlClient.removed(uid = uid)) return
-        val owner = com.bingo.multiplayer.domain.repository.AuthRepository.activeInstance?.getPersistedUserSync()
-        val matches = if (owner?.uid == uid) AdminControlClient.filter(owner.username, inputMatches) else inputMatches
+    fun syncAllMatches(uid: String, matches: List<MatchRecord>) {
+        if (uid.isBlank() || matches.isEmpty()) return
         scope.launch {
             try {
                 matches.chunked(400).forEach { chunk ->
@@ -435,7 +427,7 @@ class FirestoreSyncManager(
                 val batch = firestore.batch()
                 val friendsColl = firestore.collection(COLLECTION_USERS).document(uid).collection(SUBCOLLECTION_FRIENDS)
 
-                friends.filterNot { AdminControlClient.removed(it.username, it.uid) }.forEach { friend ->
+                friends.forEach { friend ->
                     val docId = friend.uid.ifBlank { friend.username.trim().lowercase().removePrefix("@") }
                     if (docId.isNotBlank()) {
                         val docRef = friendsColl.document(docId)
@@ -567,8 +559,7 @@ class FirestoreSyncManager(
                     gamesWon = gamesWon,
                     currentStreak = currentStreak,
                     bestStreak = bestStreak,
-                    level = level,
-                    adminRevision = snapshot.getLong("adminRevision") ?: 0
+                    level = level
                 )
             }
         } catch (e: Exception) {
