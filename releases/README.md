@@ -1,41 +1,58 @@
-# Bingo Multiplayer — Releases
+# Bingo Multiplayer — Official Releases
 
-### Latest Release: **v1.5.0 (Build 44)**
+### Official Release: **v1.0.0 (Build 45)** 🎉
 
-Current artifact: Production Release v1.5.0 with zero regressions and complete resolution of all 22 findings (R01–R22) and V1 from the comprehensive review. 100% test pass rate across 630 unit tests.
+Current artifact: **Production Release v1.0.0** — Official Public Launch of Bingo Multiplayer!
+Featuring a streamlined zero-stress multiplayer architecture, real-time EMQX broker monitoring with graceful HTTP fallback, live horizontal status alerts, dedicated WhatsApp developer reporting, and full AMOLED dark mode support. Verified with 100% passing automated test suite across 722 tests.
 
 | Asset | Description | Size | Checksum (SHA-256) |
 | :--- | :--- | :--- | :--- |
-| **[Bingo-1.5.0.apk](Bingo-1.5.0.apk)** | Signed Release APK | 7.18 MB | `05d562a9ba57465945ee7d10697257b473e189d60e5b48f5db52c0f65174d70d` |
-| **[Bingo-1.5.0.apk.sha256](Bingo-1.5.0.apk.sha256)** | SHA-256 Checksum | 65 B | — |
-| **[Bingo-1.5.0-mapping.zip](Bingo-1.5.0-mapping.zip)** | R8 ProGuard Mapping | 6.73 MB | `135e3338edb1aba74a1669f2a15c222cfecb69220c95c6b1886b66262e9f2337` |
+| **[Bingo-1.0.0.apk](Bingo-1.0.0.apk)** | Official Signed Release APK | ~6.90 MB (7,232,234 B) | `c6c9210a1b50662be0bde70aaf5f408e2501ec2de2bef616748a3989d0f64f00` |
+| **[Bingo.apk](Bingo.apk)** | Standard Universal APK Symlink | ~6.90 MB (7,232,234 B) | `c6c9210a1b50662be0bde70aaf5f408e2501ec2de2bef616748a3989d0f64f00` |
+| **[Bingo-1.0.0.apk.sha256](Bingo-1.0.0.apk.sha256)** | SHA-256 Checksum File | 83 B | — |
 
 ---
 
 ### Quick Installation
 
 ```bash
-adb install -r releases/Bingo-1.5.0.apk
+adb install -r releases/Bingo-1.0.0.apk
 ```
 
 ---
 
-### Key Highlights in v1.5.0
+### Key Highlights in v1.0.0
 
-- **Comprehensive Multiplayer Resilience**: Complete resolution of all 22 findings from the comprehensive audit, including 100% test pass rate across 630 unit tests with zero regressions.
-- **Group Match Continuity**: In-game player exits are handled as explicit surrenders allowing active peers to continue playing; turn clock suspends properly when host backgrounds; 60s host absence limits (10s buffer + 50s HOLD) strictly enforced with state synchronization barrier on resume.
-- **1v1 Heartbeat & Disconnection Recovery**: Automatic reconnection during active 1v1 matches without losing board state. Host-disconnected banner and pause states accurately preserve remaining turn time.
-- **Durable Match Continuity**: Ongoing matches are durably stored locally (24-hour match TTL), allowing players to rejoin their match if the app is temporarily backgrounded or killed by the OS.
-- **Deterministic First Turn**: Pure deterministic uniform distribution for first player selection across both cloud and local fallback match setups.
-- **Hardened Notifications (Protocol 2)**: Cryptographically authenticated push notifications via `bingo-notifications-v2`, with persistent deduplication and protection against accidental room overrides while in an active game.
-- **Social & Friends Polish**: Fixed roster loading on launch, suppressed stale friend requests, and improved avatar username resolution.
-- **Sound & Haptics Control**: Full volume sliders and vibration muting that persist reliably across sessions.
+- **Simplified Zero-Stress Multiplayer Engine**:
+  - Turn-based 5x5 Bingo engine with real-time peer-to-peer and cloud-synchronized state.
+  - Transparent turn countdown timers (30-second move budget + 5-second skip on away status).
+  - Versioned peer presence resolution guaranteeing that online successors receive their full move budget.
+- **Real-Time EMQX Broker Monitoring & Graceful HTTP Fallback**:
+  - Live continuous broker health monitoring distinguishing primary cluster from backup nodes.
+  - Automatic fallback to high-availability HTTP Key-Value cloud storage during MQTT network disruptions.
+  - Non-intrusive horizontal scrolling alert note on the main menu informing players of server status.
+  - Dedicated one-tap WhatsApp developer alert button on the Developer Note screen with auto-framed error reports.
+- **Nearby & Offline Multiplayer**:
+  - Peer-to-peer discovery over local Wi-Fi and mobile hotspots without needing internet connectivity.
+  - Challenging single-player offline mode against AI bots.
+- **Social & Community Features**:
+  - Player profiles, customizable avatars, and global stats tracking (games played, win streaks, XP).
+  - Direct friend requests, real-time presence indicators, and private game invites.
+- **AMOLED Dark Mode & Tactile Feedback**:
+  - High-contrast, battery-friendly AMOLED dark theme alongside crisp light theme.
+  - Authentic haptic feedback and original Bingo sound effects with dedicated toggle controls.
+
+---
+
+### 🏛️ Historical Archive
+
+For early prototype builds, beta releases, and developmental milestones (v1.0 – v1.5 beta), please visit the companion archive repository at **[VamsiReddyBora/BINGO-Legacy](https://github.com/VamsiReddyBora/BINGO-Legacy)**.
 
 ---
 
 ### Related Links
 
 - [Main Documentation](../README.md)
-- [Comprehensive Review Report](../MultiplayerComprehensiveReview.md)
-- [Release Manifest](ReleaseManifest.json)
-- [GitHub Repository](https://github.com/VamsiReddyBora/BINGO)
+- [Official GitHub Repository](https://github.com/VamsiReddyBora/BINGO)
+- [GitHub Releases Page](https://github.com/VamsiReddyBora/BINGO/releases)
+- [Companion Archive Repository](https://github.com/VamsiReddyBora/BINGO-Legacy)
