@@ -1,8 +1,8 @@
 {
   "versionCode": 45,
-  "versionName": "1.0.0",
+  "versionName": "1.0",
   "tag_name": "v1.0.0",
-  "downloadUrl": "https://vamsireddybora.github.io/BINGO/Bingo.apk",
-  "releaseNotes": "• Official v1.0.0 Launch: Simplified Zero-Stress Multiplayer Engine\n• Real-Time EMQX Broker Monitoring: Automatic HTTP fallback & live status alert note\n• Dedicated WhatsApp Alert Button: 1-tap report button in developer notes\n• AMOLED Dark Theme: Sleek high-contrast dark mode alongside light theme\n• Zero-Stress Turns: 30s turn budget, away-status fast skipping, and seamless rejoin",
+  "downloadUrl": "https://vamsireddybora.github.io/BINGO/Bingo-1.0.apk",
+  "releaseNotes": "• Version 1.0\n• Turn-based multiplayer with synchronized boards\n• 30s turn countdown with auto-skip\n• Reconnection support for active matches\n• Light and AMOLED dark themes",
   "apkSize": 7232234
 }
