@@ -186,5 +186,14 @@ data class InGameChatMessage(
     val isSelf: Boolean = true,
     val senderName: String? = null,
     val timestamp: Long = System.currentTimeMillis(),
-    val isSystemMessage: Boolean = false
+    val isSystemMessage: Boolean = false,
+    val senderPlayerId: String = ""
 )
+
+@Keep
+@Serializable
+enum class PlayerConnectionStatus {
+    ONLINE,
+    AWAY,
+    OFFLINE
+}

@@ -97,6 +97,15 @@ object PresenceManager {
     var currentActiveUsername: String? = null
         private set
 
+    var currentConnectedServerUri: String? = null
+        private set
+
+    val isMqttConnected: Boolean
+        get() = presenceClient?.isConnected == true
+
+    val isPrimaryBrokerConnected: Boolean
+        get() = presenceClient?.isConnected == true && (currentConnectedServerUri?.contains("broker.emqx.io") != true)
+
     var currentActivityState: AppActivityState = AppActivityState.ONLINE
         private set
     var currentActivityDetail: String = ""
@@ -416,12 +425,20 @@ object PresenceManager {
 
                 client.setCallback(object : MqttCallbackExtended {
                     override fun connectComplete(reconnect: Boolean, serverURI: String?) {
-                        Log.d(TAG, "Presence connected for @$clean (reconnect=$reconnect). Publishing ${currentActivityState.name}.")
+                        Log.d(TAG, "Presence connected for @$clean (reconnect=$reconnect, serverURI=$serverURI). Publishing ${currentActivityState.name}.")
                         publishStatus(clean, currentActivityState.name)
+                        currentConnectedServerUri = serverURI
+                        if (serverURI?.contains("broker.emqx.io") == true) {
+                            EmqxBrokerMonitor.recordPrimaryBrokerDown()
+                        } else {
+                            EmqxBrokerMonitor.recordPrimaryBrokerUp()
+                        }
                     }
 
                     override fun connectionLost(cause: Throwable?) {
                         Log.w(TAG, "Presence connection lost for @$clean: ${cause?.message}")
+                        currentConnectedServerUri = null
+                        EmqxBrokerMonitor.recordPrimaryBrokerDown()
                     }
 
                     override fun messageArrived(topic: String?, message: MqttMessage?) {}
@@ -432,6 +449,7 @@ object PresenceManager {
                     client.connect(options)
                 } catch (e: Exception) {
                     Log.w(TAG, "Presence connect initial: ${e.message}")
+                    EmqxBrokerMonitor.recordPrimaryBrokerDown()
                 }
                 publishStatus(clean, currentActivityState.name)
 

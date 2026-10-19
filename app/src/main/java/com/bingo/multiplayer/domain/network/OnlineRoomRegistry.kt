@@ -8,6 +8,8 @@ import com.bingo.multiplayer.domain.model.Player
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -312,7 +314,7 @@ object OnlineRoomRegistry {
 
             val now = System.currentTimeMillis()
             // If host has been silent > 10 minutes, the room is considered expired
-            if ((now - session.lastHeartbeat) > 600_000L) {
+            if (session.status != "PLAYING" && (now - session.lastHeartbeat) > 600_000L) {
                 return@withContext RoomJoinResult.Expired("Room $cleanCode has expired or the host has left.")
             }
 
@@ -444,7 +446,7 @@ object OnlineRoomRegistry {
                 lastSeenTimestamp = now
             )
 
-            val isHostAlive = (now - session.lastHeartbeat) < 600_000L
+            val isHostAlive = session.status == "PLAYING" || (now - session.lastHeartbeat) < 600_000L
 
             val playerExists = session.players.any {
                 it.id == safeLocal.id || (it.username.isNotBlank() && it.username.equals(safeLocal.username, ignoreCase = true))
@@ -620,29 +622,45 @@ object OnlineRoomRegistry {
      * Updates status (e.g. "PLAYING" when game starts, "CLOSED" when host leaves).
      * Synchronizes currentSeed, isManualBoard, and boardSize to guarantee dual-channel game start delivery.
      */
+    // Serialize this client's metadata writes; late completion must not overwrite its rematch.
+    private val metadataMutation = Mutex()
+
     suspend fun updateRoomStatus(
         roomCode: String,
         status: String,
         seed: Long = 0L,
         isManualBoard: Boolean = false,
         boardSize: Int = 5,
-        isDynamicBoard: Boolean = false
+        isDynamicBoard: Boolean = false,
+        administrativeHost: Player? = null,
+        departedIds: Set<String> = emptySet(),
+        expectedSeed: Long? = null
     ) = withContext(Dispatchers.IO) {
         val cleanCode = roomCode.trim().uppercase()
         if (cleanCode.isBlank()) return@withContext
+        metadataMutation.withLock {
         try {
             val current = getRoom(cleanCode) ?: return@withContext
+            if (expectedSeed != null && current.currentSeed != expectedSeed) return@withContext
             val now = System.currentTimeMillis()
+            val host = administrativeHost ?: current.players.firstOrNull { it.id == current.hostId }
+            val eligiblePlayers = current.players.filter { it.id !in departedIds }.map { p ->
+                if (administrativeHost != null) p.copy(isHost = p.id == administrativeHost.id) else p
+            }
             val updatedPlayers = if (status == "PLAYING") {
-                current.players.map { p ->
+                eligiblePlayers.map { p ->
                     if (p.isHost || p.id == current.hostId) {
                         p.copy(lobbyReadyStatus = "IN_GAME", lastSeenTimestamp = now)
                     } else p
                 }
-            } else current.players
+            } else eligiblePlayers
 
             val updated = current.copy(
                 status = status,
+                hostId = administrativeHost?.id ?: current.hostId,
+                hostUsername = host?.username ?: current.hostUsername,
+                hostDisplayName = host?.displayName ?: current.hostDisplayName,
+                hostAvatarUrl = host?.avatarUrl ?: current.hostAvatarUrl,
                 currentSeed = if (seed != 0L) seed else if (status == "WAITING") 0L else current.currentSeed,
                 isManualBoard = if (status == "PLAYING") isManualBoard else (if (status == "WAITING") false else current.isManualBoard),
                 boardSize = if (boardSize > 0) boardSize else current.boardSize,
@@ -665,6 +683,7 @@ object OnlineRoomRegistry {
                 publishRoomMetaMqtt(updated)
             }
         } catch (_: Exception) {}
+        }
     }
 
     /**
@@ -699,9 +718,8 @@ object OnlineRoomRegistry {
     /**
      * Closes the room completely. Clears cloud registry and MQTT metadata.
      */
-    suspend fun closeRoom(roomCode: String) = withContext(Dispatchers.IO) {
+    suspend fun closeRoom(roomCode: String, expectedSeed: Long? = null) = withContext(Dispatchers.IO) {
         val cleanCode = roomCode.trim().uppercase()
-        updateRoomStatus(cleanCode, "CLOSED")
-        clearRoomMetaMqtt(cleanCode)
+        updateRoomStatus(cleanCode, "CLOSED", expectedSeed = expectedSeed)
     }
 }

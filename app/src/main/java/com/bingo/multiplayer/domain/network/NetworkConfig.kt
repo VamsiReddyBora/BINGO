@@ -14,8 +14,10 @@ object NetworkConfig {
 
     /**
      * Primary low-latency MQTT broker endpoint with distributed global edge (EMQX Serverless Asia Pacific).
+     * Automatically fails over to the high-availability global cluster if the primary cluster is ever unreachable.
      */
     const val BROKER_URL = "ssl://p0812f88.ala.asia-southeast1.emqxsl.com:8883"
+    const val BACKUP_BROKER_URL = "ssl://broker.emqx.io:8883"
     const val MQTT_USERNAME = "Bora"
     const val MQTT_PASSWORD = "bora7989"
 
@@ -38,8 +40,8 @@ object NetworkConfig {
     /**
      * Current client application version metadata.
      */
-    const val APP_VERSION_NAME = "1.4"
-    const val APP_VERSION_CODE = 40
+    const val APP_VERSION_NAME = "1.0.0"
+    const val APP_VERSION_CODE = 45
 
     /**
      * Configures MqttConnectOptions with credentials and tuned low-latency socket factory.
@@ -49,6 +51,7 @@ object NetworkConfig {
             options.userName = MQTT_USERNAME
             options.password = MQTT_PASSWORD.toCharArray()
         }
+        options.serverURIs = arrayOf(BROKER_URL, BACKUP_BROKER_URL)
         options.socketFactory = if (BROKER_URL.startsWith("ssl://")) {
             LowLatencySSLSocketFactory()
         } else {

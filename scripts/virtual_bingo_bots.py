@@ -175,9 +175,9 @@ class BotRunner:
             self.publish(f"R|{b_id}|READY|{cfg['username']}|{cfg['name']}|1|bot_instance")
             print(f"  ➜ {cfg['name']} joined and set status to READY")
 
-    def on_disconnect(self, client, userdata, rc, properties=None):
+    def on_disconnect(self, client, userdata, *args, **kwargs):
         if self.running:
-            print(f"[Network] Disconnected from broker (rc={rc}). Attempting reconnect...")
+            print(f"[Network] Disconnected from broker. Attempting reconnect...")
 
     def on_message(self, client, userdata, msg):
         try:

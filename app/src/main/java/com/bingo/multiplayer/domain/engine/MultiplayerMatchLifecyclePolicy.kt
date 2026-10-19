@@ -47,12 +47,18 @@ sealed class LifecycleAction {
 class MultiplayerMatchLifecyclePolicy(
     val matchId: String,
     val localUid: String,
-    val isHost: Boolean,
-    val hostUid: String,
+    isHost: Boolean,
+    hostUid: String,
     initialParticipants: List<String>,
     private val clock: Clock = SystemMonotonicClock,
     initialHostHoldRemainingSeconds: Int? = null
 ) {
+    var isHost: Boolean = isHost
+        private set
+
+    var hostUid: String = hostUid
+        private set
+
     companion object {
         const val HOST_SILENT_BUFFER_MS = 10_000L
         const val HOST_TOTAL_ABSENCE_MS = 60_000L // 10s silent buffer + 50s countdown = 1 min
@@ -304,41 +310,45 @@ class MultiplayerMatchLifecyclePolicy(
 
         // 1. Host Presence Tracking (for guests)
         if (!isHost) {
-            val silence = now - lastHostHeartbeatAt
-            when (hostAbsenceState) {
-                HostAbsenceState.NORMAL,
-                HostAbsenceState.SILENT_BUFFER -> {
-                    if (silence >= HOST_TOTAL_ABSENCE_MS) {
-                        hostAbsenceState = HostAbsenceState.TERMINATED
-                        actions.add(LifecycleAction.HostTerminated)
-                    } else if (silence >= HOST_SILENT_BUFFER_MS) {
-                        hostAbsenceState = HostAbsenceState.HOLD
-                        actions.add(LifecycleAction.HostAbsenceHold(hostHoldRemainingSeconds))
+            if (hostUid in surrenderedPlayerIds || hostUid in kickedOrEliminatedPlayerIds) {
+                // Host has permanently surrendered or exited; do not track host absence or terminate
+            } else {
+                val silence = now - lastHostHeartbeatAt
+                when (hostAbsenceState) {
+                    HostAbsenceState.NORMAL,
+                    HostAbsenceState.SILENT_BUFFER -> {
+                        if (silence >= HOST_TOTAL_ABSENCE_MS) {
+                            hostAbsenceState = HostAbsenceState.TERMINATED
+                            actions.add(LifecycleAction.HostTerminated)
+                        } else if (silence >= HOST_SILENT_BUFFER_MS) {
+                            hostAbsenceState = HostAbsenceState.HOLD
+                            actions.add(LifecycleAction.HostAbsenceHold(hostHoldRemainingSeconds))
+                        }
                     }
-                }
-                HostAbsenceState.HOLD -> {
-                    if (silence >= HOST_TOTAL_ABSENCE_MS) {
-                        hostAbsenceState = HostAbsenceState.TERMINATED
-                        actions.add(LifecycleAction.HostTerminated)
-                    } else {
-                        actions.add(LifecycleAction.HostAbsenceHold(hostHoldRemainingSeconds))
+                    HostAbsenceState.HOLD -> {
+                        if (silence >= HOST_TOTAL_ABSENCE_MS) {
+                            hostAbsenceState = HostAbsenceState.TERMINATED
+                            actions.add(LifecycleAction.HostTerminated)
+                        } else {
+                            actions.add(LifecycleAction.HostAbsenceHold(hostHoldRemainingSeconds))
+                        }
                     }
-                }
-                HostAbsenceState.RETURNING -> {
-                    val remainingMs = hostReturnDeadlineAt - now
-                    if (remainingMs <= 0L) {
-                        hostReturnCountdownRemaining = null
-                        hostReturnDeadlineAt = 0L
-                        hostAbsenceState = HostAbsenceState.NORMAL
-                        actions.add(LifecycleAction.HostResumed)
-                    } else {
-                        val sec = ((remainingMs + 999L) / 1000L).coerceIn(1L, READY_COUNTDOWN_SECONDS.toLong()).toInt()
-                        hostReturnCountdownRemaining = sec
-                        actions.add(LifecycleAction.HostReturningCountdown(sec))
+                    HostAbsenceState.RETURNING -> {
+                        val remainingMs = hostReturnDeadlineAt - now
+                        if (remainingMs <= 0L) {
+                            hostReturnCountdownRemaining = null
+                            hostReturnDeadlineAt = 0L
+                            hostAbsenceState = HostAbsenceState.NORMAL
+                            actions.add(LifecycleAction.HostResumed)
+                        } else {
+                            val sec = ((remainingMs + 999L) / 1000L).coerceIn(1L, READY_COUNTDOWN_SECONDS.toLong()).toInt()
+                            hostReturnCountdownRemaining = sec
+                            actions.add(LifecycleAction.HostReturningCountdown(sec))
+                        }
                     }
-                }
-                HostAbsenceState.TERMINATED -> {
-                    // Match terminated
+                    HostAbsenceState.TERMINATED -> {
+                        // Match terminated
+                    }
                 }
             }
         }
@@ -612,4 +622,26 @@ class MultiplayerMatchLifecyclePolicy(
      */
     fun shouldInstantlySkipTurn(playerId: String): Boolean =
         isPlayerEliminated(playerId)
+
+    /**
+     * Authoritatively transfers host authority to [newHostUid] when the current host permanently exits.
+     * Cancels all host-absence hold or termination watchdog timers.
+     */
+    @Synchronized
+    fun transferHostAuthority(newHostUid: String) {
+        if (newHostUid.isBlank()) return
+        val oldHost = hostUid
+        if (oldHost.isNotBlank() && oldHost != newHostUid) {
+            surrenderedPlayerIds.add(oldHost)
+            activeParticipants.remove(oldHost)
+            disconnectedPlayerIds.add(oldHost)
+            kickedOrEliminatedPlayerIds.add(oldHost)
+        }
+        hostUid = newHostUid
+        isHost = (localUid == newHostUid)
+        hostAbsenceState = HostAbsenceState.NORMAL
+        hostReturnCountdownRemaining = null
+        hostReturnDeadlineAt = 0L
+        lastHostHeartbeatAt = clock.elapsedRealtime()
+    }
 }

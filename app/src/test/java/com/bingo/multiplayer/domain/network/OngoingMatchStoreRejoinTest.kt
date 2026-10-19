@@ -361,7 +361,7 @@ class OngoingMatchStoreRejoinTest {
         )
         assertTrue(recorded)
 
-        val tombstone = OngoingMatchStore.getMatchResultTombstone(context = null, 445566L)
+        val tombstone = OngoingMatchStore.getMatchResultTombstone(context = null, 445566L, accountUid = "user_me")
         assertNotNull(tombstone)
         assertEquals("user_me", tombstone?.winnerUid)
         assertEquals("Opponent Unreachable (Claimed Victory)", tombstone?.winReason)
@@ -490,11 +490,11 @@ class OngoingMatchStoreRejoinTest {
             winnerUid = "account_impostor",
             winReason = "Bingo",
             episodeCount = 0,
-            accountUid = "account_impostor"
+            accountUid = "account_winner"
         )
         assertFalse("Conflicting second result write must be rejected", conflictingRecorded)
 
-        val tombstone = OngoingMatchStore.getMatchResultTombstone(context = null, 112233L)
+        val tombstone = OngoingMatchStore.getMatchResultTombstone(context = null, 112233L, accountUid = "account_winner")
         assertNotNull(tombstone)
         assertEquals("account_winner", tombstone?.winnerUid)
 

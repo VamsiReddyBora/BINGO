@@ -102,8 +102,8 @@ class MultiplayerGameplayReducerTest {
         assertTrue(result.accepted)
         assertEquals(3, result.state.turnNumber)
         assertEquals("B", result.state.currentPlayerId)
-        assertEquals(setOf("A"), result.state.disconnectedPlayerIds)
-        assertEquals(mapOf("A" to 1), result.state.missedTurns)
+        assertTrue(result.state.disconnectedPlayerIds.isEmpty())
+        assertTrue(result.state.missedTurns.isEmpty())
         assertEquals(30_000L, result.state.remainingTurnMillis)
         val later = result.state.copy(remainingTurnMillis = 17_000L)
         repeat(10) { unchanged(later, MultiplayerGameplayReducer.timeout(packet, context, later)) }
@@ -215,7 +215,7 @@ class MultiplayerGameplayReducerTest {
         assertTrue(MultiplayerGameplayReducer.result(packet, context, acceptedMove).accepted)
         val hostBoard = acceptedMove.allPlayerBoards.getValue("host")
         val anotherWon = acceptedMove.copy(allPlayerBoards = acceptedMove.allPlayerBoards + ("A" to hostBoard))
-        assertTrue(MultiplayerGameplayReducer.result(packet.copy(number = 0, winnerPlayerId = "A"), context, anotherWon).accepted)
+        assertFalse("Caller who also completes retains priority", MultiplayerGameplayReducer.result(packet.copy(number = 0, winnerPlayerId = "A"), context, anotherWon).accepted)
         assertFalse(MultiplayerGameplayReducer.result(packet.copy(number = 0), context.copy(excludedPlayerIds = setOf("host")), acceptedMove).accepted)
     }
 
@@ -235,8 +235,9 @@ class MultiplayerGameplayReducerTest {
         assertTrue(accepted.accepted)
         assertEquals(3, accepted.state.turnNumber)
         assertEquals(30_000L, accepted.state.remainingTurnMillis)
-        assertEquals(3, accepted.state.missedTurns["A"])
-        assertEquals(setOf("A"), accepted.state.disconnectedPlayerIds)
+        assertTrue(accepted.state.missedTurns.isEmpty())
+        assertTrue(accepted.state.disconnectedPlayerIds.isEmpty())
+        assertEquals(setOf("A"), accepted.state.surrenderedPlayerIds)
         val replay = MultiplayerGameplayReducer.surrender(packet, context, accepted.state)
         assertFalse(replay.accepted)
         assertSame(accepted.state, replay.state)

@@ -23,6 +23,9 @@ web/dist/
 *.zip
 
 # Secrets & Credentials
+app/google-services.json
+*.jks
+*.keystore
 cloudflare_worker/service-account.json
 *.json.key
 
@@ -38,10 +41,8 @@ cloudflare_worker/.dev.vars.*
 cloudflare_worker/dist/
 /.wrangler/
 
-# Curated, verified deliverables retained in releases.
+# Curated, verified deliverables retained in releases (only APK).
 !/releases/Bingo-1.5.0.apk
-!/releases/Bingo-1.5.0.apk.sha256
-!/releases/Bingo-1.5.0-mapping.zip
 
 # Temporary archive, testing scratch, and simulation evidence
 temp_archive/

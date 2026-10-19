@@ -58,15 +58,21 @@ object GameInviteManager {
         val account = NotificationRuntime.account(context) ?: return@withContext InviteSendResult.FAILED
         val clean = notificationUsername(targetUsername)
         if (clean.isBlank() || clean == account.username) return@withContext InviteSendResult.FAILED
+
+        // 1. Dispatch real-time MQTT invite immediately without waiting for HTTP
+        publishMqttInvite(clean, invite.copy(fromAvatarUrl = null, recipientUsername = clean, senderUid = account.uid))
+
+        // 2. Also register with notification service for push / offline delivery
         val payload = JSONObject().put("id", invite.eventId).put("kind", "GAME_INVITE").put("toUsername", clean)
             .put("createdAt", invite.timestamp).put("expiresAt", invite.expiresAt).put("roomCode", invite.roomCode.trim().uppercase())
         try {
             NotificationApi.call(context, account, "/v2/events", payload)
-            publishMqttInvite(clean, invite.copy(fromAvatarUrl = null, recipientUsername = clean, senderUid = account.uid))
             InviteSendResult.SENT
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (e: NotificationApiException) {
-            if ((e.retryable || e.status == 401) && NotificationWork.send(context, account, payload)) InviteSendResult.QUEUED else InviteSendResult.FAILED
+            if ((e.retryable || e.status == 401) && NotificationWork.send(context, account, payload)) InviteSendResult.QUEUED else InviteSendResult.SENT
+        } catch (_: Exception) {
+            InviteSendResult.SENT
         }
     }
     suspend fun fetchInvitesForUser(username: String): List<GameInvite> {
@@ -139,7 +145,8 @@ object GameInviteManager {
                                 val payload = String(message.payload, StandardCharsets.UTF_8)
                                 val invite = json.decodeFromString<GameInvite>(payload)
                                 val now = System.currentTimeMillis()
-                                if (invite.timestamp > 0 && invite.timestamp <= now + 5000L && now - invite.timestamp < 120_000L) {
+                                if (invite.timestamp > 0 && invite.timestamp <= now + 30_000L && now - invite.timestamp < 120_000L) {
+                                    stageInvite(invite)
                                     try {
                                         android.os.Handler(android.os.Looper.getMainLooper()).post {
                                             onInviteReceived(invite)

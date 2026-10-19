@@ -14,7 +14,9 @@ data class MultiplayerSnapshotCheckpoint(
     val turnNumber: Int = 1,
     val picks: List<MatchPick> = emptyList(),
     // Explicit departure receipts, independent of transient silence or missed turns.
-    val surrenderedPlayerIds: Set<String> = emptySet()
+    val surrenderedPlayerIds: Set<String> = emptySet(),
+    val senderRevisions: Map<String, Long> = emptyMap(),
+    val senderTimestamps: Map<String, Long> = emptyMap()
 )
 
 data class MultiplayerSnapshotApplication(
@@ -38,11 +40,26 @@ object MultiplayerSnapshotReconciler {
         localPicks: List<MatchPick>,
         playerBoard: Board,
         opponentBoard: Board,
-        allPlayerBoards: Map<String, Board>
+        allPlayerBoards: Map<String, Board>,
+        allowPeerSnapshots: Boolean = false,
+        participantIds: List<String> = allPlayerBoards.keys.toList(),
+        turnOrder: List<String> = participantIds
     ): MultiplayerSnapshotApplication? {
         if (packet.type != "GAME_SYNC" || packet.seed != matchSeed || matchSeed == 0L ||
-            hostId.isBlank() || packet.playerId != hostId || packet.turnNumber < checkpoint.turnNumber) return null
-        if (packet.sequence > 0L) {
+            packet.turnNumber < checkpoint.turnNumber ||
+            (if (allowPeerSnapshots) packet.playerId !in participantIds else hostId.isBlank() || packet.playerId != hostId)) return null
+        if (allowPeerSnapshots && (packet.currentTurnPlayerId !in participantIds || packet.turnNumber < 1 ||
+                packet.pickedByHistory.size != packet.pickedHistory.size || packet.turnIds.size != packet.pickedHistory.size ||
+                packet.turnIds.any { it >= packet.turnNumber } ||
+                (packet.turnClock != null && (!packet.turnClock.valid() || packet.turnClock.turnNumber != packet.turnNumber ||
+                    packet.turnClock.playerId != packet.currentTurnPlayerId)))) return null
+        if (allowPeerSnapshots) {
+            val origin = MultiplayerGameplayReducer.sender(packet)
+            if (origin !in participantIds || origin != packet.playerId) return null
+            if (packet.sequence > 0L) {
+                if (packet.sequence <= (checkpoint.senderRevisions[origin] ?: 0L)) return null
+            } else if (packet.timestamp <= (checkpoint.senderTimestamps[origin] ?: 0L)) return null
+        } else if (packet.sequence > 0L) {
             if (packet.sequence <= checkpoint.revision) return null
         } else if (checkpoint.revision > 0L || packet.timestamp <= checkpoint.timestamp) return null
 
@@ -50,11 +67,13 @@ object MultiplayerSnapshotReconciler {
             MatchPick(number, packet.pickedByHistory.getOrNull(index)?.takeIf { it.isNotBlank() } ?: hostId,
                 packet.turnIds.getOrNull(index) ?: (index + 1))
         }
-        if (accepted.any { it.number !in 1..(playerBoard.size * playerBoard.size) || it.turn < 1 || it.turn >= packet.turnNumber } ||
+        if (accepted.any { it.number !in 1..(playerBoard.size * playerBoard.size) || it.turn < 1 || (!packet.isMatchFinished && it.turn >= packet.turnNumber) } ||
+            (allowPeerSnapshots && accepted.any { it.playerId !in participantIds }) ||
             accepted.map { it.number }.distinct().size != accepted.size ||
             accepted.map { it.turn }.zipWithNext().any { (a, b) -> b <= a } ||
             accepted.take(checkpoint.picks.size) != checkpoint.picks) return null
 
+        if (packet.surrenderedPlayerIds.any { it !in participantIds }) return null
         val departed = checkpoint.surrenderedPlayerIds + packet.surrenderedPlayerIds
         if (packet.currentTurnPlayerId in departed && packet.winnerPlayerId.isBlank()) return null
         val engine = BingoEngine()
@@ -66,14 +85,16 @@ object MultiplayerSnapshotReconciler {
             }
             return result
         }
-        val winnerBoard = allPlayerBoards[packet.winnerPlayerId]
-            ?: playerBoard.takeIf { packet.winnerPlayerId == localId }
+        val acceptedBoards = allPlayerBoards.mapValues { (id, board) ->
+            rebuild(board, accepted) { LobbyLifecycleEngine.isPlayerIdMatch(it, id) }
+        }.toMutableMap().apply { putIfAbsent(localId, rebuild(playerBoard, accepted) { it == localId }) }
+        val result = MultiplayerResultRules.evaluate(acceptedBoards, participantIds, departed,
+            accepted.lastOrNull()?.playerId.orEmpty(), turnOrder)
         val confirmedWinner = packet.winnerPlayerId.takeIf { id ->
-            id.isNotBlank() && id !in checkpoint.surrenderedPlayerIds && id !in packet.surrenderedPlayerIds &&
-                id !in packet.eliminatedPlayerIds && winnerBoard != null &&
-                (rebuild(winnerBoard, accepted) { it == id }.isBingo ||
-                    (packet.isMatchFinished && packet.winReason in setOf("Opponent Surrendered", "Opponent Disconnected", "Opponent Left", "Host Disconnected")))
+            id.isNotBlank() && result?.winnerId == id &&
+                (result.reason != "Opponent Surrendered" || (packet.isMatchFinished && packet.winReason.contains("surrender", ignoreCase = true)))
         }.orEmpty()
+        if (allowPeerSnapshots && packet.isMatchFinished && confirmedWinner.isBlank()) return null
         // A snapshot made before an in-flight pick is not a rejection. Only a closed turn
         // can reject it. Previously accepted host picks can never be rolled back.
         val pending = if (confirmedWinner.isNotBlank()) emptyList() else localPicks.filter { local ->
@@ -83,7 +104,9 @@ object MultiplayerSnapshotReconciler {
         return MultiplayerSnapshotApplication(
             checkpoint = checkpoint.copy(revision = packet.sequence, timestamp = maxOf(checkpoint.timestamp, packet.timestamp),
                 turnNumber = packet.turnNumber, picks = accepted,
-                surrenderedPlayerIds = checkpoint.surrenderedPlayerIds + packet.surrenderedPlayerIds),
+                surrenderedPlayerIds = departed,
+                senderRevisions = checkpoint.senderRevisions + (packet.playerId to packet.sequence),
+                senderTimestamps = checkpoint.senderTimestamps + (packet.playerId to packet.timestamp)),
             picks = picks,
             hasPendingPicks = pending.isNotEmpty(),
             playerBoard = rebuild(playerBoard, picks) { LobbyLifecycleEngine.isPlayerIdMatch(it, localId) },

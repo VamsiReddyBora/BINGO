@@ -387,23 +387,14 @@ object LobbyLifecycleEngine {
         val cleanMyUid = myUid.trim().lowercase().removePrefix("u_")
         val cleanPId = p.id.trim().lowercase().removePrefix("u_")
         if (cleanPId.isNotBlank() && cleanMyUid.isNotBlank()) {
-            if (cleanPId == cleanMyUid) {
-                return true
-            }
+            return cleanPId == cleanMyUid
         }
         val cleanMyUser = myUsername.trim().lowercase().removePrefix("@").removePrefix("u_")
         val cleanPUser = p.username.trim().lowercase().removePrefix("@").removePrefix("u_")
         if (cleanMyUser.isNotBlank() && cleanPUser.isNotBlank() && cleanMyUser == cleanPUser) {
             return true
         }
-        val cleanMyDisplay = myDisplayName.trim().lowercase()
-        val cleanPDisplay = p.displayName.trim().lowercase()
-        if (cleanMyDisplay.isNotBlank() && cleanPDisplay.isNotBlank() && cleanMyDisplay == cleanPDisplay) {
-            if (p.isHost == isHost) return true
-        }
-        if (isHost && p.isHost) {
-            return true
-        }
+        // Display names and host badges are not unique player identities.
         return false
     }
 

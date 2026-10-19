@@ -29,6 +29,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
@@ -294,6 +295,41 @@ fun DeveloperNoteScreen(
                         color = tokens.primaryButtonText
                     )
                 }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // ── Dedicated WhatsApp Quick Alert Button for EMQX Server Down ──
+            OutlinedButton(
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    val serverAlertMessage = "Hi Vamsi! The EMQX real-time broker appears to be down (app is running on HTTP fallback). Could you please check and restart the server? Thanks!"
+                    messageText = serverAlertMessage
+                    coroutineScope.launch {
+                        FeedbackManager.openDirectWhatsAppChat(
+                            context = context,
+                            username = currentUser?.username ?: "player",
+                            displayName = currentUser?.displayName ?: "Player",
+                            message = serverAlertMessage
+                        )
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.2.dp, Color(0xFF25D366)),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    containerColor = if (tokens.isDark) Color(0xFF14291D) else Color(0xFFF0FDF4),
+                    contentColor = if (tokens.isDark) Color(0xFF4ADE80) else Color(0xFF15803D)
+                )
+            ) {
+                Text(
+                    text = "💬 Report EMQX Server Down on WhatsApp",
+                    fontSize = 13.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (tokens.isDark) Color(0xFF4ADE80) else Color(0xFF15803D)
+                )
             }
 
             Spacer(modifier = Modifier.height(30.dp))

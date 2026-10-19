@@ -56,8 +56,8 @@ fun AuthGateScreen(
                     val ongoing = OngoingMatchStore.getOngoingMatch(context, currentUid)
                     if (ongoing != null) {
                         val session = OnlineRoomRegistry.getRoom(ongoing.roomCode)
-                        if (session != null && session.status == "CLOSED" && !ongoing.is1v1Match && ongoing.participants.size != 2) {
-                            OngoingMatchStore.clearOngoingMatch(context, currentUid)
+                        if (ongoing.simplifiedRulesVersion == 0 && session != null && session.status == "CLOSED" && !ongoing.is1v1Match && ongoing.participants.size != 2) {
+                            OngoingMatchStore.clearMatchIfCurrent(context, currentUid, ongoing.roomCode, ongoing.matchSeed)
                         }
                     }
                 }

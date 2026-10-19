@@ -12,11 +12,11 @@ class MultiplayerLifecyclePacketGate(private val clock: Clock = SystemMonotonicC
         val scopedTypes = MultiplayerGameplayReducer.gameplayTypes + setOf(
             "GAME_SYNC", "GAME_SYNC_ACK", "GAME_PAUSED", "GAME_RESUMED", "PAUSE_EXTEND",
             "HOST_HOLD", "HOST_RESUMED", "PLAYER_ELIMINATED", "PLAYER_DISCONNECTED",
-            "HOST_LEFT", "REJOIN_GAME", "SYNC_REQUEST", "BOARD_READY", "GO_TO_LOBBY",
+            "HOST_LEFT", "LEAVE", "REJOIN_GAME", "SYNC_REQUEST", "BOARD_READY", "GO_TO_LOBBY",
             "MULTIPLAYER_PRESENCE_REQUEST", "MULTIPLAYER_PRESENCE_RESPONSE",
             "KICK_PLAYER", "SETTINGS_UPDATE", "CHAT_MESSAGE"
         )
-        private val departureTypes = setOf("HOST_LEFT", "PLAYER_DISCONNECTED", "REJOIN_GAME")
+        private val departureTypes = setOf("HOST_LEFT", "PLAYER_DISCONNECTED", "REJOIN_GAME", "LEAVE")
     }
     private data class Probe(val createdAt: Long, val responders: MutableSet<String> = mutableSetOf())
     private var scope = ""
@@ -45,7 +45,11 @@ class MultiplayerLifecyclePacketGate(private val clock: Clock = SystemMonotonicC
             if (packet.type == "HOST_LEFT") return packet.playerId.isBlank() ||
                 (packet.playerId == context.hostId && MultiplayerGameplayReducer.sender(packet) == context.hostId)
         }
-        if (packet.transportOnly || packet.type in setOf("LEAVE", "LOBBY_EXPIRED", "LOBBY_EXTEND")) return false
+        if (packet.transportOnly || packet.type in setOf("LOBBY_EXPIRED", "LOBBY_EXTEND")) return false
+        if (packet.type == "LEAVE") {
+            return MultiplayerGameplayReducer.belongsToMatch(packet, context) &&
+                MultiplayerGameplayReducer.sender(packet) == packet.playerId
+        }
         if (packet.type !in scopedTypes) return true
         if (!MultiplayerGameplayReducer.belongsToMatch(packet, context)) return false
         if (packet.senderInstanceId in retiredInstances) return false
