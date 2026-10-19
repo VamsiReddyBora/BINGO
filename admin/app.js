@@ -139,6 +139,13 @@ function identity(row) {
       {},
       h("strong", {}, p.displayName || row.username),
       h("small", {}, "@" + row.username),
+      row.sourceStatus && row.sourceStatus !== "FRESH"
+        ? h(
+            "small",
+            { title: "Open for a fresh inspection" },
+            "Profile: " + row.sourceStatus.toLowerCase(),
+          )
+        : null,
     ),
   );
 }
@@ -234,20 +241,32 @@ function filters() {
   };
 }
 function rows() {
-  return (state.snapshot?.players || []).map((row) =>
-    state.stale
-      ? {
-          ...row,
-          presence: {
-            ...row.presence,
-            status: "UNKNOWN",
-            detail: row.presence?.detail
-              ? "Last verified activity: " + row.presence.detail
-              : "",
-          },
-        }
-      : row,
-  );
+  return (state.snapshot?.players || []).map((row) => {
+    let result = { ...row, profile: { ...row.profile } };
+    if (
+      state.stale ||
+      ["STALE", "REGISTRY", "UNAVAILABLE"].includes(row.sourceStatus)
+    ) {
+      for (const field of [
+        "level",
+        "gamesPlayed",
+        "gamesWon",
+        "currentStreak",
+        "bestStreak",
+        "xp",
+      ])
+        delete result.profile[field];
+    }
+    if (state.stale)
+      result.presence = {
+        ...row.presence,
+        status: "UNKNOWN",
+        detail: row.presence?.detail
+          ? "Last verified activity: " + row.presence.detail
+          : "",
+      };
+    return result;
+  });
 }
 function filtered() {
   return selectPlayers(rows(), filters());
@@ -633,6 +652,11 @@ function renderInspection() {
   $("inspector-warning").hidden = data.sourceApplied;
   $("inspector-warning").textContent =
     "This change is protected in admin control. The profile storage has not yet received this revision. Check the pending synchronization jobs.";
+  if (data.historyPartial) {
+    $("inspector-warning").hidden = false;
+    $("inspector-warning").textContent =
+      "The legacy backup is unavailable. Verified profile and history records are shown; additional backup-only records may be missing. Changes requiring that backup remain pending until it recovers.";
+  }
   const body = $("inspector-body");
   body.replaceChildren();
   if (state.section === "overview") renderOverview(body, data);
@@ -757,7 +781,12 @@ function renderOverview(body, data) {
     "div",
     { class: "profile-form" },
     field("Display name", "displayName", p.displayName),
-    field("Level", "level", p.level, { type: "number", min: 1, max: 10000,required:false }),
+    field("Level", "level", p.level, {
+      type: "number",
+      min: 1,
+      max: 10000,
+      required: false,
+    }),
     ...["gamesPlayed", "gamesWon", "currentStreak", "bestStreak", "xp"].map(
       (key) =>
         field(
@@ -770,7 +799,7 @@ function renderOverview(body, data) {
           }[key],
           key,
           p[key] ?? "",
-          { type: "number", min: 0, max: 100000000,required:false },
+          { type: "number", min: 0, max: 100000000, required: false },
         ),
     ),
   );
@@ -787,7 +816,8 @@ function renderOverview(body, data) {
     const fields = new FormData(edit),
       patch = {};
     for (const [key, value] of fields)
-      if(value!=="")patch[key] = key === "displayName" ? value.trim() : Number(value);
+      if (value !== "")
+        patch[key] = key === "displayName" ? value.trim() : Number(value);
     if (patch.gamesWon > patch.gamesPlayed) {
       toast("Wins cannot exceed games played.", "error");
       return;

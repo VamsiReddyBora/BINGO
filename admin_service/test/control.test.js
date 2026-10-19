@@ -7,6 +7,7 @@ import {
   decodeLegacy,
   encodeLegacy,
   validateAvatar,
+  rasterPhoto,
   validatePatch,
   presence,
   passwordHash,
@@ -555,4 +556,12 @@ test("new player record is visible only after backing storage accepts it", async
     200,
   );
   assert.equal((await detail(f, "new_player")).profile.uid, "guest_new_player");
+});
+
+test("a malformed old photo falls back without hiding an otherwise valid player profile", () => {
+  assert.equal(
+    rasterPhoto("data:image/jpeg;base64,YWJjZGVmZ2hpamtsbW5vcA=="),
+    null,
+  );
+  assert.equal(rasterPhoto("not a photo"), null);
 });

@@ -314,11 +314,11 @@ export class AdminControl {
     const cursor = this.profileCursor || 0;
     const refreshNames = new Set(
       Array.from(
-        { length: Math.min(8, active.length) },
+        { length: Math.min(6, active.length) },
         (_, i) => active[(cursor + i) % active.length],
       ),
     );
-    this.profileCursor = active.length ? (cursor + 8) % active.length : 0;
+    this.profileCursor = active.length ? (cursor + 6) % active.length : 0;
     const rows = await mapLimit(active, 5, async (name) => {
       try {
         const row = await this.player(
@@ -416,9 +416,15 @@ export class AdminControl {
       return json({ entries });
     }
     if (path === "/api/operations") {
-      const operations=[...(await this.storage.list({prefix:"operation:"})).values()];
-      operations.sort((a,b)=>Number(b.status==="PENDING")-Number(a.status==="PENDING")||b.createdAt-a.createdAt);
-      return json({operations:operations.slice(0,100)});
+      const operations = [
+        ...(await this.storage.list({ prefix: "operation:" })).values(),
+      ];
+      operations.sort(
+        (a, b) =>
+          Number(b.status === "PENDING") - Number(a.status === "PENDING") ||
+          b.createdAt - a.createdAt,
+      );
+      return json({ operations: operations.slice(0, 100) });
     }
     if (path === "/api/release") {
       const data = decodeLegacy(await this.legacy.get("latest_app_version"));
@@ -445,7 +451,12 @@ export class AdminControl {
       "Player source is unavailable; showing cached data would be unsafe for editing",
     );
     const [backup, friends, cloudMatches] = await Promise.all([
-      row.binId ? this.legacy.backup(row.binId) : Promise.resolve(null),
+      row.binId
+        ? this.legacy.backup(row.binId).catch((error) => {
+            if (row.backupError) return null;
+            throw error;
+          })
+        : Promise.resolve(null),
       this.legacy.friends(name, row.profile.uid),
       this.legacy.collection("users/" + row.profile.uid + "/matches"),
     ]);
@@ -472,6 +483,7 @@ export class AdminControl {
       etag: row.etag,
       sourceApplied: row.sourceApplied,
       fetchedAt: Date.now(),
+      historyPartial: row.backupError,
       friends: friends.filter(
         (f) => !removedNames.has(f.username) && !removedIds.has(f.uid),
       ),
@@ -1061,7 +1073,11 @@ export class AdminControl {
     const now = Date.now();
     const pending = [
       ...(await this.storage.list({ prefix: "operation:" })).values(),
-    ].filter((op) => op.status === "PENDING").sort((a,b)=>(a.updatedAt||a.createdAt)-(b.updatedAt||b.createdAt));
+    ]
+      .filter((op) => op.status === "PENDING")
+      .sort(
+        (a, b) => (a.updatedAt || a.createdAt) - (b.updatedAt || b.createdAt),
+      );
     for (const op of pending.slice(0, 10)) await this.execute(op);
     for (const [key, s] of await this.storage.list({ prefix: "session:" }))
       if (s.expiresAt <= now || now - s.lastSeen >= 1800000)
@@ -1075,7 +1091,8 @@ export class AdminControl {
     const remaining = [
       ...(await this.storage.list({ prefix: "operation:" })).values(),
     ].some((op) => op.status === "PENDING");
-    const activeSessions=await this.storage.list({prefix:"session:"});
-    if (remaining||activeSessions.size) await this.storage.setAlarm(now + (remaining?60000:300000));
+    const activeSessions = await this.storage.list({ prefix: "session:" });
+    if (remaining || activeSessions.size)
+      await this.storage.setAlarm(now + (remaining ? 60000 : 300000));
   }
 }

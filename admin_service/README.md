@@ -23,7 +23,7 @@ An accepted mutation is first stored with its audit record. `SYNCED` means the r
 
 Profile source application and device receipt are different things. `sourceApplied` only describes the stored profile revision; it does not claim that a phone received the change. Client profile corrections apply once so future games can accumulate new statistics normally. Photo removal uses explicit null fields. Match-removal markers prevent an old backup from merging removed records back into an updated app.
 
-The first directory load reads the index and broker observations, then refreshes at most eight full profiles per request to stay within Worker limits. Other rows show clearly labelled registry/cached/unavailable data until refreshed; opening a player requests fresh data. A directory outage never authorizes a repair write, hardcoded player insertion or success toast. Only verified directory membership contributes to the total.
+The first directory load reads the index and broker observations, then refreshes at most six full profiles per request to stay within Worker limits. Other rows show clearly labelled registry/cached/unavailable data until refreshed; opening a player requests fresh data. A directory outage never authorizes a repair write, hardcoded player insertion or success toast. Only verified directory membership contributes to the total.
 
 The Android integration is `AdminControlClient`, initialized by `BingoApplication`. Background account checks run approximately every 15 seconds, persist policies locally, block removed accounts, correct social/profile backups and filter deleted match history. They do not run in the move/turn packet handler. Explicit owner account removal signs the updated app out without backing that account up again.
 

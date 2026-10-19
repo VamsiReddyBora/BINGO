@@ -159,16 +159,20 @@ export function validateAvatar(value) {
   return value;
 }
 export function rasterPhoto(value) {
-  if (typeof value !== "string") return null;
-  if (value.startsWith("data:")) return validateAvatar(value);
-  const mime = value.startsWith("/9j/")
-    ? "jpeg"
-    : value.startsWith("iVBORw0KGgo")
-      ? "png"
-      : value.startsWith("UklGR")
-        ? "webp"
-        : null;
-  return mime ? validateAvatar(`data:image/${mime};base64,${value}`) : null;
+  try {
+    if (typeof value !== "string") return null;
+    if (value.startsWith("data:")) return validateAvatar(value);
+    const mime = value.startsWith("/9j/")
+      ? "jpeg"
+      : value.startsWith("iVBORw0KGgo")
+        ? "png"
+        : value.startsWith("UklGR")
+          ? "webp"
+          : null;
+    return mime ? validateAvatar(`data:image/${mime};base64,${value}`) : null;
+  } catch {
+    return null;
+  }
 }
 export function applyPolicy(profile, policy = {}) {
   requireThat(

@@ -110,15 +110,17 @@ export class LegacyStore {
   }
   async read(name) {
     name = username(name);
-    const [rawBin, rawReg] = await Promise.all([
+    const reads = await Promise.allSettled([
       this.get("user_" + name),
       this.get("reg_" + name),
     ]);
+    const rawBin = reads[0].status === "fulfilled" ? reads[0].value : null;
+    const rawReg = reads[1].status === "fulfilled" ? reads[1].value : null;
     const reg = decodeLegacy(rawReg);
     let bin = typeof rawBin === "string" ? rawBin.trim() : null;
     if (!bin || bin === "null") bin = null;
     let backup = null,
-      backupError = false;
+      backupError = reads[0].status !== "fulfilled";
     if (bin) {
       try {
         backup = await this.backup(bin);
@@ -129,12 +131,20 @@ export class LegacyStore {
     let profile =
       backup?.profile ||
       (reg && typeof reg === "object" && !Array.isArray(reg) ? reg : null);
+    if (!profile?.uid) {
+      const mapped = await this.firestoreGet("usernames/" + name);
+      if (mapped?.uid) {
+        profile = await this.firestoreGet("users/" + mapped.uid);
+        backupError = true;
+      }
+    }
     requireThat(
       profile && typeof profile.uid === "string" && profile.uid.length > 0,
       503,
       "Player profile could not be verified",
     );
-    const avatarBinId = (await this.get("ava_" + name))?.trim() || null;
+    const avatarBinId =
+      (await this.get("ava_" + name).catch(() => null))?.trim() || null;
     if (
       !profile.avatarBase64 &&
       (!profile.avatarUrl || !profile.avatarUrl.startsWith("https://")) &&
@@ -255,7 +265,7 @@ export class LegacyStore {
         requireThat(data.id, 503, "Avatar storage failed");
         await this.set("ava_" + name, data.id);
       }
-    } else await this.set("ava_" + name, "");
+    } else if (policy?.fields?.avatarBase64) await this.set("ava_" + name, "");
     return profile;
   }
   async token() {

@@ -236,3 +236,30 @@ test("large account cleanup checkpoints progress and erases profile, photo, hist
   assert.equal(f.kv.get("user_kevin"), "");
   assert.deepEqual(decodeLegacy(f.kv.get("friends_stuart")), []);
 });
+
+test("Firestore fallback uses an existing identity and never invents an absent account", async () => {
+  const f = fixture();
+  f.kv.set("user_kevin", "");
+  f.kv.set("reg_kevin", "");
+  const row = await f.store.read("kevin");
+  assert.equal(row.profile.uid, f.profile.uid);
+  assert.equal(row.backupError, true);
+  await assert.rejects(() => f.store.read("missing_player"), /verified/);
+});
+test("failed backup pointer read cannot authorize replacing history with an empty backup", async () => {
+  const f = fixture(),
+    get = f.store.get.bind(f.store);
+  f.store.get = async (key) => {
+    if (key === "user_kevin") throw Error("offline");
+    return get(key);
+  };
+  const row = await f.store.read("kevin");
+  assert.equal(row.profile.uid, f.profile.uid);
+  assert.equal(row.backupError, true);
+  await assert.rejects(
+    () =>
+      f.store.mirrorProfile("kevin", { ...row.profile, displayName: "New" }),
+    /readable/,
+  );
+  assert.equal(f.bins.get("deadbeef1234").matchHistory.length, 34);
+});
