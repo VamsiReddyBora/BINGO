@@ -1,8 +1,8 @@
 {
   "versionCode": 45,
   "versionName": "1.0",
-  "tag_name": "v1.0.0",
+  "tag_name": "v1.0",
   "downloadUrl": "https://vamsireddybora.github.io/BINGO/Bingo-1.0.apk",
   "releaseNotes": "• Version 1.0\n• Turn-based multiplayer with synchronized boards\n• 30s turn countdown with auto-skip\n• Reconnection support for active matches\n• Light and AMOLED dark themes",
-  "apkSize": 7236337
+  "apkSize": 7240439
 }
