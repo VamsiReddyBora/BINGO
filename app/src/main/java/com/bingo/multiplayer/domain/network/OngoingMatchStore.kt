@@ -64,7 +64,12 @@ data class OngoingMatchData(
     val runnerPlayerIds: List<String> = emptyList(),
     val isMatchFinished: Boolean = false,
     val winnerPlayerId: String = "",
-    val winReason: String = ""
+    val winReason: String = "",
+    val turnClock: MultiplayerTurnClock? = null,
+    val lastPlayerActivityAt: Long = startedAt,
+    val isExpired: Boolean = false,
+    val simplifiedRulesVersion: Int = 0,
+    val presenceState: MultiplayerPresenceState = MultiplayerPresenceState()
 )
 
 @Keep
@@ -80,6 +85,9 @@ data class MatchResultTombstone(
     val runnerPlayerIds: List<String> = emptyList()
 )
 
+@Serializable
+data class PendingMatchExit(val accountUid: String, val roomCode: String, val packet: RoomMessagePacket)
+
 /**
  * Persists active online room match metadata so a player who temporarily exited,
  * switched apps, or experienced a connection drop can effortlessly rejoin the same
@@ -89,6 +97,7 @@ object OngoingMatchStore {
     private const val PREFS_NAME = "bingo_ongoing_match"
     private const val KEY_MATCH_DATA = "active_match_data"
     private const val KEY_TOMBSTONE_PREFIX = "match_tombstone_"
+    private const val KEY_PENDING_EXIT_PREFIX = "pending_match_exit_"
     private const val MAX_MATCH_AGE_MS = 8 * 60 * 1000L // 8 minutes TTL for legacy group matches
 
     private val json = Json {
@@ -110,7 +119,8 @@ object OngoingMatchStore {
         return if (clean.isNotBlank()) "active_match_data_$clean" else KEY_MATCH_DATA
     }
 
-    private fun getTombstoneKey(matchSeed: Long): String = "$KEY_TOMBSTONE_PREFIX$matchSeed"
+    private fun getTombstoneKey(matchSeed: Long, accountUid: String? = null): String =
+        "$KEY_TOMBSTONE_PREFIX${accountUid?.takeIf { it.isNotBlank() }?.let { "$it:" }.orEmpty()}$matchSeed"
 
     /**
      * Atomically and durably saves match checkpoint using commit().
@@ -130,6 +140,13 @@ object OngoingMatchStore {
         } catch (_: Exception) {
             false
         }
+    }
+
+    @Synchronized
+    fun saveRecoveredMatch(context: Context?, data: OngoingMatchData): Boolean {
+        val current = getOngoingMatch(context, data.accountUid) ?: return false
+        if (current.matchSeed != data.matchSeed || current.roomCode != data.roomCode || current.startedAt != data.startedAt) return false
+        return saveOngoingMatch(context, data)
     }
 
     /** Compare the active account/match before every asynchronous controller write.
@@ -209,7 +226,13 @@ object OngoingMatchStore {
         clearNullableEpisodeFields: Boolean = false,
         expectedMatchSeed: Long? = null,
         accountUid: String? = null,
-        hostHoldRemainingSeconds: Int? = null
+        hostHoldRemainingSeconds: Int? = null,
+        turnClock: MultiplayerTurnClock? = null,
+        lastPlayerActivityAt: Long? = null,
+        isMatchFinished: Boolean? = null,
+        winnerPlayerId: String? = null,
+        winReason: String? = null,
+        runnerPlayerIds: List<String>? = null
     ): Boolean {
         if (accountUid.isNullOrBlank()) return false
         return try {
@@ -246,6 +269,12 @@ object OngoingMatchStore {
                 peerAvailabilityState = peerAvailabilityState ?: current.peerAvailabilityState,
                 matchRevision = matchRevision ?: if (current.reliableSnapshot == null) current.matchRevision + 1 else current.matchRevision,
                 hostHoldRemainingSeconds = hostHoldRemainingSeconds ?: current.hostHoldRemainingSeconds,
+                turnClock = turnClock ?: current.turnClock,
+                lastPlayerActivityAt = maxOf(current.lastPlayerActivityAt, lastPlayerActivityAt ?: 0L),
+                isMatchFinished = isMatchFinished ?: current.isMatchFinished,
+                winnerPlayerId = winnerPlayerId ?: current.winnerPlayerId,
+                winReason = winReason ?: current.winReason,
+                runnerPlayerIds = runnerPlayerIds ?: current.runnerPlayerIds,
                 lastUpdatedAt = nowMs
             )
             saveOngoingMatch(context, updated)
@@ -294,14 +323,17 @@ object OngoingMatchStore {
             }
 
             // Check if this match has already concluded via a durable result tombstone (HB11, F002)
-            val tombstone = getMatchResultTombstone(context, data.matchSeed)
-            if (tombstone != null && data.reliableSnapshot == null) {
+            val tombstone = getMatchResultTombstone(context, data.matchSeed, data.accountUid)
+            if (tombstone != null && data.reliableSnapshot == null && data.simplifiedRulesVersion == 0) {
                 clearOngoingMatch(context, accountUid)
                 return null
             }
 
             val age = System.currentTimeMillis() - data.lastUpdatedAt
-            val isExpired = if (data.is1v1Match) age >= (24 * 60 * 60 * 1000L) else age >= MAX_MATCH_AGE_MS
+            // A local old checkpoint cannot establish remote inactivity. Version-3 recovery
+            // validates the retained peer state before deciding expiry, including a local final result.
+            val isExpired = data.isExpired || (data.simplifiedRulesVersion == 0 &&
+                if (data.is1v1Match) age >= (24 * 60 * 60 * 1000L) else age >= MAX_MATCH_AGE_MS)
             if (!isExpired && data.roomCode.isNotBlank()) {
                 data
             } else {
@@ -333,6 +365,14 @@ object OngoingMatchStore {
         }
     }
 
+    /** A delayed lookup for an older game may never clear its replacement. */
+    @Synchronized
+    fun clearMatchIfCurrent(context: Context?, accountUid: String, roomCode: String, seed: Long): Boolean {
+        val current = getOngoingMatch(context, accountUid) ?: return false
+        if (current.matchSeed != seed || current.roomCode != roomCode) return false
+        return clearOngoingMatch(context, accountUid)
+    }
+
     /**
      * Durably stores a LOCAL immutable accepted result tombstone keyed by match seed (HB11, F002).
      * Rejects conflicting writes and allows idempotent duplicate writes.
@@ -349,7 +389,7 @@ object OngoingMatchStore {
         runnerPlayerIds: List<String> = emptyList()
     ): Boolean {
         if (matchSeed == 0L) return false
-        val existing = getMatchResultTombstone(context, matchSeed)
+        val existing = getMatchResultTombstone(context, matchSeed, accountUid)
         if (existing != null) {
             // Idempotent: identical result returns true
             if (existing.winnerUid == winnerUid && existing.winReason == winReason) {
@@ -369,7 +409,7 @@ object OngoingMatchStore {
                 runnerPlayerIds = runnerPlayerIds
             )
             val serialized = json.encodeToString(tombstone)
-            val committed = getPrefs(context).edit().putString(getTombstoneKey(matchSeed), serialized).commit()
+            val committed = getPrefs(context).edit().putString(getTombstoneKey(matchSeed, accountUid), serialized).commit()
             if (!committed) {
                 return false
             }
@@ -383,17 +423,36 @@ object OngoingMatchStore {
     /**
      * Retrieves an immutable final result tombstone if one exists for this match seed (HB11, F002).
      */
-    fun getMatchResultTombstone(context: Context?, matchSeed: Long): MatchResultTombstone? {
+    fun getMatchResultTombstone(context: Context?, matchSeed: Long, accountUid: String? = null): MatchResultTombstone? {
         if (matchSeed == 0L) return null
         val local = try {
-            val serialized = getPrefs(context).getString(getTombstoneKey(matchSeed), null)
+            val prefs = getPrefs(context)
+            val serialized = prefs.getString(getTombstoneKey(matchSeed, accountUid), null)
+                ?: prefs.getString(getTombstoneKey(matchSeed), null)
             if (serialized != null) json.decodeFromString<MatchResultTombstone>(serialized) else null
         } catch (_: Exception) {
             null
         }
-        if (local != null) {
+        if (local != null && (accountUid.isNullOrBlank() || local.accountUid.isBlank() || local.accountUid == accountUid)) {
             return local
         }
         return null
     }
+
+    @Synchronized
+    fun enqueueExit(context: Context?, exit: PendingMatchExit): Boolean {
+        if (exit.accountUid.isBlank() || exit.roomCode.isBlank() || exit.packet.seed == 0L || exit.packet.type != "SURRENDER") return false
+        return getPrefs(context).edit().putString("$KEY_PENDING_EXIT_PREFIX${exit.accountUid}:${exit.packet.seed}",
+            json.encodeToString(exit)).commit()
+    }
+
+    @Synchronized
+    fun pendingExits(context: Context?, accountUid: String): List<PendingMatchExit> = getPrefs(context).all
+        .filterKeys { it.startsWith("$KEY_PENDING_EXIT_PREFIX$accountUid:") }.values.mapNotNull {
+            runCatching { json.decodeFromString<PendingMatchExit>(it as String) }.getOrNull()
+        }
+
+    @Synchronized
+    fun acknowledgeExit(context: Context?, accountUid: String, seed: Long): Boolean =
+        getPrefs(context).edit().remove("$KEY_PENDING_EXIT_PREFIX$accountUid:$seed").commit()
 }

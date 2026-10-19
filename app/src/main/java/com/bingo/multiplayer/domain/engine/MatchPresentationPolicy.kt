@@ -61,6 +61,16 @@ object MatchSystemMessages {
                 result.add(if (index < 0) result.size else index, notice)
             }
         }
-        return result
+        var seenHostNotice = false
+        val sanitized = mutableListOf<InGameChatMessage>()
+        for (msg in result) {
+            val isHostNotice = msg.isSystemMessage && (msg.text.contains("is the host") || msg.text.contains("are the host"))
+            if (isHostNotice) {
+                if (seenHostNotice) continue
+                seenHostNotice = true
+            }
+            sanitized.add(msg)
+        }
+        return sanitized
     }
 }

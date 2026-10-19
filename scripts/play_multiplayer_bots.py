@@ -16,10 +16,17 @@ import json
 import random
 import threading
 import ssl
+import gzip
+import base64
 import urllib.request
 import urllib.parse
 from typing import Dict, List, Optional, Set
 import paho.mqtt.client as mqtt
+
+def encode_base64_url(raw: str) -> str:
+    compressed = gzip.compress(raw.encode('utf-8'))
+    b64 = base64.b64encode(compressed).decode('ascii')
+    return f"GZ:{b64}"
 
 # --- Configuration ---
 BROKER_HOST = "p0812f88.ala.asia-southeast1.emqxsl.com"
@@ -83,11 +90,13 @@ def count_completed_lines(board: List[int], marked: Set[int]) -> int:
     return lines
 
 class MultiplayerBotCompanion:
-    def __init__(self, room_code: Optional[str] = None):
+    def __init__(self, room_code: Optional[str] = None, mode: str = "normal"):
         self.room_code = (room_code or "KV5000").upper()
+        self.mode = mode.lower()
+        self.simulation_enabled = (self.mode == "simulation")
         self.topic = f"bingo/v3/room/{self.room_code}"
         self.running = True
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
 
         # Network
         self.client_id = f"sim_multi_{random.randint(1000, 9999)}"
@@ -106,11 +115,18 @@ class MultiplayerBotCompanion:
         self.match_seed = 0
         self.board_size = 5
         self.turn_number = 1
+        self.scheduled_turn = 0
         self.current_turn_player_id = ""
         self.turn_order: List[str] = []
         self.picked_numbers: List[int] = []
         self.picked_by: List[str] = []
+        self.pick_turns: List[int] = []
         self.marked: Set[int] = set()
+        self.turn_start_time = time.time()
+        self.turn_timeout_seconds = 30.0
+        self.is_game_over = False
+        self.winner_player_id = ""
+        self.win_reason = ""
 
         # Opponent (Bob / User)
         self.opponent_id = ""
@@ -153,6 +169,8 @@ class MultiplayerBotCompanion:
             {"id": b["id"], "displayName": b["displayName"], "username": b["username"], "isHost": b["isHost"], "lobbyReadyStatus": "READY"}
             for b in BOTS
         ]
+        # Generous future heartbeat timestamp (+1 hr) prevents false room expiry from clock drift
+        future_heartbeat = int(time.time() * 1000) + 3600000
         session = {
             "roomCode": self.room_code,
             "hostId": BOT_KEVIN["id"],
@@ -161,7 +179,7 @@ class MultiplayerBotCompanion:
             "status": "WAITING",
             "boardSize": 5,
             "createdAt": int(time.time() * 1000),
-            "lastHeartbeat": int(time.time() * 1000),
+            "lastHeartbeat": future_heartbeat,
             "players": players_meta,
             "currentSeed": 0,
             "isManualBoard": False,
@@ -170,15 +188,15 @@ class MultiplayerBotCompanion:
         json_str = json.dumps(session)
         meta_topic = f"bingo/v3/room_meta/{self.room_code}"
         self.client.publish(meta_topic, json_str, qos=1, retain=True)
-        print(f"[Registry] Published 4-bot metadata to retained topic '{meta_topic}'")
 
         try:
-            url = f"{KEYVALUE_API_URL}/UpdateValue/{KEYVALUE_APP_KEY}/room_{self.room_code}?value={urllib.parse.quote(json_str)}"
+            gz_val = encode_base64_url(json_str)
+            url = f"{KEYVALUE_API_URL}/UpdateValue/{KEYVALUE_APP_KEY}/room_{self.room_code}?value={urllib.parse.quote(gz_val)}"
             req = urllib.request.Request(url, data=b"", headers={"Content-Length": "0"}, method="POST")
             with urllib.request.urlopen(req, timeout=3.0) as resp:
-                print(f"[Registry] Registered room {self.room_code} on KeyValue cloud registry (status={resp.status})")
-        except Exception as e:
-            print(f"[Registry] KeyValue registration note: {e}")
+                pass
+        except Exception:
+            pass
 
     def _on_connect(self, client, userdata, flags, rc, properties=None):
         if rc == 0:
@@ -220,11 +238,15 @@ class MultiplayerBotCompanion:
             self.publish(ready_micro)
 
     def _heartbeat_loop(self):
+        tick = 0
         while self.running:
             try:
                 time.sleep(2.5)
+                tick += 1
                 if not self.in_game:
                     self._send_lobby_presences()
+                    if tick % 4 == 0:
+                        self._register_room_metadata()
                 else:
                     for b in BOTS:
                         status = self.bot_status.get(b["id"], "ONLINE")
@@ -232,8 +254,101 @@ class MultiplayerBotCompanion:
                             now_ms = int(time.time() * 1000)
                             mhb = f"MHB|1|{self.match_seed}|ACTIVE|{b['id']}|{self.opponent_id}|sim_bot|{self.turn_number}|none|{now_ms}"
                             self.publish(mhb)
+                    # Host Kevin periodically broadcasts GAME_SYNC so guest is always reconciled
+                    if tick % 2 == 0:
+                        self.send_game_sync()
             except Exception:
                 pass
+
+    def _get_turn_timeout_seconds(self, player_id: str) -> float:
+        if not player_id:
+            return 30.0
+        if player_id.startswith("player_"):
+            # Bot companion: 5.0s if away/offline before their turn starts, 30.0s if online
+            return 5.0 if self.bot_status.get(player_id) != "ONLINE" else 30.0
+        else:
+            # Real player (Bob): ALWAYS give full 30.0 seconds!
+            return 30.0
+
+    def _finalize_game(self, winner_id: str, win_reason: str):
+        with self.lock:
+            if not self.in_game or self.is_game_over:
+                return
+            self.is_game_over = True
+            self.in_game = False
+            self.winner_player_id = winner_id
+            self.win_reason = win_reason
+            winner_name = self._get_player_name(winner_id)
+
+            print("\n" + "★"*65)
+            print(f"🏆 🏆 🏆  GAME OVER! WINNER: {winner_name.upper()}  🏆 🏆 🏆")
+            print(f"Reason: {win_reason}")
+            print("★"*65 + "\n")
+
+            now_ms = int(time.time() * 1000)
+
+            # 1. Broadcast GAME_OVER packet
+            game_over_pkt = {
+                "type": "GAME_OVER",
+                "playerId": BOT_KEVIN["id"],
+                "senderPlayerId": BOT_KEVIN["id"],
+                "isHost": True,
+                "winnerPlayerId": winner_id,
+                "winReason": win_reason,
+                "seed": self.match_seed,
+                "matchId": str(self.match_seed),
+                "turnNumber": max(self.turn_number, len(self.picked_numbers) + 1),
+                "pickedHistory": list(self.picked_numbers),
+                "pickedByHistory": list(self.picked_by),
+                "isMatchFinished": True,
+                "timestamp": now_ms
+            }
+            self.publish(json.dumps(game_over_pkt))
+
+            # 2. Broadcast authoritative GAME_SYNC confirming match finalized
+            self.send_game_sync()
+
+            # 3. Chat celebration
+            if winner_id == self.opponent_id:
+                self.send_chat(f"CONGRATULATIONS {self.opponent_name.upper()}!! You won! What an incredible game! 👑🏆🎉", BOT_KEVIN)
+                self.send_chat("GG Bob! You played brilliantly! 🍌🎉", BOT_STUART)
+            else:
+                self.send_chat(f"BINGO!! {winner_name} won the game! GG everyone! 👑🎉", BOT_KEVIN)
+
+    def send_game_sync(self):
+        if not self.running:
+            return
+        with self.lock:
+            now_ms = int(time.time() * 1000)
+            elapsed = time.time() - self.turn_start_time
+            rem_ms = int(max(0.0, self.turn_timeout_seconds - elapsed) * 1000)
+            sync_turn = max(self.turn_number, len(self.picked_numbers) + 1) if self.is_game_over else self.turn_number
+            sync_pkt = {
+                "type": "GAME_SYNC",
+                "playerId": BOT_KEVIN["id"],
+                "isHost": True,
+                "seed": self.match_seed,
+                "matchId": str(self.match_seed),
+                "turnNumber": sync_turn,
+                "currentTurnPlayerId": self.current_turn_player_id,
+                "pickedHistory": list(self.picked_numbers),
+                "pickedByHistory": list(self.picked_by),
+                "turnIds": list(self.pick_turns) if len(self.pick_turns) == len(self.picked_numbers) else list(range(1, len(self.picked_numbers) + 1)),
+                "boardHash": 0,
+                "isPaused": False,
+                "pauseRemainingSeconds": 0,
+                "pauseEpisode": 0,
+                "pauseOwnerId": "",
+                "remainingTurnMillis": rem_ms,
+                "eliminatedPlayerIds": list(self.surrendered_player_ids),
+                "surrenderedPlayerIds": list(self.surrendered_player_ids),
+                "winnerPlayerId": self.winner_player_id,
+                "winReason": self.win_reason,
+                "isMatchFinished": self.is_game_over,
+                "runnerPlayerIds": [],
+                "timestamp": now_ms
+            }
+            self.publish(json.dumps(sync_pkt))
 
     def _on_message(self, client, userdata, msg):
         try:
@@ -275,6 +390,11 @@ class MultiplayerBotCompanion:
                 data = json.loads(payload)
                 pkt_type = data.get("type", "")
                 pid = data.get("playerId", "")
+                sender_instance = data.get("senderInstanceId", "")
+
+                # Filter out echoed packets sent by this bot script
+                if sender_instance == "sim_bot" or (pid and pid.startswith("player_")):
+                    return
 
                 # Check for lobby join / ready in JSON
                 if pid and not pid.startswith("player_") and not self.in_game:
@@ -295,9 +415,26 @@ class MultiplayerBotCompanion:
                 if pkt_type == "PICK_NUMBER":
                     num = data.get("number", 0)
                     picker = data.get("playerId", "")
-                    turn_num = data.get("turnNumber", self.turn_number)
+                    turn_num = data.get("turnNumber", self.turn_number + 1)
                     next_turn = data.get("currentTurnPlayerId", "")
                     self._on_pick_received(num, picker, turn_num, next_turn)
+                elif pkt_type == "TURN_TIMEOUT":
+                    timed_out_id = data.get("playerId", "")
+                    turn_num = data.get("turnNumber", self.turn_number + 1)
+                    next_turn = data.get("currentTurnPlayerId", "")
+                    self._on_timeout_received(timed_out_id, turn_num, next_turn)
+                elif pkt_type == "SYNC_REQUEST":
+                    print(f"🔄 [SYNC] Received SYNC_REQUEST from {self.opponent_name}. Sending GAME_SYNC state...")
+                    self.send_game_sync()
+                elif pkt_type == "SURRENDER":
+                    surr_id = data.get("playerId", "")
+                    if surr_id and not surr_id.startswith("player_"):
+                        print(f"🚪 [GAME] Real player '{self.opponent_name}' surrendered.")
+                        self.surrendered_player_ids.add(surr_id)
+                elif pkt_type == "BINGO_CLAIMED":
+                    matches_seed = (not data.get("seed") or data.get("seed") == self.match_seed)
+                    if self.in_game and matches_seed:
+                        self._finalize_game(self.opponent_id, f"{self.opponent_name} completed 5 lines (BINGO)!")
                 elif pkt_type == "CHAT_MESSAGE":
                     sender = data.get("username", "Opponent")
                     text = data.get("displayName", "")
@@ -311,9 +448,30 @@ class MultiplayerBotCompanion:
             parts = payload.split("|")
             num = int(parts[1]) if len(parts) > 1 and (parts[1].isdigit() or parts[1] == "-1") else 0
             picker = parts[2] if len(parts) > 2 else ""
-            turn_num = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else self.turn_number
+            turn_num = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else (self.turn_number + 1)
             next_turn = parts[4] if len(parts) > 4 else ""
-            self._on_pick_received(num, picker, turn_num, next_turn)
+            sender_instance = parts[7] if len(parts) > 7 else ""
+            if not picker.startswith("player_") and sender_instance != "sim_bot":
+                self._on_pick_received(num, picker, turn_num, next_turn)
+
+        # 4. Micro Timeout Pass
+        elif payload.startswith("T|"):
+            parts = payload.split("|")
+            timed_out_id = parts[1] if len(parts) > 1 else ""
+            turn_num = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else (self.turn_number + 1)
+            next_turn = parts[3] if len(parts) > 3 else ""
+            sender_instance = parts[6] if len(parts) > 6 else ""
+            if not timed_out_id.startswith("player_") and sender_instance != "sim_bot":
+                self._on_timeout_received(timed_out_id, turn_num, next_turn)
+
+        # 5. Micro Bingo Claim
+        elif payload.startswith("BINGO|"):
+            parts = payload.split("|")
+            pid = parts[1] if len(parts) > 1 else ""
+            seed_str = parts[4] if len(parts) > 4 else ""
+            matches_seed = (not seed_str or seed_str == str(self.match_seed))
+            if self.in_game and pid and not pid.startswith("player_") and matches_seed:
+                self._finalize_game(self.opponent_id, f"{self.opponent_name} completed 5 lines (BINGO)!")
 
     def _start_countdown(self):
         self.match_started = True
@@ -368,10 +526,12 @@ class MultiplayerBotCompanion:
         self.in_game = True
         self.match_seed = seed
         self.turn_number = 1
+        self.scheduled_turn = 0
         self.turn_order = turn_order
         self.current_turn_player_id = first_turn
         self.picked_numbers.clear()
         self.picked_by.clear()
+        self.pick_turns.clear()
         self.marked.clear()
 
         # Generate distinct boards for each bot
@@ -388,8 +548,66 @@ class MultiplayerBotCompanion:
         print(f"First Turn:      {first_name}")
         print("="*65 + "\n")
 
-        # Start dynamic simulation manager (handles random minimize, disconnect, surrender)
-        threading.Thread(target=self._dynamic_simulation_loop, daemon=True).start()
+        # Start dynamic simulation manager if simulation mode enabled
+        if self.simulation_enabled:
+            threading.Thread(target=self._dynamic_simulation_loop, daemon=True).start()
+        else:
+            print("✨ [NORMAL MODE] All bots will stay 100% ONLINE throughout the match.")
+
+        # Start turn timer monitoring thread to prevent game from freezing at 0s
+        self.turn_start_time = time.time()
+        self.turn_timeout_seconds = 30.0
+        threading.Thread(target=self._turn_timer_loop, daemon=True).start()
+
+        self._check_and_trigger_turn()
+
+    def _turn_timer_loop(self):
+        """Monitors turn timeout and automatically passes turn if current player times out."""
+        while self.running and self.in_game:
+            time.sleep(0.5)
+            if not self.in_game or not self.current_turn_player_id:
+                continue
+            if (time.time() - self.turn_start_time) >= self.turn_timeout_seconds:
+                self._handle_turn_timeout()
+
+    def _handle_turn_timeout(self):
+        with self.lock:
+            if not self.in_game or not self.current_turn_player_id:
+                return
+            timed_out_id = self.current_turn_player_id
+            curr_turn = self.turn_number
+            next_turn_num = curr_turn + 1
+            next_player = self._get_next_player(timed_out_id)
+
+            self.turn_number = next_turn_num
+            self.current_turn_player_id = next_player
+            self.turn_start_time = time.time()
+            self.turn_timeout_seconds = self._get_turn_timeout_seconds(next_player)
+
+            timed_out_name = self._get_player_name(timed_out_id)
+            next_name = self._get_player_name(next_player)
+            print(f"⏱️ [Turn {curr_turn:02d}] Turn TIMED OUT for {timed_out_name} ➔ Passed to {next_name} (Turn {next_turn_num:02d})")
+
+            history_str = ",".join(str(x) for x in self.picked_numbers)
+            picked_by_str = ",".join(self.picked_by)
+
+            # Broadcast TURN_TIMEOUT micro-packet
+            micro = f"T|{timed_out_id}|{next_turn_num}|{next_player}|{history_str}|{self.match_seed}|sim_bot|{picked_by_str}"
+            self.publish(micro)
+
+            # Broadcast TURN_TIMEOUT JSON packet
+            json_timeout = {
+                "type": "TURN_TIMEOUT",
+                "playerId": timed_out_id,
+                "senderPlayerId": BOT_KEVIN["id"],
+                "turnNumber": next_turn_num,
+                "closedTurnNumber": curr_turn,
+                "currentTurnPlayerId": next_player,
+                "seed": self.match_seed,
+                "matchId": str(self.match_seed),
+                "timestamp": int(time.time() * 1000)
+            }
+            self.publish(json.dumps(json_timeout))
 
         self._check_and_trigger_turn()
 
@@ -411,62 +629,102 @@ class MultiplayerBotCompanion:
         return active[0]
 
     def _on_pick_received(self, num: int, picker: str, turn_num: int, next_turn: str):
-        picker_name = self._get_player_name(picker)
+        with self.lock:
+            if not self.in_game or self.is_game_over:
+                return
 
-        if num > 0 and num not in self.picked_numbers:
-            self.picked_numbers.append(num)
-            self.picked_by.append(picker)
-            self.marked.add(num)
-            print(f"🎲 [Turn {turn_num:02d}] {picker_name} picked #{num:02d}")
-        elif num <= 0:
-            print(f"⏱️ [Turn {turn_num:02d}] Turn skipped/passed by {picker_name}")
+            picker_name = self._get_player_name(picker)
 
-        self.turn_number = max(self.turn_number, turn_num + 1)
+            if num > 0 and num not in self.marked:
+                self.picked_numbers.append(num)
+                self.picked_by.append(picker)
+                self.pick_turns.append(self.turn_number)
+                self.marked.add(num)
+                print(f"🎲 [Turn {self.turn_number:02d}] {picker_name} picked #{num:02d}")
+            elif num <= 0:
+                print(f"⏱️ [Turn {self.turn_number:02d}] Turn skipped/passed by {picker_name}")
+            else:
+                # Duplicate pick packet for already marked number
+                return
 
-        # Calculate next turn
-        calculated_next = next_turn or self._get_next_player(picker)
-        self.current_turn_player_id = calculated_next
-        next_name = self._get_player_name(self.current_turn_player_id)
-        print(f"   ➔ Next Turn: {next_name} (Turn {self.turn_number})")
+            self.turn_number = max(self.turn_number + 1, turn_num)
 
-        # Check line completions for bots
-        for b in BOTS:
-            if b["id"] not in self.surrendered_player_ids:
-                lines = count_completed_lines(self.bot_boards[b["id"]], self.marked)
-                if lines >= 5:
-                    print(f"\n🎉 🎉 🎉 BINGO! {b['displayName'].upper()} HAS 5 LINES! 🎉 🎉 🎉")
-                    self.send_chat(f"BINGO!! What an awesome match! GG! 👑🎉", b)
-                    self.publish(f"BINGO|{b['id']}|{lines}|{num}|{self.match_seed}")
-                    return
+            # Calculate next turn
+            calculated_next = next_turn or self._get_next_player(picker)
+            self.current_turn_player_id = calculated_next
+            self.turn_start_time = time.time()
+            self.turn_timeout_seconds = self._get_turn_timeout_seconds(calculated_next)
+
+            next_name = self._get_player_name(self.current_turn_player_id)
+            print(f"   ➔ Next Turn: {next_name} (Turn {self.turn_number:02d})")
+
+            # Check line completions for bots
+            for b in BOTS:
+                if b["id"] not in self.surrendered_player_ids:
+                    lines = count_completed_lines(self.bot_boards[b["id"]], self.marked)
+                    if lines >= 5:
+                        self._finalize_game(b["id"], f"{b['displayName']} completed 5 lines (BINGO)!")
+                        return
+
+        self._check_and_trigger_turn()
+
+    def _on_timeout_received(self, timed_out_id: str, turn_num: int, next_turn: str):
+        with self.lock:
+            if not self.in_game or self.is_game_over:
+                return
+            timed_out_name = self._get_player_name(timed_out_id)
+            print(f"⏱️ [Turn {self.turn_number:02d}] Turn TIMED OUT / Passed by {timed_out_name}")
+
+            self.turn_number = max(self.turn_number + 1, turn_num)
+            calculated_next = next_turn or self._get_next_player(timed_out_id)
+            self.current_turn_player_id = calculated_next
+            self.turn_start_time = time.time()
+            self.turn_timeout_seconds = self._get_turn_timeout_seconds(calculated_next)
+
+            next_name = self._get_player_name(self.current_turn_player_id)
+            print(f"   ➔ Next Turn: {next_name} (Turn {self.turn_number:02d})")
 
         self._check_and_trigger_turn()
 
     def _check_and_trigger_turn(self):
-        curr_id = self.current_turn_player_id
-        if not self.in_game or not curr_id:
-            return
+        with self.lock:
+            curr_id = self.current_turn_player_id
+            if not self.in_game or self.is_game_over or not curr_id:
+                return
+            curr_turn = self.turn_number
 
-        # If it's a bot's turn:
-        if curr_id.startswith("player_"):
-            # Check if bot is currently away or offline
-            status = self.bot_status.get(curr_id, "ONLINE")
-            if status != "ONLINE":
-                print(f"   ⏳ [{self._get_player_name(curr_id)}] is currently {status}. Will not pick; app timer will count down and skip!")
+            # If already scheduled for this turn number, do not schedule again
+            if self.scheduled_turn == curr_turn:
                 return
 
-            threading.Thread(target=self._execute_bot_pick, args=(curr_id,), daemon=True).start()
+            # Reset turn start time and timer length
+            self.turn_start_time = time.time()
+            self.turn_timeout_seconds = self._get_turn_timeout_seconds(curr_id)
 
-    def _execute_bot_pick(self, bot_id: str):
+            # If it's a bot's turn:
+            if curr_id.startswith("player_"):
+                # Check if bot is currently away or offline
+                status = self.bot_status.get(curr_id, "ONLINE")
+                if status != "ONLINE":
+                    print(f"   ⏳ [{self._get_player_name(curr_id)}] is currently {status}. Will wait {self.turn_timeout_seconds:.1f}s for turn skip.")
+                    return
+
+                self.scheduled_turn = curr_turn
+                threading.Thread(target=self._execute_bot_pick, args=(curr_id, curr_turn), daemon=True).start()
+
+    def _execute_bot_pick(self, bot_id: str, turn_at_schedule: int):
         bot = next((b for b in BOTS if b["id"] == bot_id), None)
         if not bot:
             return
 
-        # Human-like think delay (1.5 - 2.2 seconds)
-        think_delay = random.uniform(1.5, 2.2)
+        # Fast think delay (0.8 - 1.2 seconds for rapid testing)
+        think_delay = random.uniform(0.8, 1.2)
         time.sleep(think_delay)
 
         with self.lock:
-            if not self.in_game or self.current_turn_player_id != bot_id:
+            if not self.in_game or self.is_game_over or self.current_turn_player_id != bot_id:
+                return
+            if self.turn_number != turn_at_schedule:
                 return
             if self.bot_status.get(bot_id) != "ONLINE":
                 return
@@ -476,33 +734,39 @@ class MultiplayerBotCompanion:
             if not unmarked:
                 return
 
+            curr_turn = self.turn_number
             chosen_num = unmarked[0]
             self.picked_numbers.append(chosen_num)
             self.picked_by.append(bot_id)
+            self.pick_turns.append(curr_turn)
             self.marked.add(chosen_num)
 
-            curr_turn = self.turn_number
             next_turn_num = curr_turn + 1
             next_player = self._get_next_player(bot_id)
 
             self.turn_number = next_turn_num
             self.current_turn_player_id = next_player
+            self.turn_start_time = time.time()
+            self.turn_timeout_seconds = self._get_turn_timeout_seconds(next_player)
 
             history_str = ",".join(str(x) for x in self.picked_numbers)
             picked_by_str = ",".join(self.picked_by)
 
-            # Broadcast micro-packet
-            micro = f"P|{chosen_num}|{bot_id}|{curr_turn}|{next_player}|{history_str}|{self.match_seed}|sim_bot|{picked_by_str}"
+            # Broadcast micro-packet with next_turn_num (curr_turn + 1)
+            micro = f"P|{chosen_num}|{bot_id}|{next_turn_num}|{next_player}|{history_str}|{self.match_seed}|sim_bot|{picked_by_str}"
             self.publish(micro)
 
-            # Broadcast JSON packet
+            # Broadcast JSON packet with next_turn_num and closedTurnNumber
             json_pick = {
                 "type": "PICK_NUMBER",
                 "number": chosen_num,
                 "playerId": bot_id,
-                "turnNumber": curr_turn,
-                "pickedHistory": self.picked_numbers,
-                "pickedByHistory": self.picked_by,
+                "senderPlayerId": bot_id,
+                "senderInstanceId": "sim_bot",
+                "turnNumber": next_turn_num,
+                "closedTurnNumber": curr_turn,
+                "pickedHistory": list(self.picked_numbers),
+                "pickedByHistory": list(self.picked_by),
                 "currentTurnPlayerId": next_player,
                 "seed": self.match_seed,
                 "matchId": str(self.match_seed),
@@ -520,9 +784,10 @@ class MultiplayerBotCompanion:
             elif lines == 4:
                 self.send_chat("4 lines! Just one more for BINGO! ⚡", bot)
             elif lines >= 5:
-                print(f"\n🎉 🎉 🎉 BINGO! {bot['displayName'].upper()} REACHED 5 LINES! 🎉 🎉 🎉")
-                self.send_chat("BINGO!! What a game! GG everyone! 👑🎉", bot)
-                self.publish(f"BINGO|{bot_id}|{lines}|{chosen_num}|{self.match_seed}")
+                self._finalize_game(bot_id, f"{bot['displayName']} completed 5 lines (BINGO)!")
+                return
+
+        self._check_and_trigger_turn()
 
     # =========================================================================
     # DYNAMIC REAL-WORLD SIMULATION (Random Minimize, Disconnect, Surrender)
@@ -678,10 +943,13 @@ class MultiplayerBotCompanion:
 
         # If it was Phil's turn, advance turn immediately
         if self.current_turn_player_id == phil_id:
-            next_player = self._get_next_player(phil_id)
-            self.current_turn_player_id = next_player
-            self.turn_number += 1
-            print(f"  ➜ Advanced turn from surrendered Phil to {self._get_player_name(next_player)}!")
+            with self.lock:
+                next_player = self._get_next_player(phil_id)
+                self.current_turn_player_id = next_player
+                self.turn_number += 1
+                self.turn_start_time = time.time()
+                self.turn_timeout_seconds = self._get_turn_timeout_seconds(next_player)
+                print(f"  ➜ Advanced turn from surrendered Phil to {self._get_player_name(next_player)}!")
             self._check_and_trigger_turn()
 
     def stop(self):
@@ -694,9 +962,10 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="Multiplayer 5-Player Bingo Companion with Real-World Network Simulation")
     parser.add_argument("--room", type=str, default="KV5000", help="Room code for Kevin to host (default: KV5000)")
+    parser.add_argument("--mode", type=str, choices=["normal", "simulation"], default="normal", help="Match mode: 'normal' (all bots online) or 'simulation' (random disconnects/surrender)")
     args = parser.parse_args()
 
-    companion = MultiplayerBotCompanion(room_code=args.room)
+    companion = MultiplayerBotCompanion(room_code=args.room, mode=args.mode)
     companion.start()
 
     try:

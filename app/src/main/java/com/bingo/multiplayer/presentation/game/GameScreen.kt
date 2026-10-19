@@ -125,11 +125,14 @@ fun GameScreen(
     canResumeGame: Boolean = true,
     opponentConnectionStatus: String = "",
     hostName: String = "Host",
+    isAiMode: Boolean = false,
     useAcceptedChatHistory: Boolean = false,
     board: Board,
     opponentBoard: Board? = null,
     isMyTurn: Boolean,
     turnTimeRemaining: Int,
+    absenceBudgetTurn: Boolean = false,
+    welcomeBackGranted: Boolean = false,
     isGamePaused: Boolean = false,
     pausedByPlayerName: String = "",
     onTogglePause: () -> Unit = {},
@@ -210,7 +213,7 @@ fun GameScreen(
         if (trimmed.isNotBlank()) {
             onSetTyping(false)
             lastTypingSentTime = 0L
-            chatMessages = chatMessages + InGameChatMessage(
+            if (!useAcceptedChatHistory) chatMessages = chatMessages + InGameChatMessage(
                 text = trimmed,
                 isSelf = true
             )
@@ -438,19 +441,17 @@ fun GameScreen(
             animateStampDrop = false
             return@LaunchedEffect
         }
-        if (isGameOver && didPlayerWin) {
-            if (!hasTriggeredCelebration) {
-                hasTriggeredCelebration = true
-                isEmojiBurstActive = true
-                animateStampDrop = true
-            } else {
-                showStampBadge = true
-            }
-        } else if (isGameOver && !didPlayerWin) {
-            // Defeat or draw: show stamp badge directly without winner emoji projectile celebration
+        if (isGameOver) {
             showStampBadge = true
-            isEmojiBurstActive = false
             animateStampDrop = true
+            if (didPlayerWin) {
+                if (!hasTriggeredCelebration) {
+                    hasTriggeredCelebration = true
+                    isEmojiBurstActive = true
+                }
+            } else {
+                isEmojiBurstActive = false
+            }
         } else {
             hasTriggeredCelebration = false
             showStampBadge = false
@@ -794,15 +795,12 @@ fun GameScreen(
                         ) {
                             val sortedReviewPlayers = remember(reviewPlayers, allPlayerBoards, winnerPlayerId, disconnectedPlayerIds) {
                                 reviewPlayers.sortedWith(
-                                    compareBy<Player> { p ->
-                                        if (disconnectedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, p.id) }) 1 else 0
-                                    }.thenByDescending { p ->
-                                        val isDisc = disconnectedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, p.id) }
+                                    compareByDescending<Player> { p ->
                                         val isWin = com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(winnerPlayerId, p.id)
-                                        if (isWin && !isDisc) 3
+                                        if (isWin) 3
                                         else {
                                             val b = allPlayerBoards[p.id] ?: if (p.id == myPlayerId || p.id == "local") board else (opponentBoard ?: board)
-                                            if (b.isBingo && !isDisc) 2 else 1
+                                            if (b.isBingo) 2 else 1
                                         }
                                     }.thenByDescending { p ->
                                         val b = allPlayerBoards[p.id] ?: if (p.id == myPlayerId || p.id == "local") board else (opponentBoard ?: board)
@@ -822,8 +820,8 @@ fun GameScreen(
                                 val isDisconnected = disconnectedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, player.id) }
                                 val isWinner = com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(winnerPlayerId, player.id)
                                 val badgeSuffix = when {
-                                    !isDisconnected && isWinner -> " 👑"
-                                    !isDisconnected && isBingo -> " 🥈"
+                                    isWinner -> " 👑"
+                                    isBingo -> " 🥈"
                                     isDisconnected -> " (Offline)"
                                     else -> ""
                                 }
@@ -908,9 +906,48 @@ fun GameScreen(
                             }
                         }
 
-                        if (onReturnToLobby != null) {
+                        if (isAiMode) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                OutlinedButton(
+                                    onClick = onBackToMenu,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(46.dp),
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = BorderStroke(1.dp, tokens.surfaceBorder),
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        contentColor = tokens.textPrimary
+                                    )
+                                ) {
+                                    Text("Main Menu", color = tokens.textPrimary, fontWeight = FontWeight.SemiBold)
+                                }
+
+                                Button(
+                                    onClick = onPlayAgain,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(46.dp),
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = tokens.primaryButtonBg
+                                    )
+                                ) {
+                                    Text("Play Again", color = tokens.primaryButtonText, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        } else {
                             Button(
-                                onClick = onReturnToLobby,
+                                onClick = {
+                                    if (onReturnToLobby != null) {
+                                        onReturnToLobby()
+                                    } else {
+                                        onBackToMenu()
+                                    }
+                                },
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(48.dp),
@@ -932,67 +969,6 @@ fun GameScreen(
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 15.sp
                                 )
-                            }
-                        } else {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                OutlinedButton(
-                                    onClick = onBackToMenu,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(46.dp),
-                                    shape = RoundedCornerShape(12.dp),
-                                    border = BorderStroke(1.dp, tokens.surfaceBorder),
-                                    colors = ButtonDefaults.outlinedButtonColors(
-                                        contentColor = tokens.textPrimary
-                                    )
-                                ) {
-                                    Text("Main Menu", color = tokens.textPrimary, fontWeight = FontWeight.SemiBold)
-                                }
-
-                                if (isLobbyAvailable) {
-                                    if (isHost) {
-                                        Button(
-                                            onClick = onPlayAgain,
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .height(46.dp),
-                                            shape = RoundedCornerShape(12.dp),
-                                            colors = ButtonDefaults.buttonColors(
-                                                containerColor = tokens.primaryButtonBg
-                                            )
-                                        ) {
-                                            Text("Play Again", color = tokens.primaryButtonText, fontWeight = FontWeight.Bold)
-                                        }
-                                    } else {
-                                        Button(
-                                            onClick = {
-                                                if (!hasRequestedPlayAgain) {
-                                                    hasRequestedPlayAgain = true
-                                                    onRequestPlayAgain()
-                                                }
-                                            },
-                                            enabled = !hasRequestedPlayAgain,
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .height(46.dp),
-                                            shape = RoundedCornerShape(12.dp),
-                                            colors = ButtonDefaults.buttonColors(
-                                                containerColor = tokens.primaryButtonBg,
-                                                disabledContainerColor = tokens.surfaceBorder
-                                            )
-                                        ) {
-                                            Text(
-                                                text = if (hasRequestedPlayAgain) "Requested" else "Play Again",
-                                                color = if (hasRequestedPlayAgain) tokens.textMuted else tokens.primaryButtonText,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-                                    }
-                                }
                             }
                         }
                     }
@@ -1041,22 +1017,22 @@ fun GameScreen(
                         val isLocalDisconnected = disconnectedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, myPlayerId) }
                         val (stampType, stampText) = if (isLocalSelected) {
                             when {
-                                isLocalDisconnected -> StampResultType.OFFLINE to "OFFLINE"
                                 didPlayerWin -> StampResultType.WON to "YOU'VE WON!"
                                 isRunner -> StampResultType.RUNNER to "RUNNER!"
+                                isLocalDisconnected -> StampResultType.OFFLINE to "OFFLINE"
                                 else -> StampResultType.LOST to "YOU LOST!"
                             }
                         } else {
                             val isSelectedDisconnected = disconnectedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, selectedReviewPlayerId) }
-                            val isWinnerSelected = !isSelectedDisconnected && com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(selectedReviewPlayerId, winnerPlayerId)
+                            val isWinnerSelected = com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(selectedReviewPlayerId, winnerPlayerId)
                             val reviewPlayer = players.firstOrNull {
                                 com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it.id, selectedReviewPlayerId)
                             }
                             val reviewName = reviewPlayer?.displayName?.takeIf { it.isNotBlank() } ?: reviewPlayer?.username ?: "Player"
                             when {
-                                isSelectedDisconnected -> StampResultType.OFFLINE to "OFFLINE"
                                 isWinnerSelected -> StampResultType.WON to "$reviewName WON!"
                                 displayedBoard.isBingo -> StampResultType.RUNNER to "RUNNER!"
+                                isSelectedDisconnected -> StampResultType.OFFLINE to "OFFLINE"
                                 else -> StampResultType.LOST to "LOST!"
                             }
                         }
@@ -1078,14 +1054,16 @@ fun GameScreen(
                         val (statusMessage, statusColor) = when {
                             isActiveDisconnected -> {
                                 val msg = if (isYou) "You are disconnected" else "$activePlayerName is disconnected"
-                                msg to Color(0xFFEF4444)
+                                (msg + if (absenceBudgetTurn && !welcomeBackGranted) " · Passing in ${turnTimeRemaining}s" else "") to Color(0xFFEF4444)
                             }
                             isActiveAway -> {
                                 val msg = if (isYou) "You minimized the game" else "$activePlayerName minimized the game"
-                                msg to Color(0xFFEAB308)
+                                (msg + if (absenceBudgetTurn && !welcomeBackGranted) " · Passing in ${turnTimeRemaining}s" else "") to Color(0xFFEAB308)
                             }
                             else -> {
-                                val msg = if (isYou) {
+                                val msg = if (welcomeBackGranted) {
+                                    if (isYou) "Welcome back! Your turn" else "$activePlayerName is back! $activePlayerName is choosing..."
+                                } else if (isYou) {
                                     when {
                                         turnTimeRemaining > 20 -> "You are choosing$animatedDots"
                                         turnTimeRemaining in 11..20 -> "You are cooking something..."

@@ -86,7 +86,16 @@ data class RoomMessagePacket(
     val transportOnly: Boolean = false,
     val lifecycleSequence: Long = 0L,
     val isMatchFinished: Boolean = false,
-    val chatMessages: List<InGameChatMessage> = emptyList()
+    val chatMessages: List<InGameChatMessage> = emptyList(),
+    val turnClock: MultiplayerTurnClock? = null,
+    val lastPlayerActivityAt: Long = 0L,
+    val boardNumbers: Map<String, List<Int>> = emptyMap(),
+    val simplifiedRulesVersion: Int = 0,
+    val recoveryReplay: Boolean = false,
+    val playerPresences: Map<String, MultiplayerPresenceRecord> = emptyMap(),
+    val presenceStatus: String = "",
+    val closedTurnClock: MultiplayerTurnClock? = null,
+    val isRetainedDelivery: Boolean = false
 )
 
 class OnlineRoomSyncManager(
@@ -214,6 +223,120 @@ class OnlineRoomSyncManager(
     private var heartbeatJob: Job? = null
     private var livenessJob: Job? = null
     private var pingJob: Job? = null
+    private val _connectionReady = MutableStateFlow(false)
+    val connectionReady: StateFlow<Boolean> = _connectionReady.asStateFlow()
+    var activePeerSeed: Long = 0L
+        private set
+    private var peerSyncMarker: String? = null
+
+    fun bindPeerMatch(seed: Long) {
+        if (seed == 0L) return
+        activePeerSeed = seed
+        val client = mqttClient ?: return
+        val code = currentRoomCode ?: return
+        val generation = roomConnectionId
+        val marker = synchronized(this) {
+            if (peerSyncMarker?.startsWith("${PeerMatchRecovery.topic(code, seed)}/") == true) return
+            "${PeerMatchRecovery.topic(code, seed)}/probe/${UUID.randomUUID()}".also { peerSyncMarker = it }
+        }
+        scope.launch(Dispatchers.IO) {
+            try {
+                if (!client.isConnected || mqttClient !== client || roomConnectionId != generation) {
+                    if (peerSyncMarker == marker) peerSyncMarker = null
+                    return@launch
+                }
+                client.subscribe("${PeerMatchRecovery.topic(code, seed)}/#", 1).waitForCompletion(3_000L)
+                if (roomConnectionId != generation || activePeerSeed != seed) return@launch
+                client.publish(marker, MqttMessage(byteArrayOf(1)).apply { qos = 1 })
+            } catch (_: Exception) {
+                if (peerSyncMarker == marker) peerSyncMarker = null
+                if (roomConnectionId == generation && activePeerSeed == seed) {
+                    delay(1000L)
+                    if (client.isConnected) bindPeerMatch(seed) else retryConnection(code, generation)
+                }
+            }
+        }
+    }
+
+    fun publishPeerSnapshot(packet: RoomMessagePacket) {
+        if (packet.seed == 0L || packet.seed != activePeerSeed) return
+        val code = currentRoomCode ?: return
+        val generation = roomConnectionId
+        val client = mqttClient ?: return
+        val outgoing = packet.copy(roomCode = code, senderPlayerId = localPlayer?.id.orEmpty(),
+            senderInstanceId = instanceId, connectionGeneration = generation)
+        scope.launch(Dispatchers.IO) {
+            if (!client.isConnected || mqttClient !== client || roomConnectionId != generation) return@launch
+            runCatching {
+                client.publish("${PeerMatchRecovery.topic(code, packet.seed)}/state/${outgoing.playerId}",
+                    MqttMessage(FastPacketCodec.encode(outgoing).toByteArray(StandardCharsets.UTF_8)).apply {
+                        qos = 1; isRetained = true
+                    })
+            }
+        }
+    }
+
+    fun publishAcceptedTurnOutcome(packet: RoomMessagePacket) {
+        if (packet.seed == 0L || packet.seed != activePeerSeed || packet.type !in setOf("PICK_NUMBER", "TURN_TIMEOUT")) return
+        val code = currentRoomCode ?: return
+        val generation = roomConnectionId
+        val client = mqttClient ?: return
+        val turn = if (packet.closedTurnNumber > 0) packet.closedTurnNumber else packet.turnNumber
+        val outgoing = packet.copy(roomCode = code, senderPlayerId = packet.senderPlayerId.ifBlank { packet.playerId },
+            senderInstanceId = instanceId, connectionGeneration = generation, recoveryReplay = true)
+        scope.launch(Dispatchers.IO) {
+            if (!client.isConnected || mqttClient !== client || roomConnectionId != generation) return@launch
+            runCatching {
+                val outcomeTopic = "${PeerMatchRecovery.topic(code, packet.seed)}/outcome/$turn"
+                client.publish(outcomeTopic,
+                    MqttMessage(FastPacketCodec.encode(outgoing).toByteArray(StandardCharsets.UTF_8)).apply {
+                        qos = 1; isRetained = true
+                    })
+            }
+        }
+    }
+
+    fun publishAcceptedDeparture(packet: RoomMessagePacket) {
+        if (packet.seed == 0L || packet.seed != activePeerSeed || packet.type !in setOf("SURRENDER", "LEAVE", "HOST_LEFT")) return
+        val code = currentRoomCode ?: return
+        val generation = roomConnectionId
+        val client = mqttClient ?: return
+        val outgoing = packet.copy(roomCode = code, senderPlayerId = packet.senderPlayerId.ifBlank { packet.playerId },
+            senderInstanceId = instanceId, connectionGeneration = generation, recoveryReplay = true, isRetainedDelivery = true)
+        scope.launch(Dispatchers.IO) {
+            if (!client.isConnected || mqttClient !== client || roomConnectionId != generation) return@launch
+            runCatching {
+                val exitTopic = "${PeerMatchRecovery.topic(code, packet.seed)}/accepted_exit/${packet.playerId}"
+                client.publish(exitTopic,
+                    MqttMessage(FastPacketCodec.encode(outgoing).toByteArray(StandardCharsets.UTF_8)).apply {
+                        qos = 1; isRetained = true
+                    })
+            }
+        }
+    }
+
+    /** Administrative lobby role only; it never controls peer clocks or result eligibility. */
+    fun updateMatchRoster(players: List<Player>) {
+        if (activePeerSeed == 0L) return
+        currentHostId = players.firstOrNull { it.isHost }?.id
+        localPlayer = players.firstOrNull { it.id == localPlayer?.id } ?: localPlayer
+        playerRegistry.clear()
+        players.forEach { playerRegistry[it.id] = it }
+        _players.value = players
+    }
+
+    fun disconnectSession(expectedSession: String) {
+        if (roomSessionId == expectedSession) disconnect()
+    }
+
+    private fun retryConnection(code: String, generation: String) {
+        scope.launch(Dispatchers.IO) {
+            delay(1500L)
+            if (currentRoomCode != code || roomConnectionId != generation || mqttClient?.isConnected == true) return@launch
+            val player = localPlayer ?: return@launch
+            connectToRoom(code, player, playerRegistry.values.toList(), activePeerSeed)
+        }
+    }
 
     // Dedicated 1v1 Match Heartbeat & Availability State
     var activeMatchConnectionGeneration: String = UUID.randomUUID().toString()
@@ -482,11 +605,12 @@ class OnlineRoomSyncManager(
      * Connects to high-speed MQTT room topic and begins presence heartbeat and ping measurement.
      * Optionally pre-loads existing players discovered via cloud room registry.
      */
-    fun connectToRoom(roomCode: String, player: Player, initialPlayers: List<Player> = emptyList()) {
+    fun connectToRoom(roomCode: String, player: Player, initialPlayers: List<Player> = emptyList(), resumeMatchSeed: Long = 0L) {
         disconnect()
 
         val cleanCode = roomCode.trim().uppercase()
         currentRoomCode = cleanCode
+        activePeerSeed = resumeMatchSeed
         val connectionId = roomConnectionId
         val isPlayerHost = player.isHost || (currentHostId != null && player.id == currentHostId)
         val safePlayer = player.copy(isHost = isPlayerHost)
@@ -514,7 +638,7 @@ class OnlineRoomSyncManager(
 
         // Immediately perform initial cloud sync to discover players already registered
         scope.launch(Dispatchers.IO) {
-            reconcileWithCloud(cleanCode, player)
+            if (activePeerSeed == 0L) reconcileWithCloud(cleanCode, player)
         }
 
         scope.launch(Dispatchers.IO) {
@@ -524,10 +648,10 @@ class OnlineRoomSyncManager(
                 mqttClient = client
 
                 val options = MqttConnectOptions().apply {
-                    isAutomaticReconnect = true
+                    isAutomaticReconnect = false
                     isCleanSession = true
                     connectionTimeout = 10
-                    keepAliveInterval = 30
+                    keepAliveInterval = 10
                     NetworkConfig.applyMqttOptions(this)
                     try {
                         val willPacket = RoomMessagePacket(
@@ -538,17 +662,22 @@ class OnlineRoomSyncManager(
                             displayName = player.displayName,
                             username = player.username,
                             isHost = player.isHost,
-                            timestamp = System.currentTimeMillis()
+                            timestamp = System.currentTimeMillis(), senderPlayerId = player.id
                         )
-                        val willTopic = "bingo/v3/room/$cleanCode"
+                        val willTopic = "bingo/v5/room/$cleanCode/availability/${player.id}"
                         val willPayload = FastPacketCodec.encode(willPacket).toByteArray(java.nio.charset.StandardCharsets.UTF_8)
-                        setWill(willTopic, willPayload, 1, false)
+                        setWill(willTopic, willPayload, 1, true)
                     } catch (_: Exception) {}
                 }
 
                 client.setCallback(object : MqttCallbackExtended {
                     override fun connectComplete(reconnect: Boolean, serverURI: String?) {
                         if (mqttClient !== client || roomConnectionId != connectionId) return
+                        if (serverURI?.contains("broker.emqx.io") == true) {
+                            EmqxBrokerMonitor.recordPrimaryBrokerDown()
+                        } else {
+                            EmqxBrokerMonitor.recordPrimaryBrokerUp()
+                        }
                         activeMatchConnectionGeneration = UUID.randomUUID().toString()
                         val policy = matchHeartbeatPolicy
                         if (policy != null && !policy.isLocalHealthy) {
@@ -560,6 +689,10 @@ class OnlineRoomSyncManager(
                             subscribeToRoom(cleanCode)
                             requestLobbyCompatibility()
                             sendJoinPacket()
+                            _connectionReady.value = true
+                            _incomingPackets.emit(RoomMessagePacket(type = "ROOM_CONNECTION_READY", playerId = player.id,
+                                connectionGeneration = connectionId, roomCode = cleanCode))
+                            if (activePeerSeed != 0L) bindPeerMatch(activePeerSeed)
                             // If local player was already toggled to READY before/during connection, immediately broadcast READY_STATUS!
                             localPlayer?.let { lp ->
                                 if (lp.lobbyReadyStatus == LobbyLifecycleEngine.STATUS_READY) {
@@ -592,10 +725,27 @@ class OnlineRoomSyncManager(
 
                     override fun messageArrived(topic: String?, message: MqttMessage?) {
                         if (mqttClient !== client || roomConnectionId != connectionId) return
-                        val payloadBytes = message?.payload ?: return
+                        if (topic == peerSyncMarker) {
+                            peerSyncMarker = null
+                            _incomingPackets.tryEmit(RoomMessagePacket(type = "PEER_SYNC_READY", seed = activePeerSeed,
+                                targetPlayerId = localPlayer?.id.orEmpty(), connectionGeneration = connectionId, roomCode = cleanCode))
+                            return
+                        }
+                        val payloadBytes = message?.payload?.takeIf { it.isNotEmpty() } ?: return
+                        if (topic?.contains("/probe/") == true) return
                         try {
                             val payloadStr = String(payloadBytes, StandardCharsets.UTF_8)
-                            val packet = FastPacketCodec.decode(payloadStr)
+                            val decoded = FastPacketCodec.decode(payloadStr)
+                            val isOutcome = topic?.contains("/outcome/") == true
+                            val isAcceptedDeparture = topic?.contains("/accepted_exit/") == true
+                            val isExitReceipt = (decoded.closedTurnNumber > 0 || decoded.recoveryReplay) && decoded.type in setOf("SURRENDER", "LEAVE", "HOST_LEFT")
+                            val packet = decoded.copy(
+                                recoveryReplay = decoded.recoveryReplay || isOutcome || isAcceptedDeparture || (isExitReceipt && topic?.contains("/exit/") == true),
+                                isRetainedDelivery = message?.isRetained == true)
+                            if (topic?.startsWith("bingo/v5/match/") == true) {
+                                _incomingPackets.tryEmit(packet)
+                                return
+                            }
                             if (message.isRetained && topic != null) {
                                 reliableRetainedChecks[topic]?.let { (expected, received) ->
                                     if (packet.type == "MATCH_V2_STATE" && packet.reliableSnapshot == expected) received.complete(true)
@@ -609,7 +759,9 @@ class OnlineRoomSyncManager(
 
                     override fun connectionLost(cause: Throwable?) {
                         if (mqttClient !== client || roomConnectionId != connectionId) return
+                        EmqxBrokerMonitor.recordBrokerFailure()
                         isSubscribed = false
+                        _connectionReady.value = false
                         verifiedReliableTopics.clear()
                         matchHeartbeatPolicy?.let { policy ->
                             if (policy.isLocalHealthy) {
@@ -617,30 +769,32 @@ class OnlineRoomSyncManager(
                                 _matchHeartbeatDecisions.tryEmit(decision)
                             }
                         }
-                        scope.launch(Dispatchers.IO) {
-                            delay(1500L)
-                            val code = currentRoomCode
-                            val activeClient = mqttClient
-                            if (code != null && activeClient != null && !activeClient.isConnected) {
-                                try {
-                                    activeClient.reconnect()
-                                } catch (_: Exception) {}
-                            }
-                        }
+                        retryConnection(cleanCode, connectionId)
                     }
 
                     override fun deliveryComplete(token: IMqttDeliveryToken?) { }
                 })
 
-                client.connect(options)
-            } catch (_: Exception) { }
+                client.connect(options, null, object : IMqttActionListener {
+                    override fun onSuccess(token: IMqttToken?) {
+                        // Handled with exact serverURI in connectComplete callback
+                    }
+                    override fun onFailure(token: IMqttToken?, error: Throwable?) {
+                        EmqxBrokerMonitor.recordPrimaryBrokerDown()
+                        retryConnection(cleanCode, connectionId)
+                    }
+                })
+            } catch (_: Exception) {
+                EmqxBrokerMonitor.recordPrimaryBrokerDown()
+                retryConnection(cleanCode, connectionId)
+            }
         }
 
         // Periodic Presence Heartbeat & Cloud Room Reconciliation (Every 2.5s)
         heartbeatJob = scope.launch(Dispatchers.IO) {
             while (isActive) {
                 delay(2500L)
-                if (!AppLifecycleObserver.isAppInForeground.value) {
+                if (!AppLifecycleObserver.isAppInForeground.value || activePeerSeed != 0L) {
                     continue
                 }
                 val p = localPlayer ?: continue
@@ -650,9 +804,7 @@ class OnlineRoomSyncManager(
                 val client = mqttClient
                 if (client != null) {
                     if (!client.isConnected) {
-                        try {
-                            client.reconnect()
-                        } catch (_: Exception) {}
+                        retryConnection(code, roomConnectionId)
                     } else if (!isSubscribed) {
                         subscribeToRoom(code)
                     }
@@ -715,7 +867,8 @@ class OnlineRoomSyncManager(
         val client = mqttClient ?: return
         try {
             if (client.isConnected) {
-                client.subscribe(getTopic(roomCode), 1).waitForCompletion(2000L)
+                client.subscribe(arrayOf(getTopic(roomCode), "bingo/v5/room/${roomCode.trim().uppercase()}/availability/#"),
+                    intArrayOf(1, 1)).waitForCompletion(2000L)
                 isSubscribed = true
                 lastBrokerReceiveEchoAt = android.os.SystemClock.elapsedRealtime()
             }
@@ -728,7 +881,8 @@ class OnlineRoomSyncManager(
         val p = localPlayer ?: return
         broadcastPacket(
             RoomMessagePacket(
-                type = "JOIN",
+                type = "JOIN", connectionGeneration = roomConnectionId,
+                presenceStatus = if (AppLifecycleObserver.isAppInForeground.value) "ONLINE" else "AWAY",
                 playerId = p.id,
                 displayName = p.displayName,
                 username = p.username,
@@ -743,6 +897,10 @@ class OnlineRoomSyncManager(
                 readyVersion = p.readyVersion
             )
         )
+        broadcastPacket(RoomMessagePacket(type = "PLAYER_PRESENCE", playerId = p.id, senderPlayerId = p.id,
+            displayName = p.displayName, presenceStatus = if (AppLifecycleObserver.isAppInForeground.value) "ONLINE" else "AWAY",
+            readyStatus = if (AppLifecycleObserver.isAppInForeground.value) "ONLINE" else "AWAY",
+            connectionGeneration = roomConnectionId, roomCode = currentRoomCode.orEmpty()))
     }
 
     private var reliableStateTopic: String? = null
@@ -813,22 +971,33 @@ class OnlineRoomSyncManager(
                 }
                 if (client != null && client.isConnected && roomConnectionId == generation && currentRoomCode == code) {
                     val outgoing = scopedPacket.copy(senderInstanceId = packet.senderInstanceId.ifBlank { instanceId },
+                        connectionGeneration = packet.connectionGeneration.ifBlank { generation },
                         reliablePolicyVersion = com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.VERSION,
                         hostWaitVersion = 1,
                         protocolVersion = if (packet.type in setOf("START_GAME", "PLAY_AGAIN") && packet.players.size == 2) 2 else packet.protocolVersion)
                     val payload = FastPacketCodec.encode(outgoing)
                     val qosLevel = when (packet.type) {
-                        "PICK_NUMBER", "PING", "PONG", "MATCH_HEARTBEAT", "MULTIPLAYER_PRESENCE_REQUEST", "MULTIPLAYER_PRESENCE_RESPONSE" -> 0 // Instant line-rate flight, zero ACK wait, non-retained, disposable
-                        "TURN_TIMEOUT", "GAME_SYNC", "START_GAME", "PLAY_AGAIN", "ROOM_STATE", "SURRENDER", "LEAVE" -> 1 // Guaranteed delivery
+                        "PING", "PONG", "MATCH_HEARTBEAT", "MULTIPLAYER_PRESENCE_REQUEST", "MULTIPLAYER_PRESENCE_RESPONSE" -> 0 // Instant line-rate flight, zero ACK wait, non-retained, disposable
+                        "PICK_NUMBER", "TURN_TIMEOUT", "GAME_SYNC", "START_GAME", "PLAY_AGAIN", "ROOM_STATE", "SURRENDER", "LEAVE" -> 1 // Guaranteed delivery
                         else -> 1 // Guaranteed delivery for room control & state (START_GAME, PLAY_AGAIN, BOARD_READY, ROOM_STATE, etc.)
                     }
                     val message = MqttMessage(payload.toByteArray(StandardCharsets.UTF_8)).apply {
                         qos = qosLevel
-                        if (packet.isMatchFinished || packet.winnerPlayerId.isNotBlank()) {
-                            isRetained = true
-                        }
                     }
-                    client.publish(getTopic(code), message)
+                    if (activePeerSeed == packet.seed && packet.simplifiedRulesVersion > 0 &&
+                        packet.type in setOf("PICK_NUMBER", "TURN_TIMEOUT")) {
+                        // Each command has its own durable receipt. Live peers, including the
+                        // publisher, consume the same broker stream; recovery can replay a pick
+                        // even if every process dies before the next complete snapshot.
+                        val origin = outgoing.senderPlayerId.ifBlank { outgoing.playerId }
+                        val commandTopic = "${PeerMatchRecovery.topic(code, packet.seed)}/command/${outgoing.closedTurnNumber}/$origin/${outgoing.type}"
+                        message.isRetained = true
+                        client.publish(commandTopic, message)
+                    } else client.publish(getTopic(code), message)
+                    if (packet.type == "PLAYER_PRESENCE") {
+                        client.publish("bingo/v5/room/$code/availability/${packet.playerId}",
+                            MqttMessage(payload.toByteArray(StandardCharsets.UTF_8)).apply { qos = 1; isRetained = true })
+                    }
                 }
             } catch (_: Exception) { }
         }
@@ -875,7 +1044,7 @@ class OnlineRoomSyncManager(
         val generation = roomConnectionId
         try {
             val cloudSession = roomRegistry.sync(code, localP, playerRegistry.values.toList(), kickedPlayerIds) ?: return
-            if (currentRoomCode != code || roomConnectionId != generation) return
+            if (currentRoomCode != code || roomConnectionId != generation || activePeerSeed != 0L) return
             if (cloudSession.hostId.isNotBlank()) {
                 currentHostId = cloudSession.hostId
             }
@@ -973,10 +1142,6 @@ class OnlineRoomSyncManager(
             ) {
                 val participants = cloudSession.players.distinctBy { it.id }
                 val isTwoPlayer = participants.size == 2
-                if (isTwoPlayer && !canStartReliableMatch(participants.map { it.id }, localP.id)) {
-                    requestLobbyCompatibility()
-                    return
-                }
                 lastStartedMatchSeed = cloudSession.currentSeed
                 _incomingPackets.tryEmit(
                     RoomMessagePacket(
@@ -1024,13 +1189,16 @@ class OnlineRoomSyncManager(
     fun onForegroundResume() {
         val code = currentRoomCode ?: return
         val p = localPlayer ?: return
+        if (activePeerSeed != 0L) {
+            if (mqttClient?.isConnected == true) bindPeerMatch(activePeerSeed)
+            else retryConnection(code, roomConnectionId)
+            return
+        }
         scope.launch(Dispatchers.IO) {
             val client = mqttClient
             if (client != null) {
                 if (!client.isConnected) {
-                    try {
-                        client.reconnect()
-                    } catch (_: Exception) {}
+                    retryConnection(code, roomConnectionId)
                 }
                 if (!isSubscribed) {
                     subscribeToRoom(code)
@@ -1064,9 +1232,7 @@ class OnlineRoomSyncManager(
             val client = mqttClient
             if (client != null) {
                 if (!client.isConnected) {
-                    try {
-                        client.reconnect()
-                    } catch (_: Exception) {}
+                    retryConnection(code, roomConnectionId)
                 }
                 if (!isSubscribed) {
                     subscribeToRoom(code)
@@ -1136,7 +1302,8 @@ class OnlineRoomSyncManager(
             _incomingPackets.tryEmit(packet)
             return
         }
-        if (packet.senderInstanceId.isNotBlank() && packet.senderInstanceId == instanceId && packet.type != "PING") {
+        if (packet.senderInstanceId.isNotBlank() && packet.senderInstanceId == instanceId &&
+            packet.type !in setOf("PING", "PICK_NUMBER", "TURN_TIMEOUT", "GAME_PAUSED", "GAME_RESUMED", "PAUSE_EXTEND")) {
             return
         }
 
@@ -1321,6 +1488,7 @@ class OnlineRoomSyncManager(
             }
 
             "KICK_PLAYER" -> {
+                if (activePeerSeed != 0L) return
                 val targetId = packet.targetPlayerId.ifBlank { packet.playerId }
                 if (targetId.isNotEmpty()) {
                     playerRegistry.remove(targetId)
@@ -1332,6 +1500,10 @@ class OnlineRoomSyncManager(
                 if (is1v1MatchActive) {
                     // Protected by 1v1 heartbeat policy: transport disconnects or Last Will
                     // must never alter immutable match participants or cause premature departure
+                    return
+                }
+                if (packet.transportOnly || activePeerSeed != 0L) {
+                    _incomingPackets.tryEmit(packet)
                     return
                 }
                 if (packet.playerId.isNotEmpty()) {
@@ -1501,7 +1673,11 @@ class OnlineRoomSyncManager(
     }
 
     fun disconnect() {
+        val leavingConnection = roomConnectionId
         roomConnectionId = UUID.randomUUID().toString()
+        _connectionReady.value = false
+        activePeerSeed = 0L
+        peerSyncMarker = null
         lobbyChallenges.clear()
         verifiedLobbyPeers.clear()
         val p = localPlayer
@@ -1521,14 +1697,17 @@ class OnlineRoomSyncManager(
                 val msg = MqttMessage(payload.toByteArray(StandardCharsets.UTF_8)).apply {
                     qos = 1
                 }
-                client.publish(getTopic(code), msg).waitForCompletion(500L)
+                client.publish(getTopic(code), msg)
+                val offline = RoomMessagePacket(type = "PLAYER_PRESENCE", playerId = p.id, senderPlayerId = p.id,
+                    roomCode = code, connectionGeneration = leavingConnection, senderInstanceId = instanceId,
+                    lifecycleSequence = Long.MAX_VALUE, readyStatus = "OFFLINE", presenceStatus = "OFFLINE",
+                    timestamp = System.currentTimeMillis())
+                client.publish("bingo/v5/room/$code/availability/${p.id}",
+                    MqttMessage(FastPacketCodec.encode(offline).toByteArray(StandardCharsets.UTF_8)).apply {
+                        qos = 1; isRetained = true
+                    }).waitForCompletion(500L)
             } catch (_: Exception) {}
 
-            if (p.isHost) {
-                scope.launch(Dispatchers.IO) {
-                    roomRegistry.close(code)
-                }
-            }
         }
 
         stopMatchHeartbeat()
@@ -1559,7 +1738,7 @@ class OnlineRoomSyncManager(
         currentHostId = null
         isSubscribed = false
         lastStartedMatchSeed = 0L
-        completedMatchSeeds.clear()
+        // Completed seed receipts survive connection replacement and room changes.
         lastDirectHeartbeatTimestamps.clear()
         playerRegistry.clear()
         kickedPlayerIds.clear()

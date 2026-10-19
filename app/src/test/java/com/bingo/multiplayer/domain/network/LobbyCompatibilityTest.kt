@@ -173,7 +173,7 @@ class LobbyCompatibilityTest {
         }
     }
 
-    @Test fun cloudStartWaitsForCompatibilityThenPreservesProtocolAndBoardSettings() = runBlocking {
+    @Test fun cloudStartDoesNotDependOnObsoleteWatchdogHandshakeAndPreservesBoardSettings() = runBlocking {
         PairFixture().use { f ->
             f.drop = true
             f.registry.session = OnlineRoomSession("UNIT_ROOM", "A", "kevin", "Kevin", status = "PLAYING",
@@ -183,7 +183,7 @@ class LobbyCompatibilityTest {
                 f.b.incomingPackets.collect { if (it.type == "START_GAME") received += it }
             }
             f.b.refreshNow()
-            assertTrue(received.isEmpty())
+            until { received.size == 1 }
             f.drop = false
             assertTrue(f.b.awaitReliableCompatibility(ids, "B"))
             f.b.refreshNow()

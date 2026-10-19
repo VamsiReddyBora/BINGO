@@ -6,6 +6,6 @@ object MultiplayerResultAuthority {
         if (!context.requiresHostResultConfirmation || context.localId == context.hostId) return true
         return confirmation != null && MultiplayerGameplayReducer.belongsToMatch(confirmation, context) &&
             MultiplayerGameplayReducer.sender(confirmation) == context.hostId &&
-            confirmation.type == "GAME_SYNC"
+            confirmation.type in setOf("GAME_SYNC", "GAME_OVER", "BINGO_CLAIMED")
     }
 }

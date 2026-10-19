@@ -64,6 +64,7 @@ object FastPacketCodec {
                 }
             }
             "BOARD_READY" -> {
+                if (packet.simplifiedRulesVersion > 0) return encodeCompact(packet)
                 val boardStr = packet.pickedHistory.joinToString(",")
                 if (packet.senderInstanceId.isNotBlank()) {
                     "B|${packet.playerId}|${packet.seed}|$boardStr|${packet.senderInstanceId}"

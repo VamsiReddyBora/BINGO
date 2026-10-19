@@ -392,10 +392,10 @@ class LobbyLifecycleEngineTest {
         assertTrue(LobbyLifecycleEngine.isPlayerMe(player, myUid = "u_alice"))
         // Prefix stripped UID match
         assertTrue(LobbyLifecycleEngine.isPlayerMe(player, myUid = "alice"))
-        // Username match
-        assertTrue(LobbyLifecycleEngine.isPlayerMe(player, myUid = "other_uid", myUsername = "@Alice"))
-        // Display name match for non-host
-        assertTrue(LobbyLifecycleEngine.isPlayerMe(player, myUid = "diff", myUsername = "", myDisplayName = "Alice", isHost = false))
+        // A different stable UID must not match a username
+        assertFalse(LobbyLifecycleEngine.isPlayerMe(player, myUid = "other_uid", myUsername = "@Alice"))
+        // Equal display names never identify a different account
+        assertFalse(LobbyLifecycleEngine.isPlayerMe(player, myUid = "diff", myUsername = "", myDisplayName = "Alice", isHost = false))
         // Negative test: should not match Bob
         assertFalse(LobbyLifecycleEngine.isPlayerMe(player, myUid = "bob", myUsername = "bob", myDisplayName = "Bob", isHost = false))
     }

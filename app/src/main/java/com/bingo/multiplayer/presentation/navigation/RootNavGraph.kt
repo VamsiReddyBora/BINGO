@@ -64,6 +64,13 @@ import com.bingo.multiplayer.domain.network.MultiplayerResultAuthority
 import com.bingo.multiplayer.domain.network.MultiplayerLifecyclePacketGate
 import com.bingo.multiplayer.domain.network.MultiplayerGameplayState
 import com.bingo.multiplayer.domain.network.OngoingMatchData
+import com.bingo.multiplayer.domain.network.MultiplayerTurnClock
+import com.bingo.multiplayer.domain.network.MultiplayerPresenceState
+import com.bingo.multiplayer.domain.network.MultiplayerPresenceRecord
+import com.bingo.multiplayer.domain.network.MultiplayerResultRules
+import com.bingo.multiplayer.domain.network.PeerMatchRecovery
+import com.bingo.multiplayer.domain.network.PendingMatchExit
+import com.bingo.multiplayer.domain.network.SimplifiedMatchPacketGate
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -162,6 +169,7 @@ fun RootNavGraph(
     var currentMatchSeed by remember { androidx.compose.runtime.mutableLongStateOf(0L) }
     var matchStartTimeMs by remember { androidx.compose.runtime.mutableLongStateOf(0L) }
     var isLocalBoardReady by remember { mutableStateOf(false) }
+    val manualReadyAtById = remember { mutableStateMapOf<String, Long>() }
     var isOpponentBoardReady by remember { mutableStateOf(false) }
     var countdownSeconds by remember { mutableIntStateOf(-1) }
     var firstTurnPlayerName by remember { mutableStateOf("") }
@@ -209,7 +217,35 @@ fun RootNavGraph(
     var lastAppliedPauseTimestamp by remember { mutableLongStateOf(0L) }
     var multiplayerSnapshotCheckpoint by remember { mutableStateOf(MultiplayerSnapshotCheckpoint()) }
 
-    val isMultiplayerSuspended = false
+    var peerTurnClock by remember { mutableStateOf<MultiplayerTurnClock?>(null) }
+    var pendingPeerCommand by remember { mutableStateOf<RoomMessagePacket?>(null) }
+    var peerPresenceState by remember { mutableStateOf(MultiplayerPresenceState()) }
+    var peerSnapshotRevision by remember { mutableLongStateOf(0L) }
+    var peerLifecycleSequence by remember { mutableLongStateOf(0L) }
+    var lastPlayerActivityAt by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var verifiedRoomExists by remember { mutableStateOf(true) }
+    var lastAcceptedPauseVersion by remember { mutableLongStateOf(0L) }
+    var pendingExitRevision by remember { mutableLongStateOf(0L) }
+    var coldPeerRejoin by remember { mutableStateOf(false) }
+    var coldRecoveryProbeAt by remember { mutableLongStateOf(0L) }
+    var freshPeerRecoveryResponse by remember { mutableStateOf(false) }
+    var recoveryRemainingSavedAt by remember { mutableLongStateOf(0L) }
+    var recoveryRequestedAt by remember { mutableLongStateOf(0L) }
+    var recoveryRemainingMillis by remember { mutableStateOf<Long?>(null) }
+    var recoveryRemainingTurn by remember { mutableIntStateOf(0) }
+    var recoveryRemainingPlayerId by remember { mutableStateOf("") }
+    var recoveryRemainingSeed by remember { mutableLongStateOf(0L) }
+    var pendingHumanReturn by remember { mutableStateOf(false) }
+    var pendingHumanReturnAt by remember { mutableLongStateOf(0L) }
+    var recoveryFenceCompleted by remember { mutableStateOf(true) }
+    val bufferedReconciliationCommands = remember { mutableListOf<RoomMessagePacket>() }
+    val pendingPeerWills = remember { mutableMapOf<String, RoomMessagePacket>() }
+    val peerConnectionReady by onlineRoomSync.connectionReady.collectAsState()
+    val appInForeground by com.bingo.multiplayer.domain.network.AppLifecycleObserver.isAppInForeground.collectAsState()
+    fun peerGameplaySuspended() = currentGameMode == GameMode.ONLINE_ROOM &&
+        (!onlineRoomSync.connectionReady.value || isReconcilingMatch || !recoveryFenceCompleted)
+    val isMultiplayerSuspended = peerGameplaySuspended()
+
 
 
     fun getEffectiveUser(): com.bingo.multiplayer.domain.model.UserProfile? {
@@ -234,8 +270,10 @@ fun RootNavGraph(
         return user?.avatarBase64?.takeIf { it.isNotBlank() } ?: user?.avatarUrl
     }
 
+    var presentationSeed by remember { mutableLongStateOf(0L) }
     fun prepareMatchPresentation(seed: Long, saved: OngoingMatchData? = null) {
-        matchSystemMessages = saved?.systemMessages ?: emptyList()
+        if (presentationSeed != seed || saved != null) matchSystemMessages = saved?.systemMessages ?: emptyList()
+        presentationSeed = seed
     }
 
     fun reportMatchStatus(event: String, text: String) {
@@ -248,6 +286,23 @@ fun RootNavGraph(
         matchSystemMessages = MatchSystemMessages.merge(matchSystemMessages, listOf(notice))
         matchChatHistory = MatchSystemMessages.merge(matchChatHistory, listOf(notice))
         coroutineScope.launch(Dispatchers.IO) { OngoingMatchStore.savePresentation(context, uid, seed, notice = notice) }
+    }
+
+    fun deduplicateChatMessages(messages: List<InGameChatMessage>): List<InGameChatMessage> {
+        var hasHostNotice = false
+        val result = mutableListOf<InGameChatMessage>()
+        val seenIds = mutableSetOf<Long>()
+        val sorted = messages.sortedBy { it.timestamp }
+        for (msg in sorted) {
+            if (!seenIds.add(msg.id)) continue
+            val isHostNotice = msg.isSystemMessage && (msg.text.contains("is the host") || msg.text.contains("are the host"))
+            if (isHostNotice) {
+                if (hasHostNotice) continue
+                hasHostNotice = true
+            }
+            result.add(msg)
+        }
+        return result
     }
 
     var lastForegroundResumeTimestamp by remember { androidx.compose.runtime.mutableLongStateOf(System.currentTimeMillis()) }
@@ -301,18 +356,55 @@ fun RootNavGraph(
         return false
     }
 
+    fun ensurePeerTurnClock(incoming: MultiplayerTurnClock? = null) {
+        if (currentGameMode != GameMode.ONLINE_ROOM || currentTurnPlayerId.isBlank()) return
+        if (incoming != null && incoming.valid() && incoming.turnNumber == turnNumber && incoming.playerId == currentTurnPlayerId) {
+            val old = peerTurnClock
+            peerTurnClock = if (old == null || old.turnNumber != turnNumber || old.playerId != currentTurnPlayerId)
+                incoming else old.merge(incoming)
+        }
+        if (peerTurnClock?.turnNumber != turnNumber || peerTurnClock?.playerId != currentTurnPlayerId) {
+            peerTurnClock = MultiplayerTurnClock.start(turnNumber, currentTurnPlayerId, System.currentTimeMillis(),
+                peerPresenceState.isAbsent(currentTurnPlayerId))
+        }
+        turnTimer = peerTurnClock?.remainingSeconds(System.currentTimeMillis()) ?: turnTimer
+    }
+
+    fun savePeerMatch() {
+        if (currentGameMode != GameMode.ONLINE_ROOM || roomCode.isBlank() || currentMatchSeed == 0L) return
+        // Preparation has no live turn yet. Do not overwrite a valid checkpoint with
+        // the previous screen's board while a manual board is still being designed.
+        if (currentTurnPlayerId.isBlank() || peerTurnClock == null ||
+            playerBoard.size != boardSize || matchParticipants.any { allPlayerBoards[it.id]?.size != boardSize }) return
+        val uid = getLocalUid()
+        val existing = OngoingMatchStore.getOngoingMatch(context, uid)
+        if (existing != null && existing.matchSeed != currentMatchSeed && existing.startedAt > matchStartTimeMs) return
+        val data = OngoingMatchData(roomCode = roomCode, matchSeed = currentMatchSeed, boardSize = boardSize,
+            isDynamicBoard = isDynamicBoard, isManualBoard = isManualBoard, isHost = isHosting,
+            participants = matchParticipants, playerBoard = playerBoard, opponentBoard = opponentBoard,
+            allPlayerBoards = allPlayerBoards, pickedNumbers = pickedNumbersHistory.toList(),
+            pickedByPlayers = pickedByPlayerHistory.toList(), turnIds = pickedTurnIdsHistory.toList(),
+            turnNumber = turnNumber, currentTurnPlayerId = currentTurnPlayerId, randomizedTurnOrder = randomizedTurnOrder,
+            chatMessages = matchChatHistory, systemMessages = matchSystemMessages, startedAt = matchStartTimeMs,
+            is1v1Match = matchParticipants.size == 2, accountUid = uid, protocolVersion = 3,
+            matchRevision = peerSnapshotRevision, isPaused = isGamePaused,
+            remainingTurnMillis = if (isReconcilingMatch && coldPeerRejoin) recoveryRemainingMillis
+                else peerTurnClock?.remainingMillis(System.currentTimeMillis()) ?: (turnTimer * 1000L),
+            pauseRemainingSeconds = pauseRemainingSeconds, pauseOwnerId = pausedByPlayerName,
+            pauseControlRevision = lastAcceptedPauseVersion.toInt(),
+            multiplayerSnapshotCheckpoint = multiplayerSnapshotCheckpoint.copy(surrenderedPlayerIds =
+                multiplayerSnapshotCheckpoint.surrenderedPlayerIds + surrenderedPlayerIds),
+            runnerPlayerIds = activeRunnerPlayerIds, isMatchFinished = isGameOver, winnerPlayerId = winnerPlayerId,
+            winReason = activeWinReason, turnClock = peerTurnClock, lastPlayerActivityAt = lastPlayerActivityAt,
+            simplifiedRulesVersion = 1, presenceState = peerPresenceState)
+        OngoingMatchStore.saveOngoingMatch(context, data)
+    }
+
     fun persistMultiplayerControl(): Boolean {
         if (currentGameMode != GameMode.ONLINE_ROOM || roomCode.isBlank()) return true
-        return OngoingMatchStore.updateMatchGameState(
-            context = context, accountUid = getLocalUid(), expectedMatchSeed = currentMatchSeed,
-            isPaused = isGamePaused,
-            remainingTurnMillis = (if (isGamePaused) frozenRemainingTurnMillis else null) ?: (turnTimer * 1000L),
-            turnNumber = turnNumber,
-            currentTurnPlayerId = currentTurnPlayerId,
-            pauseOwnerId = pausedByPlayerName,
-            pauseRemainingSeconds = if (isGamePaused) pauseRemainingSeconds else 0,
-            pauseDeadlineTimestamp = if (isGamePaused) System.currentTimeMillis() + (pauseRemainingSeconds * 1000L) else null
-        )
+        savePeerMatch()
+        return true
+
     }
 
     val broadcastPacket: (RoomMessagePacket) -> Unit = publish@ { original ->
@@ -322,6 +414,14 @@ fun RootNavGraph(
             MultiplayerGameplayReducer.prepareOutgoing(original, outgoingSeed, getLocalUid()) else original
         if (packet.seed == 0L && currentMatchSeed != 0L && original.type !in setOf("HOST_LEFT", "PLAYER_DISCONNECTED")) {
             packet = packet.copy(seed = currentMatchSeed, matchId = currentMatchSeed.toString())
+        }
+        if (currentGameMode == GameMode.ONLINE_ROOM && inMatchScreen && currentMatchSeed != 0L) {
+            peerLifecycleSequence += 1L
+            packet = packet.copy(senderPlayerId = getLocalUid(), lifecycleSequence = peerLifecycleSequence,
+                turnClock = packet.turnClock ?: peerTurnClock,
+                lastPlayerActivityAt = lastPlayerActivityAt, simplifiedRulesVersion = 1,
+                playerPresences = if (packet.playerPresences.isEmpty()) peerPresenceState.records else packet.playerPresences,
+                surrenderedPlayerIds = (packet.surrenderedPlayerIds + surrenderedPlayerIds).distinct())
         }
         if (isUsingP2p) lanP2pSync.broadcastPacket(packet) else onlineRoomSync.broadcastPacket(packet)
     }
@@ -352,6 +452,77 @@ fun RootNavGraph(
         }
     }
 
+    fun peerSnapshotPacket(): RoomMessagePacket {
+        peerSnapshotRevision += 1L
+        multiplayerSnapshotCheckpoint = multiplayerSnapshotCheckpoint.copy(surrenderedPlayerIds =
+            multiplayerSnapshotCheckpoint.surrenderedPlayerIds + surrenderedPlayerIds)
+        val packet = RoomMessagePacket(type = "GAME_SYNC", playerId = getLocalUid(), senderPlayerId = getLocalUid(),
+            roomCode = roomCode, seed = currentMatchSeed, matchId = currentMatchSeed.toString(), sequence = peerSnapshotRevision,
+            turnNumber = turnNumber, currentTurnPlayerId = currentTurnPlayerId,
+            pickedHistory = pickedNumbersHistory.toList(), pickedByHistory = pickedByPlayerHistory.toList(), turnIds = pickedTurnIdsHistory.toList(),
+            isPaused = isGamePaused, pauseOwnerId = pausedByPlayerName, pauseEpisode = lastAcceptedPauseVersion.toInt(),
+            pauseRemainingSeconds = pauseRemainingSeconds, turnClock = peerTurnClock,
+            remainingTurnMillis = peerTurnClock?.remainingMillis(System.currentTimeMillis()) ?: (turnTimer * 1000L),
+            lastPlayerActivityAt = lastPlayerActivityAt, surrenderedPlayerIds = surrenderedPlayerIds.toList(),
+            isMatchFinished = isGameOver, winnerPlayerId = if (isGameOver) winnerPlayerId else "",
+            winReason = if (isGameOver) activeWinReason else "", runnerPlayerIds = activeRunnerPlayerIds,
+            chatMessages = matchChatHistory, boardSize = boardSize,
+            boardNumbers = allPlayerBoards.mapValues { it.value.cells.map { cell -> cell.number } },
+            playerPresences = peerPresenceState.records, simplifiedRulesVersion = 1)
+        savePeerMatch()
+        return packet
+    }
+
+    fun publishPeerState() {
+        if (currentGameMode == GameMode.ONLINE_ROOM && currentMatchSeed != 0L && !isReconcilingMatch)
+            onlineRoomSync.publishPeerSnapshot(peerSnapshotPacket())
+    }
+
+    fun applyPeerPresence(id: String, record: MultiplayerPresenceRecord, lastWill: Boolean = false) {
+        val participants = if (navController.currentDestination?.route in setOf(Screen.Game.route, Screen.ManualBoardDesign.route))
+            matchParticipants else onlineRoomSync.players.value
+        if (id in surrenderedPlayerIds || participants.none { it.id == id }) return
+        val next = peerPresenceState.update(id, record, lastWill)
+        if (next == peerPresenceState) return
+        peerPresenceState = next
+        disconnectedPlayerIds.removeAll { it == id }; awayPlayerIds.removeAll { it == id }
+        when (next.records[id]?.status) {
+            "OFFLINE" -> disconnectedPlayerIds.add(id)
+            "AWAY" -> awayPlayerIds.add(id)
+            "ONLINE" -> {
+                if (!isGamePaused) peerTurnClock = peerTurnClock?.resume(record.observedAt)
+                if (id == currentTurnPlayerId) peerTurnClock = peerTurnClock?.welcomeBack(record.observedAt)
+            }
+        }
+        val eligible = participants.filter { it.id !in surrenderedPlayerIds }
+        if (!isGamePaused && eligible.isNotEmpty() && eligible.all { peerPresenceState.isAbsent(it.id) }) {
+            if (peerTurnClock?.frozenRemainingMillis == null) {
+                val validRemaining = recoveryRemainingMillis?.takeIf {
+                    isReconcilingMatch &&
+                    recoveryRemainingSeed == currentMatchSeed &&
+                    recoveryRemainingTurn == turnNumber &&
+                    recoveryRemainingPlayerId == currentTurnPlayerId
+                }
+                val freezeRemainder = validRemaining ?: peerTurnClock?.remainingMillis(if (lastWill) System.currentTimeMillis() else record.observedAt)
+                peerTurnClock = peerTurnClock?.copy(frozenRemainingMillis = freezeRemainder)
+            }
+        }
+        turnTimer = peerTurnClock?.remainingSeconds(System.currentTimeMillis()) ?: turnTimer
+    }
+
+    fun announcePeerPresence(status: String) {
+        if (currentGameMode != GameMode.ONLINE_ROOM || roomCode.isBlank()) return
+        peerLifecycleSequence += 1L
+        val record = MultiplayerPresenceRecord(onlineRoomSync.roomSessionId.substringBefore('/'), onlineRoomSync.instanceId,
+            peerLifecycleSequence, System.currentTimeMillis(), status)
+        applyPeerPresence(getLocalUid(), record)
+        broadcastPacket(RoomMessagePacket(type = "PLAYER_PRESENCE", playerId = getLocalUid(),
+            displayName = getPlayerDisplayName(), readyStatus = status, seed = currentMatchSeed,
+            playerPresences = mapOf(getLocalUid() to record), lifecycleSequence = record.version))
+        savePeerMatch()
+        publishPeerState()
+    }
+
     fun isPlayerMe(p: Player): Boolean {
         val user = (authRepository.authState.value as? AuthState.Authenticated)?.user
         return com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerMe(
@@ -366,13 +537,70 @@ fun RootNavGraph(
     fun isPlayerMe(playerId: String): Boolean {
         if (playerId.isBlank()) return false
         val myUid = getLocalUid()
+        if (currentGameMode == GameMode.ONLINE_ROOM) return playerId == myUid
         if (com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(playerId, myUid)) return true
         val user = (authRepository.authState.value as? AuthState.Authenticated)?.user
         val myUser = user?.username ?: ""
         if (myUser.isNotBlank() && com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(playerId, myUser)) return true
         val myDisplay = getPlayerDisplayName()
-        if (myDisplay.isNotBlank() && playerId.equals(myDisplay, ignoreCase = true) && isHosting) return true
+        if (myDisplay.isNotBlank() && playerId.equals(myDisplay, ignoreCase = true)) return true
         return false
+    }
+
+    fun getActiveParticipants(): List<Player> {
+        val fromMatch = matchParticipants.filter { it.id.isNotBlank() }.distinctBy { it.id }
+        if (fromMatch.isNotEmpty()) return fromMatch
+        val fromRealTime = realTimePlayers.filter { it.id.isNotBlank() }.distinctBy { it.id }
+        if (fromRealTime.isNotEmpty()) return fromRealTime
+        val myUid = getLocalUid()
+        val other = opponentPlayerId.takeIf { it.isNotBlank() } ?: "opponent"
+        return listOf(
+            Player(id = myUid, displayName = getPlayerDisplayName(), isHost = isHosting),
+            Player(id = other, displayName = "Opponent", isHost = !isHosting)
+        )
+    }
+
+    fun gameplayContext(): MultiplayerGameplayContext {
+        val participants = getActiveParticipants()
+        val host = participants.find { it.isHost }?.id ?: onlineRoomSync.currentHostId ?: (if (isHosting) getLocalUid() else opponentPlayerId)
+        val excluded = surrenderedPlayerIds
+        return MultiplayerGameplayContext(currentMatchSeed, getLocalUid(), host, participants,
+            randomizedTurnOrder, excluded, allowPeerTimeouts = true,
+            isActive = (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) &&
+                navController.currentDestination?.route in setOf(Screen.Game.route, Screen.ManualBoardDesign.route),
+            requiresHostResultConfirmation = false, strictIdentity = currentGameMode == GameMode.ONLINE_ROOM)
+    }
+
+    fun gameplayState() = MultiplayerGameplayState(
+        picks = pickedNumbersHistory.mapIndexed { i, n -> MatchPick(n, pickedByPlayerHistory.getOrNull(i).orEmpty(), pickedTurnIdsHistory.getOrNull(i) ?: (i + 1)) },
+        playerBoard = playerBoard, opponentBoard = opponentBoard, allPlayerBoards = allPlayerBoards,
+        turnNumber = turnNumber, currentPlayerId = currentTurnPlayerId,
+        remainingTurnMillis = frozenRemainingTurnMillis ?: (turnTimer * 1000L),
+        isPaused = isGamePaused, isSuspended = peerGameplaySuspended(), isGameOver = isGameOver,
+        disconnectedPlayerIds = disconnectedPlayerIds.toSet(), missedTurns = consecutiveMissedTurns.toMap(),
+        surrenderedPlayerIds = surrenderedPlayerIds,
+        turnClock = if (currentGameMode == GameMode.ONLINE_ROOM) peerTurnClock else null
+    )
+
+    fun applyGameplayState(state: MultiplayerGameplayState) {
+        val changedTurn = turnNumber != state.turnNumber || currentTurnPlayerId != state.currentPlayerId
+        playerBoard = state.playerBoard; opponentBoard = state.opponentBoard; allPlayerBoards = state.allPlayerBoards
+        pickedNumbersHistory.clear(); pickedNumbersHistory.addAll(state.picks.map { it.number })
+        pickedByPlayerHistory.clear(); pickedByPlayerHistory.addAll(state.picks.map { it.playerId })
+        pickedTurnIdsHistory.clear(); pickedTurnIdsHistory.addAll(state.picks.map { it.turn })
+        turnNumber = state.turnNumber; currentTurnPlayerId = state.currentPlayerId
+        turnTimer = ((state.remainingTurnMillis + 999L) / 1000L).toInt()
+        isMyTurn = isPlayerMe(currentTurnPlayerId)
+        disconnectedPlayerIds.clear(); disconnectedPlayerIds.addAll(state.disconnectedPlayerIds)
+        consecutiveMissedTurns.clear(); consecutiveMissedTurns.putAll(state.missedTurns)
+        surrenderedPlayerIds = surrenderedPlayerIds + state.surrenderedPlayerIds
+        multiplayerSnapshotCheckpoint = multiplayerSnapshotCheckpoint.copy(surrenderedPlayerIds =
+            multiplayerSnapshotCheckpoint.surrenderedPlayerIds + surrenderedPlayerIds)
+        if (changedTurn) {
+            frozenRemainingTurnMillis = state.remainingTurnMillis.takeIf { isGamePaused }
+            frozenRemainingTurnSeconds = frozenRemainingTurnMillis?.let { ((it + 999L) / 1000L).toInt() }
+            frozenTurnNumber = turnNumber; frozenMatchSeed = currentMatchSeed
+        }
     }
 
     var incomingInvite by remember { mutableStateOf<com.bingo.multiplayer.domain.network.GameInvite?>(null) }
@@ -446,8 +674,10 @@ fun RootNavGraph(
             currentRoute == Screen.JoinRoom.route ||
             currentRoute == Screen.OnlineChoice.route) {
             if (isHosting && currentGameMode == GameMode.ONLINE_ROOM && roomCode.isNotBlank()) {
+                val closingRoom = roomCode
+                val closingSeed = currentMatchSeed
                 coroutineScope.launch {
-                    com.bingo.multiplayer.domain.network.OnlineRoomRegistry.closeRoom(roomCode)
+                    com.bingo.multiplayer.domain.network.OnlineRoomRegistry.closeRoom(closingRoom, expectedSeed = closingSeed.takeIf { it != 0L })
                 }
             }
             disconnectRoom()
@@ -465,8 +695,10 @@ fun RootNavGraph(
                         isHost = true
                     )
                 )
+                val closingRoom = roomCode
+                val closingSeed = currentMatchSeed
                 coroutineScope.launch {
-                    com.bingo.multiplayer.domain.network.OnlineRoomRegistry.closeRoom(roomCode)
+                    com.bingo.multiplayer.domain.network.OnlineRoomRegistry.closeRoom(closingRoom, expectedSeed = closingSeed.takeIf { it != 0L })
                 }
             }
             com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context, getLocalUid())
@@ -518,12 +750,41 @@ fun RootNavGraph(
     // Observe App Foreground/Background transitions to handle match resume and prevent false disconnects
     LaunchedEffect(Unit) {
         com.bingo.multiplayer.domain.network.AppLifecycleObserver.isAppInForeground.collect { isInForeground ->
+            val route = navController.currentDestination?.route
+            if (currentGameMode == GameMode.ONLINE_ROOM && roomCode.isNotBlank() &&
+                route !in setOf(Screen.Game.route, Screen.ManualBoardDesign.route))
+                announcePeerPresence(if (isInForeground) "ONLINE" else "AWAY")
+            if (currentGameMode == GameMode.ONLINE_ROOM && currentMatchSeed != 0L &&
+                route in setOf(Screen.Game.route, Screen.ManualBoardDesign.route)) {
+                if (isInForeground) {
+                    val now = System.currentTimeMillis()
+                    pendingHumanReturn = true
+                    pendingHumanReturnAt = now
+                    if (now - lastPlayerActivityAt < MultiplayerTurnClock.INACTIVITY_MILLIS) {
+                        lastPlayerActivityAt = now
+                    }
+                    recoveryRequestedAt = now
+                    isReconcilingMatch = true
+                    recoveryFenceCompleted = false
+                    announcePeerPresence("ONLINE")
+                    onlineRoomSync.onForegroundResume()
+                    if (route == Screen.Game.route) onlineRoomSync.bindPeerMatch(currentMatchSeed)
+                    else {
+                        isReconcilingMatch = false
+                        recoveryFenceCompleted = true
+                    }
+                } else {
+                    announcePeerPresence("AWAY")
+                }
+                return@collect
+            }
             if (isInForeground) {
                 val now = System.currentTimeMillis()
                 lastForegroundResumeTimestamp = now
                 val currentDest = navController.currentDestination?.route
                 val isInGame = currentDest == Screen.Game.route || currentDest == Screen.ManualBoardDesign.route
                 if (isInGame && !isGameOver && (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK)) {
+                    lastPlayerActivityAt = now
                     // 1. Reconnect MQTT if needed and refresh sync
                     onlineRoomSync.onForegroundResume()
                     // 2. Clear stale disconnect records accumulated while local device was asleep
@@ -791,6 +1052,20 @@ fun RootNavGraph(
             val isHostPlayer = isHosting || (onlineRoomSync.currentHostId != null && getLocalUid() == onlineRoomSync.currentHostId) || (matchParticipants.singleOrNull { it.isHost }?.id == getLocalUid()) || (realTimePlayers.singleOrNull { it.isHost }?.id == getLocalUid())
             if (!isHostPlayer) return
         }
+        if (currentGameMode == GameMode.ONLINE_ROOM) {
+            if (isGameOver || peerGameplaySuspended() || pause == isGamePaused) return
+            val now = System.currentTimeMillis()
+            ensurePeerTurnClock()
+            val changedClock = if (pause) peerTurnClock?.freeze(now) else peerTurnClock?.resume(now)
+            // Manual controls use the same broker ordering as picks. Applying a local pause
+            // before its echo could reject an opponent pick already accepted by MQTT.
+            broadcastPacket(RoomMessagePacket(type = if (pause) "GAME_PAUSED" else "GAME_RESUMED",
+                playerId = getLocalUid(), displayName = getPlayerDisplayName(), pauseEpisode = (lastAcceptedPauseVersion + 1L).toInt(),
+                remainingTurnMillis = changedClock?.remainingMillis(now) ?: (turnTimer * 1000L),
+                isPaused = pause, pauseRemainingSeconds = if (pause) 30 else 0,
+                pauseOwnerId = if (pause) getLocalUid() else "", turnClock = changedClock, timestamp = now))
+            return
+        }
         if (pause && !isGamePaused) {
             val remMs = (turnTimer * 1000L)
             frozenRemainingTurnMillis = remMs
@@ -939,17 +1214,26 @@ fun RootNavGraph(
             durationSeconds = if (matchStartTimeMs > 0L) ((System.currentTimeMillis() - matchStartTimeMs) / 1000L).coerceAtLeast(0L) else 0L,
             finalBoardNumbers = playerBoard.cells.map { it.number },
             markedNumbers = playerBoard.cells.filter { it.isMarked }.map { it.number },
-            stableResultId = stableResultId,
-            expectedAccountUid = expectedAccountUid
+            stableResultId = stableResultId ?: if (currentGameMode == GameMode.ONLINE_ROOM && currentMatchSeed != 0L)
+                "match:$roomCode:$currentMatchSeed:${getLocalUid()}" else null,
+            expectedAccountUid = expectedAccountUid ?: if (currentGameMode == GameMode.ONLINE_ROOM) getLocalUid() else null
         )
         if (!recorded) return false
-        com.bingo.multiplayer.domain.network.OngoingMatchStore.clearOngoingMatch(context, getLocalUid())
+        if (currentGameMode == GameMode.ONLINE_ROOM && isGameOver) {
+            savePeerMatch()
+            OngoingMatchStore.recordMatchResultTombstone(context, roomCode, currentMatchSeed, winnerPlayerId,
+                activeWinReason, accountUid = getLocalUid(), runnerPlayerIds = activeRunnerPlayerIds)
+        } else if (currentGameMode != GameMode.ONLINE_ROOM) {
+            OngoingMatchStore.clearOngoingMatch(context, getLocalUid())
+        }
         if (currentMatchSeed != 0L) {
             onlineRoomSync.recordCompletedSeed(currentMatchSeed)
         }
-        if (isHosting && (currentGameMode == GameMode.ONLINE_ROOM) && roomCode.isNotBlank()) {
+        if (isGameOver && isHosting && (currentGameMode == GameMode.ONLINE_ROOM) && roomCode.isNotBlank()) {
+            val finishedCode = roomCode; val finishedSeed = currentMatchSeed
             coroutineScope.launch(Dispatchers.IO) {
-                com.bingo.multiplayer.domain.network.OnlineRoomRegistry.updateRoomStatus(roomCode, "WAITING", seed = 0L)
+                com.bingo.multiplayer.domain.network.OnlineRoomRegistry.updateRoomStatus(finishedCode, "WAITING",
+                    seed = 0L, expectedSeed = finishedSeed)
             }
         }
         return true
@@ -965,19 +1249,6 @@ fun RootNavGraph(
         val activeCount = realTimePlayers.count { it.id.isNotBlank() }
         return (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) &&
                 (activeCount > 2 || allPlayerBoards.size > 2)
-    }
-
-    fun getActiveParticipants(): List<Player> {
-        val fromMatch = matchParticipants.filter { it.id.isNotBlank() }.distinctBy { it.id }
-        if (fromMatch.isNotEmpty()) return fromMatch
-        val fromRealTime = realTimePlayers.filter { it.id.isNotBlank() }.distinctBy { it.id }
-        if (fromRealTime.isNotEmpty()) return fromRealTime
-        val myUid = getLocalUid()
-        val other = opponentPlayerId.takeIf { it.isNotBlank() } ?: "opponent"
-        return listOf(
-            Player(id = myUid, displayName = getPlayerDisplayName(), isHost = isHosting),
-            Player(id = other, displayName = "Opponent", isHost = !isHosting)
-        )
     }
 
     data class MatchOutcome(
@@ -1108,7 +1379,9 @@ fun RootNavGraph(
         size: Int = 5,
         firstTurnPlayerId: String? = null,
         hostSeed: Long? = null,
-        incomingPlayersList: List<Player> = emptyList()
+        incomingPlayersList: List<Player> = emptyList(),
+        initialTurnClock: MultiplayerTurnClock? = null,
+        hostPlayerId: String? = null
     ) {
         currentGameMode = mode
         currentAiDifficulty = difficulty
@@ -1124,6 +1397,18 @@ fun RootNavGraph(
         val user = (authRepository.authState.value as? AuthState.Authenticated)?.user
         val myUsername = user?.username ?: ""
         val myDisplay = getPlayerDisplayName()
+
+        val authoritativeHostUid = when (mode) {
+            GameMode.AI_EASY, GameMode.AI_HARD -> myUid
+            else -> {
+                (if (isHosting) myUid else null)
+                    ?: hostPlayerId?.takeIf { it.isNotBlank() }
+                    ?: onlineRoomSync.currentHostId?.takeIf { it.isNotBlank() }
+                    ?: matchParticipants.firstOrNull { it.isHost }?.id
+                    ?: realTimePlayers.firstOrNull { it.isHost }?.id
+                    ?: ""
+            }
+        }
 
         if (mode == GameMode.ONLINE_ROOM || mode == GameMode.NEARBY_NETWORK) {
             // 1. Gather all participants from incoming packet, cached match participants, or real-time lobby
@@ -1145,13 +1430,19 @@ fun RootNavGraph(
                     compareByDescending<Player> { it.isHost }
                         .thenBy { it.username.trim().lowercase().removePrefix("@").takeIf { u -> u.isNotBlank() } ?: it.id.trim().lowercase() }
                 )
-            matchParticipants = allParticipants
+            matchParticipants = if (authoritativeHostUid.isNotBlank()) {
+                allParticipants.map { p ->
+                    p.copy(isHost = com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(p.id, authoritativeHostUid))
+                }
+            } else {
+                allParticipants
+            }
 
             // 3. Deterministic, collision-free board generation for every participant
             val newBoards = mutableMapOf<String, Board>()
             var myBoardGenerated: Board? = null
 
-            allParticipants.forEachIndexed { index, p ->
+            matchParticipants.forEachIndexed { index, p ->
                 val pSeed = com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.resolvePlayerBoardSeed(baseSeed, p, index)
                 val b = engine.generateBoard(size, pSeed)
                 newBoards[p.id] = b
@@ -1170,7 +1461,7 @@ fun RootNavGraph(
             allPlayerBoards = newBoards
 
             // Opponent board for 2-player or spotlight review fallback
-            val otherPlayer = allParticipants.firstOrNull { !isPlayerMe(it) }
+            val otherPlayer = matchParticipants.firstOrNull { !isPlayerMe(it) }
             opponentBoard = if (otherPlayer != null) {
                 newBoards[otherPlayer.id]
                     ?: engine.generateBoard(size, com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.resolvePlayerBoardSeed(baseSeed, otherPlayer, 1))
@@ -1209,16 +1500,23 @@ fun RootNavGraph(
         pickedNumbersHistory.clear()
         pickedByPlayerHistory.clear()
         pickedTurnIdsHistory.clear()
-        val hostPlayer = matchParticipants.firstOrNull { it.isHost } ?: matchParticipants.firstOrNull()
-        val isLocalHost = hostPlayer != null && isPlayerMe(hostPlayer)
-        val hostDisplay = if (isLocalHost) "You" else (hostPlayer?.displayName?.ifBlank { hostPlayer.username } ?: "Host")
-        val hostInitialMsgText = if (isLocalHost) "👑 You are the host" else "👑 $hostDisplay is the host"
+        val actualHostPlayer = matchParticipants.firstOrNull { it.isHost }
+            ?: (if (authoritativeHostUid.isNotBlank()) matchParticipants.firstOrNull { it.id == authoritativeHostUid } else null)
+            ?: (if (authoritativeHostUid.isNotBlank()) realTimePlayers.firstOrNull { it.id == authoritativeHostUid } else null)
+            ?: matchParticipants.firstOrNull()
+        val actualHostName = actualHostPlayer?.displayName?.ifBlank { actualHostPlayer.username }?.takeIf { it.isNotBlank() } ?: "Host"
+        val hostInitialMsgText = if (mode == GameMode.AI_EASY || mode == GameMode.AI_HARD) {
+            "👑 You are the host"
+        } else {
+            "👑 $actualHostName is the host"
+        }
+        val hostNoticeId = (baseSeed xor 0x484F53544C4F4E47L)
         val hostInitialChatMessage = InGameChatMessage(
-            id = System.currentTimeMillis() + (0..1000).random(),
+            id = hostNoticeId,
             text = hostInitialMsgText,
             isSelf = false,
             senderName = null,
-            timestamp = System.currentTimeMillis(),
+            timestamp = matchStartTimeMs,
             isSystemMessage = true
         )
         matchChatHistory = listOf(hostInitialChatMessage)
@@ -1233,10 +1531,22 @@ fun RootNavGraph(
         activeRunnerPlayerIds = emptyList()
 
         surrenderedPlayerIds = emptySet()
+        multiplayerSnapshotCheckpoint = MultiplayerSnapshotCheckpoint()
+        peerTurnClock = null
+        peerSnapshotRevision = 0L
+        pendingPeerCommand = null
+        coldPeerRejoin = false
+        recoveryRemainingMillis = null
+        pendingPeerWills.clear()
+        peerPresenceState = peerPresenceState.copy(records = peerPresenceState.records.filterKeys { id -> matchParticipants.any { it.id == id } })
+        lastAcceptedPauseVersion = 0L
+        lastPlayerActivityAt = System.currentTimeMillis()
+        verifiedRoomExists = true
         frozenRemainingTurnSeconds = null
         frozenRemainingTurnMillis = null
         lastAppliedPauseTimestamp = 0L
         isReconcilingMatch = false
+        recoveryFenceCompleted = true
         onlineRoomSync.stopMatchHeartbeat()
 
         val activePlayersList = matchParticipants.ifEmpty { realTimePlayers }
@@ -1314,6 +1624,13 @@ fun RootNavGraph(
         latestIncomingEmoteTimestamp = 0L
         latestIncomingChatMessage = null
 
+        if (mode == GameMode.ONLINE_ROOM) {
+            peerTurnClock = initialTurnClock
+            ensurePeerTurnClock()
+            isReconcilingMatch = false
+            awaitingHostStateSync = false
+            savePeerMatch()
+        }
         navController.navigate(Screen.Game.route)
     }
 
@@ -1388,6 +1705,19 @@ fun RootNavGraph(
 
                 frozenRemainingTurnSeconds = null
 
+                if (currentGameMode == GameMode.ONLINE_ROOM) {
+                    multiplayerSnapshotCheckpoint = MultiplayerSnapshotCheckpoint()
+                    surrenderedPlayerIds = emptySet()
+                    peerSnapshotRevision = 0L
+                    lastPlayerActivityAt = System.currentTimeMillis()
+                    matchStartTimeMs = lastPlayerActivityAt
+                    peerTurnClock = MultiplayerTurnClock.start(1, currentTurnPlayerId,
+                        (manualReadyAtById.values.maxOrNull() ?: (lastPlayerActivityAt - 5300L)) + 5300L,
+                        peerPresenceState.isAbsent(currentTurnPlayerId))
+                    isReconcilingMatch = false
+                    awaitingHostStateSync = false
+                }
+
                 if (currentGameMode == GameMode.ONLINE_ROOM && roomCode.isNotBlank()) {
                     com.bingo.multiplayer.domain.network.OngoingMatchStore.saveOngoingMatch(
                         context = context,
@@ -1414,6 +1744,7 @@ fun RootNavGraph(
                     )
                 }
 
+                if (currentGameMode == GameMode.ONLINE_ROOM) savePeerMatch()
                 navController.navigate(Screen.Game.route) {
                     popUpTo(Screen.ManualBoardDesign.route) { inclusive = true }
                 }
@@ -1430,9 +1761,9 @@ fun RootNavGraph(
             return
         }
 
-        // Check if this match has already concluded via a durable result tombstone (HB11)
-        val tombstone = com.bingo.multiplayer.domain.network.OngoingMatchStore.getMatchResultTombstone(context, matchData.matchSeed)
-        if (tombstone != null) {
+        // New peer matches keep the complete final checkpoint so results can be rendered after restart.
+        val tombstone = com.bingo.multiplayer.domain.network.OngoingMatchStore.getMatchResultTombstone(context, matchData.matchSeed, getLocalUid())
+        if (tombstone != null && matchData.simplifiedRulesVersion == 0) {
             Toast.makeText(context, "Match has already concluded: ${tombstone.winReason}", Toast.LENGTH_LONG).show()
             val won = isPlayerMe(tombstone.winnerUid)
             isGameOver = true
@@ -1471,6 +1802,31 @@ fun RootNavGraph(
         isManualBoard = matchData.isManualBoard
         currentMatchSeed = matchData.matchSeed
         multiplayerSnapshotCheckpoint = matchData.multiplayerSnapshotCheckpoint
+        peerSnapshotRevision = matchData.matchRevision
+        peerLifecycleSequence = 0L
+        pendingPeerWills.clear()
+        peerPresenceState = matchData.presenceState
+        coldPeerRejoin = true
+        val restoreNow = System.currentTimeMillis()
+        pendingHumanReturn = true
+        pendingHumanReturnAt = restoreNow
+        recoveryRequestedAt = restoreNow
+        coldRecoveryProbeAt = 0L
+        freshPeerRecoveryResponse = false
+        recoveryRemainingSavedAt = matchData.lastUpdatedAt
+        recoveryRemainingMillis = matchData.remainingTurnMillis
+        recoveryRemainingTurn = matchData.turnNumber
+        recoveryRemainingPlayerId = matchData.currentTurnPlayerId
+        recoveryRemainingSeed = matchData.matchSeed
+        lastPlayerActivityAt = if (restoreNow - matchData.lastPlayerActivityAt < MultiplayerTurnClock.INACTIVITY_MILLIS) {
+            restoreNow
+        } else {
+            matchData.lastPlayerActivityAt
+        }
+        matchStartTimeMs = matchData.startedAt
+        peerTurnClock = matchData.turnClock ?: MultiplayerTurnClock.restore(matchData.turnNumber,
+            matchData.currentTurnPlayerId, System.currentTimeMillis(), matchData.remainingTurnMillis ?: 30_000L)
+        lastAcceptedPauseVersion = matchData.pauseControlRevision.toLong()
         lastAppliedPauseTimestamp = matchData.pauseControlTimestamp
         prepareMatchPresentation(matchData.matchSeed, matchData)
         matchParticipants = matchData.participants
@@ -1486,8 +1842,9 @@ fun RootNavGraph(
             effectivePauseDeadline - nowMs
         } else 0L
 
-        if (matchData.isPaused && pauseRemainingMs > 0L) {
-            val remSec = ((pauseRemainingMs + 999L) / 1000L).toInt().coerceAtLeast(1)
+        if (matchData.isPaused && (pauseRemainingMs > 0L || matchData.simplifiedRulesVersion > 0)) {
+            val remSec = if (matchData.simplifiedRulesVersion > 0) matchData.pauseRemainingSeconds ?: 30
+                else ((pauseRemainingMs + 999L) / 1000L).toInt().coerceAtLeast(1)
             isGamePaused = true
             pausedByPlayerName = matchData.pauseOwnerId ?: "Opponent"
             pauseRemainingSeconds = remSec
@@ -1515,6 +1872,12 @@ fun RootNavGraph(
         activeRunnerPlayerIds = emptyList()
         disconnectedPlayerIds.clear()
         awayPlayerIds.clear()
+        peerPresenceState.records.forEach { (id, record) ->
+            when (record.status) {
+                "OFFLINE" -> disconnectedPlayerIds.add(id)
+                "AWAY" -> awayPlayerIds.add(id)
+            }
+        }
         consecutiveMissedTurns.clear()
         lastForegroundResumeTimestamp = System.currentTimeMillis()
 
@@ -1522,6 +1885,7 @@ fun RootNavGraph(
         onlineRoomSync.resetInGameHeartbeats(participantIds)
 
         isReconcilingMatch = true
+        recoveryFenceCompleted = false
         if (matchData.playerBoard != null) {
             playerBoard = matchData.playerBoard
             if (matchData.opponentBoard != null) opponentBoard = matchData.opponentBoard
@@ -1546,51 +1910,172 @@ fun RootNavGraph(
             )
         }
 
-        // Connect to room FIRST (cleans old session and subscribes to room)
-        onlineRoomSync.connectToRoom(matchData.roomCode, me)
+        // Restore the accepted local result without waiting for a running original host.
+        if (matchData.isMatchFinished) {
+            isGameOver = true
+            winnerPlayerId = matchData.winnerPlayerId
+            activeWinReason = matchData.winReason
+            activeRunnerPlayerIds = matchData.runnerPlayerIds
+            didPlayerWin = winnerPlayerId == myUid
+            isRunnerMatch = myUid in activeRunnerPlayerIds
+        }
+        onlineRoomSync.connectToRoom(matchData.roomCode, me, matchData.participants, matchData.matchSeed)
 
         surrenderedPlayerIds = matchData.multiplayerSnapshotCheckpoint.surrenderedPlayerIds
+        turnTimer = peerTurnClock?.remainingSeconds(System.currentTimeMillis()) ?: turnTimer
         navController.navigate(Screen.Game.route)
 
-        coroutineScope.launch {
-            delay(300L)
-            broadcastPacket(
-                RoomMessagePacket(
-                    type = "REJOIN_GAME",
-                    playerId = myUid,
-                    displayName = getPlayerDisplayName(),
-                    username = user?.username ?: "",
-                    isHost = isHosting,
-                    seed = currentMatchSeed,
-                    boardSize = boardSize,
-                    turnNumber = turnNumber,
-                    currentTurnPlayerId = currentTurnPlayerId,
-                    timestamp = System.currentTimeMillis()
-                )
-            )
-            broadcastPacket(
-                RoomMessagePacket(
-                    type = "SYNC_REQUEST",
-                    playerId = myUid,
-                    seed = currentMatchSeed,
-                    timestamp = System.currentTimeMillis()
-                )
-            )
+    }
+
+    fun finishPeerMatchIfWon(): Boolean {
+        if (isGameOver) return true
+        val result = MultiplayerResultRules.evaluate(allPlayerBoards + (getLocalUid() to playerBoard),
+            matchParticipants.map { it.id }, surrenderedPlayerIds, pickedByPlayerHistory.lastOrNull().orEmpty(),
+            randomizedTurnOrder.map { it.id }) ?: return false
+        isGameOver = true
+        winnerPlayerId = result.winnerId
+        activeRunnerPlayerIds = result.runnerIds
+        activeWinReason = result.reason
+        didPlayerWin = result.winnerId == getLocalUid()
+        isRunnerMatch = getLocalUid() in result.runnerIds
+        isDrawMatch = false
+        savePeerMatch()
+        recordFinishedMatch(didPlayerWin, isRunner = isRunnerMatch)
+        return true
+    }
+
+    fun expirePeerMatch() {
+        val expiredSeed = currentMatchSeed
+        OngoingMatchStore.clearOngoingMatch(context, getLocalUid())
+        onlineRoomSync.recordCompletedSeed(expiredSeed)
+        disconnectRoom()
+        currentMatchSeed = 0L
+        isGameOver = false
+        isGamePaused = false
+        isReconcilingMatch = false
+        Toast.makeText(context, "Match expired after 5 minutes without player activity", Toast.LENGTH_LONG).show()
+        navController.navigate(Screen.MainMenu.route) { popUpTo(Screen.MainMenu.route) { inclusive = false }; launchSingleTop = true }
+    }
+
+    fun refreshAdministrativeHost() {
+        val previous = matchParticipants.firstOrNull { it.isHost }?.id
+        if (previous == null || previous !in surrenderedPlayerIds) return
+        val next = (randomizedTurnOrder.ifEmpty { matchParticipants }).firstOrNull { it.id !in surrenderedPlayerIds }?.id ?: return
+        matchParticipants = matchParticipants.map { it.copy(isHost = it.id == next) }
+        isHosting = getLocalUid() == next
+        onlineRoomSync.updateMatchRoster(matchParticipants.filter { it.id !in surrenderedPlayerIds })
+        if (isHosting && !isGameOver) {
+            val code = roomCode; val seed = currentMatchSeed; val size = boardSize
+            val manual = isManualBoard; val dynamic = isDynamicBoard
+            val newHost = matchParticipants.first { it.id == next }; val departed = surrenderedPlayerIds
+            coroutineScope.launch(Dispatchers.IO) {
+                com.bingo.multiplayer.domain.network.OnlineRoomRegistry.updateRoomStatus(code, "PLAYING", seed,
+                    manual, size, dynamic, administrativeHost = newHost, departedIds = departed, expectedSeed = seed)
+            }
         }
     }
 
-    fun gameplayContext(): MultiplayerGameplayContext {
-        val participants = getActiveParticipants()
-        val host = participants.find { it.isHost }?.id ?: onlineRoomSync.currentHostId ?: (if (isHosting) getLocalUid() else opponentPlayerId)
-        val excluded = surrenderedPlayerIds
-        return MultiplayerGameplayContext(currentMatchSeed, getLocalUid(), host, participants,
-            randomizedTurnOrder, excluded, allowPeerTimeouts = currentGameMode == GameMode.NEARBY_NETWORK,
-            isActive = (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) &&
-                navController.currentDestination?.route in setOf(Screen.Game.route, Screen.ManualBoardDesign.route),
-            requiresHostResultConfirmation = currentGameMode == GameMode.ONLINE_ROOM && participants.size > 2)
+    fun acceptPeerGameplay(state: MultiplayerGameplayState, packet: RoomMessagePacket) {
+        val preTurnNumber = turnNumber
+        val preTurnPlayerId = currentTurnPlayerId
+        val changedTurn = state.turnNumber != turnNumber || state.currentPlayerId != currentTurnPlayerId
+        if (changedTurn) pendingPeerCommand = null
+        applyGameplayState(state)
+        val acceptNow = System.currentTimeMillis()
+        if (changedTurn) {
+            var resolvedPresence = peerPresenceState
+            packet.playerPresences.forEach { (id, record) ->
+                resolvedPresence = resolvedPresence.update(id, record)
+            }
+            val isAbsent = resolvedPresence.isAbsent(state.currentPlayerId)
+            peerTurnClock = PeerMatchRecovery.resolveTransitionClock(
+                packet = packet,
+                nextTurnNumber = state.turnNumber,
+                nextPlayerId = state.currentPlayerId,
+                now = acceptNow,
+                isAbsent = isAbsent,
+                currentClock = peerTurnClock
+            )
+        }
+        ensurePeerTurnClock(peerTurnClock ?: packet.turnClock)
+        if (isReconcilingMatch && (changedTurn || packet.timestamp >= recoveryRemainingSavedAt)) {
+            val isAbsent = peerPresenceState.isAbsent(state.currentPlayerId)
+            val budget = peerTurnClock?.initialBudgetMillis ?: (if (isAbsent) 5_000L else 30_000L)
+            recoveryRemainingMillis = if (changedTurn) {
+                packet.turnClock?.frozenRemainingMillis
+                    ?: peerTurnClock?.frozenRemainingMillis
+                    ?: budget
+            } else {
+                peerTurnClock?.frozenRemainingMillis ?: recoveryRemainingMillis ?: peerTurnClock?.remainingMillis(System.currentTimeMillis())
+            }
+            recoveryRemainingSavedAt = packet.timestamp
+            recoveryRemainingTurn = state.turnNumber
+            recoveryRemainingPlayerId = state.currentPlayerId
+            recoveryRemainingSeed = currentMatchSeed
+        }
+        refreshAdministrativeHost()
+        multiplayerSnapshotCheckpoint = multiplayerSnapshotCheckpoint.copy(turnNumber = turnNumber,
+            picks = state.picks, surrenderedPlayerIds = surrenderedPlayerIds)
+        if (isGamePaused) peerTurnClock = peerTurnClock?.freeze(System.currentTimeMillis())
+        if (packet.type == "PICK_NUMBER" || packet.type == "SURRENDER")
+            lastPlayerActivityAt = maxOf(lastPlayerActivityAt, packet.timestamp.coerceAtMost(System.currentTimeMillis()))
+        recentPick = if (packet.type == "PICK_NUMBER") RecentPick(packet.number, packet.playerId, packet.closedTurnNumber)
+            else if (packet.type == "TURN_TIMEOUT") RecentPick(-1, packet.playerId, packet.closedTurnNumber) else recentPick
+        if (!isReconcilingMatch && !packet.recoveryReplay) {
+            if (packet.closedTurnNumber > 0 && packet.type in setOf("PICK_NUMBER", "TURN_TIMEOUT")) {
+                onlineRoomSync.publishAcceptedTurnOutcome(packet)
+            } else if (packet.type in setOf("SURRENDER", "LEAVE", "HOST_LEFT")) {
+                val acceptedDeparture = PeerMatchRecovery.buildAcceptedDepartureReceipt(
+                    packet = packet,
+                    preTurnNumber = preTurnNumber,
+                    preTurnPlayerId = preTurnPlayerId,
+                    nextTurnNumber = state.turnNumber,
+                    nextPlayerId = state.currentPlayerId,
+                    successorClock = peerTurnClock
+                )
+                onlineRoomSync.publishAcceptedDeparture(acceptedDeparture)
+            }
+        }
+        val finished = finishPeerMatchIfWon()
+        savePeerMatch()
+        if (finished && !isReconcilingMatch) publishPeerState()
+    }
+
+    fun executePeerPick(number: Int, isOwnPick: Boolean, pickerId: String, shouldBroadcast: Boolean) {
+        if (isGameOver || isGamePaused || peerGameplaySuspended() || isProcessingTurn || pendingPeerCommand != null) return
+        if (isOwnPick && (!isMyTurn || pickerId != getLocalUid())) return
+        ensurePeerTurnClock()
+        val now = System.currentTimeMillis()
+        if (number > 0 && peerTurnClock?.remainingMillis(now) == 0L) return
+        if (number <= 0 && peerTurnClock?.remainingMillis(now) != 0L) return
+        val rules = gameplayContext()
+        val next = rules.nextPlayer(pickerId, surrenderedPlayerIds)
+        val packet = MultiplayerGameplayReducer.prepareOutgoing(RoomMessagePacket(
+            type = if (number <= 0) "TURN_TIMEOUT" else "PICK_NUMBER", playerId = pickerId, number = number,
+            seed = currentMatchSeed, turnNumber = turnNumber + 1, closedTurnNumber = turnNumber,
+            currentTurnPlayerId = next, timestamp = now,
+            closedTurnClock = peerTurnClock,
+            turnClock = MultiplayerTurnClock.start(turnNumber + 1, next, now, peerPresenceState.isAbsent(next)),
+            simplifiedRulesVersion = 1), currentMatchSeed, getLocalUid())
+        val decision = if (number <= 0) MultiplayerGameplayReducer.timeout(packet, rules, gameplayState())
+            else MultiplayerGameplayReducer.pick(packet, rules, gameplayState())
+        if (!decision.accepted) return
+        if (number > 0 && isOwnPick) {
+            com.bingo.multiplayer.core.designsystem.BingoSoundEffects.playPickSound()
+            com.bingo.multiplayer.core.designsystem.BingoSoundEffects.playVibration(context)
+        }
+        // Render the local tap immediately; commit turns/results only through the broker's
+        // shared command stream, including our own echo. A failed publish cannot create a
+        // private winning board or pass a turn only on this phone.
+        if (shouldBroadcast) {
+            pendingPeerCommand = packet
+            broadcastPacket(packet)
+        } else acceptPeerGameplay(decision.state, packet)
+
     }
 
     fun broadcastAcceptedGameplayState() {
+        if (currentGameMode == GameMode.ONLINE_ROOM) { publishPeerState(); return }
         if (!isHosting) return
         broadcastPacket(RoomMessagePacket(
             type = "GAME_SYNC", playerId = getLocalUid(), isHost = true,
@@ -1612,6 +2097,10 @@ fun RootNavGraph(
         pickerId: String,
         shouldBroadcast: Boolean = false
     ) {
+        if (currentGameMode == GameMode.ONLINE_ROOM) {
+            executePeerPick(number, isOwnPick, pickerId, shouldBroadcast)
+            return
+        }
         if (isGameOver || isGamePaused || isMultiplayerSuspended) return
         if (isOwnPick && (!isMyTurn || isProcessingTurn)) return
         if (number > 0 && number in pickedNumbersHistory) return
@@ -1626,7 +2115,7 @@ fun RootNavGraph(
 
             if (!isTimeoutPass) {
                 // Play audio and tactile haptic feedback for picked number
-                com.bingo.multiplayer.core.designsystem.BingoSoundEffects.playPickSound()
+                if (isOwnPick) com.bingo.multiplayer.core.designsystem.BingoSoundEffects.playPickSound()
                 if (isOwnPick) {
                     com.bingo.multiplayer.core.designsystem.BingoSoundEffects.playVibration(context)
                 }
@@ -1705,7 +2194,7 @@ fun RootNavGraph(
             turnTimer = 30
             frozenRemainingTurnSeconds = null
             frozenRemainingTurnMillis = null
-            val confirmedOutcome = outcome.isGameOver && MultiplayerResultAuthority.mayFinalize(gameplayContext())
+            val confirmedOutcome = outcome.isGameOver && (!isGroupMatch() || playerBoard.isBingo || isHosting || MultiplayerResultAuthority.mayFinalize(gameplayContext()))
             isGameOver = confirmedOutcome
 
             val nextPlayerId = calculateNextTurnPlayerId(pickerId)
@@ -1816,7 +2305,7 @@ fun RootNavGraph(
             delay(2500L)
             val activeRoute = navController.currentDestination?.route
             val inActiveGameScreen = (activeRoute == Screen.Game.route)
-            if ((currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) &&
+            if (currentGameMode == GameMode.NEARBY_NETWORK &&
                 !isGameOver &&
                 roomCode.isNotEmpty() &&
                 currentMatchSeed != 0L &&
@@ -1847,6 +2336,7 @@ fun RootNavGraph(
     }
 
     fun saveGameplayState() {
+        if (currentGameMode == GameMode.ONLINE_ROOM) { savePeerMatch(); return }
         if (isGameOver || currentGameMode != GameMode.ONLINE_ROOM || roomCode.isBlank()) return
         OngoingMatchStore.updateMatchGameState(context = context, accountUid = getLocalUid(), expectedMatchSeed = currentMatchSeed,
             playerBoard = playerBoard, opponentBoard = opponentBoard, allPlayerBoards = allPlayerBoards,
@@ -1856,41 +2346,505 @@ fun RootNavGraph(
             multiplayerSnapshotCheckpoint = multiplayerSnapshotCheckpoint)
     }
 
-    fun gameplayState() = MultiplayerGameplayState(
-        picks = pickedNumbersHistory.mapIndexed { i, n -> MatchPick(n, pickedByPlayerHistory.getOrNull(i).orEmpty(), pickedTurnIdsHistory.getOrNull(i) ?: (i + 1)) },
-        playerBoard = playerBoard, opponentBoard = opponentBoard, allPlayerBoards = allPlayerBoards,
-        turnNumber = turnNumber, currentPlayerId = currentTurnPlayerId,
-        remainingTurnMillis = frozenRemainingTurnMillis ?: (turnTimer * 1000L),
-        isPaused = isGamePaused, isSuspended = isMultiplayerSuspended, isGameOver = isGameOver,
-        disconnectedPlayerIds = disconnectedPlayerIds.toSet(), missedTurns = consecutiveMissedTurns.toMap(),
-        surrenderedPlayerIds = surrenderedPlayerIds
-    )
-
-    fun applyGameplayState(state: MultiplayerGameplayState) {
-        val changedTurn = turnNumber != state.turnNumber || currentTurnPlayerId != state.currentPlayerId
-        playerBoard = state.playerBoard; opponentBoard = state.opponentBoard; allPlayerBoards = state.allPlayerBoards
-        pickedNumbersHistory.clear(); pickedNumbersHistory.addAll(state.picks.map { it.number })
-        pickedByPlayerHistory.clear(); pickedByPlayerHistory.addAll(state.picks.map { it.playerId })
-        pickedTurnIdsHistory.clear(); pickedTurnIdsHistory.addAll(state.picks.map { it.turn })
-        turnNumber = state.turnNumber; currentTurnPlayerId = state.currentPlayerId
-        turnTimer = ((state.remainingTurnMillis + 999L) / 1000L).toInt()
-        isMyTurn = isPlayerMe(currentTurnPlayerId)
-        disconnectedPlayerIds.clear(); disconnectedPlayerIds.addAll(state.disconnectedPlayerIds)
-        consecutiveMissedTurns.clear(); consecutiveMissedTurns.putAll(state.missedTurns)
-        surrenderedPlayerIds = state.surrenderedPlayerIds
-        if (changedTurn) {
-            frozenRemainingTurnMillis = state.remainingTurnMillis.takeIf { isGamePaused }
-            frozenRemainingTurnSeconds = frozenRemainingTurnMillis?.let { ((it + 999L) / 1000L).toInt() }
-            frozenTurnNumber = turnNumber; frozenMatchSeed = currentMatchSeed
-        }
-    }
-
     fun requestGameplayCorrection() {
         if (isHosting) broadcastAcceptedGameplayState()
         else broadcastPacket(RoomMessagePacket(type = "SYNC_REQUEST", playerId = getLocalUid(), seed = currentMatchSeed))
     }
 
+    fun leavePeerMatch() {
+        val uid = getLocalUid()
+        val seed = currentMatchSeed
+        val code = roomCode
+        if (seed == 0L || code.isBlank()) return
+        val pendingPick = pendingPeerCommand?.takeIf { it.type == "PICK_NUMBER" && it.playerId == uid }
+        val effectiveTurn = if (pendingPick != null && (pendingPick.closedTurnNumber >= turnNumber || pendingPick.turnNumber > turnNumber)) {
+            (if (pendingPick.closedTurnNumber > 0) pendingPick.closedTurnNumber else (pendingPick.turnNumber - 1)) + 1
+        } else {
+            turnNumber
+        }
+        val effectiveClosedTurn = if (pendingPick != null) {
+            if (pendingPick.closedTurnNumber > 0) pendingPick.closedTurnNumber else (pendingPick.turnNumber - 1)
+        } else 0
+        val next = gameplayContext().nextPlayer(uid, surrenderedPlayerIds + uid)
+        val now = System.currentTimeMillis()
+        val packet = MultiplayerGameplayReducer.prepareOutgoing(RoomMessagePacket(type = "SURRENDER",
+            playerId = uid, seed = seed, roomCode = code, displayName = getPlayerDisplayName(),
+            timestamp = now, turnNumber = effectiveTurn, closedTurnNumber = 0,
+            turnClock = if (currentTurnPlayerId == uid && pendingPick == null) MultiplayerTurnClock.start(effectiveTurn + 1, next, now,
+                peerPresenceState.isAbsent(next)) else peerTurnClock,
+            simplifiedRulesVersion = 1, playerPresences = peerPresenceState.records), seed, uid)
+        if (!OngoingMatchStore.enqueueExit(context, PendingMatchExit(uid, code, packet))) {
+            Toast.makeText(context, "Could not save your exit. Please try again.", Toast.LENGTH_LONG).show()
+            return
+        }
+        manualStartJob?.cancel()
+        recordFinishedMatch(false)
+        OngoingMatchStore.clearOngoingMatch(context, uid)
+        onlineRoomSync.recordCompletedSeed(seed)
+        // Disconnect this session synchronously. Only the independent outbox worker continues afterwards.
+        disconnectRoom()
+        pendingExitRevision += 1L
+        currentMatchSeed = 0L
+        isHosting = false
+        isGameOver = false
+        isReconcilingMatch = false
+        recoveryFenceCompleted = true
+        isGamePaused = false
+        isMyTurn = false
+        peerTurnClock = null
+        showLeaveMatchDialog = false
+        navController.navigate(Screen.MainMenu.route) { popUpTo(Screen.MainMenu.route) { inclusive = false }; launchSingleTop = true }
+    }
+
+    LaunchedEffect(pendingPeerCommand, currentMatchSeed, peerConnectionReady) {
+        val packet = pendingPeerCommand ?: return@LaunchedEffect
+        repeat(3) {
+            delay(1500L)
+            if (packet.seed != currentMatchSeed || pendingPeerCommand != packet) return@LaunchedEffect
+            if (peerConnectionReady) broadcastPacket(packet)
+        }
+        if (pendingPeerCommand == packet) {
+            pendingPeerCommand = null
+            isReconcilingMatch = true
+            recoveryFenceCompleted = false
+            onlineRoomSync.bindPeerMatch(currentMatchSeed)
+        }
+    }
+
+    fun drainBufferedReconciliationCommands() {
+        if (!recoveryFenceCompleted) return
+        var advanced = true
+        while (advanced && bufferedReconciliationCommands.isNotEmpty() && !isGameOver) {
+            advanced = false
+            val sorted = PeerMatchRecovery.prioritizeAndSortCommands(bufferedReconciliationCommands)
+            bufferedReconciliationCommands.clear()
+            bufferedReconciliationCommands.addAll(sorted)
+            val confirmedPicks = bufferedReconciliationCommands.flatMap { it.pickedHistory }.toSet()
+            val iterator = bufferedReconciliationCommands.iterator()
+            while (iterator.hasNext()) {
+                val buffered = iterator.next()
+                val effectiveTurn = if (buffered.closedTurnNumber > 0) buffered.closedTurnNumber else buffered.turnNumber
+                if (buffered.type == "SURRENDER" && effectiveTurn > turnNumber) continue
+                val rules = gameplayContext()
+                val beforeState = gameplayState().copy(isSuspended = false)
+                val currentClock = beforeState.turnClock
+                val closedClock = buffered.closedTurnClock
+                val subsequentTurnExists = bufferedReconciliationCommands.any { PeerMatchRecovery.cmdTurn(it) > PeerMatchRecovery.cmdTurn(buffered) }
+                val turnHasConfirmedPick = bufferedReconciliationCommands.any {
+                    it.type == "PICK_NUMBER" && PeerMatchRecovery.cmdTurn(it) == PeerMatchRecovery.cmdTurn(buffered) &&
+                    (it.recoveryReplay || confirmedPicks.contains(it.number))
+                }
+                val isAcceptedTimeout = buffered.recoveryReplay || (subsequentTurnExists && !turnHasConfirmedPick)
+                val matchesWelcomeBack = currentClock == null ||
+                    (currentClock.welcomeBackGranted == closedClock?.welcomeBackGranted) ||
+                    (closedClock?.welcomeBackGranted == true)
+                val isResumedClock = currentClock != null && closedClock != null &&
+                    currentClock.frozenRemainingMillis != null &&
+                    closedClock.frozenRemainingMillis == null &&
+                    closedClock.changedAt >= currentClock.changedAt &&
+                    closedClock.initialBudgetMillis == currentClock.initialBudgetMillis
+
+                val reconstructedClock = if (isGamePaused) currentClock else {
+                    if (buffered.type == "TURN_TIMEOUT" && closedClock != null && currentClock != null &&
+                        currentClock.turnNumber == closedClock.turnNumber &&
+                        currentClock.playerId == closedClock.playerId &&
+                        closedClock.valid() &&
+                        isAcceptedTimeout &&
+                        matchesWelcomeBack &&
+                        (isResumedClock || currentClock.frozenRemainingMillis == null)) {
+                        closedClock
+                    } else {
+                        currentClock?.copy(frozenRemainingMillis = null)
+                    }
+                }
+                val before = beforeState.copy(turnClock = reconstructedClock)
+                val decision = when (buffered.type) {
+                    "PICK_NUMBER" -> MultiplayerGameplayReducer.pick(buffered, rules, before)
+                    "TURN_TIMEOUT" -> MultiplayerGameplayReducer.timeout(buffered, rules, before)
+                    else -> MultiplayerGameplayReducer.surrender(buffered, rules, before)
+                }
+                if (decision.accepted) {
+                    iterator.remove()
+                    acceptPeerGameplay(decision.state, buffered)
+                    if (!isReconcilingMatch) publishPeerState()
+                    advanced = true
+                    break
+                } else {
+                    val closedTurn = if (buffered.closedTurnNumber > 0) buffered.closedTurnNumber else (buffered.turnNumber - 1)
+                    val isAlreadySurrendered = buffered.type == "SURRENDER" && buffered.playerId in surrenderedPlayerIds
+                    val isAlreadyPicked = buffered.type == "PICK_NUMBER" && pickedNumbersHistory.contains(buffered.number)
+                    val isObsoleteTurn = (closedTurn in 1 until turnNumber) || (buffered.turnNumber in 1 until turnNumber)
+                    val isStaleTimeoutProposal = buffered.type == "TURN_TIMEOUT" && !buffered.recoveryReplay &&
+                        currentClock != null &&
+                        currentClock.turnNumber == (closedClock?.turnNumber ?: buffered.turnNumber) &&
+                        currentClock.playerId == (closedClock?.playerId ?: buffered.playerId) &&
+                        (!matchesWelcomeBack || (closedClock != null && currentClock.changedAt > closedClock.changedAt) || (currentClock.frozenRemainingMillis != null && !isResumedClock))
+                    if (isAlreadySurrendered || isAlreadyPicked || isObsoleteTurn || isStaleTimeoutProposal) {
+                        iterator.remove()
+                    }
+                }
+            }
+        }
+    }
+
+    fun handlePeerGamePacket(original: RoomMessagePacket): Boolean {
+        if (currentGameMode != GameMode.ONLINE_ROOM || currentMatchSeed == 0L ||
+            navController.currentDestination?.route !in setOf(Screen.Game.route, Screen.ManualBoardDesign.route)) return false
+        val ids = matchParticipants.map { it.id }.toSet()
+        val uid = getLocalUid()
+        if (original.type == "ROOM_CONNECTION_READY") {
+            if (navController.currentDestination?.route == Screen.Game.route) {
+                isReconcilingMatch = true
+                recoveryFenceCompleted = false
+                onlineRoomSync.bindPeerMatch(currentMatchSeed)
+            }
+            return true
+        }
+        if (original.type in setOf("PEER_SYNC_READY", "PEER_RECOVERY_READY")) {
+            if (original.seed != currentMatchSeed || original.targetPlayerId != uid ||
+                original.connectionGeneration != onlineRoomSync.roomSessionId.substringBefore('/')) return true
+            if (coldPeerRejoin && coldRecoveryProbeAt == 0L && !isGameOver) {
+                // MQTT wills may still be in flight immediately after every app was killed.
+                // Ask once for a live peer before deciding whether the saved clock was frozen.
+                coldRecoveryProbeAt = System.currentTimeMillis()
+                broadcastPacket(RoomMessagePacket(type = "SYNC_REQUEST", playerId = uid, seed = currentMatchSeed))
+                val seed = currentMatchSeed; val generation = original.connectionGeneration
+                coroutineScope.launch {
+                    delay(1500L)
+                    if (currentMatchSeed == seed && getLocalUid() == uid &&
+                        onlineRoomSync.roomSessionId.substringBefore('/') == generation)
+                        handlePeerGamePacket(original.copy(type = "PEER_RECOVERY_READY"))
+                }
+                return true
+            }
+            if (coldPeerRejoin && original.type == "PEER_SYNC_READY") return true
+            pendingPeerWills.values.toList().forEach { will ->
+                applyPeerPresence(will.playerId, MultiplayerPresenceRecord(will.connectionGeneration,
+                    will.senderInstanceId, 0L, will.timestamp, "OFFLINE"), lastWill = true)
+            }
+            pendingPeerWills.clear()
+            recoveryFenceCompleted = true
+            drainBufferedReconciliationCommands()
+            val now = System.currentTimeMillis()
+            val effectiveActivityCheckTime = if (pendingHumanReturn && pendingHumanReturnAt > 0L) pendingHumanReturnAt else now
+            val isMatchAlive = (!isGameOver && effectiveActivityCheckTime - lastPlayerActivityAt < MultiplayerTurnClock.INACTIVITY_MILLIS)
+            if (!isGameOver && !isMatchAlive) {
+                expirePeerMatch(); return true
+            }
+            if (pendingHumanReturn && isMatchAlive) {
+                lastPlayerActivityAt = effectiveActivityCheckTime
+                pendingHumanReturn = false
+                pendingHumanReturnAt = 0L
+            }
+            refreshAdministrativeHost()
+            if (coldPeerRejoin && !isGameOver && !freshPeerRecoveryResponse) {
+                if (isGamePaused) {
+                    peerTurnClock = peerTurnClock?.freeze(now)
+                } else {
+                    val validRemaining = recoveryRemainingMillis?.takeIf {
+                        recoveryRemainingSeed == currentMatchSeed &&
+                        recoveryRemainingTurn == turnNumber &&
+                        recoveryRemainingPlayerId == currentTurnPlayerId
+                    }
+                    if (validRemaining != null) {
+                        peerTurnClock = peerTurnClock?.copy(frozenRemainingMillis = validRemaining)
+                    } else {
+                        val isAbsent = peerPresenceState.isAbsent(currentTurnPlayerId)
+                        val budget = peerTurnClock?.initialBudgetMillis?.takeIf { it in setOf(5_000L, 30_000L) }
+                            ?: (if (isAbsent) MultiplayerTurnClock.ABSENCE_MILLIS else MultiplayerTurnClock.ONLINE_MILLIS)
+                        val fallback = peerTurnClock?.frozenRemainingMillis ?: peerTurnClock?.remainingMillis(now) ?: budget
+                        peerTurnClock = peerTurnClock?.copy(frozenRemainingMillis = fallback)
+                    }
+                }
+            }
+            coldPeerRejoin = false
+            if (isGameOver) recordFinishedMatch(didPlayerWin, isRunner = isRunnerMatch)
+            else {
+                announcePeerPresence(if (com.bingo.multiplayer.domain.network.AppLifecycleObserver.isAppInForeground.value) "ONLINE" else "AWAY")
+                ensurePeerTurnClock()
+                if (turnNumber > 1 || pickedNumbersHistory.isNotEmpty()) {
+                    broadcastPacket(RoomMessagePacket(type = "SYNC_REQUEST", playerId = uid, seed = currentMatchSeed))
+                }
+            }
+            if (bufferedReconciliationCommands.isEmpty()) {
+                isReconcilingMatch = false
+                awaitingHostStateSync = false
+            }
+            savePeerMatch(); publishPeerState()
+            return true
+        }
+        if (original.type in setOf("LOBBY_EXPIRED", "LOBBY_EXTEND", "SETTINGS_UPDATE", "KICK_PLAYER")) return true
+        if (original.type in setOf("START_GAME", "PLAY_AGAIN", "GO_TO_LOBBY")) return false
+        if (original.roomCode.isNotBlank() && original.roomCode != roomCode) return true
+        if (original.transportOnly && original.type == "LEAVE") return true
+        if (original.type == "PLAYER_DISCONNECTED" && original.transportOnly) {
+            if (SimplifiedMatchPacketGate.acceptsWill(original, roomCode, ids)) {
+                pendingPeerWills[original.playerId] = original
+                applyPeerPresence(original.playerId, MultiplayerPresenceRecord(original.connectionGeneration,
+                    original.senderInstanceId, 0L, original.timestamp, "OFFLINE"), lastWill = true)
+                savePeerMatch()
+            }
+            return true
+        }
+        val isRoomPresence = original.type in setOf("JOIN", "PLAYER_PRESENCE") && original.seed == 0L &&
+            original.playerId in ids && original.connectionGeneration.isNotBlank()
+        if (original.type in SimplifiedMatchPacketGate.types && !isRoomPresence &&
+            !SimplifiedMatchPacketGate.accepts(original, currentMatchSeed, roomCode, ids)) return true
+        val isSelfEcho = original.senderInstanceId == onlineRoomSync.instanceId ||
+            (original.senderInstanceId.isBlank() && MultiplayerGameplayReducer.sender(original) == uid)
+        if (isSelfEcho && original.type !in setOf("PICK_NUMBER", "TURN_TIMEOUT", "GAME_PAUSED", "GAME_RESUMED", "PAUSE_EXTEND") &&
+            !(original.recoveryReplay && isReconcilingMatch)) return true
+        val packet = if (original.type in setOf("LEAVE", "HOST_LEFT")) original.copy(type = "SURRENDER") else original
+        if (packet.type in setOf("EMOTE", "CHAT_PHRASE")) {
+            lastPlayerActivityAt = maxOf(lastPlayerActivityAt, packet.timestamp.coerceAtMost(System.currentTimeMillis()))
+            savePeerMatch()
+        }
+        when (packet.type) {
+            "JOIN", "PLAYER_PRESENCE", "PLAYER_DISCONNECTED" -> {
+                if (packet.playerId !in ids || packet.playerId in surrenderedPlayerIds) return true
+                val record = packet.playerPresences[packet.playerId] ?: MultiplayerPresenceRecord(
+                    packet.connectionGeneration, packet.senderInstanceId, packet.lifecycleSequence, packet.timestamp,
+                    if (packet.type == "PLAYER_DISCONNECTED") "OFFLINE" else packet.presenceStatus.ifBlank { packet.readyStatus })
+                val oldClock = peerTurnClock
+                applyPeerPresence(packet.playerId, record)
+                if (peerTurnClock != oldClock && !isReconcilingMatch) publishPeerState()
+                savePeerMatch()
+                return true
+            }
+            "PICK_NUMBER", "TURN_TIMEOUT", "SURRENDER" -> {
+                if (isGameOver) return true
+                if (isReconcilingMatch) {
+                    val existingIndex = bufferedReconciliationCommands.indexOfFirst {
+                        if (packet.type == "SURRENDER") {
+                            it.type == packet.type && it.playerId == packet.playerId
+                        } else {
+                            it.type == packet.type && it.closedTurnNumber == packet.closedTurnNumber &&
+                            (if (it.turnNumber > 0) it.turnNumber else 0) == (if (packet.turnNumber > 0) packet.turnNumber else 0) &&
+                            it.playerId == packet.playerId && it.number == packet.number &&
+                            it.sequence == packet.sequence && it.timestamp == packet.timestamp
+                        }
+                    }
+                    if (existingIndex < 0) {
+                        bufferedReconciliationCommands.add(packet)
+                    } else if ((packet.recoveryReplay && !bufferedReconciliationCommands[existingIndex].recoveryReplay) ||
+                        (!bufferedReconciliationCommands[existingIndex].recoveryReplay && packet.closedTurnNumber > bufferedReconciliationCommands[existingIndex].closedTurnNumber) ||
+                        (packet.recoveryReplay && bufferedReconciliationCommands[existingIndex].recoveryReplay && packet.closedTurnNumber > bufferedReconciliationCommands[existingIndex].closedTurnNumber)) {
+                        bufferedReconciliationCommands[existingIndex] = packet
+                    }
+                    return true
+                }
+                if (packet.type == "SURRENDER" && packet.turnNumber > turnNumber) {
+                    val existingIndex = bufferedReconciliationCommands.indexOfFirst {
+                        it.type == packet.type && it.playerId == packet.playerId
+                    }
+                    if (existingIndex < 0) {
+                        bufferedReconciliationCommands.add(packet)
+                    } else if ((packet.recoveryReplay && !bufferedReconciliationCommands[existingIndex].recoveryReplay) ||
+                        (!bufferedReconciliationCommands[existingIndex].recoveryReplay && packet.closedTurnNumber > bufferedReconciliationCommands[existingIndex].closedTurnNumber) ||
+                        (packet.recoveryReplay && bufferedReconciliationCommands[existingIndex].recoveryReplay && packet.closedTurnNumber > bufferedReconciliationCommands[existingIndex].closedTurnNumber)) {
+                        bufferedReconciliationCommands[existingIndex] = packet
+                    }
+                    requestGameplayCorrection()
+                    return true
+                }
+                val rules = gameplayContext()
+                val beforeState = gameplayState().copy(isSuspended = false)
+                val before = if (isGamePaused) beforeState else beforeState.copy(turnClock = beforeState.turnClock?.copy(frozenRemainingMillis = null))
+                val decision = when (packet.type) {
+                    "PICK_NUMBER" -> MultiplayerGameplayReducer.pick(packet, rules, before)
+                    "TURN_TIMEOUT" -> MultiplayerGameplayReducer.timeout(packet, rules, before)
+                    else -> MultiplayerGameplayReducer.surrender(packet, rules, before)
+                }
+                if (!decision.accepted) {
+                    if (isSelfEcho) pendingPeerCommand = null
+                    if (packet.turnNumber > turnNumber || (packet.closedTurnNumber >= turnNumber && packet.type in setOf("PICK_NUMBER", "TURN_TIMEOUT"))) {
+                        val existingIndex = bufferedReconciliationCommands.indexOfFirst {
+                            if (packet.type == "SURRENDER") {
+                                it.type == packet.type && it.playerId == packet.playerId
+                            } else {
+                                it.type == packet.type && it.closedTurnNumber == packet.closedTurnNumber &&
+                                it.playerId == packet.playerId && it.number == packet.number
+                            }
+                        }
+                        if (existingIndex < 0) {
+                            bufferedReconciliationCommands.add(packet)
+                        } else if ((packet.recoveryReplay && !bufferedReconciliationCommands[existingIndex].recoveryReplay) ||
+                            (!bufferedReconciliationCommands[existingIndex].recoveryReplay && packet.closedTurnNumber > bufferedReconciliationCommands[existingIndex].closedTurnNumber) ||
+                            (packet.recoveryReplay && bufferedReconciliationCommands[existingIndex].recoveryReplay && packet.closedTurnNumber > bufferedReconciliationCommands[existingIndex].closedTurnNumber)) {
+                            bufferedReconciliationCommands[existingIndex] = packet
+                        }
+                        requestGameplayCorrection()
+                    }
+                    return true
+                }
+                acceptPeerGameplay(decision.state, packet)
+                drainBufferedReconciliationCommands()
+                if (recoveryFenceCompleted && bufferedReconciliationCommands.isEmpty()) {
+                    isReconcilingMatch = false
+                    awaitingHostStateSync = false
+                }
+                if (!isReconcilingMatch) publishPeerState()
+                if (packet.type == "SURRENDER") {
+                    val name = matchParticipants.firstOrNull { it.id == packet.playerId }?.displayName ?: "Player"
+                    val text = "🏳️ $name surrendered"
+                    if (matchChatHistory.none { it.text == text && it.isSystemMessage }) {
+                        val notice = InGameChatMessage(id = ("$currentMatchSeed:exit:${packet.playerId}").hashCode().toLong(),
+                            text = text, isSelf = false, isSystemMessage = true)
+                        matchChatHistory = matchChatHistory + notice
+                        latestIncomingChatMessage = notice
+                    }
+                    if (packet.playerId == uid) {
+                        OngoingMatchStore.clearOngoingMatch(context, uid)
+                        disconnectRoom()
+                        navController.navigate(Screen.MainMenu.route) { popUpTo(Screen.MainMenu.route) { inclusive = false } }
+                    } else { savePeerMatch(); publishPeerState() }
+                }
+                return true
+            }
+            "GAME_SYNC" -> {
+                if (isGameOver) return true
+                var candidateBoards = allPlayerBoards
+                for ((id, numbers) in packet.boardNumbers) {
+                    if (id !in ids || !ManualBoardEngine.isBoardComplete(numbers, boardSize)) return true
+                    val existing = candidateBoards[id]
+                    if (existing != null && existing.cells.map { it.number } != numbers) return true
+                    if (existing == null) candidateBoards = candidateBoards + (id to ManualBoardEngine.buildBoard(numbers, boardSize))
+                }
+                val application = MultiplayerSnapshotReconciler.reconcile(packet, currentMatchSeed, "", uid,
+                    multiplayerSnapshotCheckpoint, pickedNumbersHistory.mapIndexed { i, n ->
+                        MatchPick(n, pickedByPlayerHistory.getOrNull(i).orEmpty(), pickedTurnIdsHistory.getOrNull(i) ?: i + 1)
+                    }, playerBoard, opponentBoard, candidateBoards, allowPeerSnapshots = true,
+                    participantIds = ids.toList(), turnOrder = randomizedTurnOrder.map { it.id }) ?: return true
+                val changedTurn = turnNumber != packet.turnNumber || currentTurnPlayerId != packet.currentTurnPlayerId
+                multiplayerSnapshotCheckpoint = application.checkpoint
+                if (coldPeerRejoin && !packet.isRetainedDelivery && !packet.recoveryReplay && packet.playerId != uid) freshPeerRecoveryResponse = true
+                awaitingHostStateSync = false
+                surrenderedPlayerIds = surrenderedPlayerIds + application.checkpoint.surrenderedPlayerIds
+                refreshAdministrativeHost()
+                playerBoard = application.playerBoard; opponentBoard = application.opponentBoard
+                allPlayerBoards = application.allPlayerBoards
+                pickedNumbersHistory.clear(); pickedNumbersHistory.addAll(application.picks.map { it.number })
+                pickedByPlayerHistory.clear(); pickedByPlayerHistory.addAll(application.picks.map { it.playerId })
+                pickedTurnIdsHistory.clear(); pickedTurnIdsHistory.addAll(application.picks.map { it.turn })
+                if (!application.hasPendingPicks && packet.currentTurnPlayerId in ids && packet.currentTurnPlayerId !in surrenderedPlayerIds) {
+                    turnNumber = packet.turnNumber; currentTurnPlayerId = packet.currentTurnPlayerId; isMyTurn = currentTurnPlayerId == uid
+                    if (isReconcilingMatch && (changedTurn || packet.timestamp >= recoveryRemainingSavedAt)) {
+                        recoveryRemainingMillis = packet.turnClock?.frozenRemainingMillis ?: packet.remainingTurnMillis
+                        recoveryRemainingSavedAt = packet.timestamp
+                        recoveryRemainingTurn = packet.turnNumber
+                        recoveryRemainingPlayerId = packet.currentTurnPlayerId
+                        recoveryRemainingSeed = currentMatchSeed
+                    }
+                    if (changedTurn) { peerTurnClock = null; pendingPeerCommand = null }
+                    ensurePeerTurnClock(packet.turnClock)
+                }
+                if (packet.pauseEpisode.toLong() > lastAcceptedPauseVersion) {
+                    lastAcceptedPauseVersion = packet.pauseEpisode.toLong()
+                    isGamePaused = packet.isPaused; pausedByPlayerName = packet.pauseOwnerId
+                    if (packet.turnClock?.turnNumber == turnNumber) peerTurnClock = peerTurnClock?.merge(packet.turnClock) ?: packet.turnClock
+                }
+                packet.playerPresences.forEach { (id, record) -> applyPeerPresence(id, record) }
+                lastPlayerActivityAt = maxOf(lastPlayerActivityAt, packet.lastPlayerActivityAt.coerceAtMost(System.currentTimeMillis()))
+                val snapshotCheckTime = if (pendingHumanReturn && pendingHumanReturnAt > 0L) pendingHumanReturnAt else System.currentTimeMillis()
+                if (pendingHumanReturn && !isGameOver && snapshotCheckTime - lastPlayerActivityAt < MultiplayerTurnClock.INACTIVITY_MILLIS) {
+                    lastPlayerActivityAt = snapshotCheckTime
+                    pendingHumanReturn = false
+                    pendingHumanReturnAt = 0L
+                    savePeerMatch()
+                    publishPeerState()
+                }
+                if (packet.playerId == uid) peerSnapshotRevision = maxOf(peerSnapshotRevision, packet.sequence)
+                val incoming = packet.chatMessages.map { message ->
+                    message.copy(isSelf = !message.isSystemMessage && message.senderPlayerId == uid,
+                        senderName = if (message.isSystemMessage || message.senderPlayerId == uid) null else
+                            matchParticipants.firstOrNull { it.id == message.senderPlayerId }?.displayName ?: message.senderName)
+                }
+                matchChatHistory = deduplicateChatMessages(matchChatHistory + incoming)
+                recentPick = application.picks.lastOrNull()?.let { RecentPick(it.number, it.playerId, it.turn) }
+                finishPeerMatchIfWon()
+                drainBufferedReconciliationCommands()
+                if (recoveryFenceCompleted && bufferedReconciliationCommands.isEmpty()) {
+                    isReconcilingMatch = false
+                    awaitingHostStateSync = false
+                }
+                savePeerMatch()
+                return true
+            }
+            "BINGO_CLAIMED", "GAME_OVER" -> {
+                if (!isGameOver) {
+                    val decision = MultiplayerGameplayReducer.result(packet, gameplayContext(), gameplayState().copy(isSuspended = false))
+                    if (decision.accepted) {
+                        applyGameplayState(decision.state.copy(isGameOver = false))
+                        finishPeerMatchIfWon(); savePeerMatch(); publishPeerState()
+                    } else requestGameplayCorrection()
+                }
+                return true
+            }
+            "REJOIN_GAME", "SYNC_REQUEST" -> { publishPeerState(); return true }
+            "CHAT_MESSAGE" -> {
+                val system = packet.username == "SYSTEM"
+                val origin = MultiplayerGameplayReducer.sender(packet)
+                val incoming = packet.chatMessages.firstOrNull()?.copy(senderPlayerId = origin,
+                    isSelf = origin == uid && !system, isSystemMessage = system,
+                    senderName = if (system || origin == uid) null else matchParticipants.firstOrNull { it.id == origin }?.displayName)
+                    ?: InGameChatMessage(id = ("${packet.seed}:$origin:${packet.timestamp}:${packet.displayName}").hashCode().toLong(),
+                        text = packet.displayName, isSelf = false,
+                        senderName = if (system) null else matchParticipants.firstOrNull { it.id == origin }?.displayName,
+                        timestamp = packet.timestamp, isSystemMessage = system, senderPlayerId = origin)
+                if (matchChatHistory.none { it.id == incoming.id }) {
+                    matchChatHistory = deduplicateChatMessages(matchChatHistory + incoming)
+                    latestIncomingChatMessage = incoming
+                    if (!system) lastPlayerActivityAt = maxOf(lastPlayerActivityAt, packet.timestamp.coerceAtMost(System.currentTimeMillis()))
+                    savePeerMatch()
+                }
+                return true
+            }
+            "GAME_SYNC_ACK" -> return true
+            "GAME_PAUSED", "GAME_RESUMED", "PAUSE_EXTEND" -> {
+                val host = matchParticipants.firstOrNull { it.isHost }?.id
+                if (packet.playerId != host || MultiplayerGameplayReducer.sender(packet) != host ||
+                    packet.pauseEpisode <= lastAcceptedPauseVersion || isGameOver) return true
+                lastAcceptedPauseVersion = packet.pauseEpisode.toLong()
+                if (packet.type != "PAUSE_EXTEND") {
+                    isGamePaused = packet.type == "GAME_PAUSED"
+                    pausedByPlayerName = if (isGamePaused) packet.displayName else ""
+                    peerTurnClock = packet.turnClock?.takeIf { it.turnNumber == turnNumber && it.playerId == currentTurnPlayerId }
+                        ?: if (isGamePaused) peerTurnClock?.freeze(packet.timestamp) else peerTurnClock?.resume(packet.timestamp)
+                }
+                pauseRemainingSeconds = if (isGamePaused) packet.pauseRemainingSeconds else 0
+                lastPlayerActivityAt = maxOf(lastPlayerActivityAt, packet.timestamp.coerceAtMost(System.currentTimeMillis()))
+                savePeerMatch(); publishPeerState(); return true
+            }
+        }
+        return false
+    }
+
     fun handleIncomingPacket(packet: RoomMessagePacket) {
+        val packetRoute = navController.currentDestination?.route
+        if (currentGameMode == GameMode.ONLINE_ROOM &&
+            packetRoute !in setOf(Screen.Game.route, Screen.ManualBoardDesign.route) &&
+            packet.type in SimplifiedMatchPacketGate.types && packet.seed != 0L) return
+        if (currentGameMode == GameMode.ONLINE_ROOM && packet.type in setOf("START_GAME", "PLAY_AGAIN")) {
+            val route = navController.currentDestination?.route
+            val roster = if (route == Screen.Lobby.route) realTimePlayers else matchParticipants
+            val expectedHost = roster.firstOrNull { it.isHost && it.id !in surrenderedPlayerIds }?.id
+                ?: onlineRoomSync.currentHostId
+            if (packet.seed == 0L || onlineRoomSync.isSeedCompleted(packet.seed) ||
+                (packet.roomCode.isNotBlank() && packet.roomCode != roomCode) || packet.playerId != expectedHost ||
+                MultiplayerGameplayReducer.sender(packet) != expectedHost ||
+                (packet.type == "START_GAME" && route != Screen.Lobby.route) ||
+                (packet.type == "PLAY_AGAIN" && (route != Screen.Game.route || !isGameOver)) ||
+                packet.players.none { it.id == getLocalUid() }) return
+        }
+        if (packet.transportOnly && packet.type == "LEAVE") return
+        if (currentGameMode == GameMode.ONLINE_ROOM && navController.currentDestination?.route == Screen.Lobby.route &&
+            packet.type in setOf("JOIN", "PLAYER_PRESENCE") && packet.roomCode == roomCode && packet.connectionGeneration.isNotBlank()) {
+            val record = packet.playerPresences[packet.playerId] ?: MultiplayerPresenceRecord(packet.connectionGeneration,
+                packet.senderInstanceId, packet.lifecycleSequence, packet.timestamp, packet.presenceStatus.ifBlank { packet.readyStatus })
+            applyPeerPresence(packet.playerId, record)
+            return
+        }
+        if (handlePeerGamePacket(packet)) return
         if (packet.type in MultiplayerGameplayReducer.gameplayTypes &&
             !MultiplayerGameplayReducer.belongsToMatch(packet, gameplayContext())) return
         val myUid = getLocalUid()
@@ -1955,8 +2909,18 @@ fun RootNavGraph(
                     if (packet.isManualBoard) {
                         isManualBoard = true
                         currentMatchSeed = packet.seed
+                        multiplayerSnapshotCheckpoint = MultiplayerSnapshotCheckpoint()
+                        surrenderedPlayerIds = emptySet()
+                        peerSnapshotRevision = 0L
+                        peerTurnClock = null
+                        pendingPeerCommand = null
+                        lastAcceptedPauseVersion = 0L
+                        pendingPeerWills.clear()
+                        lastPlayerActivityAt = System.currentTimeMillis()
+                        matchStartTimeMs = lastPlayerActivityAt
                         boardSize = packet.boardSize
                         allPlayerBoards = emptyMap()
+                        manualReadyAtById.clear()
                         isLocalBoardReady = false
                         isOpponentBoardReady = false
                         countdownSeconds = -1
@@ -2005,13 +2969,17 @@ fun RootNavGraph(
                             } finally {
                                 lobbyCountdownSeconds = -1
                             }
+                            if (currentMatchSeed != packet.seed || getLocalUid() != myUid ||
+                                (packet.roomCode.isNotBlank() && roomCode != packet.roomCode) ||
+                                navController.currentDestination?.route != Screen.Lobby.route) return@launch
                             startNewGame(
                                 mode = if (isUsingP2p) GameMode.NEARBY_NETWORK else GameMode.ONLINE_ROOM,
                                 difficulty = AiDifficulty.EASY,
                                 size = packet.boardSize,
                                 firstTurnPlayerId = packet.currentTurnPlayerId.takeIf { it.isNotBlank() },
                                 hostSeed = packet.seed,
-                                incomingPlayersList = packet.players
+                                incomingPlayersList = packet.players, initialTurnClock = packet.turnClock,
+                                hostPlayerId = packet.playerId.takeIf { it.isNotBlank() }
                             )
                         }
                     }
@@ -2062,8 +3030,18 @@ fun RootNavGraph(
                     if (packet.isManualBoard || isManualBoard) {
                         isManualBoard = true
                         currentMatchSeed = packet.seed
+                        multiplayerSnapshotCheckpoint = MultiplayerSnapshotCheckpoint()
+                        surrenderedPlayerIds = emptySet()
+                        peerSnapshotRevision = 0L
+                        peerTurnClock = null
+                        pendingPeerCommand = null
+                        lastAcceptedPauseVersion = 0L
+                        pendingPeerWills.clear()
+                        lastPlayerActivityAt = System.currentTimeMillis()
+                        matchStartTimeMs = lastPlayerActivityAt
                         boardSize = packet.boardSize
                         allPlayerBoards = emptyMap()
+                        manualReadyAtById.clear()
                         isLocalBoardReady = false
                         isOpponentBoardReady = false
                         countdownSeconds = -1
@@ -2108,7 +3086,8 @@ fun RootNavGraph(
                             size = packet.boardSize,
                             firstTurnPlayerId = null,
                             hostSeed = packet.seed,
-                            incomingPlayersList = packet.players
+                            incomingPlayersList = packet.players, initialTurnClock = packet.turnClock,
+                            hostPlayerId = packet.playerId.takeIf { it.isNotBlank() }
                         )
                     }
                 }
@@ -2128,13 +3107,14 @@ fun RootNavGraph(
                     if (packet.pickedHistory.size == totalCells && packet.playerId.isNotBlank() && ManualBoardEngine.isBoardComplete(packet.pickedHistory, boardSize)) {
                         val mBoard = ManualBoardEngine.buildBoard(packet.pickedHistory, boardSize)
                         allPlayerBoards = allPlayerBoards + (packet.playerId to mBoard)
+                        manualReadyAtById[packet.playerId] = packet.timestamp
                         if (packet.playerId != getLocalUid()) {
                             opponentBoard = mBoard
                             isOpponentBoardReady = true
                         }
                     }
                     val participants = getActiveParticipants()
-                    val expectedUids = participants.map { it.id }.filter { it.isNotBlank() }.toSet()
+                    val expectedUids = participants.filter { it.id !in surrenderedPlayerIds }.map { it.id }.filter { it.isNotBlank() }.toSet()
                     val allReady = expectedUids.isNotEmpty() && expectedUids.all { allPlayerBoards.containsKey(it) }
                     if (isLocalBoardReady && allReady && countdownSeconds < 0 && navController.currentDestination?.route == Screen.ManualBoardDesign.route) {
                         startCountdownAndInitiateTurn()
@@ -2585,23 +3565,24 @@ fun RootNavGraph(
 
                             // Evaluate win conditions from host
                             if (!isGameOver) {
-                                val outcome = if (application.confirmedWinnerId.isNotBlank() &&
+                                val outcome = if ((application.confirmedWinnerId.isNotBlank() || packet.isMatchFinished || playerBoard.isBingo) &&
                                     MultiplayerResultAuthority.mayFinalize(gameplayContext(), packet)) {
-                                    val isLocalWinner = isPlayerMe(packet.winnerPlayerId)
+                                    val rawWinner = packet.winnerPlayerId.ifBlank { application.confirmedWinnerId }.ifBlank { if (playerBoard.isBingo) myUid else "" }
+                                    val isLocalWinner = (isPlayerMe(rawWinner) || playerBoard.isBingo) && !isPlayerDisconnected(myUid)
                                     val isLocalRunner = !isLocalWinner && !isPlayerDisconnected(myUid) && (packet.runnerPlayerIds.filter { !isPlayerDisconnected(it) }.any { isPlayerMe(it) } || (playerBoard.isBingo && !isPlayerDisconnected(myUid)))
                                     MatchOutcome(
                                         isGameOver = true,
                                         didPlayerWin = isLocalWinner,
                                         isDraw = false,
                                         isRunner = isLocalRunner,
-                                        winnerPlayerId = packet.winnerPlayerId,
-                                        winReason = packet.winReason
+                                        winnerPlayerId = rawWinner.ifBlank { if (isLocalWinner) myUid else "winner" },
+                                        winReason = packet.winReason.ifBlank { if (isLocalWinner) "5 Lines Completed (BINGO)!" else "Match Finished" }
                                     )
                                 } else {
                                     val lastPicker = pickedByPlayerHistory.lastOrNull()?.takeIf { it.isNotBlank() }
                                         ?: packet.pickedByHistory.lastOrNull()?.takeIf { it.isNotBlank() }
                                         ?: currentTurnPlayerId
-                                    if (MultiplayerResultAuthority.mayFinalize(gameplayContext())) evaluateMatchOutcome(lastPicker)
+                                    if (playerBoard.isBingo || MultiplayerResultAuthority.mayFinalize(gameplayContext())) evaluateMatchOutcome(lastPicker)
                                     else MatchOutcome(false, false, false)
                                 }
                                 if (outcome.isGameOver) {
@@ -2633,7 +3614,7 @@ fun RootNavGraph(
                                 val existingIds = matchChatHistory.map { it.id }.toSet()
                                 val missing = packet.chatMessages.filter { it.id !in existingIds }
                                 if (missing.isNotEmpty()) {
-                                    matchChatHistory = (matchChatHistory + missing).sortedBy { it.timestamp }
+                                    matchChatHistory = deduplicateChatMessages(matchChatHistory + missing)
                                 }
                             }
                             awaitingHostStateSync = false
@@ -2748,25 +3729,28 @@ fun RootNavGraph(
             "BINGO_CLAIMED", "GAME_OVER" -> {
                 if ((currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) && !isGameOver) {
                     val decision = MultiplayerGameplayReducer.result(packet, gameplayContext(), gameplayState())
-                    if (!decision.accepted) {
+                    val shouldForceGameOver = packet.type == "GAME_OVER" || packet.isMatchFinished || packet.winReason.isNotBlank() || playerBoard.isBingo
+                    if (!decision.accepted && !shouldForceGameOver) {
                         requestGameplayCorrection()
                         return
                     }
                     run {
-                        applyGameplayState(decision.state)
-                        recentPick = decision.state.picks.lastOrNull()?.let { RecentPick(it.number, it.playerId, it.turn) }
-                        val effectiveWinner = decision.winnerId
+                        if (decision.accepted) {
+                            applyGameplayState(decision.state)
+                            recentPick = decision.state.picks.lastOrNull()?.let { RecentPick(it.number, it.playerId, it.turn) }
+                        }
+                        val effectiveWinner = decision.winnerId.ifBlank { packet.winnerPlayerId }.ifBlank { packet.playerId }
 
                         val fallbackPicker = pickedByPlayerHistory.lastOrNull()?.takeIf { it.isNotBlank() } ?: packet.playerId
-                        val outcome = if (effectiveWinner.isNotBlank()) {
-                            val isLocalWinner = isPlayerMe(effectiveWinner) && !isPlayerDisconnected(myUid)
+                        val outcome = if (effectiveWinner.isNotBlank() || shouldForceGameOver) {
+                            val isLocalWinner = (isPlayerMe(effectiveWinner) || (playerBoard.isBingo && !isPlayerDisconnected(myUid))) && !isPlayerDisconnected(myUid)
                             val isLocalRunner = !isLocalWinner && !isPlayerDisconnected(myUid) && (packet.runnerPlayerIds.filter { !isPlayerDisconnected(it) }.any { isPlayerMe(it) } || (playerBoard.isBingo && !isPlayerDisconnected(myUid)))
                             MatchOutcome(
                                 isGameOver = true,
                                 didPlayerWin = isLocalWinner,
                                 isDraw = false,
                                 isRunner = isLocalRunner,
-                                winnerPlayerId = effectiveWinner,
+                                winnerPlayerId = effectiveWinner.ifBlank { if (isLocalWinner) myUid else "winner" },
                                 winReason = packet.winReason.ifBlank { "Bingo Claimed" }
                             )
                         } else {
@@ -3302,6 +4286,55 @@ fun RootNavGraph(
         launch { lanP2pSync.incomingPackets.collect { handleIncomingPacket(it) } }
     }
 
+    LaunchedEffect(currentRoute, currentMatchSeed, peerConnectionReady) {
+        if (currentRoute == Screen.Game.route && currentGameMode == GameMode.ONLINE_ROOM && currentMatchSeed != 0L) {
+            if (peerConnectionReady && onlineRoomSync.activePeerSeed != currentMatchSeed) {
+                onlineRoomSync.bindPeerMatch(currentMatchSeed)
+            }
+        }
+    }
+
+    LaunchedEffect(currentRoute, currentMatchSeed, currentGameMode) {
+        val expectedSeed = currentMatchSeed
+        while (isActive && currentRoute == Screen.Game.route && currentGameMode == GameMode.ONLINE_ROOM &&
+            currentMatchSeed == expectedSeed && expectedSeed != 0L && !isGameOver) {
+            delay(1000L)
+            if (!peerGameplaySuspended() && appInForeground && !isGameOver) savePeerMatch()
+            if (!peerGameplaySuspended() && System.currentTimeMillis() - lastPlayerActivityAt >= MultiplayerTurnClock.INACTIVITY_MILLIS) {
+                // Re-read retained peer progress before deciding inactivity from a potentially old local record.
+                isReconcilingMatch = true
+                recoveryFenceCompleted = false
+                onlineRoomSync.bindPeerMatch(expectedSeed)
+            }
+        }
+    }
+
+    LaunchedEffect(currentAuthUser?.uid, appInForeground, pendingExitRevision) {
+        val uid = currentAuthUser?.uid ?: return@LaunchedEffect
+        if (!appInForeground) return@LaunchedEffect
+        var retryDelay = 1000L
+        while (isActive) {
+            val pending = OngoingMatchStore.pendingExits(context, uid)
+            if (pending.isEmpty()) break
+            for (exit in pending) {
+                if (PeerMatchRecovery.publishExit(exit)) OngoingMatchStore.acknowledgeExit(context, uid, exit.packet.seed)
+            }
+            if (OngoingMatchStore.pendingExits(context, uid).isNotEmpty()) {
+                delay(retryDelay)
+                retryDelay = (retryDelay * 2).coerceAtMost(30_000L)
+            }
+        }
+    }
+
+    LaunchedEffect(isGameOver, currentMatchSeed, roomCode) {
+        if (isGameOver && currentGameMode == GameMode.ONLINE_ROOM && roomCode.isNotBlank()) {
+            val expectedSeed = currentMatchSeed
+            verifiedRoomExists = false
+            val room = com.bingo.multiplayer.domain.network.OnlineRoomRegistry.getRoom(roomCode)
+            if (currentMatchSeed == expectedSeed && room != null) verifiedRoomExists = room.status != "CLOSED"
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -3755,8 +4788,10 @@ fun RootNavGraph(
                         )
                     )
                     if (currentGameMode == GameMode.ONLINE_ROOM && roomCode.isNotBlank()) {
+                        val closingRoom = roomCode
+                        val closingSeed = currentMatchSeed
                         coroutineScope.launch {
-                            com.bingo.multiplayer.domain.network.OnlineRoomRegistry.closeRoom(roomCode)
+                            com.bingo.multiplayer.domain.network.OnlineRoomRegistry.closeRoom(closingRoom, expectedSeed = closingSeed.takeIf { it != 0L })
                         }
                     }
                     lanDiscovery.stopBroadcasting()
@@ -3819,7 +4854,8 @@ fun RootNavGraph(
                     }
                     Toast.makeText(context, "Lobby extended by 5 minutes", Toast.LENGTH_SHORT).show()
                 },
-                onExpireLobby = {
+                onExpireLobby = expire@{
+                    if (navController.currentDestination?.route != Screen.Lobby.route || lobbyCountdownSeconds >= 0) return@expire
                     broadcastPacket(
                         RoomMessagePacket(
                             type = "LOBBY_EXPIRED",
@@ -3827,8 +4863,10 @@ fun RootNavGraph(
                         )
                     )
                     if (isHosting && currentGameMode == GameMode.ONLINE_ROOM && roomCode.isNotBlank()) {
+                        val closingRoom = roomCode
+                        val closingSeed = currentMatchSeed
                         coroutineScope.launch {
-                            com.bingo.multiplayer.domain.network.OnlineRoomRegistry.closeRoom(roomCode)
+                            com.bingo.multiplayer.domain.network.OnlineRoomRegistry.closeRoom(closingRoom, expectedSeed = closingSeed.takeIf { it != 0L })
                         }
                     }
                     Toast.makeText(context, "Lobby was expired", Toast.LENGTH_SHORT).show()
@@ -3941,7 +4979,7 @@ fun RootNavGraph(
                                 lanDiscovery.stopDiscovering()
                             }
 
-                            val activeList = realTimePlayers.filter { it.id.isNotBlank() }
+                            val activeList = realTimePlayers.filter { it.id.isNotBlank() && it.id !in surrenderedPlayerIds }
                                 .distinctBy { it.username.trim().lowercase().removePrefix("@").takeIf { u -> u.isNotBlank() } ?: it.id.trim().lowercase() }
                                 .sortedWith(
                                     compareByDescending<Player> { it.isHost }
@@ -3959,8 +4997,10 @@ fun RootNavGraph(
                             val chosenFirstTurnUid = generatedTurnOrder.firstOrNull()?.id ?: candidateUids.first()
 
                             val isTwoPlayer = (currentGameMode == GameMode.ONLINE_ROOM && sanitizedList.size == 2)
+                            val startingClock = MultiplayerTurnClock.start(1, chosenFirstTurnUid, System.currentTimeMillis() + 3300L,
+                                peerPresenceState.isAbsent(chosenFirstTurnUid))
                             val startPacket = RoomMessagePacket(
-                                type = "START_GAME",
+                                type = "START_GAME", roomCode = expectedRoom, turnClock = startingClock, simplifiedRulesVersion = 1,
                                 boardSize = targetSize,
                                 seed = seed,
                                 matchId = seed.toString(),
@@ -3982,7 +5022,17 @@ fun RootNavGraph(
                             if (manualMode) {
                                 boardSize = targetSize
                                 currentMatchSeed = seed
+                                multiplayerSnapshotCheckpoint = MultiplayerSnapshotCheckpoint()
+                                surrenderedPlayerIds = emptySet()
+                                peerSnapshotRevision = 0L
+                                peerTurnClock = null
+                                pendingPeerCommand = null
+                                lastAcceptedPauseVersion = 0L
+                                pendingPeerWills.clear()
+                                lastPlayerActivityAt = System.currentTimeMillis()
+                                matchStartTimeMs = lastPlayerActivityAt
                                 allPlayerBoards = emptyMap()
+                                manualReadyAtById.clear()
                                 isLocalBoardReady = false
                                 isOpponentBoardReady = false
                                 countdownSeconds = -1
@@ -4028,13 +5078,16 @@ fun RootNavGraph(
                                     } finally {
                                         lobbyCountdownSeconds = -1
                                     }
+                                    if (roomCode != expectedRoom || getLocalUid() != expectedUid ||
+                                        navController.currentDestination?.route != Screen.Lobby.route) return@launch
                                     startNewGame(
                                         mode = if (isUsingP2p) GameMode.NEARBY_NETWORK else GameMode.ONLINE_ROOM,
                                         difficulty = AiDifficulty.EASY,
                                         size = targetSize,
                                         firstTurnPlayerId = chosenFirstTurnUid,
                                         hostSeed = seed,
-                                        incomingPlayersList = sanitizedList
+                                        incomingPlayersList = sanitizedList, initialTurnClock = startingClock,
+                                        hostPlayerId = myId
                                     )
                                 }
                             }
@@ -4053,8 +5106,10 @@ fun RootNavGraph(
                             )
                         )
                         if (currentGameMode == GameMode.ONLINE_ROOM && roomCode.isNotBlank()) {
+                            val closingRoom = roomCode
+                            val closingSeed = currentMatchSeed
                             coroutineScope.launch {
-                                com.bingo.multiplayer.domain.network.OnlineRoomRegistry.closeRoom(roomCode)
+                                com.bingo.multiplayer.domain.network.OnlineRoomRegistry.closeRoom(closingRoom, expectedSeed = closingSeed.takeIf { it != 0L })
                             }
                         }
                         lanDiscovery.stopBroadcasting()
@@ -4251,7 +5306,7 @@ fun RootNavGraph(
                 GameMode.NEARBY_NETWORK -> opponentPlayer?.displayName ?: "Nearby Peer"
             }
 
-            val participants = getActiveParticipants().filter { !isPlayerDisconnected(it.id) }
+            val participants = getActiveParticipants().filter { it.id !in surrenderedPlayerIds }
             val expectedUids = participants.map { it.id }.filter { it.isNotBlank() }.toSet()
             val readyCount = expectedUids.count { allPlayerBoards.containsKey(it) }
             val totalCount = expectedUids.size.coerceAtLeast(2)
@@ -4293,13 +5348,14 @@ fun RootNavGraph(
                     }
 
                     allPlayerBoards = updatedBoards
+                    manualReadyAtById[myUid] = System.currentTimeMillis()
                     isLocalBoardReady = true
 
                     val readyPacket = RoomMessagePacket(
-                        type = "BOARD_READY",
+                        type = "BOARD_READY", roomCode = roomCode,
                         playerId = myUid,
                         seed = currentMatchSeed,
-                        pickedHistory = boardNumbers
+                        pickedHistory = boardNumbers, timestamp = manualReadyAtById[myUid] ?: System.currentTimeMillis()
                     )
                     broadcastPacket(readyPacket)
                     coroutineScope.launch {
@@ -4309,7 +5365,7 @@ fun RootNavGraph(
                         broadcastPacket(readyPacket)
                     }
 
-                    val curExpected = getActiveParticipants().filter { !isPlayerDisconnected(it.id) }.map { it.id }.filter { it.isNotBlank() }.toSet()
+                    val curExpected = getActiveParticipants().filter { it.id !in surrenderedPlayerIds }.map { it.id }.filter { it.isNotBlank() }.toSet()
                     val curAllReady = (currentGameMode == GameMode.AI_EASY || currentGameMode == GameMode.AI_HARD) ||
                             (curExpected.isNotEmpty() && curExpected.all { updatedBoards.containsKey(it) })
 
@@ -4317,8 +5373,10 @@ fun RootNavGraph(
                         startCountdownAndInitiateTurn()
                     } else {
                         coroutineScope.launch {
-                            while (isActive && isLocalBoardReady && countdownSeconds < 0) {
-                                val latestExpected = getActiveParticipants().filter { !isPlayerDisconnected(it.id) }.map { it.id }.filter { it.isNotBlank() }.toSet()
+                            while (isActive && isLocalBoardReady && countdownSeconds < 0 && currentMatchSeed == readyPacket.seed &&
+                                roomCode == readyPacket.roomCode && getLocalUid() == readyPacket.playerId &&
+                                navController.currentDestination?.route == Screen.ManualBoardDesign.route) {
+                                val latestExpected = getActiveParticipants().filter { it.id !in surrenderedPlayerIds }.map { it.id }.filter { it.isNotBlank() }.toSet()
                                 if (latestExpected.isNotEmpty() && latestExpected.all { allPlayerBoards.containsKey(it) }) {
                                     break
                                 }
@@ -4329,6 +5387,7 @@ fun RootNavGraph(
                     }
                 },
                 onLeave = {
+                    if (currentGameMode == GameMode.ONLINE_ROOM) leavePeerMatch() else {
                     manualStartJob?.cancel()
                     if (isHosting && currentGameMode == GameMode.ONLINE_ROOM && roomCode.isNotBlank()) {
                         broadcastPacket(
@@ -4338,8 +5397,10 @@ fun RootNavGraph(
                                 isHost = true
                             )
                         )
+                        val closingRoom = roomCode
+                        val closingSeed = currentMatchSeed
                         coroutineScope.launch {
-                            com.bingo.multiplayer.domain.network.OnlineRoomRegistry.closeRoom(roomCode)
+                            com.bingo.multiplayer.domain.network.OnlineRoomRegistry.closeRoom(closingRoom, expectedSeed = closingSeed.takeIf { it != 0L })
                         }
                     } else if (!isHosting) {
                         if (currentGameMode == GameMode.ONLINE_ROOM) {
@@ -4359,6 +5420,7 @@ fun RootNavGraph(
                     navController.navigate(Screen.MainMenu.route) {
                         popUpTo(Screen.MainMenu.route) { inclusive = false }
                         launchSingleTop = true
+                    }
                     }
                 }
             )
@@ -4460,6 +5522,32 @@ fun RootNavGraph(
 
             // Turn Countdown Timer (Simplified Friendly Zero-Stress Rules)
             LaunchedEffect(turnNumber, isMyTurn, isGameOver, isGamePaused, isMultiplayerSuspended) {
+                if (currentGameMode == GameMode.ONLINE_ROOM) {
+                    val expectedSeed = currentMatchSeed
+                    val expectedTurn = turnNumber
+                    ensurePeerTurnClock()
+                    while (isActive && currentMatchSeed == expectedSeed && turnNumber == expectedTurn && !isGameOver) {
+                        if (!peerGameplaySuspended() && !isGamePaused) {
+                            turnTimer = peerTurnClock?.remainingSeconds(System.currentTimeMillis()) ?: turnTimer
+                            if (turnTimer == 0 && com.bingo.multiplayer.domain.network.AppLifecycleObserver.isAppInForeground.value) {
+                                val active = matchParticipants.filter { it.id !in surrenderedPlayerIds &&
+                                    (it.id == getLocalUid() || peerPresenceState.records[it.id]?.status == "ONLINE") }.map { it.id }.sorted()
+                                val rank = active.indexOf(getLocalUid()).coerceAtLeast(0)
+                                // Give a pick already in flight at 0s time to arrive first.
+                                delay(500L + rank * 100L)
+                                if (currentMatchSeed == expectedSeed && turnNumber == expectedTurn && !isGamePaused &&
+                                    peerTurnClock?.remainingMillis(System.currentTimeMillis()) == 0L) {
+                                    executePeerPick(-1, isMyTurn, currentTurnPlayerId, true)
+                                }
+                                // Keep checking until a command has actually committed. A failed
+                                // publish/recovery must not leave the UI permanently stuck at zero.
+                                delay(500L)
+                            }
+                        }
+                        delay(100L)
+                    }
+                    return@LaunchedEffect
+                }
                 if (!isGameOver && !isGamePaused && !isMultiplayerSuspended) {
                     val activePicker = currentTurnPlayerId.ifBlank {
                         if (isMyTurn) getLocalUid()
@@ -4472,7 +5560,7 @@ fun RootNavGraph(
                     }
 
                     fun getPickerStatus(): com.bingo.multiplayer.domain.model.PlayerConnectionStatus {
-                        if (activePicker.isBlank()) return com.bingo.multiplayer.domain.model.PlayerConnectionStatus.ONLINE
+                        if (activePicker.isBlank() || isPlayerMe(activePicker)) return com.bingo.multiplayer.domain.model.PlayerConnectionStatus.ONLINE
                         if (isPlayerDisconnected(activePicker)) return com.bingo.multiplayer.domain.model.PlayerConnectionStatus.OFFLINE
                         if (isPlayerAway(activePicker)) return com.bingo.multiplayer.domain.model.PlayerConnectionStatus.AWAY
                         return com.bingo.multiplayer.domain.model.PlayerConnectionStatus.ONLINE
@@ -4488,7 +5576,7 @@ fun RootNavGraph(
                         frozenMatchSeed = 0L
                     } else {
                         val initStatus = getPickerStatus()
-                        turnTimer = if (initStatus != com.bingo.multiplayer.domain.model.PlayerConnectionStatus.ONLINE) 5 else 30
+                        turnTimer = if (isPlayerMe(activePicker) || initStatus == com.bingo.multiplayer.domain.model.PlayerConnectionStatus.ONLINE) 30 else 5
                     }
 
                     var wasAwayOrOffline = (getPickerStatus() != com.bingo.multiplayer.domain.model.PlayerConnectionStatus.ONLINE)
@@ -4538,6 +5626,18 @@ fun RootNavGraph(
                                     pickerId = activePicker,
                                     shouldBroadcast = true
                                 )
+                            } else {
+                                // Fallback coordinator: If host/coordinator failed to pass within 1.5s grace period,
+                                // local client passes the turn to guarantee the game NEVER freezes at 0s.
+                                delay(1500L)
+                                if (turnTimer == 0 && currentTurnPlayerId == activePicker && !isGameOver && !isGamePaused && !isMultiplayerSuspended) {
+                                    executePick(
+                                        number = -1,
+                                        isOwnPick = false,
+                                        pickerId = activePicker,
+                                        shouldBroadcast = true
+                                    )
+                                }
                             }
                         }
                     }
@@ -4614,9 +5714,7 @@ fun RootNavGraph(
 
             val isLobbyAvailable = when (currentGameMode) {
                 GameMode.AI_EASY, GameMode.AI_HARD -> true
-                GameMode.ONLINE_ROOM -> {
-                    roomCode.isNotBlank() && !isHostLeftGame && (matchParticipants.ifEmpty { realTimePlayers }).count { it.id.isNotBlank() && !isPlayerDisconnected(it.id) } >= 2
-                }
+                GameMode.ONLINE_ROOM -> verifiedRoomExists && roomCode.isNotBlank()
                 GameMode.NEARBY_NETWORK -> {
                     !isHostLeftGame && (matchParticipants.ifEmpty { realTimePlayers }).count { it.id.isNotBlank() && !isPlayerDisconnected(it.id) } >= 2
                 }
@@ -4626,12 +5724,15 @@ fun RootNavGraph(
                 canControlPause = isCurrentHost,
                 canResumeGame = isCurrentHost,
                 hostName = matchParticipants.singleOrNull { it.isHost }?.displayName ?: "Host",
-                board = playerBoard,
+                isAiMode = (currentGameMode == GameMode.AI_EASY || currentGameMode == GameMode.AI_HARD),
+                board = pendingPeerCommand?.takeIf { currentGameMode == GameMode.ONLINE_ROOM &&
+                    it.type == "PICK_NUMBER" && it.playerId == getLocalUid() && it.closedTurnNumber == turnNumber
+                }?.let { engine.markCell(playerBoard, it.number, it.playerId, true, it.closedTurnNumber) } ?: playerBoard,
                 opponentBoard = opponentBoard,
                 allPlayerBoards = allPlayerBoards,
                 players = gamePlayers,
                 currentTurnPlayerId = currentTurnPlayerId,
-                disconnectedPlayerIds = disconnectedPlayerIds.toList(),
+                disconnectedPlayerIds = (disconnectedPlayerIds + surrenderedPlayerIds).distinct(),
                 awayPlayerIds = awayPlayerIds.toList(),
                 isLobbyAvailable = isLobbyAvailable,
                 typingPlayerName = currentTypingPlayerName,
@@ -4646,6 +5747,9 @@ fun RootNavGraph(
                 },
                 isMyTurn = isMyTurn,
                 turnTimeRemaining = turnTimer,
+                absenceBudgetTurn = peerTurnClock?.initialBudgetMillis == MultiplayerTurnClock.ABSENCE_MILLIS,
+                welcomeBackGranted = peerTurnClock?.welcomeBackGranted == true,
+                useAcceptedChatHistory = currentGameMode == GameMode.ONLINE_ROOM,
                 isGamePaused = isGamePaused,
                 pausedByPlayerName = pausedByPlayerName,
                 onTogglePause = { togglePause() },
@@ -4655,10 +5759,14 @@ fun RootNavGraph(
                 onExtendPause = {
                     if (isCurrentHost) {
                         pauseRemainingSeconds = 30
+                        if (currentGameMode == GameMode.ONLINE_ROOM) {
+                            lastAcceptedPauseVersion += 1L
+                            lastPlayerActivityAt = System.currentTimeMillis()
+                        }
                         canExtendPause = false
                         broadcastPacket(
                             RoomMessagePacket(
-                                type = "PAUSE_EXTEND",
+                                type = "PAUSE_EXTEND", pauseEpisode = lastAcceptedPauseVersion.toInt(), pauseRemainingSeconds = 30,
                                 playerId = getLocalUid(),
                                 remainingTurnMillis = 30_000L,
                                 seed = currentMatchSeed,
@@ -4666,15 +5774,7 @@ fun RootNavGraph(
                                 timestamp = System.currentTimeMillis()
                             )
                         )
-                        if (currentGameMode == GameMode.ONLINE_ROOM && roomCode.isNotBlank()) {
-                            com.bingo.multiplayer.domain.network.OngoingMatchStore.updateMatchGameState(
-                                context = context,
-                                isPaused = true,
-                                pauseRemainingSeconds = 30,
-                                pauseDeadlineTimestamp = System.currentTimeMillis() + 30_000L,
-                                accountUid = getLocalUid()
-                            )
-                        }
+                        if (currentGameMode == GameMode.ONLINE_ROOM) { savePeerMatch(); publishPeerState() }
                         Toast.makeText(context, "⏸️ Pause extended (+30s)", Toast.LENGTH_SHORT).show()
                     }
                 },
@@ -4693,6 +5793,9 @@ fun RootNavGraph(
                 incomingEmoteScale = latestIncomingEmoteScale,
                 incomingEmoteTimestamp = latestIncomingEmoteTimestamp,
                 onSendEmote = { emoji, scaleMultiplier ->
+                    if (currentGameMode == GameMode.ONLINE_ROOM) {
+                        lastPlayerActivityAt = System.currentTimeMillis(); savePeerMatch(); publishPeerState()
+                    }
                     if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
                         broadcastPacket(
                             RoomMessagePacket(
@@ -4713,27 +5816,18 @@ fun RootNavGraph(
                         text = messageText,
                         isSelf = true,
                         senderName = null,
-                        timestamp = System.currentTimeMillis()
+                        timestamp = System.currentTimeMillis(), senderPlayerId = getLocalUid()
                     )
                     matchChatHistory = matchChatHistory + myChat
-                    if (currentGameMode == GameMode.ONLINE_ROOM && roomCode.isNotBlank()) {
-                        com.bingo.multiplayer.domain.network.OngoingMatchStore.updateMatchGameState(
-                            context = context,
-                            playerBoard = playerBoard,
-                            opponentBoard = opponentBoard,
-                            allPlayerBoards = allPlayerBoards,
-                            pickedNumbers = pickedNumbersHistory.toList(),
-                            pickedByPlayers = pickedByPlayerHistory.toList(),
-                            turnNumber = turnNumber,
-                            currentTurnPlayerId = currentTurnPlayerId,
-                            chatMessages = matchChatHistory,
-                            accountUid = getLocalUid()
-                        )
+                    if (currentGameMode == GameMode.ONLINE_ROOM) {
+                        lastPlayerActivityAt = myChat.timestamp
+                        savePeerMatch()
+                        publishPeerState()
                     }
                     if (currentGameMode == GameMode.ONLINE_ROOM || currentGameMode == GameMode.NEARBY_NETWORK) {
                         broadcastPacket(
                             RoomMessagePacket(
-                                type = "CHAT_MESSAGE",
+                                type = "CHAT_MESSAGE", chatMessages = listOf(myChat),
                                 playerId = getLocalUid(),
                                 displayName = messageText,
                                 username = getPlayerDisplayName(),
@@ -4755,6 +5849,9 @@ fun RootNavGraph(
                     }
                 },
                 onSurrender = {
+                    if (currentGameMode == GameMode.ONLINE_ROOM) {
+                        leavePeerMatch()
+                    } else {
                     val myUid = getLocalUid()
                     val isGroup = matchParticipants.size > 2
                     manualStartJob?.cancel()
@@ -4799,6 +5896,7 @@ fun RootNavGraph(
                     navController.navigate(Screen.MainMenu.route) {
                         popUpTo(Screen.MainMenu.route) { inclusive = true }
                     }
+                    }
                 },
                 onCellPicked = { cellNumber ->
                     if (!isReconcilingMatch && !awaitingHostStateSync) {
@@ -4814,7 +5912,9 @@ fun RootNavGraph(
                     coroutineScope.launch {
                         Toast.makeText(context, "Syncing match state…", Toast.LENGTH_SHORT).show()
                         isReconcilingMatch = true
-                        onlineRoomSync.refreshNow()
+                        recoveryFenceCompleted = false
+                        if (currentGameMode == GameMode.ONLINE_ROOM) onlineRoomSync.bindPeerMatch(currentMatchSeed)
+                        else onlineRoomSync.refreshNow()
                         broadcastPacket(
                             RoomMessagePacket(
                                 type = "SYNC_REQUEST",
@@ -4836,7 +5936,7 @@ fun RootNavGraph(
                         }
                         if (isHosting) {
                             val seed = Random.nextLong().let { if (it == 0L) 1L else it }
-                            val activeList = realTimePlayers.filter { it.id.isNotBlank() }
+                            val activeList = realTimePlayers.filter { it.id.isNotBlank() && it.id !in surrenderedPlayerIds }
                                 .distinctBy { it.username.trim().lowercase().removePrefix("@").takeIf { u -> u.isNotBlank() } ?: it.id.trim().lowercase() }
                                 .sortedWith(
                                     compareByDescending<Player> { it.isHost }
@@ -4858,8 +5958,10 @@ fun RootNavGraph(
                                     )
                                 }
                             }
+                            val first = LobbyLifecycleEngine.generateDeterministicTurnOrder(sanitizedList, seed).firstOrNull()?.id ?: getLocalUid()
+                            val rematchClock = MultiplayerTurnClock.start(1, first, System.currentTimeMillis(), peerPresenceState.isAbsent(first))
                             val playAgainPacket = RoomMessagePacket(
-                                type = "PLAY_AGAIN",
+                                type = "PLAY_AGAIN", roomCode = roomCode, turnClock = rematchClock, currentTurnPlayerId = first, simplifiedRulesVersion = 1,
                                 boardSize = targetSize,
                                 seed = seed,
                                 playerId = getLocalUid(),
@@ -4876,7 +5978,17 @@ fun RootNavGraph(
                             }
                             if (isManualBoard) {
                                 currentMatchSeed = seed
+                                multiplayerSnapshotCheckpoint = MultiplayerSnapshotCheckpoint()
+                                surrenderedPlayerIds = emptySet()
+                                peerSnapshotRevision = 0L
+                                peerTurnClock = null
+                                pendingPeerCommand = null
+                                lastAcceptedPauseVersion = 0L
+                                pendingPeerWills.clear()
+                                lastPlayerActivityAt = System.currentTimeMillis()
+                                matchStartTimeMs = lastPlayerActivityAt
                                 allPlayerBoards = emptyMap()
+                                manualReadyAtById.clear()
                                 isLocalBoardReady = false
                                 isOpponentBoardReady = false
                                 countdownSeconds = -1
@@ -4916,7 +6028,8 @@ fun RootNavGraph(
                                     size = boardSize,
                                     firstTurnPlayerId = null,
                                     hostSeed = seed,
-                                    incomingPlayersList = sanitizedList
+                                    incomingPlayersList = sanitizedList, initialTurnClock = rematchClock,
+                                    hostPlayerId = getLocalUid()
                                 )
                             }
                         }
@@ -4938,9 +6051,10 @@ fun RootNavGraph(
                                     isHost = true
                                 )
                             )
-                            if (roomCode.isNotBlank()) {
+                            val finishedRoom = roomCode
+                            if (finishedRoom.isNotBlank()) {
                                 coroutineScope.launch {
-                                    com.bingo.multiplayer.domain.network.OnlineRoomRegistry.closeRoom(roomCode)
+                                    com.bingo.multiplayer.domain.network.OnlineRoomRegistry.closeRoom(finishedRoom)
                                 }
                             }
                         }
@@ -5306,6 +6420,9 @@ fun RootNavGraph(
             confirmButton = {
                 Button(
                     onClick = {
+                        if (currentGameMode == GameMode.ONLINE_ROOM) {
+                            leavePeerMatch()
+                        } else {
                         showLeaveMatchDialog = false
                         manualStartJob?.cancel()
                         val myUid = getLocalUid()
@@ -5352,6 +6469,7 @@ fun RootNavGraph(
                         isHosting = false
                         navController.navigate(Screen.MainMenu.route) {
                             popUpTo(Screen.MainMenu.route) { inclusive = true }
+                        }
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = BingoTheme.colors.accentOpponent)

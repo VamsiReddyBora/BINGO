@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+
 package com.bingo.multiplayer.presentation.menu
 
 import androidx.compose.animation.core.Spring
@@ -10,7 +12,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,6 +32,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
+import com.bingo.multiplayer.domain.network.EmqxBrokerMonitor
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CastConnected
 import androidx.compose.material.icons.filled.DarkMode
@@ -99,6 +107,7 @@ fun MainMenuScreen(
     var selectedAiDifficulty by remember { mutableStateOf(AiDifficulty.EASY) }
     var ongoingMatch by remember { mutableStateOf(OngoingMatchStore.getOngoingMatch(context, currentAccountUid)) }
     var isMatchVerifiedActive by remember { mutableStateOf(false) }
+    val isBrokerDown by EmqxBrokerMonitor.isBrokerDown.collectAsState()
 
     // ── Ping 1-Second Stabilized Display (Matches GameScreen exactly) ──
     val realtimePing by com.bingo.multiplayer.domain.network.NetworkPingMonitor.pingMs.collectAsState()
@@ -138,29 +147,60 @@ fun MainMenuScreen(
     }
 
     LaunchedEffect(ongoingMatch?.roomCode, currentAccountUid) {
-        val ongoing = ongoingMatch ?: run {
-            isMatchVerifiedActive = false
-            return@LaunchedEffect
-        }
-        while (isActive) {
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                try {
-                    val session = com.bingo.multiplayer.domain.network.OnlineRoomRegistry.getRoom(ongoing.roomCode)
-                    // Strictly clear if room is missing or not currently in PLAYING status
-                    if (session == null || session.status != "PLAYING") {
-                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                            OngoingMatchStore.clearOngoingMatch(context, currentAccountUid)
-                            ongoingMatch = null
-                            isMatchVerifiedActive = false
-                        }
-                    } else {
-                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                            isMatchVerifiedActive = true
-                        }
+        val original = ongoingMatch ?: run { isMatchVerifiedActive = false; return@LaunchedEffect }
+        val uid = currentAccountUid ?: return@LaunchedEffect
+        if (original.simplifiedRulesVersion > 0) {
+            var retryDelay = 2000L
+            while (isActive) {
+                val lookup = com.bingo.multiplayer.domain.network.PeerMatchRecovery.read(original.roomCode, original.matchSeed)
+                val current = OngoingMatchStore.getOngoingMatch(context, uid) ?: break
+                if (current.matchSeed != original.matchSeed) break
+                if (lookup.available) {
+                    val now = System.currentTimeMillis()
+                    val recovered = com.bingo.multiplayer.domain.network.PeerMatchRecovery.merge(current, lookup.packets, now)
+                    if (uid in recovered.multiplayerSnapshotCheckpoint.surrenderedPlayerIds ||
+                        (!recovered.isMatchFinished && now - recovered.lastPlayerActivityAt >= com.bingo.multiplayer.domain.network.MultiplayerTurnClock.INACTIVITY_MILLIS)) {
+                        OngoingMatchStore.clearMatchIfCurrent(context, uid, original.roomCode, original.matchSeed)
+                        ongoingMatch = null
+                        isMatchVerifiedActive = false
+                        break
                     }
-                } catch (_: Exception) {}
+                    if (!OngoingMatchStore.saveRecoveredMatch(context, recovered)) break
+                    ongoingMatch = recovered
+                    isMatchVerifiedActive = true
+                    if (recovered.isMatchFinished) {
+                        val board = recovered.playerBoard
+                        val others = recovered.participants.filter { it.id != uid }
+                        authRepository.recordMatch(mode = "Online Match", opponentName = others.joinToString { it.displayName },
+                            didWin = recovered.winnerPlayerId == uid, boardSize = recovered.boardSize,
+                            matchTitle = if (recovered.winnerPlayerId == uid) "Online match won 🏆" else
+                                if (uid in recovered.runnerPlayerIds) "Online match runner-up 🥈" else "Online match lost",
+                            opponentUid = others.singleOrNull()?.id.orEmpty(),
+                            turnsTaken = recovered.pickedByPlayers.count { it == uid },
+                            linesCompleted = board?.completedLinesCount ?: 0,
+                            durationSeconds = ((recovered.lastPlayerActivityAt - recovered.startedAt) / 1000L).coerceAtLeast(0),
+                            finalBoardNumbers = board?.cells?.map { it.number } ?: emptyList(),
+                            markedNumbers = board?.cells?.filter { it.isMarked }?.map { it.number } ?: emptyList(),
+                            stableResultId = "match:${recovered.roomCode}:${recovered.matchSeed}:$uid", expectedAccountUid = uid)
+                        break
+                    }
+                    // No periodic discovery heartbeat. Recheck only when inactivity could actually expire.
+                    delay((recovered.lastPlayerActivityAt + com.bingo.multiplayer.domain.network.MultiplayerTurnClock.INACTIVITY_MILLIS - now)
+                        .coerceAtLeast(1000L))
+                } else {
+                    // An unavailable broker/registry is not proof that a saved match was deleted.
+                    isMatchVerifiedActive = true
+                    delay(retryDelay)
+                    retryDelay = (retryDelay * 2).coerceAtMost(30_000L)
+                }
             }
-            kotlinx.coroutines.delay(4000L)
+        } else {
+            val session = com.bingo.multiplayer.domain.network.OnlineRoomRegistry.getRoom(original.roomCode)
+            if (session?.status == "CLOSED") {
+                OngoingMatchStore.clearMatchIfCurrent(context, uid, original.roomCode, original.matchSeed)
+                ongoingMatch = null
+                isMatchVerifiedActive = false
+            } else isMatchVerifiedActive = true
         }
     }
 
@@ -303,7 +343,7 @@ fun MainMenuScreen(
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = "MATCH IN PROGRESS",
+                                    text = if (ongoing.isMatchFinished) "MATCH FINISHED" else "MATCH IN PROGRESS",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
                                     letterSpacing = 0.5.sp,
@@ -362,7 +402,7 @@ fun MainMenuScreen(
                                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
                             ) {
                                 Text(
-                                    text = "Rejoin",
+                                    text = if (ongoing.isMatchFinished) "View result" else "Rejoin",
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -420,6 +460,46 @@ fun MainMenuScreen(
             // Dynamic vertical gap placing the developer note pill directly in the middle
             // between the Nearby Network card and the bottom navigation pill:
             Spacer(modifier = Modifier.height(middleSpacing))
+
+            // Real-Time EMQX Broker Failure Alert (Horizontal Scrolling Marquee)
+            if (isBrokerDown) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp)
+                        .clickable(onClick = onOpenDeveloperNote),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = buildAnnotatedString {
+                            withStyle(
+                                SpanStyle(
+                                    color = Color(0xFFEF4444),
+                                    fontWeight = FontWeight.Bold
+                                )
+                            ) {
+                                append("Note: ")
+                            }
+                            withStyle(
+                                SpanStyle(
+                                    color = if (tokens.isDark) Color.White else Color(0xFF0F172A),
+                                    fontWeight = FontWeight.Normal
+                                )
+                            ) {
+                                append("EMQX broker is down (using HTTP fallback). Please send a message through developer note to fix this issue.")
+                            }
+                        },
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        modifier = Modifier.basicMarquee(
+                            iterations = Int.MAX_VALUE,
+                            animationMode = androidx.compose.foundation.MarqueeAnimationMode.Immediately,
+                            velocity = 30.dp
+                        )
+                    )
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+            }
 
             // Developer Note Pill Button
             Surface(

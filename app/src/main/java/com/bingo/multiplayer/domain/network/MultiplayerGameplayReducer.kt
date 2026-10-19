@@ -15,15 +15,21 @@ data class MultiplayerGameplayContext(
     val excludedPlayerIds: Set<String> = emptySet(),
     val allowPeerTimeouts: Boolean = false,
     val isActive: Boolean = true,
-    val requiresHostResultConfirmation: Boolean = false
+    val requiresHostResultConfirmation: Boolean = false,
+    val strictIdentity: Boolean = false
 ) {
-    fun participantId(id: String): String? = participants.firstOrNull {
-        LobbyLifecycleEngine.isPlayerIdMatch(it.id, id)
-    }?.id
+    fun participantId(id: String): String? = participants.firstOrNull { it.id == id }?.id
+        ?: if (strictIdentity) null else participants.firstOrNull { LobbyLifecycleEngine.isPlayerIdMatch(it.id, id) }?.id
 
-    fun nextPlayer(picker: String, surrendered: Set<String> = emptySet()): String = LobbyLifecycleEngine.calculateNextTurnPlayerId(
-        participants, excludedPlayerIds + surrendered, picker, localId, seed, turnOrder
-    )
+    fun nextPlayer(picker: String, surrendered: Set<String> = emptySet()): String {
+        if (!strictIdentity) return LobbyLifecycleEngine.calculateNextTurnPlayerId(
+            participants, excludedPlayerIds + surrendered, picker, localId, seed, turnOrder)
+        val ids = (turnOrder.ifEmpty { participants }).map { it.id }.distinct()
+        val excluded = excludedPlayerIds + surrendered
+        val start = ids.indexOf(picker)
+        return (1..ids.size).map { ids[(start + it).mod(ids.size)] }
+            .firstOrNull { it !in excluded } ?: localId
+    }
 }
 
 data class MultiplayerGameplayState(
@@ -39,7 +45,8 @@ data class MultiplayerGameplayState(
     val isGameOver: Boolean = false,
     val disconnectedPlayerIds: Set<String> = emptySet(),
     val missedTurns: Map<String, Int> = emptyMap(),
-    val surrenderedPlayerIds: Set<String> = emptySet()
+    val surrenderedPlayerIds: Set<String> = emptySet(),
+    val turnClock: MultiplayerTurnClock? = null
 )
 
 data class MultiplayerGameplayDecision(
@@ -89,9 +96,11 @@ object MultiplayerGameplayReducer {
         if (closedTurn != state.turnNumber || packet.turnNumber != state.turnNumber + 1 ||
             !LobbyLifecycleEngine.isPlayerIdMatch(picker, state.currentPlayerId) ||
             picker in context.excludedPlayerIds || picker in state.surrenderedPlayerIds ||
-            (origin != picker && origin != context.hostId)) return reject(state, "Closed or unexpected turn")
+            (origin != picker && (context.strictIdentity || origin != context.hostId))) return reject(state, "Closed or unexpected turn")
         if (packet.number !in 1..(state.playerBoard.size * state.playerBoard.size) || state.picks.any { it.number == packet.number || it.turn == closedTurn })
             return reject(state, "Duplicate or invalid selection")
+        if (state.turnClock?.frozenRemainingMillis != null)
+            return reject(state, "Turn paused")
         // The history carried by a peer is diagnostic. Only this validated open-turn
         // move can add a mark; missed earlier turns are recovered by a host snapshot.
         val move = MatchPick(packet.number, picker, closedTurn)
@@ -117,11 +126,20 @@ object MultiplayerGameplayReducer {
         if (closedTurn != state.turnNumber || packet.turnNumber != closedTurn + 1 ||
             !LobbyLifecycleEngine.isPlayerIdMatch(skipped, state.currentPlayerId)) return reject(state, "Duplicate, obsolete or missing turn")
         if (!context.allowPeerTimeouts && origin != context.hostId && origin != skipped) return reject(state, "Not a turn controller or self pass")
+        state.turnClock?.let { clock ->
+            val closedClock = packet.closedTurnClock
+            if (closedClock != null) {
+                if (closedClock != clock || clock.frozenRemainingMillis != null || packet.timestamp < clock.deadlineAt ||
+                    System.currentTimeMillis() < clock.deadlineAt) return reject(state, "Obsolete or premature timeout")
+            } else {
+                if (clock.frozenRemainingMillis != null) return reject(state, "Turn paused")
+            }
+        }
         val next = context.nextPlayer(skipped, state.surrenderedPlayerIds)
         if (packet.currentTurnPlayerId.isNotBlank() && packet.currentTurnPlayerId != next) return reject(state, "Inconsistent next player")
+        // Not choosing a number is not evidence of a network failure or a penalty.
         return MultiplayerGameplayDecision(state.copy(turnNumber = closedTurn + 1, currentPlayerId = next,
-            remainingTurnMillis = 30_000L, disconnectedPlayerIds = state.disconnectedPlayerIds + skipped,
-            missedTurns = state.missedTurns + (skipped to ((state.missedTurns[skipped] ?: 0) + 1))), true)
+            remainingTurnMillis = 30_000L), true)
     }
 
     fun surrender(packet: RoomMessagePacket, context: MultiplayerGameplayContext, state: MultiplayerGameplayState): MultiplayerGameplayDecision {
@@ -131,8 +149,7 @@ object MultiplayerGameplayReducer {
         if (player in state.surrenderedPlayerIds) return reject(state, "Already surrendered")
         val departed = state.surrenderedPlayerIds + player
         val closesTurn = LobbyLifecycleEngine.isPlayerIdMatch(player, state.currentPlayerId)
-        return MultiplayerGameplayDecision(state.copy(disconnectedPlayerIds = state.disconnectedPlayerIds + player,
-            missedTurns = state.missedTurns + (player to 3), surrenderedPlayerIds = departed,
+        return MultiplayerGameplayDecision(state.copy(surrenderedPlayerIds = departed,
             turnNumber = if (closesTurn) state.turnNumber + 1 else state.turnNumber,
             currentPlayerId = if (closesTurn) context.nextPlayer(player, departed) else state.currentPlayerId,
             remainingTurnMillis = if (closesTurn) 30_000L else state.remainingTurnMillis), true)
@@ -144,9 +161,11 @@ object MultiplayerGameplayReducer {
         val origin = context.participantId(sender(packet))
         if (!MultiplayerResultAuthority.mayFinalize(context, packet)) return reject(state, "Waiting for host result confirmation")
         val claimant = context.participantId(packet.playerId)
-        val winner = context.participantId(packet.winnerPlayerId.ifBlank { packet.playerId }) ?: return reject(state, "Unknown winner")
-        if (origin != claimant || (origin != context.hostId && origin != winner) ||
-            winner in context.excludedPlayerIds || winner in state.disconnectedPlayerIds || winner in state.surrenderedPlayerIds)
+        val rawWinner = packet.winnerPlayerId.ifBlank { packet.playerId }
+        val winner = context.participantId(rawWinner) ?: if (LobbyLifecycleEngine.isPlayerIdMatch(rawWinner, context.localId)) context.localId else return reject(state, "Unknown winner")
+        val isHost = (origin == context.hostId)
+        if ((origin != claimant && !isHost) ||
+            winner in context.excludedPlayerIds || winner in state.surrenderedPlayerIds)
             return reject(state, "Invalid result authority")
         var candidate = state
         if (packet.number > 0 && state.picks.none { it.number == packet.number }) {
@@ -158,9 +177,16 @@ object MultiplayerGameplayReducer {
             if (!move.accepted) return reject(state, "Winning pick is unaccepted; request host snapshot")
             candidate = move.state
         }
-        val winnerBoard = candidate.allPlayerBoards[winner] ?: if (winner == context.localId) candidate.playerBoard
-            else if (context.participants.size == 2) candidate.opponentBoard else null
-        if (winnerBoard?.isBingo != true) return reject(state, "No accepted Bingo for winner")
+        val boards = candidate.allPlayerBoards.toMutableMap().apply {
+            putIfAbsent(context.localId, candidate.playerBoard)
+            if (context.participants.size == 2) context.participants.firstOrNull { it.id != context.localId }?.let {
+                putIfAbsent(it.id, candidate.opponentBoard)
+            }
+        }
+        val caller = candidate.picks.lastOrNull()?.playerId.orEmpty()
+        if (!MultiplayerResultRules.verifies(winner, boards, context.participants.map { it.id },
+                context.excludedPlayerIds + candidate.surrenderedPlayerIds, caller, context.turnOrder.map { it.id }))
+            return reject(state, "No accepted Bingo or permanent-exit result for winner")
         return MultiplayerGameplayDecision(candidate.copy(isGameOver = true), true, winnerId = winner)
     }
 }
