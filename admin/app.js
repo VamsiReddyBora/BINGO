@@ -139,6 +139,13 @@ function identity(row) {
       {},
       h("strong", {}, p.displayName || row.username),
       h("small", {}, "@" + row.username),
+      row.sourceStatus && row.sourceStatus !== "FRESH"
+        ? h(
+            "small",
+            { title: "Open for a fresh inspection" },
+            "Profile: " + row.sourceStatus.toLowerCase(),
+          )
+        : null,
     ),
   );
 }
@@ -234,20 +241,32 @@ function filters() {
   };
 }
 function rows() {
-  return (state.snapshot?.players || []).map((row) =>
-    state.stale
-      ? {
-          ...row,
-          presence: {
-            ...row.presence,
-            status: "UNKNOWN",
-            detail: row.presence?.detail
-              ? "Last verified activity: " + row.presence.detail
-              : "",
-          },
-        }
-      : row,
-  );
+  return (state.snapshot?.players || []).map((row) => {
+    let result = { ...row, profile: { ...row.profile } };
+    if (
+      state.stale ||
+      ["STALE", "REGISTRY", "UNAVAILABLE"].includes(row.sourceStatus)
+    ) {
+      for (const field of [
+        "level",
+        "gamesPlayed",
+        "gamesWon",
+        "currentStreak",
+        "bestStreak",
+        "xp",
+      ])
+        delete result.profile[field];
+    }
+    if (state.stale)
+      result.presence = {
+        ...row.presence,
+        status: "UNKNOWN",
+        detail: row.presence?.detail
+          ? "Last verified activity: " + row.presence.detail
+          : "",
+      };
+    return result;
+  });
 }
 function filtered() {
   return selectPlayers(rows(), filters());
