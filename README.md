@@ -8,7 +8,7 @@ Modern peer-to-peer and online multiplayer Bingo game for Android, built with Je
 
 ---
 
-### 📦 Official Release: [v1.0.0 (Build 45)](releases/README.md)
+### 📦 Latest Release: [v1.0.0 (Build 45)](releases/README.md)
 
 Download the production-signed APK directly:
 - **[Bingo-1.0.0.apk](releases/Bingo-1.0.0.apk)** *(~6.90 MB)*

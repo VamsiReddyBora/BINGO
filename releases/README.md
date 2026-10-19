@@ -1,13 +1,13 @@
-# Bingo Multiplayer — Official Releases
+# Bingo Multiplayer — Releases
 
-### Official Release: **v1.0.0 (Build 45)** 🎉
+### Latest Release: **v1.0.0 (Build 45)** 🎉
 
-Current artifact: **Production Release v1.0.0** — Official Public Launch of Bingo Multiplayer!
+Current artifact: **Production Release v1.0.0** — Public Launch of Bingo Multiplayer!
 Featuring a streamlined zero-stress multiplayer architecture, real-time EMQX broker monitoring with graceful HTTP fallback, live horizontal status alerts, dedicated WhatsApp developer reporting, and full AMOLED dark mode support. Verified with 100% passing automated test suite across 722 tests.
 
 | Asset | Description | Size | Checksum (SHA-256) |
 | :--- | :--- | :--- | :--- |
-| **[Bingo-1.0.0.apk](Bingo-1.0.0.apk)** | Official Signed Release APK | ~6.90 MB (7,232,234 B) | `c6c9210a1b50662be0bde70aaf5f408e2501ec2de2bef616748a3989d0f64f00` |
+| **[Bingo-1.0.0.apk](Bingo-1.0.0.apk)** | Production Signed Release APK | ~6.90 MB (7,232,234 B) | `c6c9210a1b50662be0bde70aaf5f408e2501ec2de2bef616748a3989d0f64f00` |
 | **[Bingo.apk](Bingo.apk)** | Standard Universal APK Symlink | ~6.90 MB (7,232,234 B) | `c6c9210a1b50662be0bde70aaf5f408e2501ec2de2bef616748a3989d0f64f00` |
 | **[Bingo-1.0.0.apk.sha256](Bingo-1.0.0.apk.sha256)** | SHA-256 Checksum File | 83 B | — |
 
@@ -47,5 +47,5 @@ adb install -r releases/Bingo-1.0.0.apk
 ### Related Links
 
 - [Main Documentation](../README.md)
-- [Official GitHub Repository](https://github.com/VamsiReddyBora/BINGO)
+- [GitHub Repository](https://github.com/VamsiReddyBora/BINGO)
 - [GitHub Releases Page](https://github.com/VamsiReddyBora/BINGO/releases)
