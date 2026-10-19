@@ -65,6 +65,13 @@ object EmqxBrokerMonitor {
         monitorJob = null
     }
 
+    /** Await any in-flight probe when a caller needs a fully stopped monitor. */
+    internal suspend fun stopAndAwait() {
+        val running = monitorJob
+        stop()
+        running?.join()
+    }
+
     fun recordPrimaryBrokerDown() {
         _isBrokerDown.value = true
     }

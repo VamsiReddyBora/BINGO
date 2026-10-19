@@ -7,6 +7,7 @@ import androidx.appcompat.app.AppCompatDelegate
 class BingoApplication : Application() {
     override fun onCreate() {
         super.onCreate()
+        com.bingo.multiplayer.domain.network.AdminControlClient.initialize(this)
         com.bingo.multiplayer.core.diagnostics.AppExitDiagnostics.install(this)
         com.bingo.multiplayer.domain.notifications.NotificationRuntime.init(this)
         try {

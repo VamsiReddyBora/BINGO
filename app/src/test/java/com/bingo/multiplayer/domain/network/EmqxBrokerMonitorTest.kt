@@ -9,6 +9,8 @@ class EmqxBrokerMonitorTest {
 
     @Test
     fun testEmqxBrokerMonitorTransitions() = runBlocking {
+        // A live startup probe must not overwrite the explicit transitions under test.
+        EmqxBrokerMonitor.stopAndAwait()
         // Record broker success -> isBrokerDown must be false
         EmqxBrokerMonitor.recordBrokerSuccess()
         assertFalse("Broker should not be down after recordBrokerSuccess", EmqxBrokerMonitor.isBrokerDown.value)

@@ -2,25 +2,41 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    function activeAccount(uid) {
+      return !exists(/databases/$(database)/documents/adminTombstones/$(uid));
+    }
+
+    // Only the administrative service account can create or remove these markers.
+    match /adminTombstones/{userId} {
+      allow read, write: if false;
+    }
 
     // User profile and settings
     match /users/{userId} {
-      allow read, write: if true;
+      // Preserve existing public profile queries; block deleted identities from writing.
+      allow read: if true;
+      allow write: if activeAccount(userId);
 
       // Match history subcollection
       match /matches/{matchId} {
-        allow read, write: if true;
+        allow read: if true;
+        allow write: if activeAccount(userId);
       }
 
       // Friends subcollection
       match /friends/{friendId} {
-        allow read, write: if true;
+        allow read: if true;
+        // One owner lookup also preserves large friend-list batch writes in older APKs.
+        // Deletion cleanup leaves removal markers on the other side of the friendship.
+        allow write: if activeAccount(userId);
       }
     }
 
     // Unique username registry
     match /usernames/{username} {
-      allow read, write: if true;
+      allow read: if true;
+      allow create, update: if activeAccount(request.resource.data.uid);
+      allow delete: if activeAccount(resource.data.uid);
     }
   }
 }

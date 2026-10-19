@@ -1,0 +1,12 @@
+{
+  "name": "bingo-admin-control",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "jose": "6.1.3"
+  }
+}
