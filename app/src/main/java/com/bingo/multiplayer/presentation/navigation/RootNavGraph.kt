@@ -480,18 +480,55 @@ fun RootNavGraph(
 
     fun applyPeerPresence(id: String, record: MultiplayerPresenceRecord, lastWill: Boolean = false) {
         val participants = if (navController.currentDestination?.route in setOf(Screen.Game.route, Screen.ManualBoardDesign.route))
-            matchParticipants else onlineRoomSync.players.value
-        if (id in surrenderedPlayerIds || participants.none { it.id == id }) return
+            matchParticipants.ifEmpty { realTimePlayers }.ifEmpty { onlineRoomSync.players.value }
+        else onlineRoomSync.players.value
+        if (id in surrenderedPlayerIds || participants.none { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it.id, id) }) return
+        val previousRecord = peerPresenceState.records[id]
         val next = peerPresenceState.update(id, record, lastWill)
         if (next == peerPresenceState) return
+        val oldStatus = previousRecord?.status
+        val newStatus = next.records[id]?.status
         peerPresenceState = next
         disconnectedPlayerIds.removeAll { it == id }; awayPlayerIds.removeAll { it == id }
-        when (next.records[id]?.status) {
+        when (newStatus) {
             "OFFLINE" -> disconnectedPlayerIds.add(id)
             "AWAY" -> awayPlayerIds.add(id)
             "ONLINE" -> {
                 if (!isGamePaused) peerTurnClock = peerTurnClock?.resume(record.observedAt)
                 if (id == currentTurnPlayerId) peerTurnClock = peerTurnClock?.welcomeBack(record.observedAt)
+            }
+        }
+        val shouldAnnounce = (id != getLocalUid()) && (
+            (oldStatus != null && oldStatus != newStatus) || (lastWill && newStatus == "OFFLINE")
+        )
+        if (shouldAnnounce) {
+            val inGame = (navController.currentDestination?.route in setOf(Screen.Game.route, Screen.ManualBoardDesign.route)) && !isGameOver
+            if (inGame) {
+                val p = participants.find { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it.id, id) }
+                val name = p?.displayName?.ifBlank { null } ?: p?.username?.ifBlank { null } ?: "Opponent"
+                val chatMsg = when (newStatus) {
+                    "AWAY" -> "$name minimized the app"
+                    "ONLINE" -> if (oldStatus == "AWAY" || oldStatus == "OFFLINE") "$name is back" else null
+                    "OFFLINE" -> "$name disconnected"
+                    else -> null
+                }
+                if (chatMsg != null) {
+                    val alreadyHasMsg = matchChatHistory.any {
+                        it.text == chatMsg && (System.currentTimeMillis() - it.timestamp) < 4000L
+                    }
+                    if (!alreadyHasMsg) {
+                        val sysMsg = InGameChatMessage(
+                            id = System.currentTimeMillis() + (0..1000).random(),
+                            text = chatMsg,
+                            isSelf = false,
+                            senderName = null,
+                            timestamp = System.currentTimeMillis(),
+                            isSystemMessage = true
+                        )
+                        matchChatHistory = matchChatHistory + sysMsg
+                        latestIncomingChatMessage = sysMsg
+                    }
+                }
             }
         }
         val eligible = participants.filter { it.id !in surrenderedPlayerIds }
@@ -3837,10 +3874,12 @@ fun RootNavGraph(
                     }
                     when (packet.readyStatus) {
                         "ONLINE" -> {
+                            val wasAway = isPlayerAway(packet.playerId)
+                            val wasDisconnected = isPlayerDisconnected(packet.playerId)
                             markPlayerOnline(packet.playerId)
                             markPlayerReconnected(packet.playerId)
-                            if (inGame && !isGameOver) {
-                                val msg = "🟢 $name returned"
+                            if (inGame && !isGameOver && (wasAway || wasDisconnected)) {
+                                val msg = "$name is back"
                                 val alreadyHasMsg = matchChatHistory.any {
                                     it.text == msg && (System.currentTimeMillis() - it.timestamp) < 5000L
                                 }
@@ -3861,7 +3900,7 @@ fun RootNavGraph(
                         "AWAY" -> {
                             markPlayerAway(packet.playerId)
                             if (inGame && !isGameOver) {
-                                val msg = "🟡 $name minimized the game"
+                                val msg = "$name minimized the app"
                                 val alreadyHasMsg = matchChatHistory.any {
                                     it.text == msg && (System.currentTimeMillis() - it.timestamp) < 5000L
                                 }
@@ -3882,7 +3921,7 @@ fun RootNavGraph(
                         "OFFLINE" -> {
                             markPlayerDisconnected(packet.playerId)
                             if (inGame && !isGameOver) {
-                                val msg = "🔴 $name disconnected"
+                                val msg = "$name disconnected"
                                 val alreadyHasMsg = matchChatHistory.any {
                                     it.text == msg && (System.currentTimeMillis() - it.timestamp) < 5000L
                                 }
@@ -3923,7 +3962,7 @@ fun RootNavGraph(
                         }
 
                         val leftName = packet.displayName.ifBlank { packet.username.ifBlank { "A player" } }
-                        val leftMsg = if (isHostSender) "👑 $leftName (Host) disconnected (in lobby)" else "🔴 $leftName disconnected (in lobby)"
+                        val leftMsg = "$leftName disconnected"
                         val alreadyHasMsg = matchChatHistory.any { it.text == leftMsg && (System.currentTimeMillis() - it.timestamp) < 5000L }
                         if (!alreadyHasMsg) {
                             val sysMsg = InGameChatMessage(
@@ -4140,7 +4179,7 @@ fun RootNavGraph(
                         }
 
                         val leftName = packet.displayName.ifBlank { packet.username.ifBlank { "A player" } }
-                        val leftMsg = "$leftName disconnected (reconnecting...)"
+                        val leftMsg = "$leftName disconnected"
                         val alreadyHasMsg = matchChatHistory.any { it.text == leftMsg && (System.currentTimeMillis() - it.timestamp) < 5000L }
                         if (!alreadyHasMsg) {
                             val sysMsg = InGameChatMessage(

@@ -24,6 +24,8 @@ internal data class MatchNotice(val text: String, val tone: MatchNoticeTone)
 /** Display-only translation. Stored text, message IDs and match events remain unchanged. */
 internal object MatchStatusPresentation {
     fun notice(raw: String): MatchNotice {
+        // Strip any leading status emoji dots or duplicate dots (e.g. 🟡, 🟢, 🔴, 👑) and trailing extra whitespace
+        val clean = raw.replace(Regex("^[🟡🟢🔴⚪⚫🟠👑\\s]+"), "").trim()
         val text = raw.trim()
         return when {
             text == "Synchronizing match…" -> MatchNotice("🔄 Updating your match…", MatchNoticeTone.INFO)
@@ -32,15 +34,29 @@ internal object MatchStatusPresentation {
             text == "Could not save or synchronize match. Retrying…" -> MatchNotice("🟠 Couldn’t update the match. Retrying…", MatchNoticeTone.WARNING)
             text == "Waiting for the match host to reconnect…" -> MatchNotice("⏳ Waiting for the host to return…", MatchNoticeTone.WARNING)
             text.startsWith("Synchronizing with ") -> MatchNotice("🔄 Updating the match with ${text.removePrefix("Synchronizing with ")}", MatchNoticeTone.INFO)
-            text.endsWith(" reconnected; synchronizing…") -> MatchNotice("🔄 ${text.removeSuffix(" reconnected; synchronizing…")} is back. Updating the match…", MatchNoticeTone.INFO)
-            text.endsWith(" reconnected") -> MatchNotice("🟢 ${text.removeSuffix(" reconnected")} is back!", MatchNoticeTone.SUCCESS)
-            text.endsWith(" online") -> MatchNotice("🟢 ${text.removeSuffix(" online")} is online", MatchNoticeTone.SUCCESS)
+            text.endsWith(" reconnected; synchronizing…") -> MatchNotice("🔄 ${clean.removeSuffix(" reconnected; synchronizing…")} is back. Updating the match…", MatchNoticeTone.INFO)
+            text.endsWith(" reconnected") -> MatchNotice("${clean.removeSuffix(" reconnected")} is back", MatchNoticeTone.SUCCESS)
+            text.endsWith(" is back") || text.endsWith(" returned") -> {
+                val name = clean.removeSuffix(" is back").removeSuffix(" returned").trim()
+                MatchNotice("$name is back", MatchNoticeTone.SUCCESS)
+            }
+            text.endsWith(" online") -> {
+                val name = clean.removeSuffix(" online").trim()
+                MatchNotice("$name is back", MatchNoticeTone.SUCCESS)
+            }
+            text.endsWith(" minimized the app") || text.endsWith(" minimized the game") -> {
+                val name = clean.removeSuffix(" minimized the app").removeSuffix(" minimized the game").trim()
+                MatchNotice("$name minimized the app", MatchNoticeTone.WARNING)
+            }
             text.contains(" disconnected (warning ") && text.endsWith(")") -> MatchNotice(
-                "🔴 ${text.substringBeforeLast(" disconnected (warning ")} disconnected · Warning ${text.substringAfterLast(" disconnected (warning ").dropLast(1)}", MatchNoticeTone.DISCONNECTED)
-            text.endsWith(" disconnected") -> MatchNotice("🔴 $text", MatchNoticeTone.DISCONNECTED)
+                "${clean.substringBeforeLast(" disconnected (warning ")} disconnected · Warning ${text.substringAfterLast(" disconnected (warning ").dropLast(1)}", MatchNoticeTone.DISCONNECTED)
+            text.contains(" disconnected") -> {
+                val name = clean.substringBefore(" disconnected").removeSuffix(" (Host)").removeSuffix(" (in lobby)").trim()
+                MatchNotice("$name disconnected", MatchNoticeTone.DISCONNECTED)
+            }
             text.endsWith(" paused the match.") -> MatchNotice("⏸️ ${text.dropLast(1)}", MatchNoticeTone.WARNING)
             text.endsWith(" resumed the match.") -> MatchNotice("▶️ ${text.dropLast(1)}", MatchNoticeTone.SUCCESS)
-            else -> MatchNotice(raw, MatchNoticeTone.NEUTRAL)
+            else -> MatchNotice(clean, MatchNoticeTone.NEUTRAL)
         }
     }
 }
