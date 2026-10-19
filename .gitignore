@@ -41,9 +41,18 @@ cloudflare_worker/.dev.vars.*
 cloudflare_worker/dist/
 /.wrangler/
 
-# Curated, verified deliverables retained in releases (only APK).
-!/releases/Bingo-1.5.0.apk
-
 # Temporary archive, testing scratch, and simulation evidence
 temp_archive/
-docs/testing/
+
+# Internal reviews, audit reports, fix logs, handover notes, and agent rules
+AGENTS.md
+.gemini/
+GameRules.md
+SimplifiedGameRules.md
+MultiplayerComprehensiveReview.md
+RegressionEvidence.md
+SimplifiedGameRulesComplianceReview.md
+SimplifiedRulesFixLog.md
+SimplifiedRulesFixReport.md
+handover.md
+docs/

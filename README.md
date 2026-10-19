@@ -57,4 +57,3 @@ The signed APK will be generated at `app/build/outputs/apk/release/Bingo.apk` an
 - [`app/`](app/) — Android application source code, Jetpack Compose UI, domain logic, and unit tests.
 - [`releases/`](releases/) — Production-signed release APKs, checksums, and release notes.
 - [`cloudflare_worker/`](cloudflare_worker/) — Protocol-2 authenticated push notification relay.
-- [`docs/`](docs/) — Documentation, architecture notes, and test records.
