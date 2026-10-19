@@ -5,7 +5,6 @@ Modern peer-to-peer and online multiplayer Bingo game for Android, built with Je
 [![Release](https://img.shields.io/badge/Release-v1.0.0-blue.svg)](releases/README.md)
 [![Build](https://img.shields.io/badge/Build-45-green.svg)](releases/Bingo-1.0.0.apk)
 [![Android](https://img.shields.io/badge/Android-7.0%2B-brightgreen.svg)](app/build.gradle)
-[![Archive](https://img.shields.io/badge/Archive-BINGO--Legacy-orange.svg)](https://github.com/VamsiReddyBora/BINGO-Legacy)
 
 ---
 
@@ -15,12 +14,6 @@ Download the production-signed APK directly:
 - **[Bingo-1.0.0.apk](releases/Bingo-1.0.0.apk)** *(~6.90 MB)*
 - **[SHA-256 Checksum](releases/Bingo-1.0.0.apk.sha256)**: `c6c9210a1b50662be0bde70aaf5f408e2501ec2de2bef616748a3989d0f64f00`
 - **[Release Notes & Verification](releases/README.md)** | **[GitHub Release](https://github.com/VamsiReddyBora/BINGO/releases/tag/v1.0.0)**
-
----
-
-### 🏛️ Historical Archive: [BINGO-Legacy](https://github.com/VamsiReddyBora/BINGO-Legacy)
-> Looking for early prototype builds, beta releases, or historical milestone implementations (v1.0 – v1.5 beta)?  
-> All previous iterations are preserved permanently in the companion archive: **[VamsiReddyBora/BINGO-Legacy](https://github.com/VamsiReddyBora/BINGO-Legacy)**.
 
 ---
 

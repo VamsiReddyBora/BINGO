@@ -44,15 +44,8 @@ adb install -r releases/Bingo-1.0.0.apk
 
 ---
 
-### 🏛️ Historical Archive
-
-For early prototype builds, beta releases, and developmental milestones (v1.0 – v1.5 beta), please visit the companion archive repository at **[VamsiReddyBora/BINGO-Legacy](https://github.com/VamsiReddyBora/BINGO-Legacy)**.
-
----
-
 ### Related Links
 
 - [Main Documentation](../README.md)
 - [Official GitHub Repository](https://github.com/VamsiReddyBora/BINGO)
 - [GitHub Releases Page](https://github.com/VamsiReddyBora/BINGO/releases)
-- [Companion Archive Repository](https://github.com/VamsiReddyBora/BINGO-Legacy)
