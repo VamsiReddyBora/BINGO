@@ -1,3 +1,5 @@
+import * as passkeys from "./passkeys.js";
+import { decorate } from "./icons.js";
 import {
   API_BASE,
   statusText,
@@ -150,6 +152,10 @@ function identity(row) {
   );
 }
 function clearSession() {
+  passkeys.cancelVerification();
+  recoveryCodes = [];
+  $("recovery-code-list").replaceChildren();
+  setMenu(false);
   state.generation++;
   state.session = null;
   state.snapshot = null;
@@ -170,12 +176,38 @@ function clearSession() {
   $("player-list").replaceChildren();
   $("inspector-body").replaceChildren();
   $("toasts").replaceChildren();
+  loadSignIn().catch((error) => {
+    $("login-error").textContent = error.message;
+  });
 }
 async function api(
   path,
-  { method = "GET", data, signal, auth = true, operationId } = {},
+  {
+    method = "GET",
+    data,
+    signal,
+    auth = true,
+    operationId,
+    skipVerification = false,
+  } = {},
 ) {
   if (auth && !state.session) throw new Error("Sign in to continue");
+  const mutation = method !== "GET";
+  if (mutation && data === undefined) data = {};
+  if (mutation) operationId ||= crypto.randomUUID();
+  let proof;
+  const session = state.session;
+  if (
+    mutation &&
+    auth &&
+    !skipVerification &&
+    path !== "logout" &&
+    !(path === "auth/register/options" && session.setupRequired)
+  ) {
+    proof = await passkeys.approve(api, path, method, data, operationId);
+    if (state.session !== session)
+      throw new Error("Sign in again before making changes.");
+  }
   const controller = new AbortController();
   state.controllers.add(controller);
   if (signal) {
@@ -191,8 +223,8 @@ async function api(
     if (!state.session) throw new Error("Sign in to continue");
     headers.Authorization = "Bearer " + state.session.token;
   }
-  if (method !== "GET")
-    headers["Idempotency-Key"] = operationId || crypto.randomUUID();
+  if (method !== "GET") headers["Idempotency-Key"] = operationId;
+  if (proof) headers["X-Action-Proof"] = proof;
   try {
     const res = await fetch(API_BASE + "/api/" + path, {
       method,
@@ -211,6 +243,7 @@ async function api(
         result.error || "Admin service could not complete the request",
       );
       error.status = res.status;
+      error.code = result.code;
       throw error;
     }
     return result;
@@ -572,10 +605,20 @@ async function switchTab(tab) {
     b.classList.toggle("active", b.dataset.tab === tab);
     b.setAttribute("aria-current", String(b.dataset.tab === tab));
   }
+  setMenu(false);
+  $("current-section").textContent = {
+    players: "Players",
+    rooms: "Game rooms",
+    announcements: "Announcements",
+    release: "App release",
+    activity: "Audit & sync jobs",
+    settings: "Settings & security",
+  }[tab];
   history.replaceState(null, "", "#" + tab);
   if (tab === "activity") await renderActivity();
   if (tab === "announcements") await renderAnnouncements();
   if (tab === "release") await renderRelease();
+  if (tab === "settings") await renderSecurity();
 }
 async function openPlayer(name) {
   state.readController?.abort();
@@ -1705,9 +1748,7 @@ $("login-form").addEventListener("submit", async (e) => {
       data: { password: $("password").value },
       auth: false,
     });
-    state.session = result;
-    sessionStorage.setItem("bingo_admin_session_v3", JSON.stringify(result));
-    await startConsole();
+    await acceptSession(result);
   } catch (error) {
     $("login-error").textContent =
       error.name === "AbortError"
@@ -1719,6 +1760,10 @@ $("login-form").addEventListener("submit", async (e) => {
 });
 async function startConsole() {
   const result = await api("session");
+  if (result.setupRequired) {
+    showEnrollment();
+    return;
+  }
   $("operator").textContent = result.operator;
   $("login").hidden = true;
   $("console").hidden = false;
@@ -1734,10 +1779,10 @@ $("theme").addEventListener("click", () => {
   const theme =
     document.documentElement.dataset.theme === "dark" ? "light" : "dark";
   document.documentElement.dataset.theme = theme;
-  localStorage.setItem("bingo_admin_theme_v3", theme);
+  localStorage.setItem("bingo_admin_theme_v4", theme);
 });
 document.documentElement.dataset.theme =
-  localStorage.getItem("bingo_admin_theme_v3") || "dark";
+  localStorage.getItem("bingo_admin_theme_v4") || "light";
 for (const button of $("navigation").querySelectorAll("button"))
   button.addEventListener("click", () => switchTab(button.dataset.tab));
 for (const id of [
@@ -1770,7 +1815,7 @@ window.addEventListener("resize", () => {
 });
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") clearTimeout(state.timer);
-  else if (state.session) refresh();
+  else if (state.session && !state.session.setupRequired) refresh();
 });
 $("export").addEventListener("click", () => {
   const list = filtered();
@@ -1874,29 +1919,249 @@ $("password-form").addEventListener("submit", async (e) => {
     });
     clearSession();
     $("login-error").textContent =
-      "Password changed. Sign in again with the new password.";
+      "Recovery password changed. Unlock again with your passkey.";
   } catch (error) {
     toast(error.message, "error");
   }
 });
-try {
-  const saved = JSON.parse(
-    sessionStorage.getItem("bingo_admin_session_v3") || "null",
-  );
-  if (
-    saved &&
-    /^[a-f0-9]{64}$/.test(saved.token) &&
-    saved.expiresAt > Date.now()
-  ) {
-    state.session = saved;
-    startConsole().catch((error) => {
-      clearSession();
-      $("login-error").textContent = error.message;
-    });
-  }
-} catch {
-  sessionStorage.removeItem("bingo_admin_session_v3");
+// A reload always locks the workspace. No bearer token is persisted in browser storage.
+let recoveryCodes = [];
+let signInGeneration = 0;
+function setMenu(open) {
+  $("sidebar").classList.toggle("open", open);
+  $("nav-scrim").hidden = !open;
+  $("menu-button").setAttribute("aria-expanded", String(open));
 }
+$("menu-button").addEventListener("click", () =>
+  setMenu(!$("sidebar").classList.contains("open")),
+);
+$("nav-scrim").addEventListener("click", () => setMenu(false));
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") setMenu(false);
+});
+async function loadSignIn() {
+  const sequence = ++signInGeneration;
+  $("passkey-sign-in").hidden = true;
+  $("login-form").hidden = true;
+  $("enrollment-panel").hidden = true;
+  $("recovery-panel").hidden = true;
+  const info = await api("auth/status", { auth: false });
+  if (sequence !== signInGeneration || state.session) return;
+  if (!passkeys.supported()) {
+    $("login-description").textContent =
+      "Open this page in a browser that supports passkeys, on a device with a screen lock.";
+    return;
+  }
+  $("passkey-sign-in").hidden = !info.configured;
+  $("login-form").hidden = info.configured || info.initialized;
+  $("recovery-panel").hidden = !info.initialized;
+  $("login-description").textContent = info.configured
+    ? "Unlock your workspace with a quick verification on your device."
+    : info.initialized
+      ? "Use a recovery code to restore access to your workspace."
+      : "One-time setup: verify your administrator password, then create a passkey on your own device.";
+}
+function showEnrollment() {
+  signInGeneration++;
+  $("login").hidden = false;
+  $("console").hidden = true;
+  $("login-form").hidden = true;
+  $("passkey-sign-in").hidden = true;
+  $("recovery-panel").hidden = true;
+  $("enrollment-panel").hidden = false;
+  $("login-description").textContent =
+    "Create a passkey to protect your workspace. Your device will ask you to verify it's you.";
+  $("password").value = "";
+}
+async function acceptSession(result) {
+  state.session = {
+    token: result.token,
+    expiresAt: result.expiresAt,
+    operator: result.operator,
+    setupRequired: result.setupRequired,
+  };
+  if (result.setupRequired) showEnrollment();
+  else {
+    await startConsole();
+    if (result.recoveryCodes) showRecoveryCodes(result.recoveryCodes);
+  }
+}
+function showRecoveryCodes(codes) {
+  recoveryCodes = codes;
+  $("recovery-code-list").replaceChildren(
+    ...codes.map((code) => h("code", {}, code)),
+  );
+  if (!$("recovery-codes-dialog").open) $("recovery-codes-dialog").showModal();
+}
+async function loginAction(button, action) {
+  button.disabled = true;
+  $("login-error").textContent = "";
+  try {
+    await action();
+  } catch (error) {
+    $("login-error").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+$("passkey-sign-in").addEventListener("click", (e) =>
+  loginAction(e.currentTarget, async () =>
+    acceptSession(await passkeys.signIn(api)),
+  ),
+);
+$("enroll-passkey").addEventListener("click", (e) =>
+  loginAction(e.currentTarget, async () =>
+    acceptSession(await passkeys.register(api, $("passkey-label").value)),
+  ),
+);
+$("recovery-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const input = Object.fromEntries(new FormData(e.currentTarget));
+  loginAction(e.currentTarget.querySelector("button"), async () => {
+    const result = await api("auth/recover", {
+      method: "POST",
+      auth: false,
+      data: input,
+    });
+    e.target.reset();
+    await acceptSession(result);
+  });
+});
+$("verification-cancel").addEventListener("click", passkeys.cancelVerification);
+$("device-verification").addEventListener("cancel", (e) => {
+  e.preventDefault();
+  passkeys.cancelVerification();
+});
+$("download-recovery-codes").addEventListener("click", () =>
+  saveFile(
+    "Bingo-private-recovery-codes.txt",
+    "text/plain",
+    "Bingo Control recovery codes. Keep private. Each works once, with your recovery password.\n\n" +
+      recoveryCodes.join("\n"),
+  ),
+);
+function hideRecoveryCodes() {
+  recoveryCodes = [];
+  $("recovery-code-list").replaceChildren();
+  $("recovery-codes-dialog").close();
+}
+$("recovery-codes-done").addEventListener("click", hideRecoveryCodes);
+$("recovery-codes-dialog").addEventListener("cancel", (e) => {
+  e.preventDefault();
+  hideRecoveryCodes();
+});
+async function renderSecurity() {
+  const root = $("security-content"),
+    generation = state.generation;
+  root.replaceChildren(
+    h("h2", {}, "Device verification"),
+    h("p", { class: "muted" }, "Loading your registered passkeys…"),
+  );
+  try {
+    const result = await api("auth/passkeys");
+    if (generation !== state.generation) return;
+    root.replaceChildren(
+      h("h2", {}, "Passkeys & recovery"),
+      h(
+        "p",
+        { class: "muted" },
+        "A fresh device approval protects every change. Add a second passkey so you can still get in if you lose a device.",
+      ),
+    );
+    for (const key of result.passkeys)
+      root.append(
+        h(
+          "div",
+          { class: "friend-row" },
+          h(
+            "div",
+            {},
+            h("strong", {}, key.label),
+            h(
+              "p",
+              { class: "muted small" },
+              "Added " +
+                stamp(key.createdAt) +
+                " · Last used " +
+                stamp(key.lastUsedAt),
+            ),
+          ),
+          button(
+            "Remove",
+            async () => {
+              if (
+                !(await confirmAction(
+                  "Remove passkey",
+                  "Remove “" +
+                    key.label +
+                    "”? All admin sessions will be locked.",
+                ))
+              )
+                return;
+              try {
+                await api("auth/passkeys/" + encodeURIComponent(key.id), {
+                  method: "DELETE",
+                });
+                await lock();
+              } catch (error) {
+                toast(error.message, "error");
+              }
+            },
+            "danger",
+            { disabled: result.passkeys.length <= 1 },
+          ),
+        ),
+      );
+    root.append(
+      h(
+        "div",
+        { class: "inline security-actions" },
+        button("Add a backup passkey", async () => {
+          const label = prompt("Name the new passkey", "Backup device");
+          if (label === null) return;
+          try {
+            const result = await passkeys.register(api, label);
+            state.session = {
+              token: result.token,
+              expiresAt: result.expiresAt,
+              operator: result.operator,
+              setupRequired: false,
+            };
+            await renderSecurity();
+            toast("Backup passkey added.", "success");
+          } catch (error) {
+            toast(error.message, "error");
+          }
+        }),
+        button("New recovery codes", async () => {
+          if (
+            !(await confirmAction(
+              "Replace recovery codes",
+              "Previously saved recovery codes will stop working. Download the new codes after approval.",
+            ))
+          )
+            return;
+          try {
+            const result = await api("auth/recovery/rotate", {
+              method: "POST",
+            });
+            showRecoveryCodes(result.recoveryCodes);
+          } catch (error) {
+            toast(error.message, "error");
+          }
+        }),
+      ),
+    );
+  } catch (error) {
+    if (generation === state.generation)
+      root.replaceChildren(h("p", { class: "error" }, error.message));
+  }
+}
+sessionStorage.removeItem("bingo_admin_session_v3");
+decorate();
+loadSignIn().catch((error) => {
+  $("login-error").textContent = error.message;
+});
 
 if ("serviceWorker" in navigator)
   navigator.serviceWorker

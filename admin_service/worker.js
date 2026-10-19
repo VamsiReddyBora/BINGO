@@ -19,24 +19,9 @@ import {
 import { LegacyStore } from "./legacy.js";
 import { brokerTcp } from "./mqtt.js";
 
-const json = (data, status = 200) =>
-  new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      "Content-Type": "application/json",
-      "Cache-Control": "no-store",
-      "X-Content-Type-Options": "nosniff",
-    },
-  });
-async function body(request) {
-  const text = await request.text();
-  requireThat(text.length <= 110000, 413, "Request is too large");
-  try {
-    return JSON.parse(text || "{}");
-  } catch {
-    throw new Problem(400, "Invalid JSON");
-  }
-}
+import { json, readBody as body } from "./http.js";
+import { PasskeySecurity } from "./passkeys.js";
+
 export default {
   async fetch(request, env) {
     const origin = request.headers.get("Origin");
@@ -44,7 +29,7 @@ export default {
       "Access-Control-Allow-Origin": env.ALLOWED_ORIGIN,
       "Access-Control-Allow-Methods": "GET,POST,PATCH,PUT,DELETE,OPTIONS",
       "Access-Control-Allow-Headers":
-        "Authorization,Content-Type,Idempotency-Key",
+        "Authorization,Content-Type,Idempotency-Key,X-Action-Proof",
       "Access-Control-Max-Age": "600",
       Vary: "Origin",
     };
@@ -85,6 +70,7 @@ export class AdminControl {
     this.broker = env.TEST_BROKER || ((args) => brokerTcp(env, args));
     this.mutations = Promise.resolve();
     this.cachedSnapshot = null;
+    this.security = new PasskeySecurity(this);
   }
   async fetch(request) {
     try {
@@ -92,10 +78,20 @@ export class AdminControl {
         path = url.pathname;
       if (path.startsWith("/client/") && request.method === "GET")
         return await this.publicRead(path, url);
+      if (path.startsWith("/api/auth/")) {
+        const task = this.mutations.then(() =>
+          this.security.route(request, path),
+        );
+        this.mutations = task.catch(() => {});
+        return await task;
+      }
       if (path === "/api/login" && request.method === "POST")
         return await this.login(request);
       const session = await this.authenticate(request);
-      if (request.method === "GET") return await this.read(path, url, session);
+      if (request.method === "GET") {
+        if (path !== "/api/session") await this.security.requireStrong(session);
+        return await this.read(path, url, session);
+      }
       const task = this.mutations.then(() =>
         this.mutate(request, path, session),
       );
@@ -104,6 +100,7 @@ export class AdminControl {
     } catch (e) {
       return json(
         {
+          code: e instanceof Problem ? e.code : undefined,
           error:
             e instanceof Problem
               ? e.message
@@ -145,24 +142,52 @@ export class AdminControl {
       401,
       "Invalid administrator credentials",
     );
+    await this.verifyPassword(input.password);
+    requireThat(
+      !(await this.security.keys()).length &&
+        !(await this.storage.get("passkeys-enabled")),
+      403,
+      "Use your passkey to sign in. A password alone cannot unlock the console.",
+    );
+    await this.storage.delete(key);
+    return json(await this.issueSession("setup"));
+  }
+  async verifyPassword(password) {
+    requireThat(
+      typeof password === "string" && password.length <= 200,
+      401,
+      "Invalid administrator credentials",
+    );
     const config = await this.credentials();
-    const hash = await passwordHash(input.password, config.salt);
+    const hash = await passwordHash(password, config.salt);
     requireThat(
       constantEqual(hash, config.hash),
       401,
       "Invalid administrator credentials",
     );
-    const token = randomToken(),
-      expiresAt = now + 12 * 3600000;
+    return config;
+  }
+  async issueSession(authMethod, credentialId = null) {
+    const config = await this.credentials(),
+      now = Date.now(),
+      token = randomToken(),
+      expiresAt = now + (authMethod === "passkey" ? 12 * 3600000 : 300000);
     await this.storage.put("session:" + (await digest(token)), {
       operator: config.operator || "owner",
       createdAt: now,
       lastSeen: now,
       expiresAt,
+      authMethod,
+      credentialId,
     });
-    await this.storage.delete(key);
     await this.storage.setAlarm(now + 60000);
-    return json({ token, expiresAt, operator: config.operator || "owner" });
+    return {
+      token,
+      expiresAt,
+      operator: config.operator || "owner",
+      authMethod,
+      setupRequired: authMethod !== "passkey",
+    };
   }
   async authenticate(request) {
     const value = request.headers.get("Authorization") || "";
@@ -175,7 +200,10 @@ export class AdminControl {
     const session = await this.storage.get(key),
       now = Date.now();
     requireThat(
-      session && session.expiresAt > now && now - session.lastSeen < 1800000,
+      session &&
+        ["passkey", "setup", "recovery"].includes(session.authMethod) &&
+        session.expiresAt > now &&
+        now - session.lastSeen < 1800000,
       401,
       "Admin session expired; sign in again",
     );
@@ -409,7 +437,12 @@ export class AdminControl {
   }
   async read(path, url, session) {
     if (path === "/api/session")
-      return json({ operator: session.operator, expiresAt: session.expiresAt });
+      return json({
+        operator: session.operator,
+        expiresAt: session.expiresAt,
+        authMethod: session.authMethod,
+        setupRequired: session.authMethod !== "passkey",
+      });
     if (path === "/api/players")
       return json(await this.list(url.searchParams.get("fresh") === "1"));
     if (path === "/api/audit") {
@@ -677,6 +710,7 @@ export class AdminControl {
     );
   }
   async mutate(request, path, session) {
+    session = await this.authenticate(request);
     if (path === "/api/logout") {
       await this.storage.delete(session.key);
       return json({ ok: true });
@@ -715,6 +749,7 @@ export class AdminControl {
         );
       }
     }
+    await this.security.guard(request, path, session, input);
     if (path === "/api/password") {
       requireThat(
         typeof input.password === "string" &&
@@ -1080,6 +1115,7 @@ export class AdminControl {
   }
   async runAlarm() {
     const now = Date.now();
+    await this.security.cleanup(now);
     const pending = [
       ...(await this.storage.list({ prefix: "operation:" })).values(),
     ]

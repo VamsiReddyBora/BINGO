@@ -16,7 +16,7 @@ const { chromium } = require(
 const root = path.resolve(import.meta.dirname, "../../admin");
 const evidence =
   process.env.ADMIN_EVIDENCE ||
-  "/home/bob/workspace/bingo-admin-review-20261019/new-console";
+  "/home/bob/workspace/bingo-admin-passkeys-20261019/browser";
 await fs.mkdir(evidence, { recursive: true });
 const server = http.createServer(async (req, res) => {
   try {
@@ -49,7 +49,7 @@ const server = http.createServer(async (req, res) => {
   }
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-const origin = "http://127.0.0.1:" + server.address().port;
+const origin = "http://localhost:" + server.address().port;
 const storage = new MemoryStorage(),
   legacy = new FakeLegacy();
 legacy.players.get("kevin").profile.displayName = "Kevin O'Connor";
@@ -104,12 +104,17 @@ const context = await browser.newContext({
   viewport: { width: 1440, height: 1050 },
   acceptDownloads: true,
 });
+let lastToken,
+  approvedMutations = 0;
 const errors = [],
   results = [];
 await context.route(
   "https://bingo-admin-control.vamsireddy2534.workers.dev/**",
   async (route) => {
     const r = route.request();
+    if (r.headers().authorization)
+      lastToken = r.headers().authorization.slice(7);
+    if (r.headers()["x-action-proof"]) approvedMutations++;
     const response = await worker.fetch(
       new Request(r.url(), {
         method: r.method(),
@@ -129,6 +134,18 @@ await context.route("https://example.test/**", (route) =>
   route.fulfill({ status: 404, body: "" }),
 );
 const page = await context.newPage();
+const cdp = await context.newCDPSession(page);
+await cdp.send("WebAuthn.enable");
+const { authenticatorId } = await cdp.send("WebAuthn.addVirtualAuthenticator", {
+  options: {
+    protocol: "ctap2",
+    transport: "internal",
+    hasResidentKey: true,
+    hasUserVerification: true,
+    isUserVerified: true,
+    automaticPresenceSimulation: true,
+  },
+});
 page.on("pageerror", (e) => errors.push(e.message));
 async function check(name, run) {
   await run();
@@ -138,8 +155,23 @@ async function check(name, run) {
 const visible = (selector) =>
   page.locator(selector).waitFor({ state: "visible" });
 async function login() {
-  await page.locator("#password").fill(password);
-  await page.locator("#sign-in").click();
+  if (!(await control.security.keys()).length) {
+    await page.locator("#password").fill(password);
+    await page.locator("#sign-in").click();
+    await visible("#enrollment-panel");
+    assert.equal(await page.locator("#console").isVisible(), false);
+    await page.locator("#enroll-passkey").click();
+    await visible("#recovery-codes-dialog");
+    assert.equal(await page.locator("#recovery-code-list code").count(), 8);
+    const downloadPromise = page.waitForEvent("download");
+    await page.locator("#download-recovery-codes").click();
+    const download = await downloadPromise;
+    assert.match(
+      await fs.readFile(await download.path(), "utf8"),
+      /[a-f0-9]{8}(?:-[a-f0-9]{8}){3}/,
+    );
+    await page.locator("#recovery-codes-done").click();
+  } else await page.locator("#passkey-sign-in").click();
   await visible("#console");
   await page.waitForFunction(
     () => document.querySelector("#nav-count").textContent === "3",
@@ -154,7 +186,14 @@ async function inspect(name) {
 async function confirm(typed) {
   await visible("#confirmation");
   if (typed) await page.locator("#confirmation-input").fill(typed);
+  const mutation = page.waitForResponse(
+    (r) =>
+      r.url().includes("/api/") &&
+      !r.url().includes("/api/auth/") &&
+      !["GET", "OPTIONS"].includes(r.request().method()),
+  );
   await page.locator("#confirmation-submit").click();
+  await mutation;
   await page.locator("#confirmation").waitFor({ state: "hidden" });
 }
 async function close() {
@@ -173,16 +212,23 @@ try {
       assert.equal(await page.locator("#console").isVisible(), false);
     },
   );
-  await check("Login and live player/status counts", async () => {
-    await login();
-    assert.match(
-      await page.locator("#statistics").innerText(),
-      /Registered players\s+3/,
-    );
-    assert.match(await page.locator("#player-list").innerText(), /Online 1v1/);
-  });
+  await page.screenshot({ path: evidence + "/00-login.png", fullPage: true });
+  await check(
+    "First enrollment, recovery codes, login and live counts",
+    async () => {
+      await login();
+      assert.match(
+        await page.locator("#statistics").innerText(),
+        /Registered players\s+3/,
+      );
+      assert.match(
+        await page.locator("#player-list").innerText(),
+        /Online 1v1/,
+      );
+    },
+  );
   await page.screenshot({
-    path: evidence + "/01-desktop-dark.png",
+    path: evidence + "/01-desktop-light.png",
     fullPage: true,
   });
   await check("Unsafe photo values are not inserted as HTML", async () => {
@@ -413,7 +459,14 @@ try {
       await navigator.serviceWorker.ready;
     });
     await page.reload();
-    await visible("#console");
+    assert.equal(await page.locator("#console").isVisible(), false);
+    assert.equal(
+      await page.evaluate(() =>
+        sessionStorage.getItem("bingo_admin_session_v3"),
+      ),
+      null,
+    );
+    await login();
     assert.ok(
       (await page.evaluate(() => caches.keys())).includes("bingo-game-fixture"),
     );
@@ -428,16 +481,16 @@ try {
       true,
     );
     await page.screenshot({
-      path: evidence + "/02-mobile-dark.png",
+      path: evidence + "/02-mobile-light.png",
       fullPage: true,
     });
   });
-  await check("Light theme and mobile inspector render", async () => {
+  await check("Dark theme and mobile inspector render", async () => {
     await page.locator("#theme").click();
     await inspect("bob");
     assert.equal(
       await page.evaluate(() => document.documentElement.dataset.theme),
-      "light",
+      "dark",
     );
     assert.equal(
       await page.evaluate(
@@ -448,11 +501,60 @@ try {
       true,
     );
     await page.screenshot({
-      path: evidence + "/03-mobile-inspector-light.png",
+      path: evidence + "/03-mobile-inspector-dark.png",
       fullPage: true,
     });
     await close();
   });
+  await check("Cancelled device approval makes no profile change", async () => {
+    await inspect("bob");
+    const before = legacy.writes.length;
+    await page
+      .locator("#inspector-body input[name=displayName]")
+      .fill("CANCELLED EDIT");
+    await cdp.send("WebAuthn.setAutomaticPresenceSimulation", {
+      authenticatorId,
+      enabled: false,
+    });
+    await page.getByRole("button", { name: "Save profile & stats" }).click();
+    await page.locator("#confirmation-submit").click();
+    await visible("#device-verification");
+    await page.locator("#verification-cancel").click();
+    await page.waitForFunction(() =>
+      document.querySelector("#toasts").textContent.includes("cancelled"),
+    );
+    assert.equal(legacy.writes.length, before);
+    assert.equal(legacy.players.get("bob").profile.displayName, "bob");
+    await cdp.send("WebAuthn.setAutomaticPresenceSimulation", {
+      authenticatorId,
+      enabled: true,
+    });
+    await close();
+  });
+  await check(
+    "Mobile navigation and registered passkeys settings work",
+    async () => {
+      await page.locator("#menu-button").click();
+      await page.locator("#navigation button[data-tab=settings]").click();
+      await page
+        .getByRole("button", { name: "Add a backup passkey" })
+        .waitFor();
+      assert.equal(
+        await page.locator("#security-content .friend-row").count(),
+        1,
+      );
+      assert.equal(
+        await page.locator("#security-content .friend-row button").isDisabled(),
+        true,
+      );
+      assert.equal(
+        await page.locator("#menu-button").getAttribute("aria-expanded"),
+        "false",
+      );
+      await page.locator("#menu-button").click();
+      await page.locator("#navigation button[data-tab=players]").click();
+    },
+  );
   await check(
     "Typed deletion removes player from live directory and detail",
     async () => {
@@ -472,9 +574,7 @@ try {
   await check(
     "Lock clears player data and invalidates server session",
     async () => {
-      const saved = await page.evaluate(() =>
-        JSON.parse(sessionStorage.getItem("bingo_admin_session_v3")),
-      );
+      const saved = { token: lastToken };
       await page.locator("#lock").click();
       await visible("#login");
       assert.equal(await page.locator("#player-list").innerText(), "");
@@ -485,6 +585,10 @@ try {
       );
       assert.equal(response.status, 401);
     },
+  );
+  assert.ok(
+    approvedMutations >= 8,
+    "Every write uses a fresh server-issued approval",
   );
   assert.deepEqual(errors, []);
   results.push({

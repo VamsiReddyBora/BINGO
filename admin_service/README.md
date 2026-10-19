@@ -2,6 +2,10 @@
 
 The console lives in `../admin/` and is published at https://vamsireddybora.github.io/BINGO/admin/. Its authenticated service is `bingo-admin-control`; it is separate from the existing notification relay. Gameplay picks, turn timing, match recovery and winner selection do not go through this service.
 
+## Device-verified access
+
+The redesigned console uses passkeys for sign-in and a fresh, server-checked device approval for every write. The existing admin password is used only for first-time enrollment or together with a saved recovery code. See [PASSKEYS.md](PASSKEYS.md) for owner setup, security behavior, executed checks and rollback instructions. A device may use fingerprint, face verification or its screen-lock PIN.
+
 ## Owner controls
 
 - Verified player directory; live MQTT presence, detailed activity, room, observation age, app version and provider. Missing observations are **Unknown**, not an invented offline/online result.

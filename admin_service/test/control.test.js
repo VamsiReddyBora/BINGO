@@ -22,6 +22,8 @@ import { toValue, fromValue } from "../legacy.js";
 
 import { MemoryStorage, FakeLegacy } from "./fixtures.js";
 
+import {TestAuthenticator,enroll,authorize} from "./authenticator.js";
+
 const base = "https://admin.example.test";
 const password = "fixture-only-password-12345";
 async function fixture() {
@@ -53,11 +55,16 @@ async function fixture() {
     },
   };
   const control = new AdminControl({ storage }, env);
+  const authenticator=new TestAuthenticator(env.ALLOWED_ORIGIN);
   let token = "";
   async function request(path, method = "GET", data, extra = {}) {
     const headers = { ...extra };
     if (token) headers.Authorization = "Bearer " + token;
     if (data !== undefined) headers["Content-Type"] = "application/json";
+    if(token&&method!=="GET"&&!path.startsWith("/api/auth/")&&!['/api/login','/api/logout'].includes(path)){
+      headers['Idempotency-Key'] ||=crypto.randomUUID();
+      headers['X-Action-Proof']=await authorize(control,token,authenticator,path,method,data||{},headers['Idempotency-Key']);
+    }
     return control.fetch(
       new Request(base + path, {
         method,
@@ -68,6 +75,7 @@ async function fixture() {
   }
   const login = await request("/api/login", "POST", { password });
   token = (await login.json()).token;
+  token=(await enroll(control,token,authenticator)).token;
   return {
     control,
     storage,
@@ -78,6 +86,7 @@ async function fixture() {
       return token;
     },
     sent,
+    authenticator,
   };
 }
 async function detail(f, n = "kevin") {
@@ -522,7 +531,7 @@ test("password rotation invalidates every previous admin session", async () => {
         password: "new-fixture-password-123456",
       })
     ).status,
-    200,
+    403,
   );
 });
 test("new player registration rejects a removed identity", async () => {

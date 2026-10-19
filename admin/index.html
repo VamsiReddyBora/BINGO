@@ -1,12 +1,12 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
   <head>
     <meta charset="utf-8" />
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1, viewport-fit=cover"
     />
-    <meta name="theme-color" content="#090b10" />
+    <meta name="theme-color" content="#f6f8fa" />
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' https://bingo-admin-control.vamsireddy2534.workers.dev; img-src 'self' data: blob: https:; object-src 'none'; base-uri 'none'; form-action 'self'"
@@ -19,63 +19,174 @@
   </head>
   <body>
     <section id="login" class="login-shell">
-      <form id="login-form" class="login-card">
-        <div class="brand-mark">B</div>
-        <p class="eyebrow">BINGO CONTROL</p>
-        <h1>Your players.<br />Your control room.</h1>
-        <p class="muted">
-          Secure access to player accounts, live status and game statistics.
-        </p>
-        <label for="password">Administrator password</label>
-        <input
-          id="password"
-          name="password"
-          type="password"
-          autocomplete="current-password"
-          required
-          maxlength="200"
-        />
-        <p id="login-error" class="error" role="alert"></p>
-        <button id="sign-in" class="primary" type="submit">
-          Sign in to console <span aria-hidden="true">→</span>
-        </button>
-        <p class="small muted">
-          Sessions expire after inactivity. Your password is verified by the
-          admin service.
-        </p>
-      </form>
-    </section>
-    <div id="console" hidden>
-      <header class="topbar">
+      <div class="login-story">
         <a class="brand" href="#players"
           ><span class="brand-mark">B</span
-          ><span
-            >BINGO <strong>CONTROL</strong
-            ><small>PLAYER ADMINISTRATION</small></span
-          ></a
+          ><span>Bingo<small>CONTROL CENTER</small></span></a
         >
+        <div class="story-content">
+          <p class="eyebrow">THE BIGGER PICTURE</p>
+          <h1>Your game.<br />A clearer picture.</h1>
+          <p>
+            A single place to look after your players,<br />your community and
+            every game in between.
+          </p>
+          <div class="bingo-art" aria-hidden="true">
+            <span>08</span><span>21</span><span>03</span><span>17</span
+            ><span>12</span><span>14</span><span>06</span><span>24</span
+            ><span>09</span><span>02</span><span>19</span><span>04</span
+            ><span>★</span><span>11</span><span>23</span><span>05</span
+            ><span>16</span><span>10</span><span>07</span><span>20</span
+            ><span>25</span><span>13</span><span>22</span><span>18</span
+            ><span>15</span>
+          </div>
+        </div>
+        <div class="story-footer">
+          <span data-icon="shield"></span> Private workspace · Device-verified
+          access
+        </div>
+      </div>
+      <div class="login-card">
+        <div class="login-symbol" data-icon="fingerprint"></div>
+        <p class="eyebrow">WELCOME TO BINGO CONTROL</p>
+        <h1>Good to see you.</h1>
+        <p class="muted" id="login-description">Checking secure sign-in…</p>
+        <button id="passkey-sign-in" class="primary" hidden>
+          <span data-icon="fingerprint"></span> Unlock with passkey
+          <span data-icon="arrow"></span>
+        </button>
+        <form id="login-form" hidden>
+          <label for="password">Administrator password</label
+          ><input
+            id="password"
+            name="password"
+            type="password"
+            autocomplete="current-password"
+            required
+            maxlength="200"
+          />
+          <button id="sign-in" class="primary" type="submit">
+            Continue to passkey setup <span data-icon="arrow"></span>
+          </button>
+        </form>
+        <div id="enrollment-panel" hidden>
+          <label for="passkey-label">Name this passkey</label
+          ><input
+            id="passkey-label"
+            value="My device"
+            maxlength="60"
+            autocomplete="off"
+          /><button id="enroll-passkey" class="primary">
+            <span data-icon="fingerprint"></span> Create my passkey
+          </button>
+        </div>
+        <details id="recovery-panel" hidden>
+          <summary>Lost access to your passkey?</summary>
+          <p class="muted small">
+            Use your recovery password and one saved recovery code to register a
+            replacement. This revokes old passkeys.
+          </p>
+          <form id="recovery-form">
+            <label
+              >Recovery password<input
+                name="password"
+                type="password"
+                autocomplete="current-password"
+                required
+                maxlength="200" /></label
+            ><label
+              >Recovery code<input
+                name="code"
+                autocomplete="off"
+                spellcheck="false"
+                required
+                maxlength="50" /></label
+            ><button type="submit">Recover access</button>
+          </form>
+        </details>
+        <p id="login-error" class="error" role="alert"></p>
+        <p class="login-footnote">
+          <span data-icon="lock"></span> Your device verifies it's you using a
+          fingerprint, face or screen-lock PIN. Biometric data stays on your
+          device.
+        </p>
+      </div>
+    </section>
+    <div id="console" hidden>
+      <aside id="sidebar" class="sidebar">
+        <a class="brand" href="#players"
+          ><span class="brand-mark">B</span
+          ><span>Bingo<small>Control center</small></span></a
+        >
+        <p class="nav-label">WORKSPACE</p>
+        <nav id="navigation" aria-label="Admin sections">
+          <button data-tab="players" class="active">
+            <span data-icon="players"></span>Players
+            <span id="nav-count" class="count">—</span>
+          </button>
+          <button data-tab="rooms">
+            <span data-icon="rooms"></span>Game rooms
+          </button>
+          <button data-tab="announcements">
+            <span data-icon="announcements"></span>Announcements
+          </button>
+          <button data-tab="release">
+            <span data-icon="release"></span>App release
+          </button>
+          <span class="nav-label">ADMINISTRATION</span>
+          <button data-tab="activity">
+            <span data-icon="activity"></span>Audit & sync jobs
+          </button>
+          <button data-tab="settings">
+            <span data-icon="settings"></span>Settings & security
+          </button>
+        </nav>
+        <div class="sidebar-bottom">
+          <span class="security-dot" data-icon="shield"></span>
+          <div>
+            <strong>Passkey protected</strong
+            ><small>Verification for every change</small>
+          </div>
+        </div>
+      </aside>
+      <button id="nav-scrim" aria-label="Close navigation" hidden></button>
+      <header class="topbar">
+        <div class="inline">
+          <button
+            id="menu-button"
+            class="icon-button"
+            aria-label="Open navigation"
+            aria-expanded="false"
+            aria-controls="sidebar"
+          >
+            <span data-icon="menu"></span></button
+          ><span class="breadcrumb"
+            >Workspace <span>/</span>
+            <strong id="current-section">Players</strong></span
+          >
+        </div>
         <div class="header-actions">
           <span id="connection" class="connection">Connecting…</span
-          ><button id="refresh" title="Refresh player data">
-            ↻ <span class="desktop-label">Refresh</span></button
+          ><button
+            id="refresh"
+            title="Refresh player data"
+            class="icon-button"
+            aria-label="Refresh player data"
+          >
+            <span data-icon="refresh"></span></button
           ><button
             id="theme"
+            class="icon-button"
             title="Switch light or dark theme"
             aria-label="Switch theme"
           >
-            ◐</button
-          ><button id="lock">Lock</button>
+            <span data-icon="moon"></span></button
+          ><button id="lock">
+            <span data-icon="lock"></span
+            ><span class="desktop-label">Lock console</span>
+          </button>
         </div>
       </header>
-      <nav id="navigation" aria-label="Admin sections">
-        <button data-tab="players" class="active">
-          Players <span id="nav-count" class="count">—</span></button
-        ><button data-tab="rooms">Rooms</button
-        ><button data-tab="announcements">Announcements</button
-        ><button data-tab="release">App release</button
-        ><button data-tab="activity">Audit & sync jobs</button
-        ><button data-tab="settings">Settings</button>
-      </nav>
       <main>
         <div
           id="data-warning"
@@ -86,13 +197,15 @@
         <section id="tab-players" class="tab-panel">
           <div class="section-heading">
             <div>
-              <p class="eyebrow">DIRECTORY</p>
-              <h1>Players at a glance</h1>
+              <p class="eyebrow">YOUR COMMUNITY, AT A GLANCE</p>
+              <h1>Players overview<span class="heading-dot">.</span></h1>
               <p id="last-sync" class="muted small">
                 Waiting for a verified directory snapshot.
               </p>
             </div>
-            <button id="add-player">+ Register player record</button>
+            <button id="add-player" class="primary">
+              + Register player record
+            </button>
           </div>
           <div id="statistics" class="statistics"></div>
           <div class="toolbar panel">
@@ -215,6 +328,10 @@
               <h1>Console settings</h1>
             </div>
           </div>
+          <div
+            id="security-content"
+            class="panel settings security-settings"
+          ></div>
           <div class="panel settings">
             <label
               >Refresh interval<select id="refresh-interval">
@@ -229,7 +346,11 @@
             </p>
             <hr />
             <form id="password-form">
-              <h2>Change admin password</h2>
+              <h2>Recovery password</h2>
+              <p class="muted small">
+                Used with a saved recovery code if you lose your passkeys. This
+                password alone cannot unlock the console.
+              </p>
               <label
                 >New password<input
                   name="password"
@@ -308,7 +429,7 @@
         <div class="dialog-actions">
           <button id="confirmation-cancel" type="button">Cancel</button
           ><button id="confirmation-submit" class="danger" type="submit">
-            Confirm
+            Verify & confirm
           </button>
         </div>
       </form>
@@ -349,6 +470,42 @@
           ><button type="submit" class="primary">Register record</button>
         </div>
       </form>
+    </dialog>
+    <dialog
+      id="device-verification"
+      class="confirmation verification-dialog"
+      aria-labelledby="verification-title"
+    >
+      <div class="verification-symbol" data-icon="fingerprint"></div>
+      <p class="eyebrow">DEVICE VERIFICATION</p>
+      <h2 id="verification-title">Confirm it's you</h2>
+      <p id="verification-action"></p>
+      <p class="muted small">
+        Complete the prompt on your device. Each approval authorizes this action
+        once.
+      </p>
+      <button id="verification-cancel" type="button">
+        Cancel verification
+      </button>
+    </dialog>
+    <dialog
+      id="recovery-codes-dialog"
+      class="confirmation"
+      aria-labelledby="recovery-title"
+    >
+      <p class="eyebrow">KEEP THESE SAFE</p>
+      <h2 id="recovery-title">Your recovery codes</h2>
+      <p class="muted">
+        Save these somewhere private, away from this device. Each code works
+        once, together with your recovery password.
+      </p>
+      <div id="recovery-code-list" class="recovery-code-list"></div>
+      <div class="dialog-actions">
+        <button id="download-recovery-codes">Download codes</button
+        ><button id="recovery-codes-done" class="primary">
+          I've saved them
+        </button>
+      </div>
     </dialog>
     <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
   </body>

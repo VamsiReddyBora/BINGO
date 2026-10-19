@@ -4,6 +4,7 @@ compatibility_date = "2026-10-01"
 
 [vars]
 ALLOWED_ORIGIN = "https://vamsireddybora.github.io"
+PASSKEY_RP_ID = "vamsireddybora.github.io"
 PUBLIC_URL = "https://bingo-admin-control.vamsireddy2534.workers.dev"
 LEGACY_API_URL = "https://keyvalue.immanuel.co/api/KeyVal"
 LEGACY_APP_KEY = "2464j24f"
