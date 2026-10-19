@@ -1,14 +1,14 @@
 {
   "id": "/BINGO/admin/",
-  "name": "Bingo Server",
-  "short_name": "Bingo Server",
-  "description": "Bingo Multiplayer Server Administration & Operator Console",
+  "name": "Bingo Control",
+  "short_name": "Bingo Control",
+  "description": "Player administration with device-verified access",
   "start_url": "/BINGO/admin/",
   "scope": "/BINGO/admin/",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#000000",
-  "theme_color": "#000000",
+  "background_color": "#f6f8fa",
+  "theme_color": "#128362",
   "icons": [
     {
       "src": "/BINGO/admin/icon-192.png",
