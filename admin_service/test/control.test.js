@@ -565,3 +565,23 @@ test("a malformed old photo falls back without hiding an otherwise valid player 
   );
   assert.equal(rasterPhoto("not a photo"), null);
 });
+
+test("removed UID cannot reappear under an older username alias", async () => {
+  const f = await fixture(),
+    p = await detail(f);
+  const alias = structuredClone(f.legacy.players.get("kevin"));
+  alias.username = "older_name";
+  alias.profile.username = "older_name";
+  f.legacy.players.set("older_name", alias);
+  f.legacy.failWrite = true;
+  await f.request("/api/players/kevin", "DELETE", {
+    ...identity(p),
+    confirm: "kevin",
+  });
+  assert.equal((await f.request("/api/players/older_name")).status, 410);
+  const response = await (await f.request("/api/players?fresh=1")).json();
+  assert.equal(
+    response.players.some((p) => p.username === "older_name"),
+    false,
+  );
+});

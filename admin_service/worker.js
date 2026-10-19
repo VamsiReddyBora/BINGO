@@ -267,6 +267,13 @@ export class AdminControl {
         if (!cached) throw e;
         raw = { ...cached, stale: true, error: "Profile source unavailable" };
       }
+    requireThat(
+      !(await this.policies()).some(
+        (p) => p.deleted && p.uid && p.uid === raw.profile.uid,
+      ),
+      410,
+      "Player identity has been removed",
+    );
     const profile = applyPolicy(raw.profile, policy);
     const etag = await digest(
       JSON.stringify({
@@ -350,7 +357,8 @@ export class AdminControl {
           fetchedAt: row.fetchedAt,
           presence: p,
         };
-      } catch {
+      } catch (error) {
+        if (error.status === 410) return null;
         return {
           username: name,
           profile: { username: name, displayName: name },
@@ -386,14 +394,15 @@ export class AdminControl {
         return [];
       }
     });
+    const visibleRows = rows.filter(Boolean);
     this.cachedSnapshot = {
-      players: rows,
+      players: visibleRows,
       rooms,
       fetchedAt: Date.now(),
       presenceConnected: broker.connected,
       presenceError: broker.error || null,
       directoryVerified: true,
-      total: rows.length,
+      total: visibleRows.length,
       removedAccounts: deleted.size,
     };
     return this.cachedSnapshot;
