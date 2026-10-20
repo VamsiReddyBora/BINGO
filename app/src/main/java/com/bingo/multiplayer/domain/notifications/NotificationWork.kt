@@ -25,7 +25,8 @@ object NotificationWork {
         enqueue(context, "sync:${account.generation}:$eventId", "sync", account, urgent = eventId != "poll")
     fun send(context: Context, account: NotificationAccount, payload: JSONObject): Boolean = enqueue(context,
         "send:${account.generation}:${payload.getString("toUsername")}:${payload.getString("id")}", "send", account,
-        workDataOf("payload" to payload.toString(), "expiresAt" to payload.getLong("expiresAt")))
+        workDataOf("payload" to payload.toString(), "expiresAt" to payload.getLong("expiresAt")),
+        urgent = payload.optString("kind") == "GAME_INVITE" && android.os.Build.VERSION.SDK_INT >= 31)
     fun acknowledge(context: Context, account: NotificationAccount, event: NotificationEvent) = enqueue(context,
         "ack:${account.generation}:${event.id}", "ack", account, workDataOf("eventId" to event.id))
     fun revoke(context: Context, registration: String, secret: String) = enqueue(context, "revoke:$registration", "revoke", null,
@@ -64,19 +65,31 @@ class NotificationWorker(context: Context, params: WorkerParameters) : Coroutine
                 "send" -> {
                     val payloadObj = JSONObject(inputData.getString("payload")!!)
                     val roomCode = payloadObj.optString("roomCode").trim().uppercase()
-                    if (roomCode.isNotBlank()) {
+                    if (payloadObj.optString("kind") == "GAME_INVITE" && roomCode.isNotBlank()) {
                         val hostP = com.bingo.multiplayer.domain.model.Player(
                             id = account!!.uid,
                             displayName = account.username,
                             username = account.username,
                             isHost = true
                         )
-                        val mirrorResult = com.bingo.multiplayer.domain.network.OnlineRoomRegistry.ensureInvitationReadinessDetailed(roomCode, hostP, allowCreation = false)
-                        when (mirrorResult) {
-                            is com.bingo.multiplayer.domain.network.InvitationReadinessResult.Rejected -> return Result.failure()
-                            is com.bingo.multiplayer.domain.network.InvitationReadinessResult.MirrorPending -> return Result.retry()
-                            is com.bingo.multiplayer.domain.network.InvitationReadinessResult.TransientUnavailable -> return Result.retry()
-                            is com.bingo.multiplayer.domain.network.InvitationReadinessResult.Ready -> { /* proceed */ }
+                        // Preserve the original event identity and expiry when retrying both channels.
+                        val invite = com.bingo.multiplayer.domain.network.GameInvite(
+                            fromUsername = account.username,
+                            fromDisplayName = NotificationRuntime.profile(applicationContext)?.displayName ?: account.username,
+                            roomCode = roomCode, timestamp = payloadObj.getLong("createdAt"),
+                            eventId = payloadObj.getString("id"), recipientUsername = payloadObj.getString("toUsername"),
+                            senderUid = account.uid, expiresAt = payloadObj.getLong("expiresAt")
+                        )
+                        val delivery = com.bingo.multiplayer.domain.network.GameInviteManager.dispatchInviteAttempt(
+                            readiness = { com.bingo.multiplayer.domain.network.OnlineRoomRegistry.ensureInvitationReadinessDetailed(roomCode, hostP, allowCreation = false) },
+                            isCurrent = { NotificationRuntime.account(applicationContext) == account && invite.expiresAt > System.currentTimeMillis() },
+                            publishPeer = { com.bingo.multiplayer.domain.network.GameInviteManager.publishMqttInvite(invite.recipientUsername, invite) },
+                            registerEvent = { NotificationApi.call(applicationContext, account, "/v2/events", payloadObj) }
+                        )
+                        return when (delivery) {
+                            com.bingo.multiplayer.domain.network.InviteDeliveryAttempt.REGISTERED -> Result.success()
+                            com.bingo.multiplayer.domain.network.InviteDeliveryAttempt.RETRY -> Result.retry()
+                            com.bingo.multiplayer.domain.network.InviteDeliveryAttempt.REJECTED -> Result.failure()
                         }
                     }
                     NotificationApi.call(applicationContext, account!!, "/v2/events", payloadObj)

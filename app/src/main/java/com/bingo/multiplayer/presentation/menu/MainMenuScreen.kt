@@ -269,12 +269,6 @@ fun MainMenuScreen(
                     }
                     val pingText = displayedPingText
 
-                    val displayedText = if (displayedPingLabel.isNotBlank() && displayedPingLabel != "Unknown" && displayedPingLabel != "Ping") {
-                        "$displayedPingLabel $pingText"
-                    } else {
-                        pingText
-                    }
-
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
@@ -287,7 +281,7 @@ fun MainMenuScreen(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = displayedText,
+                            text = pingText,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Bold,
                             color = pingColor

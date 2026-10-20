@@ -149,6 +149,8 @@ object OnlineRoomRegistry {
     var simulatedHttpException: Exception? = null
     @androidx.annotation.VisibleForTesting
     var simulatedMqttSession: OnlineRoomSession? = null
+    @androidx.annotation.VisibleForTesting
+    internal var roomMetaPublisherOverride: (suspend (OnlineRoomSession) -> Boolean)? = null
 
     private fun getPrefs(): android.content.SharedPreferences? {
         if (customPrefs != null) return customPrefs
@@ -413,6 +415,7 @@ object OnlineRoomRegistry {
      */
     private suspend fun publishRoomMetaMqtt(session: OnlineRoomSession): Boolean {
         currentCoroutineContext().ensureActive()
+        roomMetaPublisherOverride?.let { return it(session) }
         val activeSync = OnlineRoomSyncManager.activeInstance
         if (activeSync != null && activeSync.isConnected) {
             val ok = activeSync.publishRetainedRoomMetaAwaited(session)
@@ -694,8 +697,10 @@ object OnlineRoomRegistry {
             val ready = room ?: return@withContext InvitationReadinessResult.Rejected("Room does not exist")
             if (ready.status != "WAITING" || ready.isTerminalClosed || ready.hostId != hostPlayer.id)
                 return@withContext InvitationReadinessResult.Rejected("Room is closed, already started or owned by another host")
-            return@withContext if (publishRoomMetaMqtt(ready)) InvitationReadinessResult.Ready
-                else InvitationReadinessResult.TransientUnavailable("MQTT room publication is unavailable")
+            // A verified canonical record is already discoverable by invitation recipients.
+            // Requiring a second MQTT metadata publication here can indefinitely block push
+            // and inbox delivery despite a healthy, committed room.
+            return@withContext InvitationReadinessResult.Ready
         }
         if (terminallyClosedRooms.contains(cleanCode) || hasPendingClosure(cleanCode) || isRoomClosedHttpCancellable(cleanCode, 350L)) {
             return@withContext InvitationReadinessResult.Rejected("Room is terminally closed")
@@ -930,7 +935,10 @@ object OnlineRoomRegistry {
             }
             if (result !is MutationResult.Applied) return@withContext false
             rememberCanonicalRoom(result.session)
-            return@withContext publishRoomMetaMqtt(result.session)
+            // The conditional commit establishes discovery. Keep the retained MQTT mirror
+            // as a compatibility aid without making it a second room-creation requirement.
+            publishRoomMetaMqtt(result.session)
+            return@withContext true
         }
         if (terminallyClosedRooms.contains(cleanCode) || hasPendingClosure(cleanCode) || isRoomClosedHttpCancellable(cleanCode, 350L)) {
             return@withContext false

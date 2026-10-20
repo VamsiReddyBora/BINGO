@@ -2309,12 +2309,12 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             // ── App Version & In-App Updates (Always Last on Settings Page) ──
-            val appVersionName = remember {
+            val appVersionLabel = remember(context) {
                 try {
                     val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-                    pInfo.versionName ?: "1.4"
+                    "Version ${pInfo.versionName ?: "unknown"} · Build ${androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(pInfo)}"
                 } catch (e: Exception) {
-                    "1.4"
+                    "Version unavailable"
                 }
             }
             val updateState by AppUpdateManager.updateState.collectAsState()
@@ -2324,7 +2324,7 @@ fun SettingsScreen(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = "Version $appVersionName",
+                    text = appVersionLabel,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
                     color = tokens.textMuted

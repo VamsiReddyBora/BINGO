@@ -16,6 +16,11 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
+import java.util.concurrent.TimeUnit
+
+// A cold migration may read legacy metadata and its closure marker (8 seconds each).
+// Canonical records return directly; this budget does not affect MQTT gameplay traffic.
+private const val ROOM_METADATA_REQUEST_TIMEOUT_MS = 20_000L
 
 sealed interface RoomMetadataCommit {
     data class Applied(val room: OnlineRoomSession) : RoomMetadataCommit
@@ -102,7 +107,7 @@ internal class HttpRoomMetadataTransport(
 
     override suspend fun read(code: String): Result<OnlineRoomSession?> = withContext(Dispatchers.IO) {
         try {
-            val result = withTimeoutOrNull(6000L) { request(code) }
+            val result = withTimeoutOrNull(ROOM_METADATA_REQUEST_TIMEOUT_MS) { request(code) }
                 ?: return@withContext Result.failure(IOException("Room metadata read timed out"))
             if (result.first != 200) Result.failure(IOException(result.second.error ?: "Room metadata HTTP ${result.first}"))
             else Result.success(decode(result.second))
@@ -113,11 +118,11 @@ internal class HttpRoomMetadataTransport(
     override suspend fun commit(code: String, base: OnlineRoomSession?, next: OnlineRoomSession): RoomMetadataCommit = withContext(Dispatchers.IO) {
         try {
             val commit = Commit(base?.revision ?: 0L, base?.currentSeed?.toString(), json.encodeToString(next))
-            var result = withTimeoutOrNull(8000L) { request(code, commit) }
+            var result = withTimeoutOrNull(ROOM_METADATA_REQUEST_TIMEOUT_MS) { request(code, commit) }
                 ?: return@withContext reconcileUncertainCommit(code, next, IOException("Room metadata commit timed out"))
             if (result.first == 401) {
                 invalidateAuthorization()
-                result = withTimeoutOrNull(8000L) { request(code, commit) }
+                result = withTimeoutOrNull(ROOM_METADATA_REQUEST_TIMEOUT_MS) { request(code, commit) }
                     ?: return@withContext RoomMetadataCommit.Unavailable(IOException("Room authorization refresh timed out"))
             }
             when (result.first) {
@@ -147,7 +152,8 @@ internal object RoomMetadataApi {
         NotificationRuntime.account(it) != null
     } == true
     private fun transport(): RoomMetadataTransport = transportOverride ?: HttpRoomMetadataTransport(
-        OnlineRoomRegistry.client, NetworkConfig.FCM_RELAY_URL.removeSuffix("/send"), invalidateAuthorization = {
+        OnlineRoomRegistry.client.newBuilder().readTimeout(20, TimeUnit.SECONDS).build(),
+        NetworkConfig.FCM_RELAY_URL.removeSuffix("/send"), invalidateAuthorization = {
             NotificationRuntime.context()?.let { context ->
                 NotificationRuntime.account(context)?.let { NotificationAccountStore.get(context).forgetSession(it) }
             }

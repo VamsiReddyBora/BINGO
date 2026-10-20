@@ -43,6 +43,8 @@ enum class InviteSendResult(val message: String) {
     SENT("Invitation sent."), FAILED("Could not queue invitation. Please try again.")
 }
 
+internal enum class InviteDeliveryAttempt { REGISTERED, RETRY, REJECTED }
+
 object GameInviteManager {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true; encodeDefaults = true }
     private val BROKER_URL = NetworkConfig.BROKER_URL
@@ -61,55 +63,49 @@ object GameInviteManager {
 
         // 0. Ensure cloud room is registered before sending invite
         val cleanRoom = invite.roomCode.trim().uppercase()
-        var isMirrorPending = false
-        var isTransientUnavailable = false
-        if (cleanRoom.isNotBlank()) {
-            val hostP = com.bingo.multiplayer.domain.model.Player(
-                id = account.uid,
-                displayName = invite.fromDisplayName.ifBlank { account.username },
-                username = account.username,
-                isHost = true
-            )
-            val readiness = OnlineRoomRegistry.ensureInvitationReadinessDetailed(cleanRoom, hostP)
-            when (readiness) {
-                is com.bingo.multiplayer.domain.network.InvitationReadinessResult.Rejected -> {
-                    Log.w("GameInviteManager", "Room $cleanRoom readiness failed: ${readiness.reason}; aborting invitation dispatch")
-                    return@withContext InviteSendResult.FAILED
-                }
-                is com.bingo.multiplayer.domain.network.InvitationReadinessResult.MirrorPending -> {
-                    isMirrorPending = true
-                }
-                is com.bingo.multiplayer.domain.network.InvitationReadinessResult.TransientUnavailable -> {
-                    isTransientUnavailable = true
-                }
-                is com.bingo.multiplayer.domain.network.InvitationReadinessResult.Ready -> {
-                    isMirrorPending = false
-                }
-            }
-        }
-
-        // 1. Dispatch real-time MQTT invite ONLY if room is discoverable (Ready or MirrorPending).
-        // Defer peer dispatch when readiness is TransientUnavailable until room publication is confirmed.
-        if (!isTransientUnavailable) {
-            publishMqttInvite(clean, invite.copy(fromAvatarUrl = null, recipientUsername = clean, senderUid = account.uid))
-        }
-
-        // 2. Also register with notification service for push / offline delivery
+        if (cleanRoom.isBlank() || invite.expiresAt <= System.currentTimeMillis()) return@withContext InviteSendResult.FAILED
+        val host = com.bingo.multiplayer.domain.model.Player(id = account.uid,
+            displayName = invite.fromDisplayName.ifBlank { account.username }, username = account.username, isHost = true)
         val payload = JSONObject().put("id", invite.eventId).put("kind", "GAME_INVITE").put("toUsername", clean)
-            .put("createdAt", invite.timestamp).put("expiresAt", invite.expiresAt).put("roomCode", invite.roomCode.trim().uppercase())
-        if (isMirrorPending || isTransientUnavailable) {
-            if (NotificationWork.send(context, account, payload)) InviteSendResult.QUEUED else InviteSendResult.FAILED
-        } else {
-            try {
-                NotificationApi.call(context, account, "/v2/events", payload)
-                InviteSendResult.SENT
-            } catch (cancelled: CancellationException) { throw cancelled }
-            catch (e: NotificationApiException) {
-                if ((e.retryable || e.status == 401 || e.status == 403) && NotificationWork.send(context, account, payload)) InviteSendResult.QUEUED else InviteSendResult.FAILED
-            } catch (_: Exception) {
-                if (NotificationWork.send(context, account, payload)) InviteSendResult.QUEUED else InviteSendResult.FAILED
+            .put("createdAt", invite.timestamp).put("expiresAt", invite.expiresAt).put("roomCode", cleanRoom)
+        try {
+            when (dispatchInviteAttempt(
+                readiness = { OnlineRoomRegistry.ensureInvitationReadinessDetailed(cleanRoom, host) },
+                isCurrent = { NotificationRuntime.account(context) == account && invite.expiresAt > System.currentTimeMillis() },
+                publishPeer = { publishMqttInvite(clean, invite.copy(roomCode = cleanRoom, fromAvatarUrl = null,
+                    recipientUsername = clean, senderUid = account.uid, fromUsername = account.username)) },
+                registerEvent = { NotificationApi.call(context, account, "/v2/events", payload) }
+            )) {
+                InviteDeliveryAttempt.REGISTERED -> InviteSendResult.SENT
+                InviteDeliveryAttempt.REJECTED -> InviteSendResult.FAILED
+                InviteDeliveryAttempt.RETRY -> if (NotificationWork.send(context, account, payload)) InviteSendResult.QUEUED else InviteSendResult.FAILED
             }
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (e: NotificationApiException) {
+            if ((e.retryable || e.status == 401 || e.status == 403) && NotificationWork.send(context, account, payload)) InviteSendResult.QUEUED else InviteSendResult.FAILED
+        } catch (_: Exception) {
+            if (NotificationWork.send(context, account, payload)) InviteSendResult.QUEUED else InviteSendResult.FAILED
         }
+    }
+
+    /** Used by both the initial button action and durable retries. A failed MQTT hint
+     * must not suppress a registered inbox/push event for a discoverable room. */
+    internal suspend fun dispatchInviteAttempt(
+        readiness: suspend () -> InvitationReadinessResult,
+        isCurrent: () -> Boolean,
+        publishPeer: () -> Unit,
+        registerEvent: suspend () -> Unit
+    ): InviteDeliveryAttempt {
+        if (!isCurrent()) return InviteDeliveryAttempt.REJECTED
+        val ready = readiness()
+        if (!isCurrent() || ready is InvitationReadinessResult.Rejected) return InviteDeliveryAttempt.REJECTED
+        if (ready is InvitationReadinessResult.TransientUnavailable) return InviteDeliveryAttempt.RETRY
+        try { publishPeer() }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { /* The authenticated event remains an independent delivery channel. */ }
+        if (ready is InvitationReadinessResult.MirrorPending) return InviteDeliveryAttempt.RETRY
+        registerEvent()
+        return InviteDeliveryAttempt.REGISTERED
     }
     suspend fun fetchInvitesForUser(username: String): List<GameInvite> {
         val context = NotificationRuntime.context() ?: return emptyList()
@@ -127,7 +123,7 @@ object GameInviteManager {
     /**
      * Dispatches real-time MQTT message with retention to subscriber.
      */
-    private fun publishMqttInvite(targetUsername: String, invite: GameInvite) {
+    internal fun publishMqttInvite(targetUsername: String, invite: GameInvite) {
         kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
             var mqttClient: MqttAsyncClient? = null
             try {

@@ -12,7 +12,26 @@ class Storage {
     return structuredClone(this.map.get(key));
   }
   async put(key, value) {
-    this.map.set(key, structuredClone(value));
+    if (typeof key === "object") {
+      for (const [entry, item] of Object.entries(key))
+        this.map.set(entry, structuredClone(item));
+    } else this.map.set(key, structuredClone(value));
+  }
+  async list({ prefix = "" } = {}) {
+    return new Map(
+      [...this.map]
+        .filter(([key]) => key.startsWith(prefix))
+        .map(([key, value]) => [key, structuredClone(value)]),
+    );
+  }
+  async delete(key) {
+    this.map.delete(key);
+  }
+  async getAlarm() {
+    return this.alarm || null;
+  }
+  async setAlarm(when) {
+    this.alarm = when;
   }
 }
 let env, objects, legacy;
@@ -136,7 +155,7 @@ test("legacy migration preserves exact 64-bit seeds and ignores later legacy ove
     (
       await commit(
         payload("CLOSED", "-9223372036854775807"),
-      1,
+        1,
         "-9223372036854775807",
       )
     ).status,
@@ -170,4 +189,123 @@ test("legacy tombstone is honored without changing an opaque seed payload", asyn
   legacy.set("room_closed_ABC123", "true");
   assert.equal((await (await read()).json()).closed, true);
   assert.equal((await commit(payload(), 0, "123")).status, 410);
+});
+
+async function inviteRecipient() {
+  const directory = env.NOTIFICATIONS.get("notification-directory-v2");
+  const guestToken = "b".repeat(80);
+  await directory.storage.put({
+    "account:guest": {
+      uid: "guest",
+      username: "stuart",
+      displayName: "Stuart",
+      friends: ["host"],
+    },
+    "name:stuart": "guest",
+    "registration:guest-registration": {
+      id: "guest-registration",
+      uid: "guest",
+      revoked: false,
+      token: "test-fcm-token",
+      updatedAt: Date.now(),
+    },
+    "device:guest:guest-registration": { id: "guest-registration" },
+    ["session:" + (await digest(guestToken))]: {
+      uid: "guest",
+      registrationId: "guest-registration",
+      expiresAt: Date.now() + 60000,
+    },
+  });
+  return { directory, guestToken };
+}
+
+function invitation(id = "invitation-regression") {
+  const now = Date.now();
+  return {
+    id,
+    kind: "GAME_INVITE",
+    toUsername: "stuart",
+    roomCode: "ABC123",
+    createdAt: now,
+    expiresAt: now + 120000,
+  };
+}
+
+function sendInvitation(body) {
+  return worker.fetch(
+    new Request("https://worker/v2/events", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + token },
+      body: JSON.stringify(body),
+    }),
+    env,
+  );
+}
+
+test("canonical invitation reaches recipient inbox and FCM outbox without a legacy room mirror", async () => {
+  const { directory, guestToken } = await inviteRecipient();
+  assert.equal((await commit(payload(), 0, null)).status, 200);
+  assert.equal(legacy.get("room_ABC123"), undefined);
+  const invite = invitation();
+  assert.equal((await sendInvitation(invite)).status, 202);
+  // A retry uses the same event identity instead of creating a second invitation.
+  assert.equal((await sendInvitation(invite)).status, 202);
+  const received = await worker.fetch(
+    new Request("https://worker/v2/inbox", {
+      headers: { Authorization: "Bearer " + guestToken },
+    }),
+    env,
+  );
+  assert.equal(received.status, 200);
+  const { events } = await received.json();
+  assert.equal(events.length, 1);
+  assert.equal(events[0].id, invite.id);
+  assert.equal(events[0].roomCode, invite.roomCode);
+  assert.equal(events[0].createdAt, invite.createdAt);
+  assert.equal(events[0].expiresAt, invite.expiresAt);
+  assert.equal(events[0].recipientUid, "guest");
+  const outbox = await directory.storage.list({
+    prefix: "outbox:guest-registration:",
+  });
+  assert.equal(outbox.size, 1);
+  assert.equal([...outbox.values()][0].eventKey, "event:stuart:" + invite.id);
+});
+
+test("canonical started and closed rooms reject invites despite stale waiting legacy metadata", async () => {
+  const { directory } = await inviteRecipient();
+  await commit(payload(), 0, null);
+  legacy.set("room_ABC123", payload());
+  await commit(payload("PLAYING", "100"), 1, "0");
+  assert.equal(
+    (await sendInvitation(invitation("started-match-invite"))).status,
+    403,
+  );
+  await commit(payload("CLOSED", "100"), 2, "100");
+  assert.equal(
+    (await sendInvitation(invitation("closed-match-invite"))).status,
+    403,
+  );
+  assert.equal(
+    (await directory.storage.list({ prefix: "event:stuart:" })).size,
+    0,
+  );
+  assert.equal((await directory.storage.list({ prefix: "outbox:" })).size, 0);
+});
+
+test("cold room discovery tolerates a healthy legacy response slower than 2.5 seconds", async () => {
+  globalThis.fetch = async (_url, { signal }) =>
+    new Promise((resolve, reject) => {
+      const timer = setTimeout(() => resolve(Response.json(null)), 2800);
+      signal.addEventListener(
+        "abort",
+        () => {
+          clearTimeout(timer);
+          reject(signal.reason);
+        },
+        { once: true },
+      );
+    });
+  const result = await read();
+  assert.equal(result.status, 200);
+  assert.equal((await result.json()).payload, null);
 });

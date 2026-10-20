@@ -16,6 +16,8 @@ import kotlinx.serialization.json.Json
 import org.eclipse.paho.client.mqttv3.MqttException
 import org.junit.Assert.*
 import org.junit.Test
+import org.junit.Before
+import org.junit.After
 import java.util.UUID
 
 /**
@@ -24,6 +26,21 @@ import java.util.UUID
  * while expanding production-path coverage for all confirmed Round 4 findings (1 through 13).
  */
 class NetworkRound1RegressionTest {
+
+    private var originalPublisher: (suspend (OnlineRoomSession) -> Boolean)? = null
+
+    @Before
+    fun isolateMetadataPublicationFromTheLiveBroker() {
+        originalPublisher = OnlineRoomRegistry.roomMetaPublisherOverride
+        // Unit fixtures exercise registry decisions with an available metadata transport.
+        // Actual broker behavior is exercised only by explicit opt-in integration tests.
+        OnlineRoomRegistry.roomMetaPublisherOverride = { true }
+    }
+
+    @After
+    fun restoreMetadataPublisher() {
+        OnlineRoomRegistry.roomMetaPublisherOverride = originalPublisher
+    }
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true; encodeDefaults = true }
 

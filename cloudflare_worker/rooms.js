@@ -34,7 +34,7 @@ function inspect(payload) {
 async function legacyText(env, key) {
   const result = await fetch(
     `${env.LEGACY_API_URL}/GetValue/${encodeURIComponent(env.LEGACY_APP_KEY)}/${key}`,
-    { signal: AbortSignal.timeout(2500) },
+    { signal: AbortSignal.timeout(8000) },
   );
   requireThat(result.ok, 503, "Room migration is unavailable");
   let raw = (await result.text()).trim();
