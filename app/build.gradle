@@ -86,6 +86,22 @@ android {
                 }
             }
         }
+        variant.assembleProvider.configure {
+            doLast {
+                def deliveryConfig = new File(System.getenv("BINGO_APK_DELIVERY_CONFIG") ?:
+                    "${System.getProperty('user.home')}/.config/bingo/apk-delivery.json")
+                if (deliveryConfig.isFile()) {
+                    def builtApk = layout.buildDirectory.file(
+                        "outputs/apk/${variant.dirName}/Bingo-${variant.versionName}.apk").get().asFile
+                    project.exec {
+                        commandLine "python3", "${rootDir}/tools/deliver_apk.py",
+                            builtApk.absolutePath, "--config", deliveryConfig.absolutePath
+                    }
+                } else {
+                    logger.lifecycle("Remote APK delivery is not configured on this machine.")
+                }
+            }
+        }
     }
 }
 

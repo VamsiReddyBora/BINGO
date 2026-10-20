@@ -31,3 +31,7 @@ Ordinary unit fixtures must not publish test room metadata to production. Networ
 ## Remaining limits
 
 Physical phone UI/FCM presentation, Google sign-in on the user's phone, vendor background restrictions and complete Compose/WorkManager lifecycle execution were not established by these headless checks. The prior P3 closure-retry resource duplication and other evidence gaps remain documented. Broker capacity still needs monitoring as production usage grows. Do not claim universal zero bugs. The GitHub release description links the exact updated source commit; the historical v1.0.0 tag is unchanged.
+
+## Required APK delivery
+
+After every APK build, overwrite `Bingo.apk` on both SSH destinations configured in `~/.config/bingo/apk-delivery.json`. Debug/release assemble tasks do this automatically through `tools/deliver_apk.py`; for APKs built by another route, run the helper explicitly. See `tools/APK_DELIVERY.md`. Credentials stay outside Git and logs. Verify both destination checksums in the delivery receipt and retry any failed copy; do not report full delivery success if either destination failed. This is a standing user requirement for future sessions.
