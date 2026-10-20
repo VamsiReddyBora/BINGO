@@ -109,14 +109,31 @@ fun MainMenuScreen(
     var isMatchVerifiedActive by remember { mutableStateOf(false) }
     val isBrokerDown by EmqxBrokerMonitor.isBrokerDown.collectAsState()
 
-    // ── Ping 1-Second Stabilized Display (Matches GameScreen exactly) ──
+    // ── Ping 1-Second Stabilized Display using NetworkStatusMapper ──
     val realtimePing by com.bingo.multiplayer.domain.network.NetworkPingMonitor.pingMs.collectAsState()
-    val latestPingMs by rememberUpdatedState(if (realtimePing > 0L) realtimePing else 28L)
-    var displayedPingMs by remember { mutableLongStateOf(if (realtimePing > 0L) realtimePing else 28L) }
+    val isInternetFresh = com.bingo.multiplayer.domain.network.NetworkPingMonitor.isInternetFresh
+    val initialDisplay = com.bingo.multiplayer.domain.network.NetworkStatusMapper.mapMainMenuLatency(
+        internetLatencyMs = realtimePing,
+        isInternetFresh = isInternetFresh,
+        isBrokerDown = isBrokerDown
+    )
+    var displayedPingMs by remember { mutableLongStateOf(initialDisplay.latencyMs) }
+    var displayedPingText by remember { mutableStateOf(initialDisplay.displayText) }
+    var displayedPingLabel by remember { mutableStateOf(initialDisplay.label) }
+    var displayedPingSource by remember { mutableStateOf(initialDisplay.source) }
     LaunchedEffect(Unit) {
         while (isActive) {
             delay(1000L)
-            displayedPingMs = latestPingMs
+            val fresh = com.bingo.multiplayer.domain.network.NetworkPingMonitor.isInternetFresh
+            val mapped = com.bingo.multiplayer.domain.network.NetworkStatusMapper.mapMainMenuLatency(
+                internetLatencyMs = realtimePing,
+                isInternetFresh = fresh,
+                isBrokerDown = isBrokerDown
+            )
+            displayedPingMs = mapped.latencyMs
+            displayedPingText = mapped.displayText
+            displayedPingLabel = mapped.label
+            displayedPingSource = mapped.source
         }
     }
 
@@ -245,11 +262,18 @@ fun MainMenuScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     // Ping Display (Matches GameScreen exactly, updates every 1 second, just left of Theme Toggle)
                     val pingColor = when {
+                        displayedPingMs <= 0L -> Color.Gray
                         displayedPingMs <= 250L -> Color(0xFF16A34A)
                         displayedPingMs <= 500L -> Color(0xFFEAB308)
                         else -> Color(0xFFDC2626)
                     }
-                    val pingText = if (displayedPingMs > 999L) "999+ms" else "${displayedPingMs}ms"
+                    val pingText = displayedPingText
+
+                    val displayedText = if (displayedPingLabel.isNotBlank() && displayedPingLabel != "Unknown" && displayedPingLabel != "Ping") {
+                        "$displayedPingLabel $pingText"
+                    } else {
+                        pingText
+                    }
 
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -257,13 +281,13 @@ fun MainMenuScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Wifi,
-                            contentDescription = "Ping",
+                            contentDescription = "$displayedPingLabel: $pingText",
                             tint = tokens.cellNeutralText,
                             modifier = Modifier.size(17.dp)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = pingText,
+                            text = displayedText,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Bold,
                             color = pingColor

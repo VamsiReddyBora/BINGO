@@ -20,6 +20,7 @@ export default {
           status: "ok",
           service: "Bingo notifications",
           protocol: 2,
+          roomMetadataProtocol: 3,
           identityConfigured: !!env.GOOGLE_CLIENT_ID,
         });
       if (url.pathname === "/send")
@@ -41,6 +42,36 @@ export default {
       const store = env.NOTIFICATIONS.get(
         env.NOTIFICATIONS.idFromName("notification-directory-v2"),
       );
+      const roomMatch = url.pathname.match(/^\/v2\/rooms\/([A-Z0-9]{6})$/);
+      if (roomMatch) {
+        const roomStore = env.NOTIFICATIONS.get(
+          env.NOTIFICATIONS.idFromName("room-metadata-v3:" + roomMatch[1]),
+        );
+        let body = { action: "read", code: roomMatch[1] };
+        if (request.method === "POST") {
+          const authorized = await store.fetch(
+            new Request("https://internal/internal/room-auth", {
+              headers: {
+                Authorization: request.headers.get("Authorization") || "",
+              },
+            }),
+          );
+          if (!authorized.ok) return authorized;
+          const identity = await authorized.json();
+          body = {
+            ...(await readBody(request, 131072)),
+            action: "commit",
+            code: roomMatch[1],
+            actorUid: identity.uid,
+          };
+        }
+        return roomStore.fetch(
+          new Request("https://internal/internal/room-record", {
+            method: "POST",
+            body: JSON.stringify(body),
+          }),
+        );
+      }
       if (url.pathname === "/v2/session" && request.method === "POST") {
         const ip = await digest(
           request.headers.get("CF-Connecting-IP") || "local",

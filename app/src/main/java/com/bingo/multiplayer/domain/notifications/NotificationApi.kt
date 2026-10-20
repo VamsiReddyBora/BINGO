@@ -14,7 +14,8 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 
 class NotificationApiException(val status: Int, message: String) : Exception(message) {
-    val retryable get() = status == 0 || status == 408 || status == 425 || status == 429 || status >= 500
+    val isRoomMirrorPending get() = status == 403 && message?.contains("Only the active room host may send this invitation", ignoreCase = true) == true
+    val retryable get() = status == 0 || status == 408 || status == 425 || status == 429 || status >= 500 || isRoomMirrorPending
 }
 
 object NotificationApi {

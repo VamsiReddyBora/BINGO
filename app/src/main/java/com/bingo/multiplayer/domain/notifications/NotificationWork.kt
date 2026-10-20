@@ -61,7 +61,26 @@ class NotificationWorker(context: Context, params: WorkerParameters) : Coroutine
                     NotificationRuntime.refresh(applicationContext, account)
                     if (NotificationRuntime.account(applicationContext) == account) NotificationDeliveryStatus.clear()
                 }
-                "send" -> NotificationApi.call(applicationContext, account!!, "/v2/events", JSONObject(inputData.getString("payload")!!))
+                "send" -> {
+                    val payloadObj = JSONObject(inputData.getString("payload")!!)
+                    val roomCode = payloadObj.optString("roomCode").trim().uppercase()
+                    if (roomCode.isNotBlank()) {
+                        val hostP = com.bingo.multiplayer.domain.model.Player(
+                            id = account!!.uid,
+                            displayName = account.username,
+                            username = account.username,
+                            isHost = true
+                        )
+                        val mirrorResult = com.bingo.multiplayer.domain.network.OnlineRoomRegistry.ensureInvitationReadinessDetailed(roomCode, hostP, allowCreation = false)
+                        when (mirrorResult) {
+                            is com.bingo.multiplayer.domain.network.InvitationReadinessResult.Rejected -> return Result.failure()
+                            is com.bingo.multiplayer.domain.network.InvitationReadinessResult.MirrorPending -> return Result.retry()
+                            is com.bingo.multiplayer.domain.network.InvitationReadinessResult.TransientUnavailable -> return Result.retry()
+                            is com.bingo.multiplayer.domain.network.InvitationReadinessResult.Ready -> { /* proceed */ }
+                        }
+                    }
+                    NotificationApi.call(applicationContext, account!!, "/v2/events", payloadObj)
+                }
                 "ack" -> NotificationApi.call(applicationContext, account!!, "/v2/ack", JSONObject().put("id", inputData.getString("eventId")))
                 "sync" -> NotificationRuntime.refresh(applicationContext, account!!)
                 else -> return Result.failure()
@@ -70,7 +89,7 @@ class NotificationWorker(context: Context, params: WorkerParameters) : Coroutine
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (e: NotificationApiException) {
             if (op == "register" && NotificationRuntime.account(applicationContext) == account) NotificationDeliveryStatus.failed(e)
-            if ((e.retryable || e.status == 401) && runAttemptCount < 8 && expiry > System.currentTimeMillis()) return Result.retry()
+            if ((e.retryable || e.status == 401 || e.status == 403) && runAttemptCount < 8 && expiry > System.currentTimeMillis()) return Result.retry()
             return Result.failure(workDataOf("reason" to e.message.orEmpty().take(180)))
         } catch (_: Exception) {
             if (op == "register" && NotificationRuntime.account(applicationContext) == account)

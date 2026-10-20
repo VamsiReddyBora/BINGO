@@ -9,6 +9,7 @@ class BingoApplication : Application() {
         super.onCreate()
         com.bingo.multiplayer.core.diagnostics.AppExitDiagnostics.install(this)
         com.bingo.multiplayer.domain.notifications.NotificationRuntime.init(this)
+        com.bingo.multiplayer.domain.network.OnlineRoomRegistry.reloadDurableClosures()
         try {
             val prefs = getSharedPreferences("bingo_theme_prefs", Context.MODE_PRIVATE)
             val authPrefs = getSharedPreferences("bingo_auth_prefs", Context.MODE_PRIVATE)

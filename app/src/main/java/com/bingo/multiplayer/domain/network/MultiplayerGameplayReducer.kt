@@ -18,8 +18,14 @@ data class MultiplayerGameplayContext(
     val requiresHostResultConfirmation: Boolean = false,
     val strictIdentity: Boolean = false
 ) {
-    fun participantId(id: String): String? = participants.firstOrNull { it.id == id }?.id
-        ?: if (strictIdentity) null else participants.firstOrNull { LobbyLifecycleEngine.isPlayerIdMatch(it.id, id) }?.id
+    fun participantId(id: String): String? {
+        if (id.isBlank()) return null
+        participants.firstOrNull { it.id == id }?.id?.let { return it }
+        if (strictIdentity) {
+            return null
+        }
+        return participants.firstOrNull { LobbyLifecycleEngine.isPlayerIdMatch(it.id, id) }?.id
+    }
 
     fun nextPlayer(picker: String, surrendered: Set<String> = emptySet()): String {
         if (!strictIdentity) return LobbyLifecycleEngine.calculateNextTurnPlayerId(

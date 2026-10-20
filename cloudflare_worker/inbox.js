@@ -11,12 +11,13 @@ import {
   legacyRead,
 } from "./protocol.js";
 import { sendFcm } from "./fcm.js";
+import { roomMetadata } from "./rooms.js";
 const DAY = 86400000,
   SESSION_TTL = 7 * DAY;
 const keyEvent = (name, id) => `event:${name}:${id}`;
 const random = () => crypto.randomUUID() + crypto.randomUUID();
 
-/** This object serializes notification inbox mutations only. It never owns a game or a turn. */
+/** Instances serialize notification inbox or room-metadata mutations. They never own a game or a turn. */
 export class NotificationInbox {
   constructor(state, env) {
     this.state = state;
@@ -51,6 +52,17 @@ export class NotificationInbox {
   async handle(request) {
     try {
       const path = new URL(request.url).pathname;
+      if (path === "/internal/room-record") {
+        return await roomMetadata(
+          this.storage,
+          this.env,
+          await readBody(request, 131072),
+        );
+      }
+      if (path === "/internal/room-auth") {
+        const session = await this.authenticate(request);
+        return response({ uid: session.uid, username: session.username });
+      }
       // A valid 1,000-friend snapshot exceeds the small event/proof limit. Authenticate
       // before allowing this larger, still bounded body; all other routes retain 8 KiB.
       const preauthenticated =
@@ -400,7 +412,28 @@ export class NotificationInbox {
       ? await this.storage.get("account:" + targetUid)
       : null;
     if (input.kind === "GAME_INVITE") {
-      const room = await legacyRead(this.env, "room_" + input.roomCode);
+      let room;
+      if (this.env.NOTIFICATIONS) {
+        const roomStore = this.env.NOTIFICATIONS.get(
+          this.env.NOTIFICATIONS.idFromName(
+            "room-metadata-v3:" + input.roomCode,
+          ),
+        );
+        const recordResponse = await roomStore.fetch(
+          new Request("https://internal/internal/room-record", {
+            method: "POST",
+            body: JSON.stringify({ action: "read", code: input.roomCode }),
+          }),
+        );
+        requireThat(
+          recordResponse.ok,
+          503,
+          "Room metadata is temporarily unavailable",
+        );
+        const record = await recordResponse.json();
+        room =
+          record.closed || !record.payload ? null : JSON.parse(record.payload);
+      } else room = await legacyRead(this.env, "room_" + input.roomCode);
       requireThat(
         room &&
           room.hostId === session.uid &&

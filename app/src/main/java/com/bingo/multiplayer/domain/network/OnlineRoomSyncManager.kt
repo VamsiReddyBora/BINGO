@@ -1,5 +1,6 @@
 package com.bingo.multiplayer.domain.network
 
+import android.util.Log
 import com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine
 import com.bingo.multiplayer.domain.model.Player
 import com.bingo.multiplayer.domain.model.InGameChatMessage
@@ -16,6 +17,8 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 import androidx.annotation.Keep
+
+private const val TAG = "OnlineRoomSync"
 
 @Keep
 @Serializable
@@ -46,6 +49,7 @@ data class RoomMessagePacket(
     val targetPlayerId: String = "",
     val readyVersion: Long = 0L,
     val isManualBoard: Boolean = false,
+    val manualPreparationComplete: Boolean? = null,
     val isDynamicBoard: Boolean = false,
     val senderInstanceId: String = "",
     // Originating device account; playerId can instead identify a skipped player.
@@ -95,7 +99,8 @@ data class RoomMessagePacket(
     val playerPresences: Map<String, MultiplayerPresenceRecord> = emptyMap(),
     val presenceStatus: String = "",
     val closedTurnClock: MultiplayerTurnClock? = null,
-    val isRetainedDelivery: Boolean = false
+    val isRetainedDelivery: Boolean = false,
+    val startCommitDeadline: Long = 0L
 )
 
 class OnlineRoomSyncManager(
@@ -129,7 +134,7 @@ class OnlineRoomSyncManager(
     private data class LobbyChallenge(val room: String, val generation: String, val uid: String, val createdAt: Long)
     private val lobbyChallenges = ConcurrentHashMap<String, LobbyChallenge>()
     val roomSessionId: String get() = "$roomConnectionId/$activeMatchConnectionGeneration"
-    @Volatile private var roomConnectionId = UUID.randomUUID().toString()
+    @Volatile var roomConnectionId = UUID.randomUUID().toString()
 
     /** Small avatar-free MQTT exchange; no HTTP or guessed app-version comparison. */
     fun requestLobbyCompatibility() {
@@ -174,14 +179,40 @@ class OnlineRoomSyncManager(
         val client = mqttClient ?: return
         if (!client.isConnected) return
         scope.launch(Dispatchers.IO) {
-            try {
-                val jsonStr = json.encodeToString(session)
-                val message = MqttMessage(jsonStr.toByteArray(StandardCharsets.UTF_8)).apply {
-                    qos = 1
-                    isRetained = true
+            publishRetainedRoomMetaAwaited(session)
+        }
+    }
+
+    suspend fun publishRetainedRoomMetaAwaited(session: OnlineRoomSession): Boolean = withContext(Dispatchers.IO) {
+        val client = mqttClient ?: return@withContext false
+        if (!client.isConnected) return@withContext false
+        try {
+            val jsonStr = json.encodeToString(session)
+            val message = MqttMessage(jsonStr.toByteArray(StandardCharsets.UTF_8)).apply {
+                qos = 1
+                isRetained = true
+            }
+            kotlinx.coroutines.withTimeoutOrNull(2000L) {
+                kotlinx.coroutines.suspendCancellableCoroutine<Boolean> { cont ->
+                    try {
+                        val token = client.publish("bingo/v3/room_meta/${session.roomCode}", message, null, object : IMqttActionListener {
+                            override fun onSuccess(asyncActionToken: IMqttToken?) {
+                                if (cont.isActive) cont.resume(true) {}
+                            }
+                            override fun onFailure(asyncActionToken: IMqttToken?, exception: Throwable?) {
+                                if (cont.isActive) cont.resume(false) {}
+                            }
+                        })
+                        if (token.isComplete && cont.isActive) {
+                            cont.resume(token.exception == null) {}
+                        }
+                    } catch (e: Exception) {
+                        if (cont.isActive) cont.resume(false) {}
+                    }
                 }
-                client.publish("bingo/v3/room_meta/${session.roomCode}", message)
-            } catch (_: Exception) {}
+            } ?: false
+        } catch (_: Exception) {
+            false
         }
     }
 
@@ -189,13 +220,39 @@ class OnlineRoomSyncManager(
         val client = mqttClient ?: return
         if (!client.isConnected) return
         scope.launch(Dispatchers.IO) {
-            try {
-                val message = MqttMessage(ByteArray(0)).apply {
-                    qos = 1
-                    isRetained = true
+            clearRetainedRoomMetaAwaited(roomCode)
+        }
+    }
+
+    suspend fun clearRetainedRoomMetaAwaited(roomCode: String): Boolean = withContext(Dispatchers.IO) {
+        val client = mqttClient ?: return@withContext false
+        if (!client.isConnected) return@withContext false
+        try {
+            val message = MqttMessage(ByteArray(0)).apply {
+                qos = 1
+                isRetained = true
+            }
+            kotlinx.coroutines.withTimeoutOrNull(2000L) {
+                kotlinx.coroutines.suspendCancellableCoroutine<Boolean> { cont ->
+                    try {
+                        val token = client.publish("bingo/v3/room_meta/$roomCode", message, null, object : IMqttActionListener {
+                            override fun onSuccess(asyncActionToken: IMqttToken?) {
+                                if (cont.isActive) cont.resume(true) {}
+                            }
+                            override fun onFailure(asyncActionToken: IMqttToken?, exception: Throwable?) {
+                                if (cont.isActive) cont.resume(false) {}
+                            }
+                        })
+                        if (token.isComplete && cont.isActive) {
+                            cont.resume(token.exception == null) {}
+                        }
+                    } catch (e: Exception) {
+                        if (cont.isActive) cont.resume(false) {}
+                    }
                 }
-                client.publish("bingo/v3/room_meta/$roomCode", message)
-            } catch (_: Exception) {}
+            } ?: false
+        } catch (_: Exception) {
+            false
         }
     }
 
@@ -219,6 +276,9 @@ class OnlineRoomSyncManager(
 
     private val _pingMs = MutableStateFlow<Long>(0L)
     val pingMs: StateFlow<Long> = _pingMs.asStateFlow()
+    @Volatile var lastPingTimestamp: Long = 0L
+    val isPingFresh: Boolean
+        get() = (System.currentTimeMillis() - lastPingTimestamp) < 15000L && isConnected && isSubscribed && _pingMs.value > 0L
 
     private var heartbeatJob: Job? = null
     private var livenessJob: Job? = null
@@ -489,8 +549,9 @@ class OnlineRoomSyncManager(
     }
 
 
-    @Volatile private var isSubscribed: Boolean = false
+    @Volatile var isSubscribed: Boolean = false
     @Volatile private var lastStartedMatchSeed: Long = 0L
+    @Volatile private var lastEmittedMetaSeed: Long = 0L
     private val completedMatchSeeds = ConcurrentHashMap.newKeySet<Long>()
 
     fun recordStartedSeed(seed: Long) {
@@ -600,6 +661,49 @@ class OnlineRoomSyncManager(
 
     private fun getTopic(code: String): String =
         "bingo/v3/room/${code.trim().uppercase()}"
+
+    internal fun validateAndBuildStartPacket(session: OnlineRoomSession): RoomMessagePacket {
+        val participants = session.players.distinctBy { it.id }
+        val isTwoPlayer = participants.size == 2
+        val decodedPacket = if (!session.canonicalStartPacketJson.isNullOrBlank()) {
+            try {
+                FastPacketCodec.decode(session.canonicalStartPacketJson)
+            } catch (_: Exception) { null }
+        } else null
+
+        val validDecoded = if (decodedPacket != null && decodedPacket.type == "START_GAME" &&
+            decodedPacket.seed == session.currentSeed &&
+            decodedPacket.roomCode.equals(session.roomCode, ignoreCase = true) &&
+            decodedPacket.playerId == session.hostId &&
+            MultiplayerGameplayReducer.sender(decodedPacket) == session.hostId) {
+            decodedPacket
+        } else null
+
+        return (validDecoded ?: RoomMessagePacket(
+            type = "START_GAME",
+            roomCode = session.roomCode,
+            seed = session.currentSeed,
+            matchId = session.currentSeed.toString(),
+            boardSize = session.boardSize,
+            isManualBoard = session.isManualBoard,
+            manualPreparationComplete = session.manualPreparationComplete,
+            isDynamicBoard = session.isDynamicBoard,
+            playerId = session.hostId,
+            senderPlayerId = session.hostId,
+            players = participants,
+            currentTurnPlayerId = session.currentTurnPlayerId,
+            turnClock = session.turnClock ?: MultiplayerTurnClock.start(
+                1, session.currentTurnPlayerId.ifBlank { session.hostId },
+                session.createdAt + 3300L, false
+            ),
+            simplifiedRulesVersion = session.simplifiedRulesVersion,
+            protocolVersion = if (isTwoPlayer) 2 else session.protocolVersion,
+            reliablePolicyVersion = if (isTwoPlayer) com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.VERSION else 0,
+            hostWaitVersion = if (isTwoPlayer) 1 else 0,
+            startCommitDeadline = session.startCommitDeadline
+        )).copy(isRetainedDelivery = true,
+            manualPreparationComplete = session.manualPreparationComplete ?: validDecoded?.manualPreparationComplete)
+    }
 
     /**
      * Connects to high-speed MQTT room topic and begins presence heartbeat and ping measurement.
@@ -744,18 +848,21 @@ class OnlineRoomSyncManager(
                                 try {
                                     val session = json.decodeFromString<OnlineRoomSession>(payloadStr)
                                     if (session.status == "PLAYING" && session.currentSeed != 0L) {
-                                        val startPacket = RoomMessagePacket(
-                                            type = "START_GAME",
-                                            roomCode = session.roomCode,
-                                            seed = session.currentSeed,
-                                            matchId = session.currentSeed.toString(),
-                                            boardSize = session.boardSize,
-                                            isManualBoard = session.isManualBoard,
-                                            isDynamicBoard = session.isDynamicBoard,
-                                            playerId = session.hostId,
-                                            players = session.players
-                                        )
-                                        handleIncomingPacket(startPacket)
+                                        if (activePeerSeed != session.currentSeed && lastEmittedMetaSeed != session.currentSeed &&
+                                            !isSeedCompleted(session.currentSeed)) {
+                                            scope.launch {
+                                                val canonical = if (RoomMetadataApi.enabled) {
+                                                    RoomMetadataApi.read(cleanCode).getOrNull() ?: return@launch
+                                                } else session
+                                                if (mqttClient !== client || roomConnectionId != connectionId ||
+                                                    canonical.status != "PLAYING" || canonical.currentSeed == 0L ||
+                                                    activePeerSeed == canonical.currentSeed || lastEmittedMetaSeed == canonical.currentSeed ||
+                                                    isSeedCompleted(canonical.currentSeed)) return@launch
+                                                lastEmittedMetaSeed = canonical.currentSeed
+                                                val finalStartPacket = validateAndBuildStartPacket(canonical)
+                                                handleIncomingPacket(finalStartPacket)
+                                            }
+                                        }
                                     }
                                 } catch (_: Exception) {}
                                 return
@@ -1083,16 +1190,31 @@ class OnlineRoomSyncManager(
                 if (p.id.isNotBlank() && p.id !in kickedPlayerIds && pCleanUser !in kickedPlayerIds && pCleanDisplay !in kickedPlayerIds) {
                     val isLocal = (p.id == localP.id) ||
                         (localP.username.isNotBlank() && p.username.equals(localP.username, ignoreCase = true))
-                    val existing = if (isLocal) (playerRegistry[localP.id] ?: playerRegistry[p.id]) else playerRegistry[p.id]
+
+                    val existingAliasKey = if (!isLocal && !p.id.startsWith("u_")) {
+                        playerRegistry.entries.firstOrNull { (k, v) ->
+                            k.startsWith("u_") && (
+                                (pCleanUser.isNotBlank() && v.username.trim().lowercase().removePrefix("@") == pCleanUser) ||
+                                k.trim().lowercase().removePrefix("u_") == p.id.trim().lowercase().removePrefix("u_")
+                            )
+                        }?.key
+                    } else null
+                    if (existingAliasKey != null) {
+                        playerRegistry.remove(existingAliasKey)
+                    }
+
+                    val existing = if (isLocal) (playerRegistry[localP.id] ?: playerRegistry[p.id]) else (playerRegistry[p.id] ?: existingAliasKey?.let { playerRegistry[it] })
 
                     if (existing == null && !isLocal) {
                         hasNewPlayer = true
                     }
 
-                    val isPlayerActuallyHost = p.isHost ||
-                        (cloudSession.hostId.isNotBlank() && p.id == cloudSession.hostId) ||
-                        (cloudSession.hostUsername.isNotBlank() && p.username.equals(cloudSession.hostUsername, ignoreCase = true)) ||
-                        existing?.isHost == true
+                    val isPlayerActuallyHost = when {
+                        cloudSession.hostId.isNotBlank() -> p.id == cloudSession.hostId
+                        cloudSession.hostUsername.isNotBlank() -> p.username.equals(cloudSession.hostUsername, ignoreCase = true)
+                        currentHostId != null -> p.id == currentHostId
+                        else -> p.isHost
+                    }
 
                     if (isLocal && isPlayerActuallyHost && localPlayer?.isHost != true) {
                         localPlayer = localP.copy(isHost = true)
@@ -1166,24 +1288,9 @@ class OnlineRoomSyncManager(
                 cloudSession.currentSeed != lastStartedMatchSeed &&
                 !completedMatchSeeds.contains(cloudSession.currentSeed)
             ) {
-                val participants = cloudSession.players.distinctBy { it.id }
-                val isTwoPlayer = participants.size == 2
                 lastStartedMatchSeed = cloudSession.currentSeed
-                _incomingPackets.tryEmit(
-                    RoomMessagePacket(
-                        type = "START_GAME",
-                        boardSize = cloudSession.boardSize,
-                        seed = cloudSession.currentSeed,
-                        matchId = cloudSession.currentSeed.toString(),
-                        playerId = cloudSession.hostId,
-                        protocolVersion = if (isTwoPlayer) 2 else 0,
-                        reliablePolicyVersion = if (isTwoPlayer) com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.VERSION else 0,
-                        hostWaitVersion = if (isTwoPlayer) 1 else 0,
-                        players = participants,
-                        isManualBoard = cloudSession.isManualBoard,
-                        isDynamicBoard = cloudSession.isDynamicBoard
-                    )
-                )
+                val packetToEmit = validateAndBuildStartPacket(cloudSession)
+                _incomingPackets.tryEmit(packetToEmit)
             }
 
             // If host discovers a new player via cloud, broadcast ROOM_STATE over MQTT so joiner is also immediately updated
@@ -1378,6 +1485,17 @@ class OnlineRoomSyncManager(
             }
 
             "ROOM_STATE" -> {
+                val actor = packet.playerId
+                val sender = packet.senderPlayerId.ifBlank { packet.playerId }
+                // NR-08: Only verified host can broadcast ROOM_STATE.
+                // Reject unauthorized ROOM_STATE if known host is set and sender or actor is not host.
+                if (currentHostId != null) {
+                    if (actor != currentHostId || (packet.senderPlayerId.isNotBlank() && packet.senderPlayerId != currentHostId)) {
+                        Log.w(TAG, "Ignoring ROOM_STATE from unauthorized actor/sender: actor=$actor, sender=$sender, expected host: $currentHostId")
+                        return
+                    }
+                }
+
                 packet.players.forEach { p ->
                     val pcUser = p.username.trim().lowercase().removePrefix("@")
                     val pcDisplay = p.displayName.trim().lowercase()
@@ -1408,6 +1526,7 @@ class OnlineRoomSyncManager(
                             else -> "NOT_READY"
                         }
                         val effVersion = if (isLocal) (localPlayer?.readyVersion ?: 0L) else maxOf(p.readyVersion, existing?.readyVersion ?: 0L)
+                        val effIsHost = if (currentHostId != null) (p.id == currentHostId) else p.isHost
                         if (!effAvatar.isNullOrBlank() && effAvatar != existing?.avatarUrl && !isLocal) {
                             com.bingo.multiplayer.presentation.common.PlayerAvatarCache.evict(p.username)
                             val bmp = com.bingo.multiplayer.presentation.common.decodeAvatarBitmap(effAvatar, null)
@@ -1422,7 +1541,8 @@ class OnlineRoomSyncManager(
                             avatarUrl = effAvatar,
                             lastSeenTimestamp = System.currentTimeMillis(),
                             lobbyReadyStatus = effReady,
-                            readyVersion = effVersion
+                            readyVersion = effVersion,
+                            isHost = effIsHost
                         )
                     }
                 }
@@ -1453,7 +1573,7 @@ class OnlineRoomSyncManager(
                         com.bingo.multiplayer.presentation.common.PlayerAvatarCache.notifyAvatarChanged(packet.username)
                     }
 
-                    val updated = LobbyLifecycleEngine.onRemotePlayerJoinOrHeartbeat(packet, existing)
+                    val updated = LobbyLifecycleEngine.onRemotePlayerJoinOrHeartbeat(packet, existing, currentHostId)
                     if (existingKey != packet.playerId) {
                         playerRegistry.remove(existingKey)
                     }
@@ -1492,21 +1612,34 @@ class OnlineRoomSyncManager(
 
             "READY_STATUS" -> {
                 if (packet.playerId.isNotEmpty()) {
-                    val existing = playerRegistry[packet.playerId]
-                        ?: playerRegistry.values.find {
-                            (packet.username.isNotBlank() && it.username.equals(packet.username, ignoreCase = true)) ||
-                            (packet.displayName.isNotBlank() && it.displayName.equals(packet.displayName, ignoreCase = true))
-                        }
-                    val targetKey = existing?.id ?: packet.playerId
+                    val clean = packet.playerId.trim().lowercase().removePrefix("u_")
+                    val pCleanU = packet.username.trim().lowercase().removePrefix("@")
+                    val existingKey = if (playerRegistry.containsKey(packet.playerId)) {
+                        packet.playerId
+                    } else {
+                        playerRegistry.entries.firstOrNull { (k, v) ->
+                            val cleanK = k.trim().lowercase().removePrefix("u_")
+                            val cleanUser = v.username.trim().lowercase().removePrefix("@")
+                            k == packet.playerId || cleanK == clean || (pCleanU.isNotBlank() && (cleanUser == pCleanU || cleanK == pCleanU))
+                        }?.key ?: packet.playerId
+                    }
+                    val existing = playerRegistry[existingKey]
+                    val targetKey = if (existingKey != packet.playerId && existingKey.startsWith("u_") && !packet.playerId.startsWith("u_")) {
+                        playerRegistry.remove(existingKey)
+                        packet.playerId
+                    } else {
+                        existingKey
+                    }
 
                     val updated = LobbyLifecycleEngine.onRemoteReadyStatusPacket(packet, existing)
                     if (updated != null) {
-                        playerRegistry[targetKey] = updated
+                        val finalUpdated = if (updated.id != targetKey) updated.copy(id = targetKey) else updated
+                        playerRegistry[targetKey] = finalUpdated
                         _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
                         val code = currentRoomCode
                         if (code != null && localPlayer?.isHost == true) {
                             scope.launch(Dispatchers.IO) {
-                                roomRegistry.ready(code, targetKey, updated.lobbyReadyStatus, updated.readyVersion)
+                                roomRegistry.ready(code, targetKey, finalUpdated.lobbyReadyStatus, finalUpdated.readyVersion)
                             }
                         }
                     }
@@ -1515,6 +1648,12 @@ class OnlineRoomSyncManager(
 
             "KICK_PLAYER" -> {
                 if (activePeerSeed != 0L) return
+                val expectedHost = currentHostId ?: playerRegistry.values.firstOrNull { it.isHost }?.id
+                val senderId = packet.senderPlayerId.ifBlank { packet.playerId }
+                if (expectedHost.isNullOrBlank() || packet.playerId != expectedHost || (senderId.isNotBlank() && senderId != expectedHost)) {
+                    Log.w(TAG, "Rejected unauthorized KICK_PLAYER from ${packet.playerId} (expected host: $expectedHost)")
+                    return
+                }
                 val targetId = packet.targetPlayerId.ifBlank { packet.playerId }
                 if (targetId.isNotEmpty()) {
                     playerRegistry.remove(targetId)
@@ -1532,10 +1671,20 @@ class OnlineRoomSyncManager(
                     _incomingPackets.tryEmit(packet)
                     return
                 }
+                val senderId = packet.senderPlayerId.ifBlank { packet.playerId }
+                if (senderId.isNotBlank() && senderId != packet.playerId) {
+                    Log.w(TAG, "Rejected spoofed LEAVE packet: sender $senderId != actor ${packet.playerId}")
+                    return
+                }
                 if (packet.playerId.isNotEmpty()) {
                     val existing = playerRegistry[packet.playerId]
                     if (existing != null) {
                         if (existing.isHost) {
+                            val expectedHost = currentHostId ?: playerRegistry.values.firstOrNull { it.isHost }?.id
+                            if (packet.playerId != expectedHost || (senderId.isNotBlank() && senderId != expectedHost)) {
+                                Log.w(TAG, "Rejected unauthorized host LEAVE from ${packet.playerId}")
+                                return
+                            }
                             playerRegistry.remove(packet.playerId)
                         } else {
                             val updated = LobbyLifecycleEngine.onPlayerLeave(existing)
@@ -1562,7 +1711,7 @@ class OnlineRoomSyncManager(
                             val cur = _pingMs.value
                             val smoothed = if (cur <= 0L) brokerRtt.coerceAtLeast(1L) else ((cur * 0.60) + (brokerRtt.coerceAtLeast(1L) * 0.40)).toLong().coerceAtLeast(1L)
                             _pingMs.value = smoothed
-                            NetworkPingMonitor.recordExternalPing(smoothed)
+                            lastPingTimestamp = System.currentTimeMillis()
                         }
                     } else {
                         lastBrokerReceiveEchoAt = android.os.SystemClock.elapsedRealtime()
@@ -1703,6 +1852,7 @@ class OnlineRoomSyncManager(
         roomConnectionId = UUID.randomUUID().toString()
         _connectionReady.value = false
         activePeerSeed = 0L
+        lastEmittedMetaSeed = 0L
         peerSyncMarker = null
         lobbyChallenges.clear()
         verifiedLobbyPeers.clear()

@@ -1,9 +1,10 @@
 # Bingo Releases
 
-### Version 1.0
+### Version 1.0 — build 46
 
-- **APK**: [Bingo-1.0.apk](Bingo-1.0.apk) (~6.9 MB)
-- **SHA-256**: `0dd557aec84997979c717656131da35cffe24cbafdd5170d06989710717c1aa0`
+
+- **APK**: [Bingo-1.0.apk](Bingo-1.0.apk) (~7.0 MB)
+- **SHA-256**: `2645eb3094be953096567e39ed5df0fe6bd927c5df62e74ec298367295a592c6`
 
 ### Quick Install
 ```bash
@@ -16,3 +17,9 @@ adb install -r releases/Bingo-1.0.apk
 - Reconnection support for active matches.
 - Server connection monitor with automatic HTTP fallback.
 - Light and AMOLED dark theme support.
+
+### Build 46 validation
+
+764 unit tests passed, one existing opt-in broker test skipped; 61 backend tests passed. APK signature verified against the previous release. Physical-device testing remains with the user.
+
+See [Round 11 review](Round11Review.md) and [deferred work](DeferredNetworkingIssues.md).

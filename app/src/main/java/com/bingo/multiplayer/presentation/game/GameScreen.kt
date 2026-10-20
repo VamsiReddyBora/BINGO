@@ -148,6 +148,9 @@ fun GameScreen(
     onSyncGame: () -> Unit = {},
     isHost: Boolean = true,
     pingMs: Long = 0L,
+    latencyLabel: String = "Ping",
+    latencySource: com.bingo.multiplayer.domain.network.NetworkMetricSource = com.bingo.multiplayer.domain.network.NetworkMetricSource.NONE,
+    latencyIsReliable: Boolean = true,
     wantsToPlayAgainName: String? = null,
     onRequestPlayAgain: () -> Unit = {},
     onSurrender: () -> Unit = onBackToMenu,
@@ -252,8 +255,8 @@ fun GameScreen(
     }
 
     // ── Ping 1-Second Stabilized Display ──
-    val latestPingMs by rememberUpdatedState(if (pingMs > 0L) pingMs else 28L)
-    var displayedPingMs by remember { mutableLongStateOf(if (pingMs > 0L) pingMs else 28L) }
+    val latestPingMs by rememberUpdatedState(if (pingMs > 0L) pingMs else 0L)
+    var displayedPingMs by remember { mutableLongStateOf(if (pingMs > 0L) pingMs else 0L) }
     LaunchedEffect(Unit) {
         while (isActive) {
             delay(1000L)
@@ -671,11 +674,21 @@ fun GameScreen(
 
                     // Item 2: Top Center 🛜 Wifi Icon + Ping (Updates once every 1 second, perfectly centered!)
                     val pingColor = when {
+                        !latencyIsReliable || latencySource == com.bingo.multiplayer.domain.network.NetworkMetricSource.NONE || displayedPingMs <= 0L -> Color.Gray
                         displayedPingMs <= 250L -> Color(0xFF16A34A)
                         displayedPingMs <= 500L -> Color(0xFFEAB308)
                         else -> Color(0xFFDC2626)
                     }
-                    val pingText = if (displayedPingMs > 999L) "999+ms" else "${displayedPingMs}ms"
+                    val pingText = when {
+                        !latencyIsReliable || latencySource == com.bingo.multiplayer.domain.network.NetworkMetricSource.NONE || displayedPingMs <= 0L -> "--ms"
+                        displayedPingMs > 999L -> "999+ms"
+                        else -> "${displayedPingMs}ms"
+                    }
+                    val displayedText = if (latencyLabel.isNotBlank() && latencyLabel != "Ping" && latencyLabel != "Unknown") {
+                        "$latencyLabel $pingText"
+                    } else {
+                        pingText
+                    }
 
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -684,13 +697,13 @@ fun GameScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Wifi,
-                            contentDescription = "Ping",
+                            contentDescription = "$latencyLabel: $pingText",
                             tint = tokens.cellNeutralText,
                             modifier = Modifier.size(17.dp)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = pingText,
+                            text = displayedText,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Bold,
                             color = pingColor

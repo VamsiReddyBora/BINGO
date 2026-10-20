@@ -59,20 +59,56 @@ object GameInviteManager {
         val clean = notificationUsername(targetUsername)
         if (clean.isBlank() || clean == account.username) return@withContext InviteSendResult.FAILED
 
-        // 1. Dispatch real-time MQTT invite immediately without waiting for HTTP
-        publishMqttInvite(clean, invite.copy(fromAvatarUrl = null, recipientUsername = clean, senderUid = account.uid))
+        // 0. Ensure cloud room is registered before sending invite
+        val cleanRoom = invite.roomCode.trim().uppercase()
+        var isMirrorPending = false
+        var isTransientUnavailable = false
+        if (cleanRoom.isNotBlank()) {
+            val hostP = com.bingo.multiplayer.domain.model.Player(
+                id = account.uid,
+                displayName = invite.fromDisplayName.ifBlank { account.username },
+                username = account.username,
+                isHost = true
+            )
+            val readiness = OnlineRoomRegistry.ensureInvitationReadinessDetailed(cleanRoom, hostP)
+            when (readiness) {
+                is com.bingo.multiplayer.domain.network.InvitationReadinessResult.Rejected -> {
+                    Log.w("GameInviteManager", "Room $cleanRoom readiness failed: ${readiness.reason}; aborting invitation dispatch")
+                    return@withContext InviteSendResult.FAILED
+                }
+                is com.bingo.multiplayer.domain.network.InvitationReadinessResult.MirrorPending -> {
+                    isMirrorPending = true
+                }
+                is com.bingo.multiplayer.domain.network.InvitationReadinessResult.TransientUnavailable -> {
+                    isTransientUnavailable = true
+                }
+                is com.bingo.multiplayer.domain.network.InvitationReadinessResult.Ready -> {
+                    isMirrorPending = false
+                }
+            }
+        }
+
+        // 1. Dispatch real-time MQTT invite ONLY if room is discoverable (Ready or MirrorPending).
+        // Defer peer dispatch when readiness is TransientUnavailable until room publication is confirmed.
+        if (!isTransientUnavailable) {
+            publishMqttInvite(clean, invite.copy(fromAvatarUrl = null, recipientUsername = clean, senderUid = account.uid))
+        }
 
         // 2. Also register with notification service for push / offline delivery
         val payload = JSONObject().put("id", invite.eventId).put("kind", "GAME_INVITE").put("toUsername", clean)
             .put("createdAt", invite.timestamp).put("expiresAt", invite.expiresAt).put("roomCode", invite.roomCode.trim().uppercase())
-        try {
-            NotificationApi.call(context, account, "/v2/events", payload)
-            InviteSendResult.SENT
-        } catch (cancelled: CancellationException) { throw cancelled }
-        catch (e: NotificationApiException) {
-            if ((e.retryable || e.status == 401) && NotificationWork.send(context, account, payload)) InviteSendResult.QUEUED else InviteSendResult.SENT
-        } catch (_: Exception) {
-            InviteSendResult.SENT
+        if (isMirrorPending || isTransientUnavailable) {
+            if (NotificationWork.send(context, account, payload)) InviteSendResult.QUEUED else InviteSendResult.FAILED
+        } else {
+            try {
+                NotificationApi.call(context, account, "/v2/events", payload)
+                InviteSendResult.SENT
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (e: NotificationApiException) {
+                if ((e.retryable || e.status == 401 || e.status == 403) && NotificationWork.send(context, account, payload)) InviteSendResult.QUEUED else InviteSendResult.FAILED
+            } catch (_: Exception) {
+                if (NotificationWork.send(context, account, payload)) InviteSendResult.QUEUED else InviteSendResult.FAILED
+            }
         }
     }
     suspend fun fetchInvitesForUser(username: String): List<GameInvite> {
@@ -93,9 +129,10 @@ object GameInviteManager {
      */
     private fun publishMqttInvite(targetUsername: String, invite: GameInvite) {
         kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+            var mqttClient: MqttAsyncClient? = null
             try {
                 val clientId = "inv_pub_${UUID.randomUUID().toString().take(8)}"
-                val mqttClient = MqttAsyncClient(BROKER_URL, clientId, MemoryPersistence())
+                mqttClient = MqttAsyncClient(BROKER_URL, clientId, MemoryPersistence())
                 val options = MqttConnectOptions().apply {
                     isCleanSession = true
                     connectionTimeout = 3
@@ -109,13 +146,12 @@ object GameInviteManager {
                     isRetained = true
                 }
                 mqttClient.publish(topic, msg).waitForCompletion(2500L)
-                try {
-                    mqttClient.disconnect().waitForCompletion(1000L)
-                    mqttClient.close()
-                } catch (_: Exception) {}
                 Log.d("GameInviteManager", "Real-time invite dispatched to MQTT: $topic")
             } catch (e: Exception) {
                 Log.w("GameInviteManager", "MQTT invite publish warning: ${e.message}")
+            } finally {
+                try { mqttClient?.disconnectForcibly(0L, 50L) } catch (_: Exception) {}
+                try { mqttClient?.close() } catch (_: Exception) {}
             }
         }
     }

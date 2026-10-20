@@ -146,10 +146,17 @@ object LobbyLifecycleEngine {
      */
     fun onRemotePlayerJoinOrHeartbeat(
         packet: RoomMessagePacket,
-        existing: Player?
+        existing: Player?,
+        verifiedHostId: String? = null
     ): Player {
         val now = System.currentTimeMillis()
         val isJoin = packet.type == "JOIN"
+
+        val effectiveIsHost = when {
+            verifiedHostId != null -> packet.playerId == verifiedHostId
+            existing != null -> existing.isHost
+            else -> packet.isHost
+        }
 
         val effectiveReadyStatus: String
         val effectiveReadyVer: Long
@@ -162,7 +169,7 @@ object LobbyLifecycleEngine {
                 packet.readyStatus == STATUS_READY -> STATUS_READY
                 isAlreadyReady && !isRejoiningFromLeft -> STATUS_READY
                 packet.readyStatus.isNotBlank() -> packet.readyStatus
-                packet.isHost -> STATUS_READY
+                effectiveIsHost -> STATUS_READY
                 else -> STATUS_NOT_READY
             }
             effectiveReadyVer = when {
@@ -174,7 +181,7 @@ object LobbyLifecycleEngine {
             val (resolvedStatus, resolvedVer) = reconcileReadyStatus(
                 currentStatus = existing?.lobbyReadyStatus ?: STATUS_NOT_READY,
                 currentVersion = existing?.readyVersion ?: 0L,
-                incomingStatus = packet.readyStatus.ifBlank { if (packet.isHost) STATUS_READY else STATUS_NOT_READY },
+                incomingStatus = packet.readyStatus.ifBlank { if (effectiveIsHost) STATUS_READY else STATUS_NOT_READY },
                 incomingVersion = packet.readyVersion
             )
             effectiveReadyStatus = resolvedStatus
@@ -201,7 +208,7 @@ object LobbyLifecycleEngine {
             id = packet.playerId,
             displayName = effectiveDisplayName,
             username = effectiveUsername,
-            isHost = packet.isHost,
+            isHost = effectiveIsHost,
             avatarUrl = effectiveAvatar,
             gamesPlayed = effectiveGamesPlayed,
             gamesWon = effectiveGamesWon,
@@ -331,7 +338,8 @@ object LobbyLifecycleEngine {
         currentMatchSeed: Long,
         isGameOver: Boolean,
         isCurrentlyInGame: Boolean,
-        isCompletedSeed: Boolean = false
+        isCompletedSeed: Boolean = false,
+        isCountdownActive: Boolean = false
     ): Boolean {
         // Host always triggers its own match initiation with fresh seeds
         if (isHost) return true
@@ -348,9 +356,10 @@ object LobbyLifecycleEngine {
             return false
         }
 
-        // If guest is currently in the game screen and game is not over:
-        // Reject duplicate start packets for the ongoing match (e.g. network retries or rogue starts)
-        if (isCurrentlyInGame && !isGameOver) {
+        // If guest is currently in the game screen or lobby countdown is actively running:
+        // Reject all start packets unconditionally while the active match or countdown is not over.
+        // Prevents both same-seed retries and different-seed unsolicited starts from replacing active Nearby/Online games.
+        if ((isCurrentlyInGame || isCountdownActive) && !isGameOver) {
             return false
         }
 
@@ -619,6 +628,103 @@ object LobbyLifecycleEngine {
             turnAdvanced = turnAdvanced
         )
     }
+
+    /**
+     * Resolves whether an incoming manual match start packet routes to the manual designer
+     * or restores directly into active gameplay under recovery fence.
+     */
+    fun resolveManualMatchIngressTarget(
+        isProgressedRecovery: Boolean,
+        hasAcceptedManualBoards: Boolean,
+        isRemoteRunningPhase: Boolean = false
+    ): ManualMatchIngressTarget {
+        return if (isRemoteRunningPhase || (isProgressedRecovery && hasAcceptedManualBoards)) {
+            ManualMatchIngressTarget.GAME
+        } else {
+            ManualMatchIngressTarget.DESIGN
+        }
+    }
+
+    fun resolveManualPacketIngressTarget(
+        packet: com.bingo.multiplayer.domain.network.RoomMessagePacket,
+        isProgressedRecovery: Boolean,
+        hasAcceptedManualBoards: Boolean
+    ): ManualMatchIngressTarget {
+        val completeBoards = packet.players.isNotEmpty() && packet.players.all { player ->
+            packet.boardNumbers[player.id]?.let {
+                com.bingo.multiplayer.domain.engine.ManualBoardEngine.isBoardComplete(it, packet.boardSize)
+            } == true
+        }
+        val running = packet.manualPreparationComplete == true || completeBoards ||
+            packet.pickedHistory.isNotEmpty() || (packet.turnClock?.turnNumber ?: 0) > 1 ||
+            (isProgressedRecovery && hasAcceptedManualBoards)
+        // Old metadata has no preparation phase. Recover accepted boards before allowing edits.
+        val unknownRecovery = packet.manualPreparationComplete == null &&
+            (packet.isRetainedDelivery || packet.recoveryReplay)
+        return if (running || unknownRecovery) ManualMatchIngressTarget.GAME else ManualMatchIngressTarget.DESIGN
+    }
+
+    /**
+     * Revalidates host start preparation barrier against live transport state.
+     * Invalidates if roster membership changes, readiness is revoked, host authority is lost,
+     * or transport connection generation changes.
+     */
+    fun validatePreparationBarrier(
+        initialRosterIds: Set<String>,
+        livePlayers: List<Player>,
+        surrenderedPlayerIds: Set<String>,
+        expectedHostId: String,
+        currentHostId: String?,
+        isHosting: Boolean,
+        expectedConnectionGen: String,
+        liveConnectionGen: String,
+        requiredAckUids: List<String>
+    ): Boolean {
+        val canonicalRoster = livePlayers.map { canonicalizePlayerIdentity(it, livePlayers) }
+        val currentRoster = canonicalRoster.filter { it.id.isNotBlank() && it.id !in surrenderedPlayerIds }
+        val currentIds = currentRoster.map { it.id }.toSet()
+        val canonicalInitial = initialRosterIds.map { id ->
+            canonicalizePlayerIdentity(Player(id = id, displayName = ""), livePlayers).id
+        }.toSet()
+        val isRosterObsolete = currentIds != canonicalInitial || !canStartMatch(livePlayers)
+        val isHostAuthorityLost = !isHosting || (currentHostId != null && currentHostId != expectedHostId)
+        val isConnectionInvalid = liveConnectionGen != expectedConnectionGen
+        val isReadinessRevoked = livePlayers.any { p ->
+            val pCanId = canonicalizePlayerIdentity(p, livePlayers).id
+            (p.id in requiredAckUids || pCanId in requiredAckUids) && p.lobbyReadyStatus != "READY"
+        }
+        return !(isRosterObsolete || isHostAuthorityLost || isConnectionInvalid || isReadinessRevoked)
+    }
+
+    /**
+     * Resolves a player's canonical identity against authenticated sync and cloud rosters.
+     * Prevents self-matching stale aliases like 'u_bob' by resolving to the authenticated UID.
+     */
+    fun canonicalizePlayerIdentity(
+        player: Player,
+        authenticatedRosters: List<Player>
+    ): Player {
+        val cleanUsername = player.username.trim().lowercase().removePrefix("@")
+        val cleanId = player.id.trim().lowercase().removePrefix("u_")
+        val authP = authenticatedRosters.firstOrNull { sp ->
+            val spCleanU = sp.username.trim().lowercase().removePrefix("@")
+            !sp.id.startsWith("u_") && sp.id.isNotBlank() && (
+                sp.id == player.id ||
+                (spCleanU.isNotBlank() && spCleanU == cleanUsername) ||
+                sp.id.trim().lowercase().removePrefix("u_") == cleanId
+            )
+        }
+        return if (authP != null && !authP.id.startsWith("u_") && authP.id.isNotBlank()) {
+            player.copy(id = authP.id)
+        } else {
+            player
+        }
+    }
+}
+
+enum class ManualMatchIngressTarget {
+    DESIGN,
+    GAME
 }
 
 data class AcceptedPick(

@@ -24,6 +24,13 @@ object NetworkPingMonitor {
     private val _pingMs = MutableStateFlow<Long>(0L) // Unknown until a probe succeeds.
     val pingMs: StateFlow<Long> = _pingMs.asStateFlow()
 
+    @Volatile
+    var lastSuccessfulProbeTimestamp: Long = 0L
+        private set
+
+    val isInternetFresh: Boolean
+        get() = (System.currentTimeMillis() - lastSuccessfulProbeTimestamp) < 15000L && _pingMs.value > 0L
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var monitorJob: Job? = null
 
@@ -50,15 +57,19 @@ object NetworkPingMonitor {
 
     fun recordExternalPing(rttMs: Long) {
         if (rttMs > 0L) {
+            lastSuccessfulProbeTimestamp = System.currentTimeMillis()
             updateSmoothedPing(rttMs)
         }
     }
 
     private fun updateSmoothedPing(newRtt: Long) {
         if (newRtt <= 0L) {
-            _pingMs.value = 0L
+            if (System.currentTimeMillis() - lastSuccessfulProbeTimestamp >= 15000L) {
+                _pingMs.value = 0L
+            }
             return
         }
+        lastSuccessfulProbeTimestamp = System.currentTimeMillis()
         val cur = _pingMs.value
         val clamped = newRtt.coerceIn(1L, 9999L)
         _pingMs.value = if (cur <= 0L) {

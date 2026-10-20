@@ -60,8 +60,14 @@ class LanP2pSessionManager {
     private val _players = MutableStateFlow<List<Player>>(emptyList())
     val players: StateFlow<List<Player>> = _players.asStateFlow()
 
-    private val _measuredPingMs = MutableStateFlow<Long>(4L)
+    private val _measuredPingMs = MutableStateFlow<Long>(0L)
     val measuredPingMs: StateFlow<Long> = _measuredPingMs.asStateFlow()
+
+    private val _lastPingTimestampEpochMs = MutableStateFlow<Long>(0L)
+    val lastPingTimestampEpochMs: StateFlow<Long> = _lastPingTimestampEpochMs.asStateFlow()
+
+    val isPingFresh: Boolean
+        get() = _measuredPingMs.value > 0L && (System.currentTimeMillis() - _lastPingTimestampEpochMs.value) < NetworkStatusMapper.FRESHNESS_WINDOW_MS
 
     val boundPort: Int
         get() = serverSocket?.localPort?.takeIf { it > 0 } ?: 8999
@@ -236,8 +242,12 @@ class LanP2pSessionManager {
                             while (isActive) {
                                 val line = reader.readLine() ?: break
                                 val packet = json.decodeFromString<RoomMessagePacket>(line)
-                                if (packet.playerId.isNotBlank()) {
-                                    socketToPlayerId[socket] = packet.playerId
+                                val senderId = packet.senderPlayerId.takeIf { it.isNotBlank() } ?: packet.playerId
+                                val isHostId = (hostPlayer != null && (senderId == hostPlayer.id || packet.playerId == hostPlayer.id))
+                                if (packet.type == "JOIN" && senderId.isNotBlank() && !isHostId) {
+                                    socketToPlayerId[socket] = senderId
+                                } else if (!socketToPlayerId.containsKey(socket) && senderId.isNotBlank() && !isHostId && packet.type != "PONG" && packet.type != "PING") {
+                                    socketToPlayerId[socket] = senderId
                                 }
                                 handleIncomingPacket(packet)
 
@@ -400,15 +410,13 @@ class LanP2pSessionManager {
                             timestamp = System.currentTimeMillis()
                         )
                     )
-                    if (!p.isHost) {
-                        broadcastPacket(
-                            RoomMessagePacket(
-                                type = "PING",
-                                playerId = p.id,
-                                pingTimestamp = System.currentTimeMillis()
-                            )
+                    broadcastPacket(
+                        RoomMessagePacket(
+                            type = "PING",
+                            playerId = p.id,
+                            pingTimestamp = System.currentTimeMillis()
                         )
-                    }
+                    )
                     playerRegistry[p.id] = p.copy(lastSeenTimestamp = System.currentTimeMillis())
                 }
             }
@@ -460,7 +468,7 @@ class LanP2pSessionManager {
         }
     }
 
-    private fun handleIncomingPacket(packet: RoomMessagePacket) {
+    internal fun handleIncomingPacket(packet: RoomMessagePacket) {
         val pCleanUser = packet.username.trim().lowercase().removePrefix("@")
         val pCleanDisplay = packet.displayName.trim().lowercase()
         val isSenderKicked = packet.playerId in kickedPlayerIds ||
@@ -600,6 +608,12 @@ class LanP2pSessionManager {
             }
 
             "KICK_PLAYER" -> {
+                val expectedHost = playerRegistry.values.firstOrNull { it.isHost }?.id ?: localPlayer?.takeIf { it.isHost }?.id
+                val senderId = packet.senderPlayerId.ifBlank { packet.playerId }
+                if (expectedHost.isNullOrBlank() || packet.playerId != expectedHost || (senderId.isNotBlank() && senderId != expectedHost)) {
+                    Log.w("LanP2p", "Rejected unauthorized Nearby KICK_PLAYER from ${packet.playerId} (expected host: $expectedHost)")
+                    return
+                }
                 val targetId = packet.targetPlayerId.ifBlank { packet.playerId }
                 if (targetId.isNotEmpty()) {
                     playerRegistry.remove(targetId)
@@ -608,10 +622,20 @@ class LanP2pSessionManager {
             }
 
             "LEAVE" -> {
+                val senderId = packet.senderPlayerId.ifBlank { packet.playerId }
+                if (senderId.isNotBlank() && senderId != packet.playerId) {
+                    Log.w("LanP2p", "Rejected spoofed Nearby LEAVE packet: sender $senderId != actor ${packet.playerId}")
+                    return
+                }
                 if (packet.playerId.isNotEmpty()) {
                     val existing = playerRegistry[packet.playerId]
                     if (existing != null) {
                         if (existing.isHost) {
+                            val expectedHost = playerRegistry.values.firstOrNull { it.isHost }?.id ?: localPlayer?.takeIf { it.isHost }?.id
+                            if (packet.playerId != expectedHost || (senderId.isNotBlank() && senderId != expectedHost)) {
+                                Log.w("LanP2p", "Rejected unauthorized Nearby host LEAVE from ${packet.playerId}")
+                                return
+                            }
                             playerRegistry.remove(packet.playerId)
                         } else {
                             playerRegistry[packet.playerId] = LobbyLifecycleEngine.onPlayerLeave(existing)
@@ -622,11 +646,14 @@ class LanP2pSessionManager {
             }
 
             "PING" -> {
-                if (localPlayer?.isHost == true && packet.playerId != localPlayer?.id) {
+                if (packet.playerId != localPlayer?.id && packet.pingTimestamp > 0L) {
+                    val myId = localPlayer?.id ?: ""
                     broadcastPacket(
                         RoomMessagePacket(
                             type = "PONG",
-                            playerId = packet.playerId,
+                            playerId = myId,
+                            senderPlayerId = myId,
+                            targetPlayerId = packet.playerId,
                             pingTimestamp = packet.pingTimestamp
                         )
                     )
@@ -634,11 +661,15 @@ class LanP2pSessionManager {
             }
 
             "PONG" -> {
-                if (packet.playerId == localPlayer?.id && packet.pingTimestamp > 0L) {
-                    val rtt = (System.currentTimeMillis() - packet.pingTimestamp).coerceAtLeast(1L)
+                val myId = localPlayer?.id ?: ""
+                val isForMe = (packet.targetPlayerId == myId) || (packet.targetPlayerId.isBlank() && packet.playerId == myId)
+                if (isForMe && packet.pingTimestamp > 0L) {
+                    val now = System.currentTimeMillis()
+                    val rtt = (now - packet.pingTimestamp).coerceAtLeast(1L)
                     val cur = _measuredPingMs.value
                     val smoothed = if (cur <= 0L) rtt else ((cur * 0.60) + (rtt * 0.40)).toLong().coerceAtLeast(1L)
                     _measuredPingMs.value = smoothed
+                    _lastPingTimestampEpochMs.value = now
                 }
             }
         }
@@ -757,6 +788,8 @@ class LanP2pSessionManager {
         playerRegistry.clear()
         kickedPlayerIds.clear()
         _players.value = emptyList()
+        _measuredPingMs.value = 0L
+        _lastPingTimestampEpochMs.value = 0L
     }
 
     fun getLastSeenTimestamp(playerId: String): Long {
