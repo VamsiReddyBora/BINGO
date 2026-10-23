@@ -51,7 +51,7 @@ class InvitationDeliveryRegressionTest {
             assertTrue(OnlineRoomRegistry.createRoom("INV123", host))
             assertEquals("WAITING", store.room?.status)
             assertEquals(host.id, store.room?.hostId)
-            assertEquals(3, store.room?.metadataProtocolVersion)
+            assertEquals(7, store.room?.metadataProtocolVersion)
         }
     }
 
@@ -130,10 +130,12 @@ class InvitationDeliveryRegressionTest {
     @Test
     fun peerPublishFailureDoesNotSuppressAuthenticatedInboxDelivery() = runBlocking {
         var registered = 0
-        assertEquals(InviteDeliveryAttempt.REGISTERED, GameInviteManager.dispatchInviteAttempt(
+        // The old independent inbox fallback is explicitly superseded. A failed EMQX
+        // PUBACK cannot be reported as sent or trigger HTTP delivery. Historical name retained.
+        assertEquals(InviteDeliveryAttempt.RETRY, GameInviteManager.dispatchInviteAttempt(
             readiness = { InvitationReadinessResult.Ready }, isCurrent = { true },
             publishPeer = { throw IOException("MQTT unavailable") }, registerEvent = { registered++ }))
-        assertEquals(1, registered)
+        assertEquals(0, registered)
     }
 
     @Test

@@ -29,7 +29,8 @@ data class NotificationEvent(
     val requestTimestamp: Long = 0L,
     val presenceSessionId: String = "",
     val installationId: String = "",
-    val generation: String = ""
+    val generation: String = "",
+    val roomSessionId: String = ""
 )
 
 object NotificationPolicy {

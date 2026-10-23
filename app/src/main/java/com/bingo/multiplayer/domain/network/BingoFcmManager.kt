@@ -45,6 +45,19 @@ object BingoFcmManager {
         val account = NotificationRuntime.account(context) ?: return
         if (notificationUsername(username) == account.username) NotificationWork.register(context, account)
     }
+    internal fun invitePayload(invite: GameInvite): JSONObject = JSONObject()
+        .put("id", invite.eventId).put("kind", NotificationKind.GAME_INVITE.name)
+        .put("toUsername", notificationUsername(invite.recipientUsername))
+        .put("createdAt", invite.timestamp).put("expiresAt", invite.expiresAt)
+        .put("roomCode", invite.roomCode).put("roomSessionId", invite.roomSessionId)
+
+    fun sendInvitePush(invite: GameInvite): Boolean {
+        if (invite.isPlayRequest || invite.expiresAt <= System.currentTimeMillis()) return false
+        val context = NotificationRuntime.context() ?: return false
+        val account = NotificationRuntime.account(context) ?: return false
+        if (invite.senderUid != account.uid || invite.fromUsername != account.username) return false
+        return NotificationWork.send(context, account, invitePayload(invite))
+    }
     private fun queue(kind: NotificationKind, target: String, id: String, createdAt: Long, extra: JSONObject = JSONObject()) {
         val context = NotificationRuntime.context() ?: return
         val account = NotificationRuntime.account(context) ?: return

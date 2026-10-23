@@ -54,7 +54,7 @@ object AppUpdateManager {
     val UPDATE_ENDPOINTS = listOf(
         "https://vamsireddybora.github.io/BINGO/version.json",
         "https://raw.githubusercontent.com/VamsiReddyBora/BINGO/gh-pages/version.json",
-        "https://keyvalue.immanuel.co/api/KeyVal/GetValue/2464j24f/latest_app_version",
+        "https://keyvalue.immanuel.co/api/KeyVal/GetValue/${NetworkConfig.KEYVALUE_APP_KEY}/latest_app_version",
         "https://cdn.jsdelivr.net/gh/VamsiReddyBora/BINGO@gh-pages/version.json",
         "https://api.github.com/repos/VamsiReddyBora/BINGO/releases/latest"
     )
@@ -105,9 +105,26 @@ object AppUpdateManager {
     }
 
     /**
+     * Retrieves current installed versionCode from PackageInfo.
+     */
+    fun getInstalledVersionCode(context: Context): Long {
+        return try {
+            val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                pInfo.longVersionCode
+            } else {
+                @Suppress("DEPRECATION")
+                pInfo.versionCode.toLong()
+            }
+        } catch (_: Exception) {
+            51L
+        }
+    }
+
+    /**
      * Parses version information from either simplified version.json format or full GitHub release JSON.
      */
-    fun parseUpdatePayload(bodyStr: String, currentVersion: String): AppUpdateInfo? {
+    fun parseUpdatePayload(bodyStr: String, currentVersion: String, currentVersionCode: Long = 51L): AppUpdateInfo? {
         try {
             val json = JSONObject(bodyStr)
             val tagName = json.optString("tag_name", json.optString("tagName", ""))
@@ -143,7 +160,8 @@ object AppUpdateManager {
                 apkDownloadUrl = "https://vamsireddybora.github.io/BINGO/Bingo.apk"
             }
 
-            val hasNewer = isNewerVersion(cleanTag, currentVersion)
+            val remoteCode = json.optLong("versionCode", json.optLong("version_code", 0L))
+            val hasNewer = isNewerVersion(cleanTag, currentVersion) || (remoteCode > 0L && remoteCode > currentVersionCode)
             return AppUpdateInfo(
                 hasUpdate = hasNewer,
                 latestVersionTag = if (tagName.startsWith("v")) tagName else "v$cleanTag",
@@ -178,6 +196,7 @@ object AppUpdateManager {
 
             _updateState.value = UpdateState.Checking
             val currentVersion = getInstalledVersionName(context)
+            val currentVersionCode = getInstalledVersionCode(context)
 
             var resolvedUpdateInfo: AppUpdateInfo? = null
             var lastErrorMessage: String? = null
@@ -205,7 +224,7 @@ object AppUpdateManager {
                         }
 
                         if (cleanBody.isNotBlank() && cleanBody != "null" && cleanBody != "\"\"") {
-                            val info = parseUpdatePayload(cleanBody, currentVersion)
+                            val info = parseUpdatePayload(cleanBody, currentVersion, currentVersionCode)
                             if (info != null) {
                                 resolvedUpdateInfo = info
                                 Log.i(TAG, "Successfully resolved update info from $endpointUrl: $info")
@@ -252,6 +271,7 @@ object AppUpdateManager {
      */
     suspend fun queryUpdateSilently(context: Context): AppUpdateInfo? = withContext(Dispatchers.IO) {
         val currentVersion = getInstalledVersionName(context)
+        val currentVersionCode = getInstalledVersionCode(context)
         for (endpointUrl in UPDATE_ENDPOINTS) {
             try {
                 val request = Request.Builder()
@@ -274,7 +294,7 @@ object AppUpdateManager {
                     }
 
                     if (cleanBody.isNotBlank() && cleanBody != "null" && cleanBody != "\"\"") {
-                        val info = parseUpdatePayload(cleanBody, currentVersion)
+                        val info = parseUpdatePayload(cleanBody, currentVersion, currentVersionCode)
                         if (info != null) {
                             return@withContext info
                         }

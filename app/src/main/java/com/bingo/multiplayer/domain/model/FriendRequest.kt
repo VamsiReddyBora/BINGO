@@ -21,7 +21,7 @@ data class FriendRequest(
     val fromAvatarUrl: String? = null,
     val toUsername: String,
     val status: FriendRequestStatus = FriendRequestStatus.PENDING,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = 0L
 )
 
 @Keep

@@ -20,6 +20,8 @@ import kotlinx.serialization.json.Json
 import androidx.compose.ui.graphics.asImageBitmap
 import java.io.File
 import java.util.UUID
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
  * Authentication Gatekeeper Repository.
@@ -40,6 +42,7 @@ class AuthRepository(
     val authState: StateFlow<AuthState> = _authState.asStateFlow()
 
     private val scope = CoroutineScope(Dispatchers.IO)
+    internal val sessionGeneration = java.util.concurrent.atomic.AtomicLong(0L)
 
     init {
         activeInstance = this
@@ -81,8 +84,11 @@ class AuthRepository(
         prefs.edit().putString("google_username_$googleId", username).apply()
     }
 
+    private val aliasReleaseLock = Any()
+
     init {
         checkPersistedSession()
+        retryPendingAliasReleases()
     }
 
     /**
@@ -91,6 +97,7 @@ class AuthRepository(
     fun checkPersistedSession() {
         scope.launch {
             verifyPersistedSession()
+            retryPendingAliasReleases()
         }
     }
 
@@ -152,17 +159,20 @@ class AuthRepository(
     }
 
     suspend fun verifyPersistedSession(): AuthState = withContext(Dispatchers.IO) {
-        val state = synchronized(this@AuthRepository) {
+        val (state, capturedGen) = synchronized(this@AuthRepository) {
             val profile = getPersistedUserSync()
             val resolved = if (profile != null) AuthState.Authenticated(profile) else AuthState.Unauthenticated
             _authState.value = resolved
-            resolved
+            Pair(resolved, sessionGeneration.get())
         }
         if (state is AuthState.Authenticated) {
             val user = state.user
+            if (sessionGeneration.get() != capturedGen) return@withContext state
             com.bingo.multiplayer.domain.network.PresenceManager.setCurrentUser(user.username)
             com.bingo.multiplayer.domain.network.PresenceManager.startPresence(user.username)
             val googleId = if (user.uid.startsWith("google_")) user.uid.removePrefix("google_") else null
+            if (sessionGeneration.get() != capturedGen) return@withContext state
+            val userKey = com.bingo.multiplayer.domain.network.AccountKeyStore.getPublicKeyBase64(user.uid)
             sessionManager.claimUsername(
                 com.bingo.multiplayer.domain.network.PlayerRegistryEntry(
                     username = user.username,
@@ -173,50 +183,61 @@ class AuthRepository(
                     gamesWon = user.gamesWon,
                     currentStreak = user.currentStreak,
                     bestStreak = user.bestStreak,
-                    level = user.level
+                    level = user.level,
+                    publicKey = userKey
                 ),
                 googleId = googleId
             )
             if (user.provider == AuthProvider.GOOGLE && googleId != null) {
-                sessionManager.startSessionWatcher(googleId, deviceId) {
-                    signOut()
+                if (sessionGeneration.get() == capturedGen) {
+                    sessionManager.startSessionWatcher(googleId, deviceId) {
+                        if (sessionGeneration.get() == capturedGen) {
+                            signOut()
+                        }
+                    }
                 }
                 scope.launch {
-                    restoreCloudUserData(googleId)
+                    if (sessionGeneration.get() == capturedGen) {
+                        restoreCloudUserData(googleId)
+                    }
                 }
             }
 
             if (context != null) {
-                val firestoreSync = com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(context)
-                // 1. Immediately upload/sync current user profile and custom theme settings
-                firestoreSync.syncUserProfile(user, getSettings())
+                scope.launch(Dispatchers.IO) {
+                    val authOk = awaitFirebaseAuth(expectedGen = capturedGen, targetUid = user.uid)
+                    if (!authOk || sessionGeneration.get() != capturedGen) return@launch
+                    val firestoreSync = com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(context)
+                    // 1. Immediately upload/sync current user profile and custom theme settings
+                    firestoreSync.syncUserProfile(user, getSettings())
 
-                // 2. Upload all existing match history records
-                val existingMatches = getMatchHistory()
-                if (existingMatches.isNotEmpty()) {
-                    firestoreSync.syncAllMatches(user.uid, existingMatches)
-                }
+                    // 2. Upload all existing match history records
+                    val existingMatches = getMatchHistory()
+                    if (existingMatches.isNotEmpty()) {
+                        firestoreSync.syncAllMatches(user.uid, existingMatches)
+                    }
 
-                firestoreSync.startRealtimeProfileListener(user.uid) { _, remoteSettings ->
-                    // Preserve local dark theme, sound/vibration, and notification preferences to prevent remote echo from reverting local settings
-                    val localDark = com.bingo.multiplayer.core.designsystem.ThemePreferences.isDarkTheme.value
-                    val localSound = com.bingo.multiplayer.core.designsystem.SoundPreferences.soundEnabled.value
-                    val localHaptics = com.bingo.multiplayer.core.designsystem.SoundPreferences.hapticsEnabled.value
-                    val localPreset = com.bingo.multiplayer.core.designsystem.SoundPreferences.pickSoundPresetId.value
-                    val isNotifsConfigured = com.bingo.multiplayer.core.designsystem.NotificationPreferences.isLocallyConfigured(context)
-                    val consistentSettings = remoteSettings.copy(
-                        darkTheme = localDark,
-                        soundEnabled = localSound,
-                        hapticsEnabled = localHaptics,
-                        pickSoundPresetId = localPreset,
-                        systemNotificationsEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.systemNotificationsEnabled.value else remoteSettings.systemNotificationsEnabled,
-                        playerOnlineNotificationsEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.playerOnlineNotificationsEnabled.value else remoteSettings.playerOnlineNotificationsEnabled,
-                        playerInvitesNotificationsEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.playerInvitesNotificationsEnabled.value else remoteSettings.playerInvitesNotificationsEnabled,
-                        inAppNotificationsEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.inAppNotificationsEnabled.value else remoteSettings.inAppNotificationsEnabled,
-                        inAppPlayerOnlineEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.inAppPlayerOnlineEnabled.value else remoteSettings.inAppPlayerOnlineEnabled,
-                        inAppPlayerInvitesEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.inAppPlayerInvitesEnabled.value else remoteSettings.inAppPlayerInvitesEnabled
-                    )
-                    updateSettings(consistentSettings, syncToCloud = false)
+                    firestoreSync.startRealtimeProfileListener(user.uid) { _, remoteSettings ->
+                        // Preserve local dark theme, sound/vibration, and notification preferences to prevent remote echo from reverting local settings
+                        val localDark = com.bingo.multiplayer.core.designsystem.ThemePreferences.isDarkTheme.value
+                        val localSound = com.bingo.multiplayer.core.designsystem.SoundPreferences.soundEnabled.value
+                        val localHaptics = com.bingo.multiplayer.core.designsystem.SoundPreferences.hapticsEnabled.value
+                        val localPreset = com.bingo.multiplayer.core.designsystem.SoundPreferences.pickSoundPresetId.value
+                        val isNotifsConfigured = com.bingo.multiplayer.core.designsystem.NotificationPreferences.isLocallyConfigured(context)
+                        val consistentSettings = remoteSettings.copy(
+                            darkTheme = localDark,
+                            soundEnabled = localSound,
+                            hapticsEnabled = localHaptics,
+                            pickSoundPresetId = localPreset,
+                            systemNotificationsEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.systemNotificationsEnabled.value else remoteSettings.systemNotificationsEnabled,
+                            playerOnlineNotificationsEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.playerOnlineNotificationsEnabled.value else remoteSettings.playerOnlineNotificationsEnabled,
+                            playerInvitesNotificationsEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.playerInvitesNotificationsEnabled.value else remoteSettings.playerInvitesNotificationsEnabled,
+                            inAppNotificationsEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.inAppNotificationsEnabled.value else remoteSettings.inAppNotificationsEnabled,
+                            inAppPlayerOnlineEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.inAppPlayerOnlineEnabled.value else remoteSettings.inAppPlayerOnlineEnabled,
+                            inAppPlayerInvitesEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.inAppPlayerInvitesEnabled.value else remoteSettings.inAppPlayerInvitesEnabled
+                        )
+                        updateSettings(consistentSettings, syncToCloud = false, expectedGen = capturedGen)
+                    }
                 }
             }
         }
@@ -231,20 +252,26 @@ class AuthRepository(
         googleId: String,
         displayName: String,
         email: String,
-        customUsername: String? = null
+        customUsername: String? = null,
+        idToken: String? = null
     ) {
+        val genAtLogin = sessionGeneration.incrementAndGet()
         setGoogleUserRegistered(googleId, true)
         setSavedGoogleDisplayName(googleId, displayName)
+        val targetUid = "google_$googleId"
         sessionManager.startSessionWatcher(googleId, deviceId) {
-            signOut()
+            if (sessionGeneration.get() == genAtLogin && (_authState.value as? AuthState.Authenticated)?.user?.uid == targetUid) {
+                signOut()
+            }
         }
-        val existing = loadExistingStats()
+        ensureFirebaseAuth(idToken)
+        val existing = loadExistingStats(targetUid)
         val cleanUser = customUsername?.trim()?.lowercase()?.removePrefix("@")
             ?: displayName.filter { it.isLetterOrDigit() }.lowercase().ifEmpty { "user_$googleId".take(12) }
         setSavedGoogleUsername(googleId, cleanUser)
 
         val profile = UserProfile(
-            uid = "google_$googleId",
+            uid = targetUid,
             username = cleanUser,
             displayName = displayName,
             email = email,
@@ -254,10 +281,12 @@ class AuthRepository(
             gamesPlayed = existing.gamesPlayed,
             gamesWon = existing.gamesWon,
             currentStreak = existing.currentStreak,
+            bestStreak = existing.bestStreak,
             level = existing.level,
             xp = existing.xp
         )
-        persistUser(profile, "google_token_$googleId")
+        persistUser(profile, idToken ?: "google_token_$googleId")
+        val googleHostKey = com.bingo.multiplayer.domain.network.AccountKeyStore.getPublicKeyBase64(targetUid)
         sessionManager.claimUsername(
             com.bingo.multiplayer.domain.network.PlayerRegistryEntry(
                 username = cleanUser,
@@ -268,7 +297,8 @@ class AuthRepository(
                 gamesWon = profile.gamesWon,
                 currentStreak = profile.currentStreak,
                 bestStreak = profile.bestStreak,
-                level = profile.level
+                level = profile.level,
+                publicKey = googleHostKey
             ),
             googleId = googleId
         )
@@ -280,8 +310,14 @@ class AuthRepository(
      * Guest login — no account needed, instant access.
      */
     fun onGuestLogin(customName: String? = null, customUsername: String? = null) {
-        val guestId = if (context != null) com.bingo.multiplayer.domain.notifications.NotificationIdentity.guestUid() else "guest_${System.currentTimeMillis()}"
-        val existing = loadExistingStats()
+        sessionGeneration.incrementAndGet()
+        ensureFirebaseAuth(null)
+        val auth = runCatching { com.google.firebase.auth.FirebaseAuth.getInstance() }.getOrNull()
+        val anonUid = auth?.currentUser?.uid
+        val guestId = runCatching { com.bingo.multiplayer.domain.notifications.NotificationIdentity.guestUid() }.getOrNull()
+            ?: if (!anonUid.isNullOrBlank()) "guest_$anonUid"
+            else "guest_${System.currentTimeMillis()}"
+        val existing = loadExistingStats(guestId)
         val finalName = customName?.trim()?.ifEmpty { null } ?: "Guest"
         val cleanUser = customUsername?.trim()?.lowercase()?.removePrefix("@")
             ?: finalName.filter { it.isLetterOrDigit() }.lowercase().ifEmpty { guestId.take(10) }
@@ -296,12 +332,14 @@ class AuthRepository(
             gamesPlayed = existing.gamesPlayed,
             gamesWon = existing.gamesWon,
             currentStreak = existing.currentStreak,
+            bestStreak = existing.bestStreak,
             level = existing.level,
             xp = existing.xp
         )
         persistUser(profile, "guest_token_$guestId")
         com.bingo.multiplayer.domain.network.PresenceManager.setCurrentUser(cleanUser)
         com.bingo.multiplayer.domain.network.PresenceManager.startPresence(cleanUser)
+        val guestHostKey = com.bingo.multiplayer.domain.network.AccountKeyStore.getPublicKeyBase64(guestId)
         sessionManager.claimUsername(
             com.bingo.multiplayer.domain.network.PlayerRegistryEntry(
                 username = cleanUser,
@@ -312,7 +350,8 @@ class AuthRepository(
                 gamesWon = profile.gamesWon,
                 currentStreak = profile.currentStreak,
                 bestStreak = profile.bestStreak,
-                level = profile.level
+                level = profile.level,
+                publicKey = guestHostKey
             )
         )
         _authState.value = AuthState.Authenticated(profile)
@@ -325,12 +364,15 @@ class AuthRepository(
         val clean = newUsername.trim().lowercase().removePrefix("@")
         if (clean.length < 3 || clean.length > 20 || !clean.all { it.isLetterOrDigit() || it == '_' }) return false
         val current = (_authState.value as? AuthState.Authenticated)?.user ?: return false
+        val expectedGen = sessionGeneration.get()
         val available = sessionManager.checkUsernameAvailable(clean, current.uid)
         if (!available) return false
+        if (sessionGeneration.get() != expectedGen || (_authState.value as? AuthState.Authenticated)?.user?.uid != current.uid) return false
+
         val updated = current.copy(username = clean)
-        persistUser(updated, prefs.getString(KEY_AUTH_TOKEN, ""))
         val googleId = if (updated.uid.startsWith("google_")) updated.uid.removePrefix("google_") else null
-        sessionManager.claimUsername(
+        val updatedKey = com.bingo.multiplayer.domain.network.AccountKeyStore.getPublicKeyBase64(updated.uid)
+        val claimOk = sessionManager.claimUsernameSync(
             com.bingo.multiplayer.domain.network.PlayerRegistryEntry(
                 username = clean,
                 uid = updated.uid,
@@ -340,15 +382,66 @@ class AuthRepository(
                 gamesWon = updated.gamesWon,
                 currentStreak = updated.currentStreak,
                 bestStreak = updated.bestStreak,
-                level = updated.level
+                level = updated.level,
+                publicKey = updatedKey
             ),
             googleId = googleId
         )
-        _authState.value = AuthState.Authenticated(updated)
+        if (!claimOk) return false
+        val success = synchronized(this@AuthRepository) {
+            if (sessionGeneration.get() != expectedGen || (_authState.value as? AuthState.Authenticated)?.user?.uid != current.uid) return@synchronized false
+            val persisted = persistUser(updated, prefs.getString(KEY_AUTH_TOKEN, ""), expectedGeneration = expectedGen)
+            if (!persisted || sessionGeneration.get() != expectedGen || (_authState.value as? AuthState.Authenticated)?.user?.uid != current.uid) return@synchronized false
+            _authState.value = AuthState.Authenticated(updated)
+            true
+        }
+        if (!success) return false
+
         com.bingo.multiplayer.domain.network.PresenceManager.setCurrentUser(clean)
         com.bingo.multiplayer.domain.network.PresenceManager.startPresence(clean)
         backupUserDataToCloud()
+        val oldClean = current.username.lowercase().trim().removePrefix("@")
+        if (oldClean.isNotBlank() && oldClean != clean) {
+            val released = sessionManager.releaseUsernameAlias(oldClean, current.uid)
+            synchronized(aliasReleaseLock) {
+                val pending = prefs.getStringSet("pending_alias_releases", emptySet())?.toMutableSet() ?: mutableSetOf()
+                if (!released) {
+                    pending.add("$oldClean:${current.uid}")
+                } else {
+                    pending.remove("$oldClean:${current.uid}")
+                }
+                prefs.edit().putStringSet("pending_alias_releases", pending).apply()
+            }
+        }
+        retryPendingAliasReleases()
         return true
+    }
+
+    fun retryPendingAliasReleases() {
+        scope.launch(Dispatchers.IO) {
+            val pending = synchronized(aliasReleaseLock) {
+                prefs.getStringSet("pending_alias_releases", emptySet())?.toSet().orEmpty()
+            }
+            if (pending.isEmpty()) return@launch
+            val acknowledged = mutableSetOf<String>()
+            for (entry in pending) {
+                val parts = entry.split(":")
+                if (parts.size == 2) {
+                    val alias = parts[0]
+                    val uid = parts[1]
+                    if (sessionManager.releaseUsernameAlias(alias, uid)) {
+                        acknowledged.add(entry)
+                    }
+                }
+            }
+            if (acknowledged.isNotEmpty()) {
+                synchronized(aliasReleaseLock) {
+                    val current = prefs.getStringSet("pending_alias_releases", emptySet())?.toMutableSet() ?: mutableSetOf()
+                    current.removeAll(acknowledged)
+                    prefs.edit().putStringSet("pending_alias_releases", current).apply()
+                }
+            }
+        }
     }
 
     /**
@@ -369,99 +462,153 @@ class AuthRepository(
      * Copies an image chosen from local storage to app-internal storage
      * and persists the file path as the player's profile avatar.
      */
-    fun saveProfileAvatar(uri: Uri): Boolean {
+    fun saveProfileAvatar(uri: Uri?): Boolean {
+        val expectedGen = sessionGeneration.get()
         return try {
             val current = (_authState.value as? AuthState.Authenticated)?.user ?: return false
             val cleanUser = current.username.trim().lowercase().removePrefix("@")
 
-            // Remove any old avatar file in internal storage
-            current.avatarUrl?.let { oldPath ->
-                try {
-                    val oldFile = File(oldPath)
-                    if (context != null && oldFile.exists() && oldFile.parent == context.filesDir?.absolutePath) {
-                        oldFile.delete()
-                    }
-                } catch (_: Exception) {}
-            }
-
-            val ctx = context ?: return false
-            val filesDir = ctx.filesDir ?: ctx.cacheDir
+            val filesDir = context?.filesDir ?: context?.cacheDir ?: File(System.getProperty("java.io.tmpdir") ?: "/tmp")
             val targetFile = File(filesDir, "avatar_${System.currentTimeMillis()}.jpg")
-            ctx.contentResolver.openInputStream(uri)?.use { input ->
+            val stream = contentStreamProvider?.invoke(uri) ?: (uri?.let { context?.contentResolver?.openInputStream(it) })
+            if (stream == null) return false
+            stream.use { input ->
                 targetFile.outputStream().use { output ->
                     input.copyTo(output)
                 }
             }
 
-            // Compress and convert to Base64 for cross-device cloud persistence
+            // Downsample and compress to Base64 for cross-device cloud persistence
             var decodedBitmap: android.graphics.Bitmap? = null
+            val maxDim = 160
             val base64 = try {
-                val bitmap = android.graphics.BitmapFactory.decodeFile(targetFile.absolutePath)
-                if (bitmap != null) {
-                    decodedBitmap = bitmap
-                    val maxDim = 160
-                    val scaled = if (bitmap.width > maxDim || bitmap.height > maxDim) {
-                        val ratio = bitmap.width.toFloat() / bitmap.height.toFloat()
-                        val w = if (ratio >= 1f) maxDim else (maxDim * ratio).toInt().coerceAtLeast(1)
-                        val h = if (ratio >= 1f) (maxDim / ratio).toInt().coerceAtLeast(1) else maxDim
-                        android.graphics.Bitmap.createScaledBitmap(bitmap, w, h, true)
-                    } else bitmap
-                    val baos = java.io.ByteArrayOutputStream()
-                    scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 75, baos)
-                    android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP)
-                } else null
+                if (bitmapDecoderOverride != null) {
+                    val overrideBmp = bitmapDecoderOverride?.invoke(targetFile.absolutePath)
+                    if (overrideBmp != null) {
+                        val dims = bitmapDimensionsOverride?.invoke(overrideBmp) ?: Pair(overrideBmp.width, overrideBmp.height)
+                        val scaled = if (dims.first > maxDim || dims.second > maxDim) {
+                            val (w, h) = computeTargetDimensions(dims.first, dims.second, maxDim)
+                            val s = bitmapScalerOverride?.invoke(overrideBmp, w, h) ?: android.graphics.Bitmap.createScaledBitmap(overrideBmp, w, h, true)
+                            if (s != overrideBmp) {
+                                overrideBmp.recycle()
+                            }
+                            s
+                        } else overrideBmp
+                        decodedBitmap = scaled
+                        val baos = java.io.ByteArrayOutputStream()
+                        scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 75, baos)
+                        android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP)
+                    } else null
+                } else {
+                    val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    android.graphics.BitmapFactory.decodeFile(targetFile.absolutePath, bounds)
+                    val sampleSize = computeSampleSize(bounds.outWidth, bounds.outHeight, maxDim)
+                    val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sampleSize }
+                    val bitmap = android.graphics.BitmapFactory.decodeFile(targetFile.absolutePath, opts)
+                    if (bitmap != null) {
+                        val dims = bitmapDimensionsOverride?.invoke(bitmap) ?: Pair(bitmap.width, bitmap.height)
+                        val scaled = if (dims.first > maxDim || dims.second > maxDim) {
+                            val (w, h) = computeTargetDimensions(dims.first, dims.second, maxDim)
+                            val s = bitmapScalerOverride?.invoke(bitmap, w, h) ?: android.graphics.Bitmap.createScaledBitmap(bitmap, w, h, true)
+                            if (s != bitmap) {
+                                bitmap.recycle()
+                            }
+                            s
+                        } else bitmap
+                        decodedBitmap = scaled
+                        val baos = java.io.ByteArrayOutputStream()
+                        scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 75, baos)
+                        android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP)
+                    } else null
+                }
             } catch (_: Exception) {
                 null
             }
 
-            // 1. Immediately evict and pre-populate memory cache so all local UI renders the new avatar ON THE SPOT with ZERO delay
-            com.bingo.multiplayer.presentation.common.PlayerAvatarCache.evict(current.username, current.avatarUrl)
-            if (decodedBitmap != null) {
-                val imageBmp = decodedBitmap.asImageBitmap()
+            if (decodedBitmap == null) {
+                try { targetFile.delete() } catch (_: Exception) {}
+                return false
+            }
+
+            val oldPath = current.avatarUrl
+            val imageBmp = decodedBitmap.asImageBitmap()
+
+            var committedProfile: UserProfile? = null
+            val success = synchronized(this@AuthRepository) {
+                if (sessionGeneration.get() != expectedGen || (_authState.value as? AuthState.Authenticated)?.user?.uid != current.uid) {
+                    try { targetFile.delete() } catch (_: Exception) {}
+                    return@synchronized false
+                }
+
+                // Delete old file only after ownership and generation fence pass
+                oldPath?.let { p ->
+                    try {
+                        val oldFile = File(p)
+                        if (oldFile.exists() && oldFile.parent == context?.filesDir?.absolutePath && oldFile.absolutePath != targetFile.absolutePath) {
+                            oldFile.delete()
+                        }
+                    } catch (_: Exception) {}
+                }
+
+                // Pre-populate memory cache under lock
+                com.bingo.multiplayer.presentation.common.PlayerAvatarCache.evict(current.username, oldPath)
                 com.bingo.multiplayer.presentation.common.PlayerAvatarCache.put(targetFile.absolutePath, imageBmp)
                 com.bingo.multiplayer.presentation.common.PlayerAvatarCache.put("u:$cleanUser", imageBmp)
                 if (!base64.isNullOrBlank()) {
                     com.bingo.multiplayer.presentation.common.PlayerAvatarCache.put(base64, imageBmp)
                 }
-            }
-            com.bingo.multiplayer.presentation.common.PlayerAvatarCache.notifyAvatarChanged(cleanUser)
+                com.bingo.multiplayer.presentation.common.PlayerAvatarCache.notifyAvatarChanged(cleanUser)
 
-            val updated = current.copy(
-                avatarUrl = targetFile.absolutePath,
-                avatarBase64 = base64
-            )
-            persistUser(updated, prefs.getString(KEY_AUTH_TOKEN, ""))
-            _authState.value = AuthState.Authenticated(updated)
+                val updated = current.copy(
+                    avatarUrl = targetFile.absolutePath,
+                    avatarBase64 = base64
+                )
+                val persisted = persistUser(updated, prefs.getString(KEY_AUTH_TOKEN, ""), expectedGeneration = expectedGen)
+                if (!persisted || sessionGeneration.get() != expectedGen || (_authState.value as? AuthState.Authenticated)?.user?.uid != current.uid) {
+                    try { targetFile.delete() } catch (_: Exception) {}
+                    return@synchronized false
+                }
+                _authState.value = AuthState.Authenticated(updated)
+                committedProfile = updated
+                true
+            }
+
+            if (!success) return false
+            val finalUser = committedProfile ?: return false
+            if (sessionGeneration.get() != expectedGen) return false
+            com.bingo.multiplayer.domain.network.ProfileAvatars.state.localChange(finalUser.username, base64)
+            context?.let { com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(it)
+                .syncUserProfile(finalUser, getSettings()) }
+
             backupUserDataToCloud()
-            val googleId = if (updated.uid.startsWith("google_")) updated.uid.removePrefix("google_") else null
+            val googleId = if (finalUser.uid.startsWith("google_")) finalUser.uid.removePrefix("google_") else null
+            val finalUserKey = com.bingo.multiplayer.domain.network.AccountKeyStore.getPublicKeyBase64(finalUser.uid)
             sessionManager.claimUsername(
                 com.bingo.multiplayer.domain.network.PlayerRegistryEntry(
-                    username = updated.username,
-                    uid = updated.uid,
-                    displayName = updated.displayName,
-                    avatarUrl = updated.avatarBase64 ?: updated.avatarUrl,
-                    gamesPlayed = updated.gamesPlayed,
-                    gamesWon = updated.gamesWon,
-                    currentStreak = updated.currentStreak,
-                    bestStreak = updated.bestStreak,
-                    level = updated.level
+                    username = finalUser.username,
+                    uid = finalUser.uid,
+                    displayName = finalUser.displayName,
+                    avatarUrl = finalUser.avatarBase64 ?: finalUser.avatarUrl,
+                    gamesPlayed = finalUser.gamesPlayed,
+                    gamesWon = finalUser.gamesWon,
+                    currentStreak = finalUser.currentStreak,
+                    bestStreak = finalUser.bestStreak,
+                    level = finalUser.level,
+                    publicKey = finalUserKey
                 ),
                 googleId = googleId
             )
             scope.launch {
-                if (base64 != null) {
-                    sessionManager.saveUserAvatar(updated.username, base64)
+                if (sessionGeneration.get() == expectedGen) {
+                    // Photos persist in Firebase; visible avatars share its live public-profile watch.
+                    // 3. Update active match / lobby / friends
+                    com.bingo.multiplayer.domain.network.OnlineRoomSyncManager.activeInstance?.updateLocalAvatar(base64)
+                    com.bingo.multiplayer.domain.network.LanP2pSessionManager.activeInstance?.updateLocalAvatar(base64)
+                    com.bingo.multiplayer.domain.repository.FriendsRepository.activeInstance?.onRemoteAvatarUpdated(finalUser.username, base64)
                 }
-                // 2. Real-time broadcast to all players across MQTT
-                sessionManager.broadcastAvatarUpdate(updated.username, base64)
-                // 3. Update active match / lobby / friends
-                com.bingo.multiplayer.domain.network.OnlineRoomSyncManager.activeInstance?.updateLocalAvatar(base64)
-                com.bingo.multiplayer.domain.network.LanP2pSessionManager.activeInstance?.updateLocalAvatar(base64)
-                com.bingo.multiplayer.domain.repository.FriendsRepository.activeInstance?.onRemoteAvatarUpdated(updated.username, base64)
             }
             true
         } catch (e: Exception) {
-            e.printStackTrace()
             false
         }
     }
@@ -501,9 +648,13 @@ class AuthRepository(
         val updated = current.copy(avatarUrl = null, avatarBase64 = null)
         persistUser(updated, prefs.getString(KEY_AUTH_TOKEN, ""))
         _authState.value = AuthState.Authenticated(updated)
+        com.bingo.multiplayer.domain.network.ProfileAvatars.state.localChange(cleanUser, null)
+        context?.let { com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(it)
+            .syncUserProfile(updated, getSettings()) }
         backupUserDataToCloud()
 
         val googleId = if (updated.uid.startsWith("google_")) updated.uid.removePrefix("google_") else null
+        val updatedUserKey = com.bingo.multiplayer.domain.network.AccountKeyStore.getPublicKeyBase64(updated.uid)
         sessionManager.claimUsername(
             com.bingo.multiplayer.domain.network.PlayerRegistryEntry(
                 username = updated.username,
@@ -514,14 +665,13 @@ class AuthRepository(
                 gamesWon = updated.gamesWon,
                 currentStreak = updated.currentStreak,
                 bestStreak = updated.bestStreak,
-                level = updated.level
+                level = updated.level,
+                publicKey = updatedUserKey
             ),
             googleId = googleId
         )
 
         scope.launch {
-            sessionManager.deleteUserAvatar(cleanUser)
-            sessionManager.broadcastAvatarUpdate(cleanUser, null)
             com.bingo.multiplayer.domain.network.OnlineRoomSyncManager.activeInstance?.updateLocalAvatar(null)
             com.bingo.multiplayer.domain.network.LanP2pSessionManager.activeInstance?.updateLocalAvatar(null)
             com.bingo.multiplayer.domain.repository.FriendsRepository.activeInstance?.onRemoteAvatarUpdated(cleanUser, null)
@@ -554,7 +704,9 @@ class AuthRepository(
         )
     }
 
-    fun updateSettings(settings: com.bingo.multiplayer.domain.model.UserSettings, syncToCloud: Boolean = true) {
+    @Synchronized
+    fun updateSettings(settings: com.bingo.multiplayer.domain.model.UserSettings, syncToCloud: Boolean = true, expectedGen: Long? = null) {
+        if (expectedGen != null && sessionGeneration.get() != expectedGen) return
         val current = getSettings()
         if (current == settings) return
 
@@ -609,8 +761,10 @@ class AuthRepository(
         }
     }
 
-    fun getMatchHistory(): List<com.bingo.multiplayer.domain.model.MatchRecord> {
-        val raw = prefs.getString("match_history", null) ?: return emptyList()
+    fun getMatchHistory(uid: String? = null): List<com.bingo.multiplayer.domain.model.MatchRecord> {
+        val targetUid = uid ?: (_authState.value as? AuthState.Authenticated)?.user?.uid ?: prefs.getString(KEY_UID, null)
+        val scopedKey = if (!targetUid.isNullOrBlank()) "${targetUid}_match_history" else "match_history"
+        val raw = prefs.getString(scopedKey, null) ?: prefs.getString("match_history", null) ?: return emptyList()
         return try {
             kotlinx.serialization.json.Json.decodeFromString(raw)
         } catch (_: Exception) {
@@ -619,11 +773,32 @@ class AuthRepository(
     }
 
     @Synchronized
-    fun persistMatchHistory(matches: List<com.bingo.multiplayer.domain.model.MatchRecord>) {
+    fun persistMatchHistory(
+        matches: List<com.bingo.multiplayer.domain.model.MatchRecord>,
+        uid: String? = null,
+        expectedGeneration: Long? = null
+    ) {
         if (matches.isEmpty()) return
-        val merged = (getMatchHistory() + matches).distinctBy { it.id }
+        val currentAuth = (_authState.value as? AuthState.Authenticated)?.user
+        if (expectedGeneration != null && sessionGeneration.get() != expectedGeneration) {
+            android.util.Log.w("AuthRepository", "persistMatchHistory rejected: session generation mismatch")
+            return
+        }
+        if (uid != null && currentAuth != null && currentAuth.uid != uid) {
+            android.util.Log.w("AuthRepository", "persistMatchHistory rejected: account switched from $uid to ${currentAuth.uid}")
+            return
+        }
+        val targetUid = uid ?: currentAuth?.uid ?: prefs.getString(KEY_UID, null)
+        if (targetUid.isNullOrBlank()) return
+
+        val merged = (getMatchHistory(targetUid) + matches).distinctBy { it.id }
             .sortedByDescending { it.timestamp }.take(1000)
-        prefs.edit().putString("match_history", kotlinx.serialization.json.Json.encodeToString(merged)).apply()
+        val jsonStr = kotlinx.serialization.json.Json.encodeToString(merged)
+        val editor = prefs.edit().putString("${targetUid}_match_history", jsonStr)
+        if (currentAuth?.uid == targetUid) {
+            editor.putString("match_history", jsonStr)
+        }
+        editor.apply()
     }
 
     fun streamFirestoreMatchHistory(): kotlinx.coroutines.flow.Flow<List<com.bingo.multiplayer.domain.model.MatchRecord>>? {
@@ -675,6 +850,11 @@ class AuthRepository(
         val previousHistory = currentHistory.toList()
         currentHistory.add(0, record)
         val trimmed = if (currentHistory.size > 1000) currentHistory.take(1000) else currentHistory
+        val targetUid = (_authState.value as? AuthState.Authenticated)?.user?.uid ?: prefs.getString(KEY_UID, "") ?: ""
+        val historyJson = Json.encodeToString(trimmed)
+        val prevHistoryJson = Json.encodeToString(previousHistory)
+        val scopedHistoryKey = if (targetUid.isNotBlank()) "${targetUid}_match_history" else null
+
         if (stableResultId != null) {
             val current = (_authState.value as? AuthState.Authenticated)?.user ?: return false
             val streak = if (didWin) current.currentStreak + 1 else if (isDraw) current.currentStreak else 0
@@ -685,18 +865,38 @@ class AuthRepository(
                 xp = xp, level = (xp / 400).coerceAtLeast(1))
             // The result identity, history and profile counters commit together. A restart cannot
             // observe an increment without its deduplication record, or the inverse.
-            val saved = prefs.edit().putString("match_history", Json.encodeToString(trimmed))
+            val editor = prefs.edit().putString("match_history", historyJson)
                 .putInt(KEY_GAMES_PLAYED, updated.gamesPlayed).putInt(KEY_GAMES_WON, updated.gamesWon)
                 .putInt(KEY_STREAK, updated.currentStreak).putInt(KEY_BEST_STREAK, updated.bestStreak)
-                .putInt(KEY_XP, updated.xp).putInt(KEY_LEVEL, updated.level).putBoolean(receiptKey!!, true).commit()
+                .putInt(KEY_XP, updated.xp).putInt(KEY_LEVEL, updated.level).putBoolean(receiptKey!!, true)
+            if (scopedHistoryKey != null) {
+                editor.putString(scopedHistoryKey, historyJson)
+                    .putInt("${targetUid}_games_played", updated.gamesPlayed)
+                    .putInt("${targetUid}_games_won", updated.gamesWon)
+                    .putInt("${targetUid}_streak", updated.currentStreak)
+                    .putInt("${targetUid}_best_streak", updated.bestStreak)
+                    .putInt("${targetUid}_xp", updated.xp)
+                    .putInt("${targetUid}_level", updated.level)
+            }
+            val saved = editor.commit()
             if (!saved) {
                 // Android updates SharedPreferences memory even when its disk commit fails.
                 // Restore the touched memory values so a retry cannot trust an unpersisted receipt.
                 // The rollback itself may fail on disk; the result stays pending either way.
-                prefs.edit().putString("match_history", Json.encodeToString(previousHistory))
+                val rollbackEditor = prefs.edit().putString("match_history", prevHistoryJson)
                     .putInt(KEY_GAMES_PLAYED, current.gamesPlayed).putInt(KEY_GAMES_WON, current.gamesWon)
                     .putInt(KEY_STREAK, current.currentStreak).putInt(KEY_BEST_STREAK, current.bestStreak)
-                    .putInt(KEY_XP, current.xp).putInt(KEY_LEVEL, current.level).remove(receiptKey).commit()
+                    .putInt(KEY_XP, current.xp).putInt(KEY_LEVEL, current.level).remove(receiptKey)
+                if (scopedHistoryKey != null) {
+                    rollbackEditor.putString(scopedHistoryKey, prevHistoryJson)
+                        .putInt("${targetUid}_games_played", current.gamesPlayed)
+                        .putInt("${targetUid}_games_won", current.gamesWon)
+                        .putInt("${targetUid}_streak", current.currentStreak)
+                        .putInt("${targetUid}_best_streak", current.bestStreak)
+                        .putInt("${targetUid}_xp", current.xp)
+                        .putInt("${targetUid}_level", current.level)
+                }
+                rollbackEditor.commit()
                 return false
             }
             _authState.value = AuthState.Authenticated(updated)
@@ -706,7 +906,11 @@ class AuthRepository(
             publishCareerProfile(updated)
             return true
         }
-        prefs.edit().putString("match_history", Json.encodeToString(trimmed)).apply()
+        val editor = prefs.edit().putString("match_history", historyJson)
+        if (scopedHistoryKey != null) {
+            editor.putString(scopedHistoryKey, historyJson)
+        }
+        editor.apply()
 
         if (context != null) {
             val uid = (_authState.value as? AuthState.Authenticated)?.user?.uid ?: prefs.getString(KEY_UID, "") ?: ""
@@ -753,6 +957,7 @@ class AuthRepository(
                 .syncUserProfile(updated, getSettings())
         }
         val googleId = if (updated.uid.startsWith("google_")) updated.uid.removePrefix("google_") else null
+        val careerUserKey = com.bingo.multiplayer.domain.network.AccountKeyStore.getPublicKeyBase64(updated.uid)
         sessionManager.claimUsername(
             com.bingo.multiplayer.domain.network.PlayerRegistryEntry(
                 username = updated.username,
@@ -763,7 +968,8 @@ class AuthRepository(
                 gamesWon = updated.gamesWon,
                 currentStreak = updated.currentStreak,
                 bestStreak = updated.bestStreak,
-                level = updated.level
+                level = updated.level,
+                publicKey = careerUserKey
             ),
             googleId = googleId
         )
@@ -784,14 +990,20 @@ class AuthRepository(
         sessionManager.backupUserData(googleId, backup)
     }
 
-    suspend fun restoreCloudUserData(googleId: String): Boolean {
+    suspend fun restoreCloudUserData(googleId: String, idToken: String? = null): Boolean {
+        val expectedGen = sessionGeneration.get()
+        val targetUid = "google_$googleId"
+        if (context != null && !awaitFirebaseAuth(idToken, expectedGen, targetUid = targetUid)) return false
         val cloudData = sessionManager.fetchUserDataBackup(googleId) ?: return false
+        if (sessionGeneration.get() != expectedGen) return false
+        if (cloudData.profile.uid != targetUid || cloudData.profile.provider != AuthProvider.GOOGLE) return false
+        val current = (_authState.value as? AuthState.Authenticated)?.user
+        if (current != null && current.uid != targetUid) return false
         val cloudProfile = cloudData.profile
         val localAvatar = if (!cloudProfile.avatarBase64.isNullOrBlank()) {
             restoreAvatarFromBase64(cloudProfile.avatarBase64, cloudProfile.uid) ?: cloudProfile.avatarUrl
         } else cloudProfile.avatarUrl
 
-        val current = (_authState.value as? AuthState.Authenticated)?.user
         val finalProfile = cloudProfile.copy(
             avatarUrl = localAvatar,
             avatarBase64 = cloudProfile.avatarBase64,
@@ -802,50 +1014,69 @@ class AuthRepository(
             level = maxOf(current?.level ?: 1, cloudProfile.level),
             xp = maxOf(current?.xp ?: 0, cloudProfile.xp)
         )
-        persistUser(finalProfile, prefs.getString(KEY_AUTH_TOKEN, ""))
-        setGoogleUserRegistered(googleId, true)
-        setSavedGoogleDisplayName(googleId, finalProfile.displayName)
-        setSavedGoogleUsername(googleId, finalProfile.username)
-        val localDark = com.bingo.multiplayer.core.designsystem.ThemePreferences.isDarkTheme.value
-        val localSound = com.bingo.multiplayer.core.designsystem.SoundPreferences.soundEnabled.value
-        val localHaptics = com.bingo.multiplayer.core.designsystem.SoundPreferences.hapticsEnabled.value
-        val localPreset = com.bingo.multiplayer.core.designsystem.SoundPreferences.pickSoundPresetId.value
-        val isNotifsConfigured = context?.let { com.bingo.multiplayer.core.designsystem.NotificationPreferences.isLocallyConfigured(it) } ?: false
-        updateSettings(
-            cloudData.settings.copy(
-                darkTheme = localDark,
-                soundEnabled = localSound,
-                hapticsEnabled = localHaptics,
-                pickSoundPresetId = localPreset,
-                systemNotificationsEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.systemNotificationsEnabled.value else cloudData.settings.systemNotificationsEnabled,
-                playerOnlineNotificationsEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.playerOnlineNotificationsEnabled.value else cloudData.settings.playerOnlineNotificationsEnabled,
-                playerInvitesNotificationsEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.playerInvitesNotificationsEnabled.value else cloudData.settings.playerInvitesNotificationsEnabled,
-                inAppNotificationsEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.inAppNotificationsEnabled.value else cloudData.settings.inAppNotificationsEnabled,
-                inAppPlayerOnlineEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.inAppPlayerOnlineEnabled.value else cloudData.settings.inAppPlayerOnlineEnabled,
-                inAppPlayerInvitesEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.inAppPlayerInvitesEnabled.value else cloudData.settings.inAppPlayerInvitesEnabled
-            ),
-            syncToCloud = false
-        )
-        if (cloudData.settings.darkTheme != localDark) {
+        val currentCheck = (_authState.value as? AuthState.Authenticated)?.user
+        if (currentCheck != null && currentCheck.uid != targetUid) return false
+        if (!persistUser(finalProfile, prefs.getString(KEY_AUTH_TOKEN, ""), expectedGeneration = expectedGen)) return false
+        if (sessionGeneration.get() != expectedGen) return false
+
+        synchronized(this@AuthRepository) {
+            if (sessionGeneration.get() != expectedGen) return@synchronized false
+            setGoogleUserRegistered(googleId, true)
+            setSavedGoogleDisplayName(googleId, finalProfile.displayName)
+            setSavedGoogleUsername(googleId, finalProfile.username)
+            val localDark = com.bingo.multiplayer.core.designsystem.ThemePreferences.isDarkTheme.value
+            val localSound = com.bingo.multiplayer.core.designsystem.SoundPreferences.soundEnabled.value
+            val localHaptics = com.bingo.multiplayer.core.designsystem.SoundPreferences.hapticsEnabled.value
+            val localPreset = com.bingo.multiplayer.core.designsystem.SoundPreferences.pickSoundPresetId.value
+            val isNotifsConfigured = context?.let { com.bingo.multiplayer.core.designsystem.NotificationPreferences.isLocallyConfigured(it) } ?: false
+
+            updateSettings(
+                cloudData.settings.copy(
+                    darkTheme = localDark,
+                    soundEnabled = localSound,
+                    hapticsEnabled = localHaptics,
+                    pickSoundPresetId = localPreset,
+                    systemNotificationsEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.systemNotificationsEnabled.value else cloudData.settings.systemNotificationsEnabled,
+                    playerOnlineNotificationsEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.playerOnlineNotificationsEnabled.value else cloudData.settings.playerOnlineNotificationsEnabled,
+                    playerInvitesNotificationsEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.playerInvitesNotificationsEnabled.value else cloudData.settings.playerInvitesNotificationsEnabled,
+                    inAppNotificationsEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.inAppNotificationsEnabled.value else cloudData.settings.inAppNotificationsEnabled,
+                    inAppPlayerOnlineEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.inAppPlayerOnlineEnabled.value else cloudData.settings.inAppPlayerOnlineEnabled,
+                    inAppPlayerInvitesEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.inAppPlayerInvitesEnabled.value else cloudData.settings.inAppPlayerInvitesEnabled
+                ),
+                syncToCloud = false,
+                expectedGen = expectedGen
+            )
+
+            if (cloudData.matchHistory.isNotEmpty()) {
+                val localHistory = getMatchHistory(finalProfile.uid)
+                val merged = (localHistory + cloudData.matchHistory)
+                    .distinctBy { it.id }
+                    .sortedByDescending { it.timestamp }
+                    .let { if (it.size > 1000) it.take(1000) else it }
+                val historyJson = Json.encodeToString(merged)
+                prefs.edit().putString("match_history", historyJson)
+                    .putString("${finalProfile.uid}_match_history", historyJson)
+                    .commit()
+            }
+            if (sessionGeneration.get() != expectedGen) return@synchronized false
+            _authState.value = AuthState.Authenticated(finalProfile)
+            sessionManager.startSessionWatcher(googleId, deviceId) {
+                if (sessionGeneration.get() == expectedGen) {
+                    signOut()
+                }
+            }
+            true
+        }
+        val currentDark = com.bingo.multiplayer.core.designsystem.ThemePreferences.isDarkTheme.value
+        if (cloudData.settings.darkTheme != currentDark && sessionGeneration.get() == expectedGen) {
             backupUserDataToCloud()
-        }
-        if (cloudData.matchHistory.isNotEmpty()) {
-            val localHistory = getMatchHistory()
-            val merged = (localHistory + cloudData.matchHistory)
-                .distinctBy { it.id }
-                .sortedByDescending { it.timestamp }
-                .let { if (it.size > 1000) it.take(1000) else it }
-            prefs.edit().putString("match_history", Json.encodeToString(merged)).apply()
-        }
-        _authState.value = AuthState.Authenticated(finalProfile)
-        sessionManager.startSessionWatcher(googleId, deviceId) {
-            signOut()
         }
         return true
     }
 
     @Synchronized
     fun signOut() {
+        sessionGeneration.incrementAndGet()
         com.bingo.multiplayer.domain.network.LeaderboardSyncManager.reset()
         val current = (_authState.value as? AuthState.Authenticated)?.user
         if (current != null) {
@@ -855,7 +1086,7 @@ class AuthRepository(
             val backup = com.bingo.multiplayer.domain.model.CloudUserDataBackup(
                 profile = current,
                 settings = getSettings(),
-                matchHistory = getMatchHistory(),
+                matchHistory = getMatchHistory(current.uid),
                 lastBackupTimestamp = System.currentTimeMillis()
             )
             scope.launch(Dispatchers.IO) {
@@ -868,6 +1099,9 @@ class AuthRepository(
             com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(context).stopRealtimeProfileListener()
         }
         if (context != null) com.bingo.multiplayer.domain.notifications.NotificationRuntime.bind(context, null, null)
+        try {
+            com.google.firebase.auth.FirebaseAuth.getInstance().signOut()
+        } catch (_: Throwable) {}
         prefs.edit()
             .remove(KEY_UID)
             .remove(KEY_AUTH_TOKEN)
@@ -877,30 +1111,140 @@ class AuthRepository(
             .remove(KEY_AVATAR)
             .remove(KEY_AVATAR_BASE64)
             .remove(KEY_PROVIDER)
+            .remove(KEY_GAMES_PLAYED)
+            .remove(KEY_GAMES_WON)
+            .remove(KEY_STREAK)
+            .remove(KEY_BEST_STREAK)
+            .remove(KEY_LEVEL)
+            .remove(KEY_XP)
+            .remove("match_history")
             .apply()
         _authState.value = AuthState.Unauthenticated
     }
 
 
-    private fun loadExistingStats(): UserProfile {
-        val streak = prefs.getInt(KEY_STREAK, 0)
-        val bestStreak = maxOf(prefs.getInt(KEY_BEST_STREAK, streak), streak)
+    suspend fun awaitFirebaseAuth(idToken: String? = null, expectedGen: Long = sessionGeneration.get(), targetUid: String? = null): Boolean = withContext(Dispatchers.IO) {
+        val ctx = context ?: return@withContext true
+        try {
+            if (com.google.firebase.FirebaseApp.getApps(ctx).isEmpty()) return@withContext true
+            val auth = com.google.firebase.auth.FirebaseAuth.getInstance()
+            val currentAuth = auth.currentUser
+            val isGenuineToken = !idToken.isNullOrBlank() && !idToken.startsWith("google_token_") && !idToken.startsWith("guest_token_")
+            val task = if (isGenuineToken) {
+                val credential = com.google.firebase.auth.GoogleAuthProvider.getCredential(idToken, null)
+                auth.signInWithCredential(credential)
+            } else if (targetUid != null && targetUid.startsWith("guest_")) {
+                val customToken = runCatching { obtainGuestCustomToken(targetUid) }.getOrNull()
+                if (!customToken.isNullOrBlank()) {
+                    auth.signInWithCustomToken(customToken)
+                } else if (currentAuth == null || !currentAuth.isAnonymous) {
+                    if (currentAuth != null && !currentAuth.isAnonymous) {
+                        auth.signOut()
+                    }
+                    auth.signInAnonymously()
+                } else null
+            } else if (currentAuth == null) {
+                auth.signInAnonymously()
+            } else null
+
+            if (task != null) {
+                com.google.android.gms.tasks.Tasks.await(task, 5, java.util.concurrent.TimeUnit.SECONDS)
+            }
+            if (sessionGeneration.get() != expectedGen) return@withContext false
+            val current = auth.currentUser ?: return@withContext false
+            if (targetUid != null) {
+                if (targetUid.startsWith("google_")) {
+                    val expectedGid = targetUid.removePrefix("google_")
+                    val isMatchingGoogle = current.providerData.any { it.providerId == "google.com" && it.uid == expectedGid } ||
+                        current.uid == targetUid || current.uid == expectedGid
+                    if (!isMatchingGoogle) {
+                        return@withContext false
+                    }
+                } else if (targetUid.startsWith("guest_")) {
+                    if (!current.isAnonymous && current.uid != targetUid) {
+                        return@withContext false
+                    }
+                }
+            }
+            true
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    private suspend fun obtainGuestCustomToken(targetUid: String): String? = withContext(Dispatchers.IO) {
+        if (context == null) return@withContext null
+        try {
+            val keyPair = com.bingo.multiplayer.domain.notifications.NotificationIdentity.getKeyPair()
+            val pubKey = com.bingo.multiplayer.domain.notifications.NotificationIdentity.installationPublicKey()
+            val timestamp = System.currentTimeMillis()
+            val nonce = java.util.UUID.randomUUID().toString()
+            val firebaseUid = runCatching { com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid }.getOrNull() ?: targetUid
+            val message = "bingo-firebase-guest-binding\n$targetUid\n$firebaseUid\n$pubKey\n$timestamp\n$nonce"
+            val signer = java.security.Signature.getInstance("SHA256withECDSA").apply {
+                initSign(keyPair.private)
+                update(message.toByteArray(Charsets.UTF_8))
+            }
+            val sig = android.util.Base64.encodeToString(signer.sign(), android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING).trim()
+            val payload = org.json.JSONObject()
+                .put("guestUid", targetUid)
+                .put("firebaseUid", firebaseUid)
+                .put("publicKey", pubKey)
+                .put("timestamp", timestamp)
+                .put("nonce", nonce)
+                .put("signature", sig)
+
+            val base = com.bingo.multiplayer.domain.network.NetworkConfig.FCM_RELAY_URL.removeSuffix("/send")
+            val body = payload.toString().toRequestBody("application/json".toMediaType())
+            val req = okhttp3.Request.Builder()
+                .url("$base/v2/auth/firebase-guest-binding")
+                .post(body)
+                .build()
+
+            com.bingo.multiplayer.domain.network.NetworkConfig.httpClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext null
+                val respBody = resp.body?.string() ?: return@withContext null
+                val json = org.json.JSONObject(respBody)
+                json.optString("customToken").takeIf { it.isNotBlank() }
+            }
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun ensureFirebaseAuth(idToken: String? = null, targetUid: String? = null) {
+        val gen = sessionGeneration.get()
+        scope.launch(Dispatchers.IO) {
+            awaitFirebaseAuth(idToken, gen, targetUid)
+        }
+    }
+
+    private fun loadExistingStats(uid: String = ""): UserProfile {
+        val pfx = if (uid.isNotBlank()) "${uid}_" else ""
+        val streak = if (pfx.isNotEmpty() && prefs.contains("${pfx}streak")) prefs.getInt("${pfx}streak", 0) else if (pfx.isEmpty()) prefs.getInt(KEY_STREAK, 0) else 0
+        val bestStreak = maxOf(if (pfx.isNotEmpty() && prefs.contains("${pfx}best_streak")) prefs.getInt("${pfx}best_streak", streak) else if (pfx.isEmpty()) prefs.getInt(KEY_BEST_STREAK, streak) else 0, streak)
         return UserProfile(
-            uid = "",
+            uid = uid,
             displayName = "",
-            avatarUrl = prefs.getString(KEY_AVATAR, null),
-            avatarBase64 = prefs.getString(KEY_AVATAR_BASE64, null),
-            gamesPlayed = prefs.getInt(KEY_GAMES_PLAYED, 0),
-            gamesWon = prefs.getInt(KEY_GAMES_WON, 0),
+            avatarUrl = if (pfx.isNotEmpty() && prefs.contains("${pfx}avatar")) prefs.getString("${pfx}avatar", null) else if (pfx.isEmpty()) prefs.getString(KEY_AVATAR, null) else null,
+            avatarBase64 = if (pfx.isNotEmpty() && prefs.contains("${pfx}avatar_base64")) prefs.getString("${pfx}avatar_base64", null) else if (pfx.isEmpty()) prefs.getString(KEY_AVATAR_BASE64, null) else null,
+            gamesPlayed = if (pfx.isNotEmpty() && prefs.contains("${pfx}games_played")) prefs.getInt("${pfx}games_played", 0) else if (pfx.isEmpty()) prefs.getInt(KEY_GAMES_PLAYED, 0) else 0,
+            gamesWon = if (pfx.isNotEmpty() && prefs.contains("${pfx}games_won")) prefs.getInt("${pfx}games_won", 0) else if (pfx.isEmpty()) prefs.getInt(KEY_GAMES_WON, 0) else 0,
             currentStreak = streak,
             bestStreak = bestStreak,
-            level = prefs.getInt(KEY_LEVEL, 1),
-            xp = prefs.getInt(KEY_XP, 0)
+            level = if (pfx.isNotEmpty() && prefs.contains("${pfx}level")) prefs.getInt("${pfx}level", 1) else if (pfx.isEmpty()) prefs.getInt(KEY_LEVEL, 1) else 1,
+            xp = if (pfx.isNotEmpty() && prefs.contains("${pfx}xp")) prefs.getInt("${pfx}xp", 0) else if (pfx.isEmpty()) prefs.getInt(KEY_XP, 0) else 0
         )
     }
 
     @Synchronized
-    private fun persistUser(profile: UserProfile, token: String? = null) {
+    private fun persistUser(profile: UserProfile, token: String? = null, expectedGeneration: Long? = null): Boolean {
+        if (expectedGeneration != null && sessionGeneration.get() != expectedGeneration) return false
+        val currentAuth = (_authState.value as? AuthState.Authenticated)?.user
+        if (expectedGeneration != null && currentAuth != null && currentAuth.uid != profile.uid) return false
+        val currentSavedUid = prefs.getString(KEY_UID, null)
+        if (expectedGeneration != null && currentSavedUid != null && currentSavedUid != profile.uid) return false
+
         val editor = prefs.edit()
             .putString(KEY_UID, profile.uid)
             .putString(KEY_USERNAME, profile.username)
@@ -916,6 +1260,20 @@ class AuthRepository(
             .putInt(KEY_LEVEL, profile.level)
             .putInt(KEY_XP, profile.xp)
 
+        if (profile.uid.isNotBlank()) {
+            val pfx = "${profile.uid}_"
+            editor.putString("${pfx}username", profile.username)
+                .putString("${pfx}name", profile.displayName)
+                .putString("${pfx}avatar", profile.avatarUrl)
+                .putString("${pfx}avatar_base64", profile.avatarBase64)
+                .putInt("${pfx}games_played", profile.gamesPlayed)
+                .putInt("${pfx}games_won", profile.gamesWon)
+                .putInt("${pfx}streak", profile.currentStreak)
+                .putInt("${pfx}best_streak", profile.bestStreak)
+                .putInt("${pfx}level", profile.level)
+                .putInt("${pfx}xp", profile.xp)
+        }
+
         if (token != null) {
             editor.putString(KEY_AUTH_TOKEN, token)
         }
@@ -927,17 +1285,44 @@ class AuthRepository(
         }
 
         if (context != null && profile.uid.isNotBlank()) {
-            val firestoreSync = com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(context)
-            firestoreSync.syncUserProfile(profile, getSettings())
-            val existingMatches = getMatchHistory()
-            if (existingMatches.isNotEmpty()) {
-                firestoreSync.syncAllMatches(profile.uid, existingMatches)
+            val gen = sessionGeneration.get()
+            scope.launch(Dispatchers.IO) {
+                val tokenToUse = if (token != null && !token.startsWith("google_token_") && !token.startsWith("guest_token_") && profile.provider == AuthProvider.GOOGLE) token else null
+                val authOk = awaitFirebaseAuth(idToken = tokenToUse, expectedGen = gen, targetUid = profile.uid)
+                if (!authOk || sessionGeneration.get() != gen) return@launch
+                val firestoreSync = com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(context)
+                firestoreSync.syncUserProfile(profile, getSettings())
+                val existingMatches = getMatchHistory(profile.uid)
+                if (existingMatches.isNotEmpty()) {
+                    firestoreSync.syncAllMatches(profile.uid, existingMatches)
+                }
             }
         }
+        return true
     }
 
     companion object {
         @Volatile var activeInstance: AuthRepository? = null
+        internal var contentStreamProvider: ((Uri?) -> java.io.InputStream?)? = null
+        internal var bitmapDecoderOverride: ((String) -> android.graphics.Bitmap?)? = null
+        internal var bitmapDimensionsOverride: ((android.graphics.Bitmap) -> Pair<Int, Int>)? = null
+        internal var bitmapScalerOverride: ((android.graphics.Bitmap, Int, Int) -> android.graphics.Bitmap)? = null
+
+        fun computeSampleSize(outWidth: Int, outHeight: Int, maxDim: Int = 160): Int {
+            var sampleSize = 1
+            while ((outWidth / sampleSize > maxDim * 2) || (outHeight / sampleSize > maxDim * 2)) {
+                sampleSize *= 2
+            }
+            return sampleSize
+        }
+
+        fun computeTargetDimensions(width: Int, height: Int, maxDim: Int = 160): Pair<Int, Int> {
+            if (width <= maxDim && height <= maxDim) return Pair(width, height)
+            val ratio = width.toFloat() / height.toFloat()
+            val w = if (ratio >= 1f) maxDim else (maxDim * ratio).toInt().coerceAtLeast(1)
+            val h = if (ratio >= 1f) (maxDim / ratio).toInt().coerceAtLeast(1) else maxDim
+            return Pair(w, h)
+        }
         private const val PREFS_NAME = "bingo_auth_prefs"
         private const val KEY_UID = "uid"
         private const val KEY_USERNAME = "username"

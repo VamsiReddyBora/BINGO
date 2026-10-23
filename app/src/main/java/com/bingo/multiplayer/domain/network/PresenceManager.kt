@@ -82,8 +82,6 @@ object PresenceManager {
     private const val KEY_ACTIVE_USER = "active_username"
 
     private val BROKER_URL = NetworkConfig.BROKER_URL
-    private val httpClient = NetworkConfig.httpClient
-    private val appKey = NetworkConfig.KEYVALUE_APP_KEY
     private val json = Json { ignoreUnknownKeys = true; isLenient = true; encodeDefaults = true }
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
@@ -95,7 +93,7 @@ object PresenceManager {
     private var onlineSessionId = UUID.randomUUID().toString()
     private var onlineSessionStartedAt = System.currentTimeMillis()
     var currentActiveUsername: String? = null
-        private set
+    internal var networkEnabled: Boolean = true
 
     var currentConnectedServerUri: String? = null
         private set
@@ -126,6 +124,8 @@ object PresenceManager {
         presenceMap[clean] = PlayerPresence(clean, state.name, now, activityDetail = detail, currentRoomCode = roomCode)
         updatePresenceFlow()
 
+        if (!networkEnabled || EmqxTransport.wireOverride != null) return
+
         scope.launch {
             publishStatus(clean, state.name, detail, roomCode)
             setCloudPresence(clean, state.name, now)
@@ -140,6 +140,9 @@ object PresenceManager {
     private fun updatePresenceFlow() {
         _presenceFlow.value = HashMap(presenceMap)
         persistJob?.cancel()
+        if (!networkEnabled || prefs == null) {
+            return
+        }
         persistJob = scope.launch {
             delay(1000L)
             try {
@@ -202,150 +205,25 @@ object PresenceManager {
      * Writes presence asynchronously without blocking (fire-and-forget for lifecycle exit).
      */
     fun setCloudPresenceAsync(cleanUsername: String, status: String, timestamp: Long, detail: String = currentActivityDetail, roomCode: String = currentRoomCode) {
-        val clean = cleanUsername.trim().lowercase().removePrefix("@")
-        if (clean.isBlank()) return
-        try {
-            val encKey = URLEncoder.encode("pres_$clean", "UTF-8")
-            val vName = NetworkConfig.APP_VERSION_NAME
-            val vCode = NetworkConfig.APP_VERSION_CODE
-            val encVal = URLEncoder.encode("$status:$timestamp:$vName:$vCode:$detail:$roomCode", "UTF-8")
-            val url = "${NetworkConfig.KEYVALUE_API_URL}/UpdateValue/$appKey/$encKey?value=$encVal"
-            val emptyBody = "".toRequestBody(null)
-            val request = Request.Builder()
-                .url(url)
-                .post(emptyBody)
-                .header("Content-Length", "0")
-                .build()
-            httpClient.newCall(request).enqueue(object : okhttp3.Callback {
-                override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {}
-                override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) { response.close() }
-            })
-        } catch (_: Exception) {}
+        // Presence availability is EMQX-only; legacy storage is not a fallback.
     }
 
     /**
      * Writes presence directly to Cloud Key-Value store.
      */
     suspend fun setCloudPresence(cleanUsername: String, status: String, timestamp: Long, detail: String = currentActivityDetail, roomCode: String = currentRoomCode): Boolean = withContext(Dispatchers.IO) {
-        val clean = cleanUsername.trim().lowercase().removePrefix("@")
-        if (clean.isBlank()) return@withContext false
-        try {
-            val encKey = URLEncoder.encode("pres_$clean", "UTF-8")
-            val vName = NetworkConfig.APP_VERSION_NAME
-            val vCode = NetworkConfig.APP_VERSION_CODE
-            val encVal = URLEncoder.encode("$status:$timestamp:$vName:$vCode:$detail:$roomCode", "UTF-8")
-            val url = "${NetworkConfig.KEYVALUE_API_URL}/UpdateValue/$appKey/$encKey?value=$encVal"
-            val emptyBody = "".toRequestBody(null)
-            val request = Request.Builder()
-                .url(url)
-                .post(emptyBody)
-                .header("Content-Length", "0")
-                .build()
-            httpClient.newCall(request).execute().use { response ->
-                response.isSuccessful
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "setCloudPresence error for $clean: ${e.message}")
-            false
-        }
+        return@withContext false
     }
 
     private fun ensureInCloudDirectory(clean: String) {
-        try {
-            val encKey = URLEncoder.encode("user_directory", "UTF-8")
-            val url = "${NetworkConfig.KEYVALUE_API_URL}/GetValue/$appKey/$encKey"
-            val request = Request.Builder().url(url).get().build()
-            val current = httpClient.newCall(request).execute().use { resp ->
-                if (resp.isSuccessful) resp.body?.string()?.trim()?.removeSurrounding("\"") else null
-            }
-            if (current.isNullOrBlank() || current == "null") {
-                // Network glitch or empty response — NEVER overwrite cloud directory with a single user!
-                return
-            }
-            val users = current.split(",").map { it.trim().lowercase() }.filter { it.isNotBlank() }.toMutableSet()
-            if (users.add(clean)) {
-                val newDir = users.sorted().joinToString(",")
-                val encVal = URLEncoder.encode(newDir, "UTF-8")
-                val updateUrl = "${NetworkConfig.KEYVALUE_API_URL}/UpdateValue/$appKey/$encKey?value=$encVal"
-                val updateReq = Request.Builder().url(updateUrl).post("".toRequestBody(null)).header("Content-Length", "0").build()
-                httpClient.newCall(updateReq).execute().close()
-            }
-        } catch (_: Exception) {}
+        // No HTTP presence directory.
     }
 
     /**
      * Reads presence directly from Cloud Key-Value store.
      */
     suspend fun fetchCloudPresence(username: String): PlayerPresence? = withContext(Dispatchers.IO) {
-        val clean = username.trim().lowercase().removePrefix("@")
-        if (clean.isBlank()) return@withContext null
-        try {
-            val encKey = URLEncoder.encode("pres_$clean", "UTF-8")
-            val url = "${NetworkConfig.KEYVALUE_API_URL}/GetValue/$appKey/$encKey"
-            val request = Request.Builder().url(url).get().build()
-            httpClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@withContext null
-                val raw = response.body?.string()?.trim()?.removeSurrounding("\"") ?: return@withContext null
-                if (!raw.contains(":")) return@withContext null
-                val parts = raw.split(":")
-                val status = parts[0]
-                val ts = parts.getOrNull(1)?.toLongOrNull() ?: return@withContext null
-                val vName = parts.getOrNull(2)?.ifBlank { null } ?: NetworkConfig.APP_VERSION_NAME
-                val vCode = parts.getOrNull(3)?.toIntOrNull() ?: NetworkConfig.APP_VERSION_CODE
-                val cloudDetail = parts.getOrNull(4) ?: ""
-                val cloudRoom = parts.getOrNull(5) ?: ""
-
-                val existing = presenceMap[clean]
-                if (existing != null && existing.timestamp > ts) return@withContext existing
-                // Never wipe out active rich detail if existing presence is newer or already has detail
-                val effectiveDetail = if (cloudDetail.isNotBlank()) {
-                    cloudDetail
-                } else if (existing != null && existing.status.equals(status, ignoreCase = true) && existing.timestamp == ts) {
-                    existing.activityDetail
-                } else {
-                    ""
-                }
-                val effectiveRoom = if (cloudRoom.isNotBlank()) {
-                    cloudRoom
-                } else if (existing != null && existing.status.equals(status, ignoreCase = true) && existing.timestamp == ts) {
-                    existing.currentRoomCode
-                } else {
-                    ""
-                }
-
-                val now = System.currentTimeMillis()
-                val isCloudHeartbeatFresh = ts > 0L && (now - ts) < 15_000L
-
-                val effectiveStatus = when {
-                    isCloudHeartbeatFresh && (status.equals("ONLINE", ignoreCase = true) ||
-                            status.equals("IN_LOBBY", ignoreCase = true) ||
-                            status.equals("PLAYING", ignoreCase = true)) -> status
-                    else -> "OFFLINE"
-                }
-
-                val effectiveTimestamp = when {
-                    existing != null && existing.isOnline && existing.timestamp > ts -> existing.timestamp
-                    ts > 0L -> ts
-                    existing != null && existing.timestamp > 0L -> existing.timestamp
-                    else -> 0L
-                }
-
-                val p = PlayerPresence(
-                    username = clean,
-                    status = effectiveStatus,
-                    timestamp = effectiveTimestamp,
-                    appVersion = vName,
-                    appVersionCode = vCode,
-                    activityDetail = effectiveDetail,
-                    currentRoomCode = effectiveRoom
-                )
-                presenceMap[clean] = p
-                updatePresenceFlow()
-                p
-            }
-        } catch (_: Exception) {
-            null
-        }
+        return@withContext presenceMap[username.trim().lowercase().removePrefix("@")]
     }
 
     /**
@@ -383,6 +261,10 @@ object PresenceManager {
         val now = System.currentTimeMillis()
         presenceMap[clean] = PlayerPresence(clean, currentStatus, now)
         updatePresenceFlow()
+
+        if (!networkEnabled || EmqxTransport.wireOverride != null) {
+            return
+        }
 
         // Write initial status to cloud immediately, sync FCM token, and alert friends
         scope.launch {
@@ -429,7 +311,9 @@ object PresenceManager {
                         publishStatus(clean, currentActivityState.name)
                         currentConnectedServerUri = serverURI
                         if (serverURI?.contains("broker.emqx.io") == true) {
-                            EmqxBrokerMonitor.recordPrimaryBrokerDown()
+                            if (!EmqxTransport.connection.isHealthy) {
+                                EmqxBrokerMonitor.recordPrimaryBrokerDown()
+                            }
                         } else {
                             EmqxBrokerMonitor.recordPrimaryBrokerUp()
                         }
@@ -438,7 +322,9 @@ object PresenceManager {
                     override fun connectionLost(cause: Throwable?) {
                         Log.w(TAG, "Presence connection lost for @$clean: ${cause?.message}")
                         currentConnectedServerUri = null
-                        EmqxBrokerMonitor.recordPrimaryBrokerDown()
+                        if (!EmqxTransport.connection.isHealthy) {
+                            EmqxBrokerMonitor.recordPrimaryBrokerDown()
+                        }
                     }
 
                     override fun messageArrived(topic: String?, message: MqttMessage?) {}
@@ -449,7 +335,9 @@ object PresenceManager {
                     client.connect(options)
                 } catch (e: Exception) {
                     Log.w(TAG, "Presence connect initial: ${e.message}")
-                    EmqxBrokerMonitor.recordPrimaryBrokerDown()
+                    if (!EmqxTransport.connection.isHealthy) {
+                        EmqxBrokerMonitor.recordPrimaryBrokerDown()
+                    }
                 }
                 publishStatus(clean, currentActivityState.name)
 
@@ -507,6 +395,7 @@ object PresenceManager {
     }
 
     private fun publishStatus(cleanUsername: String, status: String, detail: String = currentActivityDetail, roomCode: String = currentRoomCode) {
+        if (!networkEnabled || EmqxTransport.wireOverride != null) return
         val client = presenceClient ?: return
         if (!client.isConnected) return
         try {
@@ -571,6 +460,8 @@ object PresenceManager {
         presenceMap[clean] = PlayerPresence(clean, currentStatus, now, activityDetail = currentActivityDetail, currentRoomCode = currentRoomCode)
         updatePresenceFlow()
 
+        if (!networkEnabled || EmqxTransport.wireOverride != null) return
+
         scope.launch {
             publishStatus(clean, currentStatus, currentActivityDetail, currentRoomCode)
             setCloudPresence(clean, currentStatus, now, currentActivityDetail, currentRoomCode)
@@ -593,8 +484,10 @@ object PresenceManager {
             val now = System.currentTimeMillis()
             presenceMap[clean] = PlayerPresence(clean, "OFFLINE", now)
             updatePresenceFlow()
-            scope.launch(Dispatchers.IO) {
-                setCloudPresence(clean, "OFFLINE", now)
+            if (networkEnabled && EmqxTransport.wireOverride == null) {
+                scope.launch(Dispatchers.IO) {
+                    setCloudPresence(clean, "OFFLINE", now)
+                }
             }
         }
     }
@@ -605,31 +498,55 @@ object PresenceManager {
         presenceClient = null
 
         if (clean != null && client != null && client.isConnected) {
-            scope.launch {
+            if (networkEnabled && EmqxTransport.wireOverride == null) {
+                scope.launch {
+                    try {
+                        publishOffline(clean)
+                        delay(150L)
+                        MqttClientShutdown.close(client)
+                    } catch (_: Exception) {}
+                }
+            } else {
                 try {
-                    publishOffline(clean)
-                    delay(150L)
-                    client.disconnect().waitForCompletion(1000L)
-                    client.close()
+                    MqttClientShutdown.closeAsync(client)
                 } catch (_: Exception) {}
             }
         }
+    }
+
+    suspend fun resetForTests() {
+        networkEnabled = false
+        heartbeatJob?.cancelAndJoin()
+        heartbeatJob = null
+        persistJob?.cancelAndJoin()
+        persistJob = null
+        val jobs = scope.coroutineContext[Job]?.children?.toList() ?: emptyList()
+        jobs.forEach { it.cancel() }
+        jobs.forEach { runCatching { it.join() } }
+        val client = presenceClient
+        presenceClient = null
+        MqttClientShutdown.close(client)
+        val watcher = watcherClient
+        watcherClient = null
+        MqttClientShutdown.close(watcher)
+        currentActiveUsername = null
+        presenceMap.clear()
+        _presenceFlow.value = emptyMap()
     }
 
     /**
      * Subscribes to real-time presence for all players (wildcard bingo/v3/presence/+).
      */
     fun startPresenceWatcher(forceReconnect: Boolean = false) {
+        if (!networkEnabled || EmqxTransport.wireOverride != null) return
         if (!forceReconnect && watcherClient?.isConnected == true) return
 
         scope.launch {
             try {
                 if (forceReconnect) {
-                    try {
-                        watcherClient?.disconnect()
-                        watcherClient?.close()
-                    } catch (_: Exception) {}
+                    val retiredWatcher = watcherClient
                     watcherClient = null
+                    MqttClientShutdown.close(retiredWatcher)
                 }
 
                 val clientId = "pres_watch_${UUID.randomUUID().toString().take(8)}"

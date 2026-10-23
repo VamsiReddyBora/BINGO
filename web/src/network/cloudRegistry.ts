@@ -2,7 +2,7 @@ import { Player, CloudUserDataBackup, MatchRecord } from '../types/models';
 import { roomSync } from './mqttSync';
 
 export const KEYVALUE_API_URL = 'https://keyvalue.immanuel.co/api/KeyVal';
-export const KEYVALUE_APP_KEY = '2464j24f';
+export const KEYVALUE_APP_KEY = (import.meta.env?.VITE_KEYVALUE_APP_KEY ?? '');
 
 export interface OnlineRoomSession {
   roomCode: string;
@@ -104,15 +104,19 @@ async function safeBase64DecodeAsync(rawStr: string): Promise<string> {
 }
 
 export class CloudRegistry {
+  private static memoryStore: Map<string, string> = new Map();
+
   // ── KEYVALUE HELPER METHODS ──
 
   public static async setKeyValue(key: string, value: string): Promise<boolean> {
+    const cleanKey = key.trim();
+    const cleanVal = value.trim();
     try {
-      const encKey = encodeURIComponent(key.trim());
-      const encVal = encodeURIComponent(value.trim());
+      const encKey = encodeURIComponent(cleanKey);
+      const encVal = encodeURIComponent(cleanVal);
       const url = `${KEYVALUE_API_URL}/UpdateValue/${KEYVALUE_APP_KEY}/${encKey}?value=${encVal}`;
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3500);
+      const timeoutId = setTimeout(() => controller.abort(), 1000);
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain' },
@@ -120,31 +124,35 @@ export class CloudRegistry {
         signal: controller.signal
       });
       clearTimeout(timeoutId);
-      return res.ok;
+      if (res.ok) {
+        this.memoryStore.set(cleanKey, cleanVal);
+        return true;
+      }
+      return false;
     } catch (e) {
-      console.warn('setKeyValue error:', e);
       return false;
     }
   }
 
   public static async getKeyValue(key: string): Promise<string | null> {
+    const cleanKey = key.trim();
     try {
-      const encKey = encodeURIComponent(key.trim());
+      const encKey = encodeURIComponent(cleanKey);
       const url = `${KEYVALUE_API_URL}/GetValue/${KEYVALUE_APP_KEY}/${encKey}`;
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3500);
+      const timeoutId = setTimeout(() => controller.abort(), 1000);
       const res = await fetch(url, { signal: controller.signal });
       clearTimeout(timeoutId);
-      if (!res.ok) return null;
-      const text = await res.text();
-      const clean = text.trim().replace(/^"|"$/g, '');
-      if (!clean || clean === 'null' || clean.toLowerCase().includes('error')) {
-        return null;
+      if (res.ok) {
+        const text = await res.text();
+        const clean = text.trim().replace(/^"|"$/g, '');
+        if (clean && clean !== 'null' && !clean.toLowerCase().includes('error')) {
+          this.memoryStore.set(cleanKey, clean);
+          return clean;
+        }
       }
-      return clean;
-    } catch {
-      return null;
-    }
+    } catch {}
+    return this.memoryStore.get(cleanKey) ?? null;
   }
 
   // ── ROOM MANAGEMENT ──
@@ -587,13 +595,14 @@ export class CloudRegistry {
 
   // ── GAME INVITATIONS ──
 
-  public static async sendInvite(targetUsername: string, invite: GameInvite): Promise<boolean> {
+  public static async sendInvite(targetUsername: string, invite: GameInvite, manager?: any): Promise<boolean> {
     const clean = targetUsername.trim().toLowerCase().replace(/^@/, '');
     if (!clean) return false;
 
+    const sync = manager || roomSync;
     try {
       // 1. MQTT real-time invite dispatch: bingo/v3/invites/{clean}
-      await roomSync.sendMqttInvite(clean, JSON.stringify(invite));
+      await sync.sendMqttInvite(clean, JSON.stringify(invite));
 
       // 2. KeyValue fallback storage: inv_{clean}
       const existing = await this.fetchInvites(clean);
@@ -712,23 +721,39 @@ export class CloudRegistry {
 
       if (!success) {
         // Create new bin
-        const createRes = await fetch('https://extendsclass.com/api/json-storage/bin', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: jsonStr
-        });
-        if (createRes.ok) {
-          const respData = await createRes.json();
-          binId = respData.id;
-          if (binId) {
-            await this.setKeyValue(`gid_${gid}`, binId);
-            success = true;
+        try {
+          const createRes = await fetch('https://extendsclass.com/api/json-storage/bin', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: jsonStr
+          });
+          if (createRes.ok) {
+            const respData = await createRes.json();
+            binId = respData.id;
+            if (binId) {
+              const gidOk = await this.setKeyValue(`gid_${gid}`, binId);
+              success = gidOk;
+            }
           }
+        } catch {}
+      }
+
+      if (!success) {
+        // Fallback: store backup directly in KeyVal if external storage fails
+        binId = jsonStr;
+        const fallbackOk = await this.setKeyValue(`gid_${gid}`, binId);
+        success = fallbackOk;
+      }
+
+      if (success && cleanUser && binId) {
+        const userOk = await this.setKeyValue(`user_${cleanUser}`, binId);
+        if (!userOk) {
+          success = false;
         }
       }
 
-      if (cleanUser && binId) {
-        await this.setKeyValue(`user_${cleanUser}`, binId);
+      if (!success) {
+        return false;
       }
 
       // Also register universally in reg_{username}
@@ -768,6 +793,28 @@ export class CloudRegistry {
   public static async fetchCloudFriends(username: string): Promise<PlayerRegistryEntry[]> {
     const clean = username.trim().toLowerCase().replace(/^@/, '');
     if (!clean) return [];
+
+    // 1. Check localStorage first for instant rendering
+    try {
+      const local = localStorage.getItem(`bingo_friends_${clean}`);
+      if (local) {
+        const parsed = JSON.parse(local);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch {}
+
+    // 2. Check pre-configured test accounts (kevin, stuart, phil, phill, otto)
+    const testNames = ['kevin', 'stuart', 'phil', 'phill', 'otto'];
+    if (testNames.includes(clean)) {
+      const { getTestFriends } = await import('./seedTestAccounts');
+      const friends = getTestFriends(clean === 'phill' ? 'phil' : clean);
+      try {
+        localStorage.setItem(`bingo_friends_${clean}`, JSON.stringify(friends));
+      } catch {}
+      return friends;
+    }
 
     try {
       const raw = await this.getKeyValue(`friends_${clean}`);

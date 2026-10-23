@@ -1,6 +1,5 @@
 package com.bingo.multiplayer.domain.network
 
-import android.util.Base64
 import android.util.Log
 import com.bingo.multiplayer.domain.model.Friend
 import com.bingo.multiplayer.domain.model.FriendRequest
@@ -21,58 +20,40 @@ import java.util.UUID
 
 object FriendRequestManager {
     private const val TAG = "FriendRequestManager"
-    private val client = NetworkConfig.httpClient
     private val json = Json { ignoreUnknownKeys = true; isLenient = true; encodeDefaults = true }
-    private val BASE_URL = NetworkConfig.KEYVALUE_API_URL
-    private val API_KEY = NetworkConfig.KEYVALUE_APP_KEY
     private val BROKER_URL = NetworkConfig.BROKER_URL
-
-    private fun encodeBase64Url(raw: String): String {
-        return Base64.encodeToString(raw.toByteArray(StandardCharsets.UTF_8), Base64.URL_SAFE or Base64.NO_WRAP).trim()
-    }
-
-    private fun decodeBase64Url(b64: String): String {
-        val clean = b64.trim().removeSurrounding("\"")
-        val bytes = Base64.decode(clean, Base64.URL_SAFE or Base64.NO_WRAP)
-        return String(bytes, StandardCharsets.UTF_8)
-    }
-
-    private val store by lazy {
-        FriendsCloudStore(client, BASE_URL, API_KEY, ::encodeBase64Url, ::decodeBase64Url)
-    }
+    private val firebaseStore by lazy { FirebaseFriendsStore(FirestoreSyncManager.getInstance().friendDocuments()) }
+    @androidx.annotation.VisibleForTesting internal var storeOverride: FirebaseFriendsStore? = null
+    private val store get() = storeOverride ?: firebaseStore
     private val mutationMutex = kotlinx.coroutines.sync.Mutex()
 
-    /** Persist first; an unavailable read must never replace another player's existing requests. */
+    /** Persist in Firebase before emitting the MQTT notice and optional push. */
     suspend fun sendFriendRequest(request: FriendRequest): Boolean = mutationMutex.withLock {
         val target = request.toUsername.trim().lowercase().removePrefix("@")
         if (target.isBlank()) return@withLock false
-        val existing = store.fetchRequests(target)?.toMutableList() ?: return@withLock false
-        existing.removeAll { it.fromUsername.trim().removePrefix("@").equals(request.fromUsername.trim().removePrefix("@"), true) }
-        existing.add(0, request)
-        if (!store.saveRequests(target, existing)) return@withLock false
+        if (!store.addRequest(target, request)) return@withLock false
         publishMqttPacket(target, FriendRequestPacket(type = "FRIEND_REQUEST", request = request))
         BingoFcmManager.sendFriendRequestPush(target, request)
         true
     }
 
+    val activeJobs = java.util.concurrent.ConcurrentHashMap.newKeySet<kotlinx.coroutines.Job>()
+
+    suspend fun awaitActiveJobs() {
+        activeJobs.toList().forEach { it.join() }
+    }
+
     /** Nullable variant lets reconciliation retain pending requests during a network failure. */
     suspend fun fetchRequestsForUserOrNull(username: String): List<FriendRequest>? = store.fetchRequests(username)
 
-    /** Keep the request retryable until both friendships and request removal have been saved. */
+    /** One Firebase transaction saves both friendships and resolves the pending request. */
     suspend fun acceptFriendRequest(request: FriendRequest, myProfile: UserProfile): Boolean = mutationMutex.withLock {
         val target = request.toUsername.trim().lowercase().removePrefix("@")
         val sender = request.fromUsername.trim().lowercase().removePrefix("@")
         if (target.isBlank() || sender.isBlank() || target != myProfile.username.trim().lowercase().removePrefix("@")) return@withLock false
-        val existing = store.fetchRequests(target)?.toMutableList() ?: return@withLock false
-        val senderFriend = Friend(request.fromUid, request.fromUsername, request.fromDisplayName, request.fromAvatarUrl)
+        if (!store.accept(request, myProfile)) return@withLock false
         val acceptor = Friend(myProfile.uid, myProfile.username, myProfile.displayName,
             myProfile.avatarBase64?.takeIf { it.isNotBlank() } ?: myProfile.avatarUrl)
-        if (!addFriendToCloudList(target, senderFriend) || !addFriendToCloudList(sender, acceptor)) return@withLock false
-        val firestore = FirestoreSyncManager.getInstance()
-        if (!firestore.restoreFriend(myProfile.uid, senderFriend) ||
-            !firestore.restoreFriend(request.fromUid, acceptor)) return@withLock false
-        existing.removeAll { it.id == request.id || it.fromUsername.trim().removePrefix("@").equals(sender, true) }
-        if (!store.saveRequests(target, existing)) return@withLock false
         publishMqttPacket(sender, FriendRequestPacket("FRIEND_ACCEPT",
             request.copy(status = FriendRequestStatus.ACCEPTED), acceptor))
         BingoFcmManager.sendFriendAcceptedPush(sender, request)
@@ -82,22 +63,43 @@ object FriendRequestManager {
     suspend fun declineFriendRequest(request: FriendRequest): Boolean = mutationMutex.withLock {
         val target = request.toUsername.trim().lowercase().removePrefix("@")
         if (target.isBlank()) return@withLock false
-        val existing = store.fetchRequests(target)?.toMutableList() ?: return@withLock false
-        existing.removeAll { it.id == request.id }
-        store.saveRequests(target, existing)
+        if (!store.decline(request)) return@withLock false
+        publishMqttPacket(request.fromUsername.trim().lowercase().removePrefix("@"),
+            FriendRequestPacket("FRIEND_DECLINE", request.copy(status = FriendRequestStatus.DECLINED)))
+        true
     }
+
+    suspend fun outgoingStatuses(username: String, targets: Set<String>): Map<String, FriendRequestStatus?>? =
+        store.outgoingStatuses(username, targets)
 
     suspend fun fetchCloudFriends(username: String): List<Friend>? = store.fetchFriends(username)
 
-    suspend fun saveCloudFriends(username: String, friends: List<Friend>): Boolean = store.saveFriends(username, friends)
+    internal suspend fun fetchCloudFriendsWithVersion(username: String): FriendsCloudStore.VersionedSnapshot<Friend>? =
+        store.fetchFriendsWithVersion(username)
 
-    private suspend fun addFriendToCloudList(username: String, friend: Friend): Boolean {
-        // A failed GET used to become emptyList(), overwriting every friendship with this one friend.
-        return store.addFriend(username, friend)
-    }
+    suspend fun saveCloudFriends(username: String, friends: List<Friend>, expectedVersion: String? = null): Boolean =
+        store.saveFriends(username, friends, expectedVersion = expectedVersion)
 
-    private fun publishMqttPacket(targetUsername: String, packet: FriendRequestPacket) {
-        kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+    suspend fun removeCloudFriend(username: String, friendIdentifier: String): Boolean = store.removeFriend(username, friendIdentifier)
+
+    internal fun publishMqttPacket(targetUsername: String, packet: FriendRequestPacket) {
+        val job = kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+            val topic = "bingo/v3/friend_requests/$targetUsername"
+            val payload = json.encodeToString(packet)
+            val bytes = payload.toByteArray(StandardCharsets.UTF_8)
+
+            // 1. Fast-path via persistent EMQX socket
+            if (EmqxTransport.wire.isHealthy) {
+                try {
+                    EmqxTransport.wire.publish(topic, bytes, retained = false)
+                    Log.d(TAG, "Dispatched friend request packet (${packet.type}) to $topic via persistent EMQX")
+                    return@launch
+                } catch (e: Exception) {
+                    Log.w(TAG, "Persistent EMQX publish failed, falling back: ${e.message}")
+                }
+            }
+
+            // 2. Fallback via ephemeral client
             try {
                 val clientId = "freq_pub_${UUID.randomUUID().toString().take(8)}"
                 val mqttClient = MqttAsyncClient(BROKER_URL, clientId, MemoryPersistence())
@@ -107,22 +109,21 @@ object FriendRequestManager {
                     NetworkConfig.applyMqttOptions(this)
                 }
                 mqttClient.connect(options).waitForCompletion(4000L)
-                val topic = "bingo/v3/friend_requests/$targetUsername"
-                val payload = json.encodeToString(packet)
-                val msg = MqttMessage(payload.toByteArray(StandardCharsets.UTF_8)).apply {
+                val msg = MqttMessage(bytes).apply {
                     qos = 1
                     isRetained = false
                 }
                 mqttClient.publish(topic, msg).waitForCompletion(4000L)
                 try {
-                    mqttClient.disconnect().waitForCompletion(1000L)
-                    mqttClient.close()
+                    MqttClientShutdown.close(mqttClient)
                 } catch (_: Exception) {}
-                Log.d(TAG, "Dispatched friend request packet (${packet.type}) to $topic")
+                Log.d(TAG, "Dispatched friend request packet (${packet.type}) to $topic via fallback MQTT")
             } catch (e: Exception) {
-                Log.w(TAG, "MQTT friend request publish warning: ${e.message}")
+                Log.w(TAG, "Fallback MQTT friend request publish failed: ${e.message}")
             }
         }
+        activeJobs.add(job)
+        job.invokeOnCompletion { activeJobs.remove(job) }
     }
 
     /**
@@ -174,12 +175,11 @@ object FriendRequestManager {
         }
 
         return AutoCloseable {
-            try {
-                if (client?.isConnected == true) {
-                    client.disconnect()
-                }
-                client?.close()
-            } catch (_: Exception) {}
+            // Disposing a UI listener must not block the UI or leave Paho's
+            // asynchronous disconnect worker accessing released queues.
+            val cleanup = MqttClientShutdown.closeAsync(client)
+            activeJobs.add(cleanup)
+            cleanup.invokeOnCompletion { activeJobs.remove(cleanup) }
         }
     }
 }

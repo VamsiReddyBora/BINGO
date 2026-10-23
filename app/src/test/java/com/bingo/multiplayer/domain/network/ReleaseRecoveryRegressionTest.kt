@@ -24,6 +24,11 @@ class ReleaseRecoveryRegressionTest {
         val active = OnlineRoomSession(code, host.id, "kevin", "Kevin", status = "PLAYING",
             players = roster, currentSeed = 200L)
         val originalClient = OnlineRoomRegistry.client
+        val originalTransport = RoomMetadataApi.transportOverride
+        RoomMetadataApi.transportOverride = object : RoomMetadataTransport {
+            override suspend fun read(code: String): Result<OnlineRoomSession?> = Result.success(active)
+            override suspend fun commit(code: String, base: OnlineRoomSession?, next: OnlineRoomSession): RoomMetadataCommit = error("Obsolete close must not write")
+        }
         val requests = CopyOnWriteArrayList<String>()
         OnlineRoomRegistry.client = OkHttpClient.Builder().addInterceptor { chain ->
             requests += chain.request().url.encodedPath
@@ -51,6 +56,7 @@ class ReleaseRecoveryRegressionTest {
             assertNull(OnlineRoomRegistry.getRoom(code))
         } finally {
             OnlineRoomRegistry.client = originalClient
+            RoomMetadataApi.transportOverride = originalTransport
             OnlineRoomRegistry.simulatedHttpException = null
             OnlineRoomRegistry.pendingClosures.remove(code)
             OnlineRoomRegistry.recentRoomCache.remove(code)

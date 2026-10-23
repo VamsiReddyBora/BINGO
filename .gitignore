@@ -1,58 +1,21 @@
-*.iml
-.gradle
-/local.properties
-/.idea
-.DS_Store
-build/
-app/build/
-captures/
-.externalNativeBuild
-.cxx
-*.hprof
-*.Zone.Identifier
-*.sh
-
-# Generated APKs are not source; current deliverables live in releases/.
-*.apk
-
-# Web build artifacts & dependencies
-web/node_modules/
-web/dist/
-
-# Archive backups
-*.zip
-
-# Secrets & Credentials
+.gradle/
+**/build/
+local.properties
+local.release.properties
 app/google-services.json
 *.jks
 *.keystore
-cloudflare_worker/service-account.json
-*.json.key
-
-# Python
-__pycache__/
-*.pyc
-
-# Notification relay local dependencies, state and secrets
-cloudflare_worker/node_modules/
-cloudflare_worker/.wrangler/
-cloudflare_worker/.dev.vars
-cloudflare_worker/.dev.vars.*
-cloudflare_worker/dist/
-/.wrangler/
-
-# Temporary archive, testing scratch, and simulation evidence
-temp_archive/
-
-# Internal reviews, audit reports, fix logs, handover notes, and agent rules
-AGENTS.md
-.gemini/
-GameRules.md
-SimplifiedGameRules.md
-MultiplayerComprehensiveReview.md
-RegressionEvidence.md
-SimplifiedGameRulesComplianceReview.md
-SimplifiedRulesFixLog.md
-SimplifiedRulesFixReport.md
-handover.md
-docs/
+*.pem
+*.p12
+*.pfx
+.env
+.env.local
+**/.dev.vars
+**/.dev.vars.*
+!**/.dev.vars.example
+**/service-account*.json
+**/node_modules/
+**/.wrangler/
+**/dist/
+*.log
+.DS_Store

@@ -177,12 +177,20 @@ class LobbyCompatibilityTest {
         PairFixture().use { f ->
             f.drop = true
             f.registry.session = OnlineRoomSession("UNIT_ROOM", "A", "kevin", "Kevin", status = "PLAYING",
-                boardSize = 6, players = listOf(host, guest), currentSeed = 123, isManualBoard = true, isDynamicBoard = true)
+                boardSize = 6, players = listOf(host, guest), currentSeed = 123, isManualBoard = true, isDynamicBoard = true,
+                metadataProtocolVersion = 7, sessionId = "unit-incarnation")
+            val original = RoomMetadataApi.transportOverride
+            RoomMetadataApi.transportOverride = object : RoomMetadataTransport {
+                override suspend fun read(code: String) = Result.success(f.registry.session)
+                override suspend fun commit(code: String, base: OnlineRoomSession?, next: OnlineRoomSession): RoomMetadataCommit = error("Read-only retained ingress")
+            }
+            f.a.applyRoomMetadata(f.registry.session!!, "UNIT_ROOM")
             val received = CopyOnWriteArrayList<RoomMessagePacket>()
             val reader = f.scope.launch(start = CoroutineStart.UNDISPATCHED) {
                 f.b.incomingPackets.collect { if (it.type == "START_GAME") received += it }
             }
-            f.b.refreshNow()
+            // Transport is subscription driven: exercise the same retained callback as production.
+            f.b.handleMetadataSession(f.registry.session!!, "UNIT_ROOM", retained = true)
             until { received.size == 1 }
             f.drop = false
             assertTrue(f.b.awaitReliableCompatibility(ids, "B"))
@@ -196,6 +204,7 @@ class LobbyCompatibilityTest {
             f.b.refreshNow(); delay(20)
             assertEquals(1, received.size)
             reader.cancel()
+            RoomMetadataApi.transportOverride = original
         }
     }
 

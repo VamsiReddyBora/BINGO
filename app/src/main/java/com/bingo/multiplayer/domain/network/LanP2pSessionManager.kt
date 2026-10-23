@@ -4,10 +4,14 @@ import android.util.Log
 import com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine
 import com.bingo.multiplayer.domain.model.Player
 import androidx.compose.ui.graphics.asImageBitmap
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,15 +30,22 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.ConcurrentHashMap
 
-class LanP2pSessionManager {
-
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+class LanP2pSessionManager(
+    private val scope: CoroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+) {
 
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
         encodeDefaults = true
     }
+
+    @Volatile private var sessionGeneration = 0L
+    private val _connectionReady = MutableStateFlow(false)
+    val connectionReady: StateFlow<Boolean> = _connectionReady.asStateFlow()
+    private var reconnectHostIp = ""
+    private var reconnectPort = 8999
+    private var reconnectFallbackIp = ""
 
     private var serverSocket: ServerSocket? = null
     private var clientSocket: Socket? = null
@@ -57,6 +68,8 @@ class LanP2pSessionManager {
 
     private val playerRegistry = ConcurrentHashMap<String, Player>()
     private val kickedPlayerIds = ConcurrentHashMap.newKeySet<String>()
+    private val appPresenceStates = ConcurrentHashMap<String, String>()
+    private val silentPlayerIds = ConcurrentHashMap.newKeySet<String>()
     private val _players = MutableStateFlow<List<Player>>(emptyList())
     val players: StateFlow<List<Player>> = _players.asStateFlow()
 
@@ -113,8 +126,18 @@ class LanP2pSessionManager {
         }
     }
 
+    private data class Outgoing(val generation: Long, val packet: RoomMessagePacket, val written: CompletableDeferred<Unit>? = null)
+    private var outgoingJob: Job? = null
+    private val outgoingPackets = Channel<Outgoing>(Channel.UNLIMITED)
+
     init {
         activeInstance = this
+        outgoingJob = scope.launch(Dispatchers.IO) {
+            for ((generation, packet, written) in outgoingPackets) {
+                if (generation == sessionGeneration) writePacket(generation, packet)
+                written?.complete(Unit)
+            }
+        }
     }
 
     fun updateLocalAvatar(newAvatarUrl: String?) {
@@ -162,6 +185,7 @@ class LanP2pSessionManager {
     fun connectAsHost(hostPlayer: Player, port: Int = 8999) {
         disconnect()
         localPlayer = hostPlayer
+        val generation = sessionGeneration
         isHostInLobby = false
         playerRegistry[hostPlayer.id] = hostPlayer
         _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
@@ -179,7 +203,8 @@ class LanP2pSessionManager {
                         if (candidatePort == port + 5) throw e
                     }
                 }
-                while (isActive) {
+                _connectionReady.value = true
+                while (isActive && sessionGeneration == generation) {
                     val socket = serverSocket?.accept() ?: break
                     socket.tcpNoDelay = true
                     try { socket.trafficClass = 0x10 } catch (_: Exception) {}
@@ -239,7 +264,7 @@ class LanP2pSessionManager {
                     val job = scope.launch(Dispatchers.IO) {
                         try {
                             val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
-                            while (isActive) {
+                            while (isActive && sessionGeneration == generation) {
                                 val line = reader.readLine() ?: break
                                 val packet = json.decodeFromString<RoomMessagePacket>(line)
                                 val senderId = packet.senderPlayerId.takeIf { it.isNotBlank() } ?: packet.playerId
@@ -266,10 +291,14 @@ class LanP2pSessionManager {
                             clientWriters.remove(writer)
                             clientSockets.remove(socket)
                             try { socket.close() } catch (_: Exception) {}
-                            if (!leavingPlayerId.isNullOrBlank()) {
+                            val hasReplacementSocket = socketToPlayerId.values.any { it == leavingPlayerId }
+                            if (sessionGeneration == generation && !hasReplacementSocket && !leavingPlayerId.isNullOrBlank() &&
+                                appPresenceStates[leavingPlayerId] != "LEFT") {
+                                // An EOF is transport loss. Only an explicit LEAVE/SURRENDER is permanent.
                                 val leavePacket = RoomMessagePacket(
-                                    type = "LEAVE",
+                                    type = "PLAYER_PRESENCE",
                                     playerId = leavingPlayerId,
+                                    readyStatus = "OFFLINE",
                                     timestamp = System.currentTimeMillis()
                                 )
                                 handleIncomingPacket(leavePacket)
@@ -296,93 +325,67 @@ class LanP2pSessionManager {
         playerRegistry[clientPlayer.id] = clientPlayer
         _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
 
-        clientConnectJob?.cancel()
-        clientConnectJob = scope.launch(Dispatchers.IO) {
-            val candidateIps = mutableListOf<String>()
-            if (hostIp.isNotBlank()) candidateIps.add(hostIp)
-            if (fallbackIp.isNotBlank() && !candidateIps.contains(fallbackIp)) candidateIps.add(fallbackIp)
-
-            // Dynamically resolve active network gateway
-            val dynamicGateway = HotspotAndWifiManager.getLocalIpAddress()
-            if (dynamicGateway.isNotBlank() && dynamicGateway.contains(".")) {
-                val subnetPrefix = dynamicGateway.substringBeforeLast(".")
-                val dynamicHost = "$subnetPrefix.1"
-                if (!candidateIps.contains(dynamicHost)) candidateIps.add(dynamicHost)
-            }
-
-            listOf(
-                "192.168.43.1", "192.168.44.1", "192.168.49.1", "192.168.50.1",
-                "192.168.125.1", "192.168.137.1", "172.20.10.1"
-            ).forEach { ip ->
-                if (!candidateIps.contains(ip)) candidateIps.add(ip)
-            }
-
-            var connectedSocket: Socket? = null
-            // Retry connecting for up to ~12 seconds to allow Wi-Fi & DHCP routes to finalize
-            for (attempt in 1..12) {
-                if (!isActive) break
-                for (targetIp in candidateIps) {
-                    try {
-                        val socket = Socket()
-                        socket.connect(java.net.InetSocketAddress(targetIp, port), 1200)
-                        socket.tcpNoDelay = true
-                        try { socket.trafficClass = 0x10 } catch (_: Exception) {}
-                        connectedSocket = socket
-                        Log.d("LanP2p", "Client successfully connected to host at $targetIp:$port on attempt $attempt")
-                        break
-                    } catch (e: Exception) {
-                        Log.d("LanP2p", "Attempt $attempt connecting to $targetIp:$port: ${e.message}")
-                    }
-                }
-                if (connectedSocket != null) break
-                delay(600L)
-            }
-
-            if (connectedSocket != null) {
-                clientSocket = connectedSocket
-                setupSocketStreams(connectedSocket)
-            } else {
-                Log.e("LanP2p", "Client failed to connect to host across candidates: $candidateIps")
-            }
-        }
+        reconnectHostIp = hostIp
+        reconnectPort = port
+        reconnectFallbackIp = fallbackIp
+        startClientConnectionLoop(sessionGeneration)
         startHeartbeat()
     }
 
-    private fun setupSocketStreams(socket: Socket) {
-        try {
-            outWriter = PrintWriter(socket.getOutputStream(), true)
-            inReader = BufferedReader(InputStreamReader(socket.getInputStream()))
-
-            clientReadJob?.cancel()
-            clientReadJob = scope.launch(Dispatchers.IO) {
+    /** Retain the same room/player and retry sockets; reconnect is never a lobby departure. */
+    private fun startClientConnectionLoop(generation: Long) {
+        clientConnectJob = scope.launch(Dispatchers.IO) {
+            val gateway = HotspotAndWifiManager.getLocalIpAddress().takeIf { it.contains('.') }
+                ?.substringBeforeLast('.')?.plus(".1").orEmpty()
+            val candidateIps = (listOf(reconnectHostIp, reconnectFallbackIp, gateway) + listOf(
+                "192.168.43.1", "192.168.44.1", "192.168.49.1", "192.168.50.1",
+                "192.168.125.1", "192.168.137.1", "172.20.10.1"
+            )).filter { it.isNotBlank() }.distinct()
+            while (isActive && generation == sessionGeneration && localPlayer?.isHost == false) {
+                var socket: Socket? = null
+                for (targetIp in candidateIps) {
+                    if (!isActive || generation != sessionGeneration) break
+                    val candidate = Socket()
+                    try {
+                        candidate.connect(java.net.InetSocketAddress(targetIp, reconnectPort), 1200)
+                        candidate.tcpNoDelay = true
+                        socket = candidate
+                        break
+                    } catch (_: Exception) { try { candidate.close() } catch (_: Exception) {} }
+                }
+                if (socket == null) { delay(750L); continue }
+                if (generation != sessionGeneration) { socket.close(); break }
+                clientSocket = socket
                 try {
-                    while (isActive) {
-                        val line = inReader?.readLine()
-                        if (line != null) {
-                            val packet = json.decodeFromString<RoomMessagePacket>(line)
-                            handleIncomingPacket(packet)
-                        } else {
-                            break // Connection closed
-                        }
+                    val writer = PrintWriter(socket.getOutputStream(), true)
+                    outWriter = writer
+                    val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
+                    inReader = reader
+                    _connectionReady.value = true
+                    sendJoinPacket()
+                    while (isActive && generation == sessionGeneration) {
+                        val line = reader.readLine() ?: break
+                        handleIncomingPacket(json.decodeFromString<RoomMessagePacket>(line))
                     }
                 } catch (e: Exception) {
-                    Log.e("LanP2p", "Read error", e)
+                    if (generation == sessionGeneration) Log.w("LanP2p", "Host socket interrupted: ${e.message}")
                 } finally {
-                    if (localPlayer?.isHost == false) {
-                        val hostLeftPacket = RoomMessagePacket(
-                            type = "HOST_LEFT",
-                            playerId = "",
-                            timestamp = System.currentTimeMillis()
-                        )
-                        _incomingPackets.tryEmit(hostLeftPacket)
+                    try { socket.close() } catch (_: Exception) {}
+                    if (generation == sessionGeneration && clientSocket === socket) {
+                        _connectionReady.value = false
+                        clientSocket = null; outWriter = null; inReader = null
+                        _incomingPackets.tryEmit(RoomMessagePacket(type = "NEARBY_TRANSPORT_LOST", transportOnly = true))
                     }
                 }
+                delay(750L)
             }
+        }
+    }
 
-            // Announce presence immediately upon connecting
-            sendJoinPacket()
-        } catch (e: Exception) {
-            Log.e("LanP2p", "Setup streams error", e)
+    fun onForegroundResume() {
+        // Break a half-open socket; the existing connection loop reconnects automatically.
+        if (localPlayer?.isHost == false && !isPingFresh) {
+            try { clientSocket?.close() } catch (_: Exception) {}
         }
     }
 
@@ -424,7 +427,23 @@ class LanP2pSessionManager {
         livenessJob = scope.launch(Dispatchers.IO) {
             while (isActive) {
                 delay(1500L)
+                checkPeerLiveness()
                 _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+            }
+        }
+    }
+
+    /** Existing heartbeat cadence; silence changes presence, never match eligibility. */
+    internal fun checkPeerLiveness(now: Long = System.currentTimeMillis()) {
+        for (peer in playerRegistry.values) {
+            if (peer.id == localPlayer?.id || appPresenceStates[peer.id] in setOf("AWAY", "LEFT")) continue
+            val lastSeen = getLastDirectHeartbeat(peer.id)
+            if (lastSeen <= 0L || now - lastSeen < 15_000L || !silentPlayerIds.add(peer.id)) continue
+            appPresenceStates[peer.id] = "OFFLINE"
+            _incomingPackets.tryEmit(RoomMessagePacket(type = "PLAYER_PRESENCE", playerId = peer.id,
+                displayName = peer.displayName, readyStatus = "OFFLINE", timestamp = now))
+            if (peer.isHost && localPlayer?.isHost == false && AppLifecycleObserver.isAppInForeground.value) {
+                try { clientSocket?.close() } catch (_: Exception) {}
             }
         }
     }
@@ -434,6 +453,7 @@ class LanP2pSessionManager {
         broadcastPacket(
             RoomMessagePacket(
                 type = "JOIN",
+                presenceStatus = if (AppLifecycleObserver.isAppInForeground.value) "ONLINE" else "AWAY",
                 playerId = p.id,
                 displayName = p.displayName,
                 username = p.username,
@@ -450,21 +470,32 @@ class LanP2pSessionManager {
     }
 
     fun broadcastPacket(packet: RoomMessagePacket) {
-        scope.launch(Dispatchers.IO) {
-            try {
-                val payload = json.encodeToString(packet)
-                outWriter?.println(payload)
-                for (writer in clientWriters) {
-                    try { writer.println(payload) } catch (_: Exception) {}
-                }
+        outgoingPackets.trySend(Outgoing(sessionGeneration, packet))
+    }
 
-                // If sender is broadcasting, simulate receiving own packet for local updates
-                if (packet.type == "GAME_SYNC" || packet.type == "HEARTBEAT" || packet.type == "JOIN" || packet.type == "LEAVE") {
-                    handleIncomingPacket(packet)
-                }
-            } catch (e: Exception) {
-                Log.e("LanP2p", "Broadcast error", e)
+    /** Flush a voluntary exit after already queued moves, without using an Internet service. */
+    suspend fun sendBeforeDisconnect(packet: RoomMessagePacket) {
+        val written = CompletableDeferred<Unit>()
+        outgoingPackets.send(Outgoing(sessionGeneration, packet, written))
+        withTimeoutOrNull(2_000L) { written.await() }
+    }
+
+    private fun writePacket(generation: Long, packet: RoomMessagePacket) {
+        val clientWriter = outWriter
+        val serverWriters = clientWriters.toList()
+        if (generation != sessionGeneration) return
+        try {
+            val payload = json.encodeToString(packet)
+            clientWriter?.let { writer ->
+                writer.println(payload)
+                if (writer.checkError()) try { clientSocket?.close() } catch (_: Exception) {}
             }
+            for (writer in serverWriters) {
+                try { writer.println(payload) } catch (_: Exception) {}
+            }
+            if (generation == sessionGeneration && packet.type in setOf("GAME_SYNC", "HEARTBEAT", "JOIN", "LEAVE")) handleIncomingPacket(packet)
+        } catch (e: Exception) {
+            Log.e("LanP2p", "Broadcast error", e)
         }
     }
 
@@ -486,6 +517,25 @@ class LanP2pSessionManager {
                 )
             }
             return
+        }
+
+        if (packet.playerId.isNotBlank()) {
+            when (packet.type) {
+                "PLAYER_PRESENCE" -> {
+                    appPresenceStates[packet.playerId] = packet.readyStatus
+                    if (packet.readyStatus == "OFFLINE") silentPlayerIds.add(packet.playerId)
+                    else silentPlayerIds.remove(packet.playerId)
+                }
+                "JOIN" -> {
+                    appPresenceStates[packet.playerId] = packet.presenceStatus.ifBlank { "ONLINE" }
+                    silentPlayerIds.remove(packet.playerId)
+                }
+                "LEAVE", "HOST_LEFT", "SURRENDER" -> appPresenceStates[packet.playerId] = "LEFT"
+                "HEARTBEAT" -> if (silentPlayerIds.remove(packet.playerId)) {
+                    appPresenceStates[packet.playerId] = "ONLINE"
+                    _incomingPackets.tryEmit(packet.copy(type = "PLAYER_PRESENCE", readyStatus = "ONLINE"))
+                }
+            }
         }
 
         // Live Heartbeat/Packet Touch: Any incoming packet confirms player is actively communicating
@@ -559,6 +609,10 @@ class LanP2pSessionManager {
                     )
                     playerRegistry[packet.playerId] = updated
                     _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+                    if (packet.type == "JOIN" && !isLocal) {
+                        _incomingPackets.tryEmit(packet.copy(type = "PLAYER_PRESENCE",
+                            readyStatus = packet.presenceStatus.ifBlank { "ONLINE" }))
+                    }
 
                     if (packet.type == "JOIN" && localPlayer?.isHost == true && packet.playerId != localPlayer?.id) {
                         localPlayer?.let { h ->
@@ -728,6 +782,8 @@ class LanP2pSessionManager {
     }
 
     fun disconnect() {
+        sessionGeneration += 1L
+        _connectionReady.value = false
         val p = localPlayer
         if (p != null) {
             val packet = RoomMessagePacket(
@@ -761,9 +817,10 @@ class LanP2pSessionManager {
         clientConnectJob = null
         serverJob = null
 
+        // Close the socket before its reader: readLine may hold the reader's lock.
+        try { clientSocket?.close() } catch (_: Exception) {}
         try { outWriter?.close() } catch (_: Exception) {}
         try { inReader?.close() } catch (_: Exception) {}
-        try { clientSocket?.close() } catch (_: Exception) {}
         try { serverSocket?.close() } catch (_: Exception) {}
 
         for (w in clientWriters) {
@@ -787,9 +844,30 @@ class LanP2pSessionManager {
         lastDirectHeartbeatTimestamps.clear()
         playerRegistry.clear()
         kickedPlayerIds.clear()
+        appPresenceStates.clear()
+        silentPlayerIds.clear()
         _players.value = emptyList()
         _measuredPingMs.value = 0L
         _lastPingTimestampEpochMs.value = 0L
+    }
+
+    @androidx.annotation.VisibleForTesting
+    suspend fun drainForTests() {
+        heartbeatJob?.cancelAndJoin()
+        heartbeatJob = null
+        livenessJob?.cancelAndJoin()
+        livenessJob = null
+        clientReadJob?.cancelAndJoin()
+        clientReadJob = null
+        clientConnectJob?.cancelAndJoin()
+        clientConnectJob = null
+        serverJob?.cancelAndJoin()
+        serverJob = null
+        clientJobs.forEach { it.cancelAndJoin() }
+        clientJobs.clear()
+        scope.coroutineContext[Job]?.children?.toList()?.forEach { child ->
+            if (child.isActive && child !== outgoingJob) child.join()
+        }
     }
 
     fun getLastSeenTimestamp(playerId: String): Long {

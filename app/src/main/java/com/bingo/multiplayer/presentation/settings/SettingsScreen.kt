@@ -1,5 +1,8 @@
 package com.bingo.multiplayer.presentation.settings
 
+import com.bingo.multiplayer.presentation.common.noRippleClickable
+import com.bingo.multiplayer.presentation.common.NoRippleSurface
+
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -100,12 +103,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -191,11 +191,15 @@ fun SettingsScreen(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) {
-            val success = authRepository.saveProfileAvatar(uri)
-            if (success) {
-                Toast.makeText(context, "Profile photo updated", Toast.LENGTH_SHORT).show()
-            } else {
-                Toast.makeText(context, "Could not load selected image", Toast.LENGTH_SHORT).show()
+            coroutineScope.launch {
+                val success = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    authRepository.saveProfileAvatar(uri)
+                }
+                if (success) {
+                    Toast.makeText(context, "Profile photo updated", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(context, "Could not load selected image", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
@@ -204,6 +208,7 @@ fun SettingsScreen(
     if (showEditUsernameDialog) {
         AlertDialog(
             onDismissRequest = { if (!isCheckingUsername) showEditUsernameDialog = false },
+            shape = RoundedCornerShape(20.dp),
             title = { Text("Edit Username", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
             text = {
                 Column {
@@ -240,19 +245,6 @@ fun SettingsScreen(
                         isCheckingUsername = true
                         usernameError = null
                         coroutineScope.launch {
-                            // First, manually clear the old username from the cloud so someone else can claim it
-                            val oldClean = user.username.lowercase()
-                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                try {
-                                    val request = okhttp3.Request.Builder()
-                                        .url("${com.bingo.multiplayer.domain.network.NetworkConfig.KEYVALUE_API_URL}/UpdateValue/${com.bingo.multiplayer.domain.network.NetworkConfig.KEYVALUE_APP_KEY}/user_$oldClean")
-                                        .post(okhttp3.RequestBody.Companion.create(null, ""))
-                                        .header("Content-Length", "0")
-                                        .build()
-                                    com.bingo.multiplayer.domain.network.NetworkConfig.httpClient.newCall(request).execute().close()
-                                } catch (_: Exception) {}
-                            }
-                            
                             val success = authRepository.updateUsername(newUsername)
                             isCheckingUsername = false
                             if (success) {
@@ -293,8 +285,10 @@ fun SettingsScreen(
     if (showSignOutDialog) {
         AlertDialog(
             onDismissRequest = { showSignOutDialog = false },
-            title = { Text("Sign Out", fontWeight = FontWeight.Bold) },
-            text = { Text("Are you sure you want to sign out of your account?") },
+            shape = RoundedCornerShape(20.dp),
+            containerColor = tokens.surface,
+            title = { Text("Sign Out", fontWeight = FontWeight.Bold, color = tokens.cellNeutralText) },
+            text = { Text("Are you sure you want to sign out of your account?", color = tokens.textSecondary) },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -479,6 +473,8 @@ fun SettingsScreen(
     if (showAddFavoriteEmojiDialog) {
         AlertDialog(
             onDismissRequest = { showAddFavoriteEmojiDialog = false },
+            shape = RoundedCornerShape(20.dp),
+            containerColor = tokens.surface,
             title = {
                 Text(
                     text = "Add Favourite Emoji",
@@ -1142,7 +1138,7 @@ fun SettingsScreen(
                             Spacer(modifier = Modifier.height(12.dp))
 
                             // Player ID (Unique Username for Search)
-                            Surface(
+                            NoRippleSurface(
                                 onClick = {
                                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                     clipboard.setPrimaryClip(ClipData.newPlainText("Player ID", "@${user.playerId}"))
@@ -1275,7 +1271,7 @@ fun SettingsScreen(
                             ) {
                                 // Light Mode Option
                                 val isLightActive = !isDarkTheme
-                                Surface(
+                                NoRippleSurface(
                                     onClick = { ThemePreferences.setDarkTheme(context, false) },
                                     modifier = Modifier
                                         .weight(1f)
@@ -1321,7 +1317,7 @@ fun SettingsScreen(
 
                                 // AMOLED Black Option
                                 val isDarkActive = isDarkTheme
-                                Surface(
+                                NoRippleSurface(
                                     onClick = { ThemePreferences.setDarkTheme(context, true) },
                                     modifier = Modifier
                                         .weight(1f)
@@ -1367,178 +1363,6 @@ fun SettingsScreen(
                             }
 
                             Spacer(modifier = Modifier.height(14.dp))
-
-                            // ── Exclusive Theme: Liquid Metal Design (Experimental) ──
-                            val isLiquidMetal = ThemePreferences.isLiquidMetalTheme.value
-                            Surface(
-                                onClick = {
-                                    ThemePreferences.setLiquidMetalTheme(context, !isLiquidMetal)
-                                },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .shadow(
-                                        elevation = if (isLiquidMetal) 14.dp else 2.dp,
-                                        shape = RoundedCornerShape(18.dp),
-                                        spotColor = if (isLiquidMetal) Color(0x60000000) else Color.Transparent
-                                    ),
-                                shape = RoundedCornerShape(18.dp),
-                                color = if (isLiquidMetal) Color.Transparent else tokens.surface,
-                                border = BorderStroke(
-                                    width = if (isLiquidMetal) 1.6.dp else 1.dp,
-                                    brush = if (isLiquidMetal) {
-                                        Brush.linearGradient(
-                                            listOf(
-                                                Color(0xFFFFFFFF),
-                                                Color(0xFFCBD5E1),
-                                                Color(0xFF94A3B8),
-                                                Color(0xFF1E242F),
-                                                Color(0xFF090B0F),
-                                                Color(0xFF475569),
-                                                Color(0xFFE2E8F0)
-                                            )
-                                        )
-                                    } else {
-                                        SolidColor(tokens.surfaceBorder)
-                                    }
-                                )
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(18.dp))
-                                        .then(
-                                            if (isLiquidMetal) {
-                                                Modifier.background(
-                                                    Brush.verticalGradient(
-                                                        listOf(
-                                                            Color(0xFFFFFFFF),
-                                                            Color(0xFFF4F7FB),
-                                                            Color(0xFFE2E8F0),
-                                                            Color(0xFFCAD2DF),
-                                                            Color(0xFFB5BFCE)
-                                                        )
-                                                    )
-                                                )
-                                            } else Modifier
-                                        )
-                                ) {
-                                    if (isLiquidMetal) {
-                                        // Crescent top-left specular highlight
-                                        Box(
-                                            modifier = Modifier
-                                                .matchParentSize()
-                                                .background(
-                                                    Brush.radialGradient(
-                                                        colors = listOf(
-                                                            Color(0xB0FFFFFF),
-                                                            Color(0x35FFFFFF),
-                                                            Color(0x00FFFFFF)
-                                                        ),
-                                                        center = Offset(120f, 10f),
-                                                        radius = 220f
-                                                    )
-                                                )
-                                        )
-                                    }
-
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 14.dp, vertical = 13.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            modifier = Modifier.weight(1f)
-                                        ) {
-                                            // Metallic Icon Badge
-                                            Surface(
-                                                shape = CircleShape,
-                                                color = if (isLiquidMetal) Color(0xFFF1F5F9) else tokens.backgroundSecondary,
-                                                border = if (isLiquidMetal) {
-                                                    BorderStroke(
-                                                        1.2.dp,
-                                                        Brush.verticalGradient(
-                                                            listOf(
-                                                                Color(0xFFFFFFFF),
-                                                                Color(0xFF94A3B8),
-                                                                Color(0xFF1E242F)
-                                                            )
-                                                        )
-                                                    )
-                                                } else null,
-                                                shadowElevation = if (isLiquidMetal) 4.dp else 0.dp,
-                                                modifier = Modifier.size(38.dp)
-                                            ) {
-                                                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                                                    Text(
-                                                        text = "✦",
-                                                        fontSize = 18.sp,
-                                                        color = if (isLiquidMetal) Color(0xFF090C11) else tokens.accentBrand
-                                                    )
-                                                }
-                                            }
-                                            Spacer(modifier = Modifier.width(12.dp))
-                                            Column {
-                                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                                    Text(
-                                                        text = "Liquid Metal Design",
-                                                        fontSize = 13.5.sp,
-                                                        fontWeight = FontWeight.ExtraBold,
-                                                        color = if (isLiquidMetal) Color(0xFF090C11) else tokens.textPrimary
-                                                    )
-                                                    Spacer(modifier = Modifier.width(6.dp))
-                                                    Surface(
-                                                        shape = RoundedCornerShape(6.dp),
-                                                        color = if (isLiquidMetal) Color(0xFF1E242F) else tokens.accentBrand.copy(alpha = 0.12f),
-                                                        border = BorderStroke(
-                                                            0.8.dp,
-                                                            if (isLiquidMetal) Color(0xFFCBD5E1) else tokens.accentBrand.copy(alpha = 0.3f)
-                                                        )
-                                                    ) {
-                                                        Text(
-                                                            text = "EXCLUSIVE",
-                                                            fontSize = 9.sp,
-                                                            fontWeight = FontWeight.ExtraBold,
-                                                            letterSpacing = 0.6.sp,
-                                                            color = if (isLiquidMetal) Color(0xFFFFFFFF) else tokens.accentBrand,
-                                                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
-                                                        )
-                                                    }
-                                                }
-                                                Spacer(modifier = Modifier.height(2.dp))
-                                                Text(
-                                                    text = "Fluid mercury chrome aesthetic with dynamic specular highlights",
-                                                    fontSize = 10.5.sp,
-                                                    fontWeight = if (isLiquidMetal) FontWeight.Medium else FontWeight.Normal,
-                                                    color = if (isLiquidMetal) Color(0xFF2B3342) else tokens.textMuted
-                                                )
-                                            }
-                                        }
-
-                                        Spacer(modifier = Modifier.width(8.dp))
-
-                                        // Switch toggle
-                                        androidx.compose.material3.Switch(
-                                            checked = isLiquidMetal,
-                                            onCheckedChange = { checked ->
-                                                ThemePreferences.setLiquidMetalTheme(context, checked)
-                                            },
-                                            colors = androidx.compose.material3.SwitchDefaults.colors(
-                                                checkedThumbColor = Color(0xFFFFFFFF),
-                                                checkedTrackColor = Color(0xFF090C11),
-                                                checkedBorderColor = Color(0xFFFFFFFF),
-                                                uncheckedThumbColor = tokens.textMuted,
-                                                uncheckedTrackColor = tokens.backgroundSecondary,
-                                                uncheckedBorderColor = tokens.surfaceBorder
-                                            )
-                                        )
-                                    }
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(18.dp))
 
                             // Curated Color Palette Section
                             Row(
@@ -1816,7 +1640,7 @@ fun SettingsScreen(
                                             verticalAlignment = Alignment.CenterVertically,
                                             modifier = Modifier
                                                 .weight(1f)
-                                                .clickable {
+                                                .noRippleClickable {
                                                     ThemePreferences.setCellBorderEnabled(context, !cellBorderEnabled)
                                                 }
                                         ) {
@@ -2441,7 +2265,7 @@ private fun NotificationSettingsContent(
                 border = BorderStroke(0.5.dp, Color(0xFFEF4444).copy(alpha = 0.3f)),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable {
+                    .noRippleClickable {
                         val intent = Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
                             putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
                         }
@@ -2616,7 +2440,7 @@ private fun SoundSettingsContent(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 3.dp)
-                    .clickable {
+                    .noRippleClickable {
                         SoundPreferences.setPickSoundPresetId(context, preset.id)
                         BingoSoundEffects.playPickSound(overridePresetId = preset.id, forceSound = true)
                         BingoSoundEffects.playVibration(context)
@@ -2870,7 +2694,7 @@ private fun SettingsCardHeader(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onToggle)
+            .noRippleClickable(onClick = onToggle)
             .padding(horizontal = 14.dp, vertical = 11.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically

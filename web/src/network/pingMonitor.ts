@@ -18,7 +18,9 @@ class NetworkPingMonitorService {
   private consecutiveErrors: number = 0;
 
   constructor() {
-    this.start();
+    if (typeof window !== 'undefined') {
+      this.start();
+    }
   }
 
   public getPing(): number {
@@ -40,6 +42,7 @@ class NetworkPingMonitorService {
     this.timer = setInterval(() => {
       this.probeLatency();
     }, 1000);
+    if (this.timer?.unref) this.timer.unref();
   }
 
   public stop() {

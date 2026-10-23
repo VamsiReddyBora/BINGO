@@ -95,3 +95,28 @@ export async function sendFcm(env, token, event, transport = fetch) {
     status: r.status,
   };
 }
+
+export async function createCustomToken(credentials, uid, claims = {}) {
+  const creds =
+    typeof credentials === "string" ? JSON.parse(credentials) : credentials;
+  requireThat(
+    creds?.private_key && creds?.client_email && creds?.project_id,
+    503,
+    "Firebase service account is not configured",
+  );
+  const now = Math.floor(Date.now() / 1000);
+  const key = await importPKCS8(creds.private_key, "RS256");
+  return await new SignJWT({
+    uid,
+    claims,
+  })
+    .setProtectedHeader({ alg: "RS256", typ: "JWT" })
+    .setIssuer(creds.client_email)
+    .setSubject(creds.client_email)
+    .setAudience(
+      "https://identitytoolkit.googleapis.com/google.identitytoolkit.v1.IdentityToolkit",
+    )
+    .setIssuedAt(now)
+    .setExpirationTime(now + 3600)
+    .sign(key);
+}

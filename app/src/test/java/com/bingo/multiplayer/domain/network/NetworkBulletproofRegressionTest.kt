@@ -3,11 +3,16 @@ package com.bingo.multiplayer.domain.network
 import com.bingo.multiplayer.domain.model.Player
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.runBlocking
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 /**
@@ -19,6 +24,23 @@ import org.junit.Test
  */
 class NetworkBulletproofRegressionTest {
 
+    private var previousWire: EmqxWire? = null
+
+    @Before
+    fun setUp() {
+        PresenceManager.networkEnabled = false
+        previousWire = EmqxTransport.wireOverride
+        EmqxTransport.wireOverride = EmqxWireFixture()
+        RoomMetadataApi.resetForTests()
+    }
+
+    @After
+    fun tearDown() = runBlocking {
+        RoomMetadataApi.resetForTests()
+        EmqxTransport.wireOverride = previousWire
+        PresenceManager.networkEnabled = true
+    }
+
     private class DummyRegistry : RoomRegistryGateway {
         override suspend fun sync(code: String, player: Player, known: List<Player>, banned: Set<String>): OnlineRoomSession? = null
         override suspend fun ready(code: String, uid: String, status: String, version: Long) {}
@@ -27,28 +49,40 @@ class NetworkBulletproofRegressionTest {
     }
 
     @Test
-    fun testIssueNet01_connectToRoomImmediatelyInitializesHostIdFromInitialPlayers() {
+    fun testIssueNet01_connectToRoomImmediatelyInitializesHostIdFromInitialPlayers() = runBlocking {
         val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
         val manager = OnlineRoomSyncManager(scope, DummyRegistry())
-        val host = Player(id = "host_123", displayName = "Host User", username = "host", isHost = true)
-        val guest = Player(id = "guest_456", displayName = "Guest User", username = "guest", isHost = false)
+        try {
+            val host = Player(id = "host_123", displayName = "Host User", username = "host", isHost = true)
+            val guest = Player(id = "guest_456", displayName = "Guest User", username = "guest", isHost = false)
 
-        // Guest connects with initialPlayers containing host
-        manager.connectToRoom("ROOM88", guest, listOf(host, guest))
+            // Guest connects with initialPlayers containing host
+            manager.connectToRoom("ROOM88", guest, listOf(host, guest))
 
-        // In the unpatched code, currentHostId is null because disconnect() set it to null
-        // and connectToRoom never initialized it from initialPlayers or player.
-        assertEquals("Host ID must be immediately initialized from initialPlayers", "host_123", manager.currentHostId)
+            // In the unpatched code, currentHostId is null because disconnect() set it to null
+            // and connectToRoom never initialized it from initialPlayers or player.
+            assertEquals("Host ID must be immediately initialized from initialPlayers", "host_123", manager.currentHostId)
+        } finally {
+            manager.disconnect()
+            manager.drainForTests()
+            scope.coroutineContext[Job]?.cancelAndJoin()
+        }
     }
 
     @Test
-    fun testIssueNet01_connectToRoomImmediatelyInitializesHostIdWhenLocalIsHost() {
+    fun testIssueNet01_connectToRoomImmediatelyInitializesHostIdWhenLocalIsHost() = runBlocking {
         val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
         val manager = OnlineRoomSyncManager(scope, DummyRegistry())
-        val host = Player(id = "host_999", displayName = "Host User", username = "host", isHost = true)
+        try {
+            val host = Player(id = "host_999", displayName = "Host User", username = "host", isHost = true)
 
-        manager.connectToRoom("ROOM99", host, emptyList())
-        assertEquals("Host ID must be immediately set to local player ID if local is host", "host_999", manager.currentHostId)
+            manager.connectToRoom("ROOM99", host, emptyList())
+            assertEquals("Host ID must be immediately set to local player ID if local is host", "host_999", manager.currentHostId)
+        } finally {
+            manager.disconnect()
+            manager.drainForTests()
+            scope.coroutineContext[Job]?.cancelAndJoin()
+        }
     }
 
     @Test

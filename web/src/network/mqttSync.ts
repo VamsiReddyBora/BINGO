@@ -4,8 +4,14 @@ import { FastPacketCodec } from './codec';
 import { NetworkPingMonitor } from './pingMonitor';
 
 export const MQTT_WS_URL = 'wss://p0812f88.ala.asia-southeast1.emqxsl.com:8084/mqtt';
-export const MQTT_USERNAME = 'Bora';
-export const MQTT_PASSWORD = 'bora7989';
+export const MQTT_USERNAME = (import.meta.env?.VITE_MQTT_USERNAME ?? '');
+export const MQTT_PASSWORD = (import.meta.env?.VITE_MQTT_PASSWORD ?? '');
+
+export type MqttConnectFn = (url: string, opts?: any) => any;
+let customMqttConnect: MqttConnectFn | null = null;
+export function setMqttConnectOverride(fn: MqttConnectFn | null) {
+  customMqttConnect = fn;
+}
 
 export class MqttRoomManager {
   private client: MqttClient | null = null;
@@ -18,6 +24,17 @@ export class MqttRoomManager {
   private pingTimer: any = null;
   private livenessTimer: any = null;
   private globalPresenceTimer: any = null;
+  private activeTimers: Set<any> = new Set();
+
+  private scheduleTimeout(fn: () => void, delayMs: number): any {
+    const timer = setTimeout(() => {
+      this.activeTimers.delete(timer);
+      fn();
+    }, delayMs);
+    this.activeTimers.add(timer);
+    if (timer?.unref) timer.unref();
+    return timer;
+  }
   
   public onPacketReceived: ((packet: RoomMessagePacket) => void) | null = null;
   public onPlayersChanged: ((players: Player[]) => void) | null = null;
@@ -54,7 +71,8 @@ export class MqttRoomManager {
     });
 
     try {
-      this.client = mqtt.connect(MQTT_WS_URL, {
+      const connectFn = customMqttConnect || mqtt.connect;
+      this.client = connectFn(MQTT_WS_URL, {
         clientId,
         username: MQTT_USERNAME,
         password: MQTT_PASSWORD,
@@ -70,7 +88,7 @@ export class MqttRoomManager {
         } : undefined
       });
 
-      this.client.on('connect', () => {
+      this.client?.on('connect', () => {
         this.onConnectionChanged?.(true);
         if (this.localPlayer?.username) {
           this.subscribeGlobalTopics(this.localPlayer.username);
@@ -78,12 +96,12 @@ export class MqttRoomManager {
         if (this.currentRoomCode) {
           this.subscribeToRoom(this.currentRoomCode);
           this.sendJoinPacket();
-          setTimeout(() => this.sendJoinPacket(), 500);
-          setTimeout(() => this.sendJoinPacket(), 1500);
+          this.scheduleTimeout(() => this.sendJoinPacket(), 500);
+          this.scheduleTimeout(() => this.sendJoinPacket(), 1500);
         }
       });
 
-      this.client.on('message', (topic, message) => {
+      this.client?.on('message', (topic, message) => {
         try {
           const payloadStr = message.toString();
           if (topic.startsWith('bingo/v3/invites/')) {
@@ -99,7 +117,7 @@ export class MqttRoomManager {
         }
       });
 
-      this.client.on('close', () => {
+      this.client?.on('close', () => {
         this.onConnectionChanged?.(false);
       });
 
@@ -137,8 +155,8 @@ export class MqttRoomManager {
     } else {
       this.subscribeToRoom(cleanCode);
       this.sendJoinPacket();
-      setTimeout(() => this.sendJoinPacket(), 500);
-      setTimeout(() => this.sendJoinPacket(), 1500);
+      this.scheduleTimeout(() => this.sendJoinPacket(), 500);
+      this.scheduleTimeout(() => this.sendJoinPacket(), 1500);
     }
 
     this.startHeartbeatLoop();
@@ -528,6 +546,7 @@ export class MqttRoomManager {
         timestamp: Date.now()
       });
     }, 2000);
+    if (this.heartbeatTimer?.unref) this.heartbeatTimer.unref();
   }
 
   private startPingLoop() {
@@ -540,6 +559,7 @@ export class MqttRoomManager {
         pingTimestamp: Date.now()
       });
     }, 1000);
+    if (this.pingTimer?.unref) this.pingTimer.unref();
   }
 
   private startLivenessLoop() {
@@ -558,6 +578,7 @@ export class MqttRoomManager {
         this.notifyPlayers();
       }
     }, 3000);
+    if (this.livenessTimer?.unref) this.livenessTimer.unref();
   }
 
   private startGlobalPresenceLoop() {
@@ -574,12 +595,17 @@ export class MqttRoomManager {
       });
       this.sendRetainedPresence(clean, payload);
     }, 6000);
+    if (this.globalPresenceTimer?.unref) this.globalPresenceTimer.unref();
   }
 
   public disconnect() {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     if (this.pingTimer) clearInterval(this.pingTimer);
     if (this.livenessTimer) clearInterval(this.livenessTimer);
+    for (const t of this.activeTimers) {
+      clearTimeout(t);
+    }
+    this.activeTimers.clear();
     
     if (this.client && this.currentRoomCode && this.localPlayer) {
       this.sendPacket({
@@ -596,6 +622,10 @@ export class MqttRoomManager {
   public destroy() {
     this.disconnect();
     if (this.globalPresenceTimer) clearInterval(this.globalPresenceTimer);
+    for (const t of this.activeTimers) {
+      clearTimeout(t);
+    }
+    this.activeTimers.clear();
     if (this.client) {
       try { this.client.end(true); } catch {}
       this.client = null;

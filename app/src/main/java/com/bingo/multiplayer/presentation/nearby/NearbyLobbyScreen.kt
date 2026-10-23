@@ -1,5 +1,7 @@
 package com.bingo.multiplayer.presentation.nearby
 
+import com.bingo.multiplayer.presentation.common.noRippleClickable
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
@@ -675,7 +677,7 @@ private fun DiscoveredGameCard(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .then(if (!isJoined) Modifier.clickable { onJoin() } else Modifier),
+            .then(if (!isJoined) Modifier.noRippleClickable { onJoin() } else Modifier),
         shape = RoundedCornerShape(14.dp),
         color = tokens.surface,
         border = BorderStroke(1.2.dp, if (isJoined) tokens.accentBrand else tokens.surfaceBorder),

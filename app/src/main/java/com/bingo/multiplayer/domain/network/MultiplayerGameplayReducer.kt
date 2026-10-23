@@ -21,20 +21,12 @@ data class MultiplayerGameplayContext(
     fun participantId(id: String): String? {
         if (id.isBlank()) return null
         participants.firstOrNull { it.id == id }?.id?.let { return it }
-        if (strictIdentity) {
-            return null
-        }
         return participants.firstOrNull { LobbyLifecycleEngine.isPlayerIdMatch(it.id, id) }?.id
     }
 
     fun nextPlayer(picker: String, surrendered: Set<String> = emptySet()): String {
-        if (!strictIdentity) return LobbyLifecycleEngine.calculateNextTurnPlayerId(
+        return LobbyLifecycleEngine.calculateNextTurnPlayerId(
             participants, excludedPlayerIds + surrendered, picker, localId, seed, turnOrder)
-        val ids = (turnOrder.ifEmpty { participants }).map { it.id }.distinct()
-        val excluded = excludedPlayerIds + surrendered
-        val start = ids.indexOf(picker)
-        return (1..ids.size).map { ids[(start + it).mod(ids.size)] }
-            .firstOrNull { it !in excluded } ?: localId
     }
 }
 
@@ -135,8 +127,14 @@ object MultiplayerGameplayReducer {
         state.turnClock?.let { clock ->
             val closedClock = packet.closedTurnClock
             if (closedClock != null) {
-                if (closedClock != clock || clock.frozenRemainingMillis != null || packet.timestamp < clock.deadlineAt ||
-                    System.currentTimeMillis() < clock.deadlineAt) return reject(state, "Obsolete or premature timeout")
+                if (closedClock.turnNumber != clock.turnNumber ||
+                    !LobbyLifecycleEngine.isPlayerIdMatch(closedClock.playerId, clock.playerId) ||
+                    (clock.welcomeBackGranted && !closedClock.welcomeBackGranted) ||
+                    closedClock.initialBudgetMillis != clock.initialBudgetMillis ||
+                    clock.frozenRemainingMillis != null ||
+                    closedClock.deadlineAt < clock.deadlineAt - 2000L ||
+                    (packet.timestamp < clock.deadlineAt - 2000L && System.currentTimeMillis() < clock.deadlineAt - 2000L))
+                    return reject(state, "Obsolete or premature timeout")
             } else {
                 if (clock.frozenRemainingMillis != null) return reject(state, "Turn paused")
             }

@@ -102,6 +102,7 @@ export function validateEvent(body, now = Date.now()) {
     "createdAt",
     "expiresAt",
     "roomCode",
+    "roomSessionId",
     "requestId",
     "requestTimestamp",
     "presenceSessionId",
@@ -128,6 +129,10 @@ export function validateEvent(body, now = Date.now()) {
   if (body.kind === "GAME_INVITE") {
     requireThat(/^[A-Z0-9]{6}$/.test(body.roomCode || ""), 400, "Invalid room");
     e.roomCode = body.roomCode;
+    if (body.roomSessionId !== undefined && body.roomSessionId !== "") {
+      requireThat(validId(body.roomSessionId), 400, "Invalid room session");
+      e.roomSessionId = body.roomSessionId;
+    }
   }
   if (["FRIEND_REQUEST", "FRIEND_ACCEPTED"].includes(body.kind)) {
     requireThat(validId(body.requestId), 400, "Missing request ID");
@@ -185,4 +190,18 @@ export async function legacyRead(env, key) {
   } catch {
     throw new HttpError(503, "Account directory response is unavailable");
   }
+}
+
+/** Push identity migration reads the existing public Firebase profile, never MQTT room data. */
+export async function profileIdentity(env, uid, transport = fetch) {
+  requireThat(/^[a-zA-Z0-9_-]+$/.test(env.FIREBASE_PROJECT_ID || ""), 503,
+    "Firebase notification directory is not configured");
+  const url = `https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/users/${encodeURIComponent(uid)}`;
+  const result = await transport(url, { signal: AbortSignal.timeout(8000) });
+  if (result.status === 404) return null;
+  requireThat(result.ok, 503, "Firebase account directory temporarily unavailable");
+  const document = await result.json();
+  const name = username(document.fields?.username?.stringValue);
+  requireThat(validName(name), 503, "Firebase account profile is unavailable");
+  return { uid, username: name };
 }

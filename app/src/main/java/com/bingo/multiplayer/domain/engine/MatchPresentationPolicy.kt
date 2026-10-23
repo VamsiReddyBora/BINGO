@@ -2,6 +2,7 @@ package com.bingo.multiplayer.domain.engine
 
 import com.bingo.multiplayer.domain.model.InGameChatMessage
 import com.bingo.multiplayer.domain.model.RecentPick
+import com.bingo.multiplayer.domain.model.Player
 import kotlinx.serialization.Serializable
 import java.nio.ByteBuffer
 import java.security.MessageDigest
@@ -45,6 +46,39 @@ data class InterruptionPromptState(
 }
 
 object MatchSystemMessages {
+    /** Filter the view, never the shared/saved conversation used by other phones. */
+    fun visibleTo(chat: List<InGameChatMessage>, viewerId: String, players: List<Player>): List<InGameChatMessage> {
+        val viewer = players.firstOrNull { LobbyLifecycleEngine.isPlayerIdMatch(it.id, viewerId) }
+        val ownNames = listOfNotNull(viewer?.displayName, viewer?.username).map { it.trim() }.filter { it.isNotBlank() }
+        val unambiguousNames = ownNames.filter { name ->
+            players.none { !LobbyLifecycleEngine.isPlayerIdMatch(it.id, viewerId) &&
+                (it.displayName.trim().equals(name, true) || it.username.trim().equals(name, true)) }
+        }
+        return chat.filter { message ->
+            if (!message.isSystemMessage || viewerId.isBlank()) true
+            else if (message.presencePlayerId.isNotBlank()) {
+                !LobbyLifecycleEngine.isPlayerIdMatch(message.presencePlayerId, viewerId)
+            } else {
+                // Compatibility for old checkpoints/peers that did not carry a
+                // presence subject. Match complete known notices, never player chat
+                // or ambiguous duplicate display names.
+                val text = message.text.trim().trimStart { !it.isLetterOrDigit() }
+                unambiguousNames.none { name ->
+                    listOf("minimized the app", "minimized the game", "disconnected", "is back", "reconnected").any { status ->
+                        text.equals("$name $status", ignoreCase = true)
+                    }
+                }
+            }
+        }
+    }
+
+    /** One identity per accepted closed turn, shared by online, nearby and recovery. */
+    fun turnSkipped(match: Long, playerId: String, playerName: String, closedTurn: Int, now: Long): InGameChatMessage? {
+        if (match == 0L || playerId.isBlank() || closedTurn <= 0) return null
+        val name = playerName.ifBlank { "Player" }
+        return notice(match, playerId, "turn-skipped:$closedTurn", "⏳ $name's turn was skipped.", now)
+    }
+
     fun notice(match: Long, owner: String, event: String, text: String, now: Long): InGameChatMessage {
         val digest = MessageDigest.getInstance("SHA-256").digest("status:$match:$owner:$event".toByteArray())
         return InGameChatMessage(id = ByteBuffer.wrap(digest).long, text = text,

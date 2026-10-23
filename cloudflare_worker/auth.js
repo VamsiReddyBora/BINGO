@@ -110,7 +110,13 @@ export async function verifyIdentity(body, env, options = {}) {
       "Expired guest proof",
     );
     const bytes = fromB64(body.publicKey);
-    uid = "guest_" + (await digestBytes(bytes));
+    const rawDigest = "guest_" + (await digestBytes(bytes));
+    const stringDigest = "guest_" + (await digestBytes(new TextEncoder().encode(body.publicKey)));
+    if (body.uid === stringDigest) {
+      uid = stringDigest;
+    } else {
+      uid = rawDigest;
+    }
     const message = `bingo-notifications-v2\n${uid}\n${name}\n${body.installationId}\n${body.generation}\n${body.sequence}\n${body.timestamp}\n${body.nonce}`;
     try {
       const key = await crypto.subtle.importKey(
@@ -154,6 +160,57 @@ export async function verifyIdentity(body, env, options = {}) {
     nonce: body.provider === "guest" ? body.nonce : "",
   };
 }
+
+export async function verifyGuestBinding(body, env) {
+  requireThat(
+    typeof body.guestUid === "string" &&
+      typeof body.firebaseUid === "string" &&
+      typeof body.publicKey === "string" &&
+      typeof body.signature === "string" &&
+      Number.isSafeInteger(body.timestamp) &&
+      Math.abs(Date.now() - body.timestamp) <= 60000 &&
+      typeof body.nonce === "string" &&
+      body.nonce.length >= 8,
+    401,
+    "Invalid guest binding proof parameters",
+  );
+  const bytes = fromB64(body.publicKey);
+  const rawDigest = "guest_" + (await digestBytes(bytes));
+  const stringDigest =
+    "guest_" + (await digestBytes(new TextEncoder().encode(body.publicKey)));
+  requireThat(
+    body.guestUid === rawDigest || body.guestUid === stringDigest,
+    403,
+    "Guest UID does not match public key",
+  );
+  const message = `bingo-firebase-guest-binding\n${body.guestUid}\n${body.firebaseUid}\n${body.publicKey}\n${body.timestamp}\n${body.nonce}`;
+  try {
+    const key = await crypto.subtle.importKey(
+      "spki",
+      bytes,
+      { name: "ECDSA", namedCurve: "P-256" },
+      false,
+      ["verify"],
+    );
+    const valid = await crypto.subtle.verify(
+      { name: "ECDSA", hash: "SHA-256" },
+      key,
+      derToRaw(fromB64(body.signature)),
+      new TextEncoder().encode(message),
+    );
+    requireThat(valid, 401, "Invalid cryptographic binding proof");
+  } catch (e) {
+    if (e instanceof HttpError) throw e;
+    throw new HttpError(401, "Invalid cryptographic binding proof");
+  }
+  return {
+    guestUid: body.guestUid,
+    firebaseUid: body.firebaseUid,
+    publicKey: body.publicKey,
+    nonce: body.nonce,
+  };
+}
+
 async function digestBytes(bytes) {
   return [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))]
     .map((n) => n.toString(16).padStart(2, "0"))

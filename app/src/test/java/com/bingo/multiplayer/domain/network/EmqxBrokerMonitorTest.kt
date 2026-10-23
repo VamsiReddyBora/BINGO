@@ -11,6 +11,7 @@ class EmqxBrokerMonitorTest {
     fun testEmqxBrokerMonitorTransitions() = runBlocking {
         // A live startup probe must not overwrite the explicit transitions under test.
         EmqxBrokerMonitor.stopAndAwait()
+        EmqxBrokerMonitor.healthyOverride = { true }
         // Record broker success -> isBrokerDown must be false
         EmqxBrokerMonitor.recordBrokerSuccess()
         assertFalse("Broker should not be down after recordBrokerSuccess", EmqxBrokerMonitor.isBrokerDown.value)
@@ -25,5 +26,9 @@ class EmqxBrokerMonitorTest {
         // When broker recovers -> isBrokerDown clears immediately
         EmqxBrokerMonitor.recordBrokerSuccess()
         assertFalse("Broker should be restored after recordBrokerSuccess", EmqxBrokerMonitor.isBrokerDown.value)
+        EmqxBrokerMonitor.healthyOverride = { false }
+        EmqxBrokerMonitor.recordBrokerSuccess()
+        assertTrue("A success hint without a subscribed fresh echo must not mark EMQX healthy", EmqxBrokerMonitor.isBrokerDown.value)
+        EmqxBrokerMonitor.healthyOverride = null
     }
 }

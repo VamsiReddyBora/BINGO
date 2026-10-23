@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { User, Info, AlertCircle, ArrowRight, ArrowLeft, X, Plus, ChevronRight, Check, Trash2, CheckCircle2, Copy, ShieldCheck } from 'lucide-react';
 import { Player, CloudUserDataBackup } from '../types/models';
 import { CloudRegistry } from '../network/cloudRegistry';
+import { TEST_ACCOUNTS } from '../network/seedTestAccounts';
 import { soundEffects } from '../audio/sounds';
 import { useTheme } from '../theme/theme';
 
@@ -779,6 +780,33 @@ export const LoginScreen: React.FC<Props> = ({
                 >
                   Instant play • No account required
                 </p>
+
+                {/* 1-Click Test Accounts (Kevin, Stuart, Phil, Otto) */}
+                <div className="flex flex-col items-center gap-1.5 pt-2 border-t border-slate-800/60">
+                  <span style={{ color: tokens.textMuted }} className="text-[10px] uppercase font-bold tracking-wider">
+                    Quick Test Accounts:
+                  </span>
+                  <div className="flex flex-wrap items-center justify-center gap-1.5">
+                    {(['kevin', 'stuart', 'phil', 'otto'] as const).map((key) => {
+                      const acc = TEST_ACCOUNTS[key];
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => {
+                            soundEffects.playTap();
+                            onLoginSuccess(acc);
+                          }}
+                          className="px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-200 border border-slate-700 active:scale-95 transition-all cursor-pointer shadow-xs flex items-center gap-1"
+                          title={`Login as ${acc.displayName}`}
+                        >
+                          <span>{acc.avatarUrl}</span>
+                          <span className="capitalize">{acc.username}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               </form>
             </div>
           )}

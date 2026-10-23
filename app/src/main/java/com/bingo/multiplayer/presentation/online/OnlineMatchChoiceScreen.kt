@@ -1,5 +1,7 @@
 package com.bingo.multiplayer.presentation.online
 
+import com.bingo.multiplayer.presentation.common.NoRippleSurface
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -139,7 +141,7 @@ private fun RoleCard(
 ) {
     val tokens = BingoTheme.colors
 
-    Surface(
+    NoRippleSurface(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),

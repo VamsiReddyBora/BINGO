@@ -91,9 +91,10 @@ fun DashboardAndFriendsScreen(
     }
 
     // Persist matches fetched from Firestore locally so they load in 0ms on next app open
+    val compositionOriginGeneration = remember(user.uid) { authRepository.sessionGeneration.get() }
     LaunchedEffect(firestoreMatches) {
         if (firestoreMatches.isNotEmpty()) {
-            authRepository.persistMatchHistory(matchHistory)
+            authRepository.persistMatchHistory(matchHistory, uid = user.uid, expectedGeneration = compositionOriginGeneration)
         }
     }
 
@@ -139,8 +140,10 @@ fun DashboardAndFriendsScreen(
     friendToRemove?.let { target ->
         AlertDialog(
             onDismissRequest = { friendToRemove = null },
-            title = { Text("Remove Friend", fontWeight = FontWeight.Bold) },
-            text = { Text("Are you sure you want to remove ${target.displayName} from your friends list?") },
+            shape = RoundedCornerShape(20.dp),
+            containerColor = tokens.surface,
+            title = { Text("Remove Friend", fontWeight = FontWeight.Bold, color = tokens.cellNeutralText) },
+            text = { Text("Are you sure you want to remove ${target.displayName} from your friends list?", color = tokens.textSecondary) },
             confirmButton = {
                 TextButton(
                     onClick = {

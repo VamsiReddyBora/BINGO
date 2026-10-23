@@ -15,6 +15,7 @@ import com.bingo.multiplayer.domain.engine.MatchSystemMessages
 
 @Keep
 @Serializable
+@OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
 data class OngoingMatchData(
     val roomCode: String,
     val matchSeed: Long,
@@ -69,7 +70,15 @@ data class OngoingMatchData(
     val lastPlayerActivityAt: Long = startedAt,
     val isExpired: Boolean = false,
     val simplifiedRulesVersion: Int = 0,
-    val presenceState: MultiplayerPresenceState = MultiplayerPresenceState()
+    val presenceState: MultiplayerPresenceState = MultiplayerPresenceState(),
+    @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
+    val clockOffsetMillis: Long = 0L,
+    @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
+    val clockOffsetsByPlayer: Map<String, Long> = emptyMap(),
+    @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
+    val pendingStartEpoch: String = "",
+    @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
+    val lobbySessionId: String = ""
 )
 
 @Keep
@@ -439,11 +448,29 @@ object OngoingMatchStore {
         return null
     }
 
+    /** A delayed cancellation may clear only its own provisional checkpoint. */
+    @Synchronized
+    fun clearScheduledStart(context: Context?, uid: String, seed: Long, epoch: String): Boolean {
+        if (uid.isBlank() || epoch.isBlank()) return false
+        val prefs = try {
+            getPrefs(context)
+        } catch (_: Exception) {
+            return false
+        }
+        val raw = prefs.getString(getMatchKey(uid), null) ?: return false
+        val current = runCatching { json.decodeFromString<OngoingMatchData>(raw) }.getOrNull() ?: return false
+        if (current.accountUid != uid || current.matchSeed != seed || current.pendingStartEpoch != epoch) return false
+        return prefs.edit().remove(getMatchKey(uid)).commit()
+    }
+
     @Synchronized
     fun enqueueExit(context: Context?, exit: PendingMatchExit): Boolean {
         if (exit.accountUid.isBlank() || exit.roomCode.isBlank() || exit.packet.seed == 0L || exit.packet.type != "SURRENDER") return false
-        return getPrefs(context).edit().putString("$KEY_PENDING_EXIT_PREFIX${exit.accountUid}:${exit.packet.seed}",
+        val saved = getPrefs(context).edit().putString("$KEY_PENDING_EXIT_PREFIX${exit.accountUid}:${exit.packet.seed}",
             json.encodeToString(exit)).commit()
+        // Only durable, intentional surrender retires the writer. Network loss never does.
+        if (saved) RoomMetadataApi.retireLocalWriter(exit)
+        return saved
     }
 
     @Synchronized

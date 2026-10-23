@@ -18,7 +18,7 @@ describe('Web Bingo Engine & FastPacketCodec Tests', () => {
     };
 
     const encoded = FastPacketCodec.encode(packet);
-    assert.strictEqual(encoded, 'P|17|player_web_123|3|player_android_456|4,12,17|987654321|inst_abc');
+    assert.strictEqual(encoded, 'P|17|player_web_123|3|player_android_456|4,12,17|987654321|inst_abc||0');
 
     const decoded = FastPacketCodec.decode(encoded);
     assert.strictEqual(decoded.type, 'PICK_NUMBER');

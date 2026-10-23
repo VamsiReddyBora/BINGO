@@ -1,5 +1,8 @@
 package com.bingo.multiplayer.presentation.lobby
 
+import com.bingo.multiplayer.presentation.common.noRippleClickable
+import com.bingo.multiplayer.presentation.common.noRippleCombinedClickable
+
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -16,7 +19,10 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.ui.semantics.Role
+import com.bingo.multiplayer.core.designsystem.ThemePreferences
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
@@ -532,7 +538,7 @@ fun LobbyScreen(
                                 modifier = Modifier
                                     .weight(1f)
                                     .clip(RoundedCornerShape(8.dp))
-                                    .combinedClickable(
+                                    .noRippleCombinedClickable(
                                         onClick = {
                                             val cleanUser = player.username.ifBlank {
                                                 player.displayName.filter { it.isLetterOrDigit() }.lowercase()
@@ -761,28 +767,19 @@ fun LobbyScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // ── Online Friends Card ──
+            // ── Friends available for a live or background invitation ──
             if (friendsRepository != null) {
-                val onlineFriends = remember(allFriends, presenceMap, players) {
-                    allFriends.filter { f ->
-                        val cleanF = f.username.trim().lowercase().removePrefix("@")
-                        val pres = presenceMap[cleanF]
-                        val effectiveTs = pres?.timestamp?.takeIf { it > 0L } ?: f.lastSeenTimestamp.takeIf { it > 0L }
-                        val status = if (pres != null) {
-                            com.bingo.multiplayer.domain.network.PresenceManager.getRichDisplayStatus(cleanF, effectiveTs)
-                        } else if (f.lastSeenTimestamp > 0L && (System.currentTimeMillis() - f.lastSeenTimestamp) >= 60_000L) {
-                            com.bingo.multiplayer.domain.network.PresenceManager.getRichDisplayStatus(cleanF, f.lastSeenTimestamp)
-                        } else {
-                            "offline"
-                        }
-                        val isOnlineByPres = com.bingo.multiplayer.domain.network.PresenceManager.isStatusOnline(status)
+                val inviteableFriends = remember(allFriends, presenceMap, players, ticker) {
+                    val eligible = allFriends.filter { f ->
                         val notInRoom = players.none { p ->
                             p.id == f.uid ||
                             (f.username.isNotBlank() && p.username.equals(f.username, ignoreCase = true)) ||
                             p.displayName.equals(f.displayName, ignoreCase = true)
                         }
-                        isOnlineByPres && notInRoom
+                        notInRoom
                     }
+                    com.bingo.multiplayer.domain.network.LobbyFriendOrdering.onlineFirst(
+                        eligible, presenceMap, System.currentTimeMillis())
                 }
 
                 Surface(
@@ -799,19 +796,19 @@ fun LobbyScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "ONLINE FRIENDS",
+                                text = "INVITE FRIENDS",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 letterSpacing = 1.sp,
                                 color = tokens.cellNeutralText.copy(alpha = 0.5f)
                             )
-                            if (onlineFriends.isNotEmpty()) {
+                            if (inviteableFriends.isNotEmpty()) {
                                 Surface(
                                     shape = RoundedCornerShape(8.dp),
                                     color = Color(0xFF16A34A).copy(alpha = 0.15f)
                                 ) {
                                     Text(
-                                        text = "${onlineFriends.size} online",
+                                        text = "${inviteableFriends.size} friends",
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = Color(0xFF16A34A),
@@ -823,9 +820,9 @@ fun LobbyScreen(
 
                         Spacer(modifier = Modifier.height(10.dp))
 
-                        if (onlineFriends.isEmpty()) {
+                        if (inviteableFriends.isEmpty()) {
                             Text(
-                                text = "No friends currently online",
+                                text = "No friends available to invite",
                                 fontSize = 12.sp,
                                 color = tokens.cellNeutralText.copy(alpha = 0.5f),
                                 textAlign = TextAlign.Center,
@@ -834,13 +831,7 @@ fun LobbyScreen(
                                     .padding(vertical = 6.dp)
                             )
                         } else {
-                            onlineFriends.forEachIndexed { fIdx, friend ->
-                                if (fIdx > 0) {
-                                    HorizontalDivider(
-                                        color = tokens.surfaceBorder.copy(alpha = 0.5f),
-                                        modifier = Modifier.padding(vertical = 6.dp)
-                                    )
-                                }
+                            LobbyFriendsList(inviteableFriends) { friend ->
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -851,7 +842,7 @@ fun LobbyScreen(
                                         modifier = Modifier
                                             .weight(1f)
                                             .clip(RoundedCornerShape(8.dp))
-                                            .clickable {
+                                            .noRippleClickable {
                                                 val cleanF = friend.username.trim().lowercase().removePrefix("@")
                                                 val livePres = presenceMap[cleanF]
                                                 val effectiveTs = livePres?.timestamp?.takeIf { it > 0L } ?: friend.lastSeenTimestamp
@@ -916,10 +907,14 @@ fun LobbyScreen(
 
                                     Spacer(modifier = Modifier.width(8.dp))
 
-                                    val isInviteCooldown = ActionCooldownManager.isInviteOnCooldown(friend.username)
+                                    val isRequest = com.bingo.multiplayer.domain.network.FriendPlayAvailability.of(
+                                        presenceMap[friend.username.trim().lowercase().removePrefix("@")]) == com.bingo.multiplayer.domain.network.FriendPlayAvailability.BUSY
+                                    val isInviteCooldown = if (isRequest) ActionCooldownManager.isPlayRequestOnCooldown(friend.username)
+                                        else ActionCooldownManager.isInviteOnCooldown(friend.username)
                                     Button(
                                         onClick = {
-                                            ActionCooldownManager.startInviteCooldown(friend.username)
+                                            if (isRequest) ActionCooldownManager.startPlayRequestCooldown(friend.username)
+                                            else ActionCooldownManager.startInviteCooldown(friend.username)
                                             val fromUser = currentUser?.username?.ifBlank { null }
                                                 ?: players.firstOrNull { it.isHost }?.username?.ifBlank { null }
                                                 ?: players.firstOrNull { it.isHost }?.id
@@ -931,14 +926,19 @@ fun LobbyScreen(
 
                                             if (roomCode.isNotBlank()) {
                                                 coroutineScope.launch {
+                                                    val sessionGuid = com.bingo.multiplayer.domain.network.OnlineRoomRegistry.getRoomCachedOnly(roomCode)?.sessionId.orEmpty()
                                                     val sendResult = com.bingo.multiplayer.domain.network.GameInviteManager.sendInvite(
                                                         targetUsername = friend.username,
-                                                        invite = com.bingo.multiplayer.domain.network.GameInvite(
-                                                            fromUsername = fromUser,
-                                                            fromDisplayName = fromName,
-                                                            fromAvatarUrl = fromAvatar,
-                                                            roomCode = roomCode
-                                                        )
+                                                        invite = com.bingo.multiplayer.domain.network.GameInviteManager.forLobbyRecipient(
+                                                            com.bingo.multiplayer.domain.network.GameInvite(
+                                                                fromUsername = fromUser,
+                                                                fromDisplayName = fromName,
+                                                                fromAvatarUrl = fromAvatar,
+                                                                roomCode = roomCode,
+                                                                roomSessionId = sessionGuid,
+                                                                recipientUid = friend.uid,
+                                                                recipientUsername = friend.username
+                                                            ), presenceMap[friend.username.trim().lowercase().removePrefix("@")])
                                                     )
                                                     Toast.makeText(context, sendResult.message, Toast.LENGTH_SHORT).show()
                                                 }
@@ -963,7 +963,7 @@ fun LobbyScreen(
                                         )
                                         Spacer(modifier = Modifier.width(4.dp))
                                         Text(
-                                            text = if (isInviteCooldown) "Invited" else "Invite",
+                                            text = if (isRequest) { if (isInviteCooldown) "Requested" else "Request" } else { if (isInviteCooldown) "Invited" else "Invite" },
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = if (isInviteCooldown) tokens.textMuted else tokens.primaryButtonText
@@ -1079,7 +1079,7 @@ fun LobbyScreen(
                                     modifier = Modifier
                                         .weight(1f)
                                         .clip(RoundedCornerShape(8.dp))
-                                        .clickable {
+                                        .noRippleClickable {
                                             val cleanFound = result.username.trim().lowercase().removePrefix("@")
                                             val livePres = presenceMap[cleanFound]
                                             val effectiveTs = livePres?.timestamp?.takeIf { it > 0L } ?: result.lastSeenTimestamp
@@ -1162,10 +1162,14 @@ fun LobbyScreen(
                                         }
                                     }
 
-                                    val isInviteCooldown = ActionCooldownManager.isInviteOnCooldown(result.username)
+                                    val isRequest = com.bingo.multiplayer.domain.network.FriendPlayAvailability.of(
+                                        presenceMap[result.username.trim().lowercase().removePrefix("@")]) == com.bingo.multiplayer.domain.network.FriendPlayAvailability.BUSY
+                                    val isInviteCooldown = if (isRequest) ActionCooldownManager.isPlayRequestOnCooldown(result.username)
+                                        else ActionCooldownManager.isInviteOnCooldown(result.username)
                                     Button(
                                         onClick = {
-                                            ActionCooldownManager.startInviteCooldown(result.username)
+                                            if (isRequest) ActionCooldownManager.startPlayRequestCooldown(result.username)
+                                            else ActionCooldownManager.startInviteCooldown(result.username)
                                             val fromUser = currentUser?.username?.ifBlank { null }
                                                 ?: players.firstOrNull { it.isHost }?.username?.ifBlank { null }
                                                 ?: players.firstOrNull { it.isHost }?.id
@@ -1177,14 +1181,19 @@ fun LobbyScreen(
 
                                             if (roomCode.isNotBlank()) {
                                                 coroutineScope.launch {
+                                                    val sessionGuid = com.bingo.multiplayer.domain.network.OnlineRoomRegistry.getRoomCachedOnly(roomCode)?.sessionId.orEmpty()
                                                     val sendResult = com.bingo.multiplayer.domain.network.GameInviteManager.sendInvite(
                                                         targetUsername = result.username,
-                                                        invite = com.bingo.multiplayer.domain.network.GameInvite(
-                                                            fromUsername = fromUser,
-                                                            fromDisplayName = fromName,
-                                                            fromAvatarUrl = fromAvatar,
-                                                            roomCode = roomCode
-                                                        )
+                                                        invite = com.bingo.multiplayer.domain.network.GameInviteManager.forLobbyRecipient(
+                                                            com.bingo.multiplayer.domain.network.GameInvite(
+                                                                fromUsername = fromUser,
+                                                                fromDisplayName = fromName,
+                                                                fromAvatarUrl = fromAvatar,
+                                                                roomCode = roomCode,
+                                                                roomSessionId = sessionGuid,
+                                                                recipientUid = result.uid,
+                                                                recipientUsername = result.username
+                                                            ), presenceMap[result.username.trim().lowercase().removePrefix("@")])
                                                     )
                                                     Toast.makeText(context, sendResult.message, Toast.LENGTH_SHORT).show()
                                                 }
@@ -1209,7 +1218,7 @@ fun LobbyScreen(
                                         )
                                         Spacer(modifier = Modifier.width(3.dp))
                                         Text(
-                                            text = if (isInviteCooldown) "Invited" else "Invite",
+                                            text = if (isRequest) { if (isInviteCooldown) "Requested" else "Request" } else { if (isInviteCooldown) "Invited" else "Invite" },
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = if (isInviteCooldown) tokens.textMuted else tokens.primaryButtonText
@@ -1256,6 +1265,17 @@ fun LobbyScreen(
             val readyCount = LobbyLifecycleEngine.countReadyPlayers(effectivePlayers)
 
             if (isHost) {
+                val toggleAccent = if (tokens.isDark && tokens.accentBrand == Color.White) {
+                    ThemePreferences.getPalette(ThemePreferences.accentColorId.value).primaryDark
+                } else tokens.accentBrand
+                val boardSwitchColors = SwitchDefaults.colors(
+                    checkedThumbColor = Color.White,
+                    checkedTrackColor = toggleAccent,
+                    checkedBorderColor = Color.Transparent,
+                    uncheckedThumbColor = tokens.textMuted,
+                    uncheckedTrackColor = tokens.cellNeutralBorder.copy(alpha = 0.25f),
+                    uncheckedBorderColor = tokens.cellNeutralBorder.copy(alpha = 0.35f)
+                )
                 // Dynamic board option
                 Column(
                     modifier = Modifier
@@ -1268,7 +1288,13 @@ fun LobbyScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { onDynamicBoardChange?.invoke(!isDynamicBoard) },
+                            .toggleable(
+                                value = isDynamicBoard,
+                                role = Role.Switch,
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onValueChange = { onDynamicBoardChange?.invoke(it) }
+                            ),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
@@ -1278,14 +1304,10 @@ fun LobbyScreen(
                             fontWeight = FontWeight.SemiBold,
                             color = tokens.cellNeutralText
                         )
-                        Checkbox(
+                        Switch(
                             checked = isDynamicBoard,
                             onCheckedChange = null,
-                            colors = CheckboxDefaults.colors(
-                                checkedColor = if (tokens.isDark) Color.White else tokens.accentBrand,
-                                uncheckedColor = tokens.surfaceBorder,
-                                checkmarkColor = if (tokens.isDark) Color.Black else Color.White
-                            )
+                            colors = boardSwitchColors
                         )
                     }
 
@@ -1332,7 +1354,13 @@ fun LobbyScreen(
                         .padding(bottom = 12.dp)
                         .clip(RoundedCornerShape(10.dp))
                         .background(tokens.surface)
-                        .clickable { onManualBoardChange?.invoke(!isManualBoard) }
+                        .toggleable(
+                            value = isManualBoard,
+                            role = Role.Switch,
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onValueChange = { onManualBoardChange?.invoke(it) }
+                        )
                         .padding(horizontal = 14.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
@@ -1343,14 +1371,10 @@ fun LobbyScreen(
                         fontWeight = FontWeight.SemiBold,
                         color = tokens.cellNeutralText
                     )
-                    Checkbox(
+                    Switch(
                         checked = isManualBoard,
                         onCheckedChange = null,
-                        colors = CheckboxDefaults.colors(
-                            checkedColor = if (tokens.isDark) Color.White else tokens.accentBrand,
-                            uncheckedColor = tokens.surfaceBorder,
-                            checkmarkColor = if (tokens.isDark) Color.Black else Color.White
-                        )
+                        colors = boardSwitchColors
                     )
                 }
 

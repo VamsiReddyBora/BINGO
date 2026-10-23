@@ -119,6 +119,7 @@ fun LoginScreen(
     fun proceedWithGoogleAccount(account: GoogleSignInAccount) {
         val email = account.email ?: ""
         val googleId = account.id ?: System.currentTimeMillis().toString()
+        val idToken = account.idToken
         val isRegistered = authRepository.isGoogleUserRegistered(googleId)
         val savedName = authRepository.getSavedGoogleDisplayName(googleId)
         val savedUsername = authRepository.getSavedGoogleUsername(googleId)
@@ -128,7 +129,7 @@ fun LoginScreen(
             loadingMessage = "Restoring your account..."
 
             // 1. Attempt cloud restore first to guarantee all stats, avatar, settings, and history are restored
-            val restored = authRepository.restoreCloudUserData(googleId)
+            val restored = authRepository.restoreCloudUserData(googleId, idToken = idToken)
             if (restored) {
                 Log.i(TAG, "Account restored successfully from cloud for Google ID: $googleId")
                 isLoading = false
@@ -144,7 +145,8 @@ fun LoginScreen(
                     googleId = googleId,
                     displayName = savedName,
                     email = email,
-                    customUsername = savedUsername
+                    customUsername = savedUsername,
+                    idToken = idToken
                 )
                 isLoading = false
                 errorMessage = null
@@ -163,7 +165,8 @@ fun LoginScreen(
                     googleId = googleId,
                     displayName = remoteProfile.displayName,
                     email = email,
-                    customUsername = remoteProfile.username
+                    customUsername = remoteProfile.username,
+                    idToken = idToken
                 )
                 isLoading = false
                 errorMessage = null
@@ -392,7 +395,8 @@ fun LoginScreen(
                                     googleId = gId,
                                     displayName = cleanName,
                                     email = gEmail,
-                                    customUsername = cleanName
+                                    customUsername = cleanName,
+                                    idToken = pendingGoogleAccount?.idToken
                                 )
                                 authRepository.backupUserDataToCloud()
                                 isLoading = false

@@ -187,7 +187,9 @@ data class InGameChatMessage(
     val senderName: String? = null,
     val timestamp: Long = System.currentTimeMillis(),
     val isSystemMessage: Boolean = false,
-    val senderPlayerId: String = ""
+    val senderPlayerId: String = "",
+    // Subject of a presence notice, independent of the phone sharing its chat history.
+    val presencePlayerId: String = ""
 )
 
 @Keep

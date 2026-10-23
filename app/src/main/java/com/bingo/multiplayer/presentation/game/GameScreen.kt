@@ -1,5 +1,7 @@
 package com.bingo.multiplayer.presentation.game
 
+import com.bingo.multiplayer.presentation.common.NoRippleSurface
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
@@ -121,6 +123,7 @@ import com.bingo.multiplayer.presentation.components.RecentPicksQueuePill
 @Composable
 fun GameScreen(
     gameplaySuspended: Boolean = false,
+    hostUnavailable: Boolean = false,
     canControlPause: Boolean = true,
     canResumeGame: Boolean = true,
     opponentConnectionStatus: String = "",
@@ -195,6 +198,9 @@ fun GameScreen(
     val gameMountTime = remember(matchSeed) { System.currentTimeMillis() }
     var lastHandledChatId by remember(matchSeed) { androidx.compose.runtime.mutableLongStateOf(0L) }
     var chatMessages by remember(matchSeed) { mutableStateOf(initialChatMessages) }
+    val visibleChatMessages = remember(chatMessages, myPlayerId, players) {
+        com.bingo.multiplayer.domain.engine.MatchSystemMessages.visibleTo(chatMessages, myPlayerId, players)
+    }
     LaunchedEffect(initialChatMessages, matchSeed, useAcceptedChatHistory) {
         if (useAcceptedChatHistory) chatMessages = initialChatMessages
     }
@@ -484,7 +490,7 @@ fun GameScreen(
 
     BackHandler(enabled = !isGameOver && isGamePaused) {}
 
-    if (showSurrenderDialog) {
+    if (showSurrenderDialog && !hostUnavailable) {
         val isMultiplayerLobbyGame = (onReturnToLobby != null)
         AlertDialog(
             onDismissRequest = { showSurrenderDialog = false },
@@ -542,7 +548,7 @@ fun GameScreen(
         )
     }
 
-    if (isGamePaused && !isGameOver) {
+    if (isGamePaused && !isGameOver && !hostUnavailable) {
         AlertDialog(
             onDismissRequest = {},
             properties = MatchDecisionDialogSpec.properties,
@@ -681,14 +687,9 @@ fun GameScreen(
                     }
                     val pingText = when {
                         !latencyIsReliable || latencySource == com.bingo.multiplayer.domain.network.NetworkMetricSource.NONE || displayedPingMs <= 0L -> "--ms"
-                        displayedPingMs > 999L -> "999+ms"
                         else -> "${displayedPingMs}ms"
                     }
-                    val displayedText = if (latencyLabel.isNotBlank() && latencyLabel != "Ping" && latencyLabel != "Unknown") {
-                        "$latencyLabel $pingText"
-                    } else {
-                        pingText
-                    }
+                    val displayedText = pingText
 
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -839,7 +840,7 @@ fun GameScreen(
                                     else -> ""
                                 }
 
-                                Surface(
+                                NoRippleSurface(
                                     onClick = {
                                         selectedReviewPlayerId = player.id
                                         animateStampDrop = false
@@ -1132,7 +1133,7 @@ fun GameScreen(
                 // In-Game WhatsApp style Chat Space between number table and emoji reactions strip
                 // Width matches exact board width so the left & right edges align pixel-perfect with cell 22 and cell 17
                 InGameChatSpace(
-                    messages = chatMessages,
+                    messages = visibleChatMessages,
                     typingPlayerName = if (isGameOver) null else (typingPlayerName ?: localAiTypingName),
                     onDoubleTapToChat = {
                         isFullLengthChatActive = true
@@ -1408,6 +1409,12 @@ fun GameScreen(
                 }
             }
         }
+    }
+
+    BackHandler(enabled = hostUnavailable && !isGameOver) {}
+    if (hostUnavailable && !isGameOver) {
+        val host = players.firstOrNull { it.isHost }
+        HostDisconnectedDialog(hostName, host?.avatarUrl, host?.username)
     }
 
 }

@@ -27,6 +27,7 @@ import org.eclipse.paho.client.mqttv3.MqttConnectOptions
 import org.eclipse.paho.client.mqttv3.MqttMessage
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
 import java.io.File
+import java.io.IOException
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.util.UUID
@@ -56,7 +57,8 @@ data class PlayerRegistryEntry(
     val level: Int = 1,
     val lastSeenTimestamp: Long = System.currentTimeMillis(),
     val appVersion: String = NetworkConfig.APP_VERSION_NAME,
-    val appVersionCode: Int = NetworkConfig.APP_VERSION_CODE
+    val appVersionCode: Int = NetworkConfig.APP_VERSION_CODE,
+    val publicKey: String? = null
 ) {
     val isOnline: Boolean
         get() = (System.currentTimeMillis() - lastSeenTimestamp) < 120_000L
@@ -122,9 +124,22 @@ class AccountSessionManager(
 
     private val brokerUrl = NetworkConfig.BROKER_URL
     private var activeMqttClient: MqttAsyncClient? = null
+    private var wireSubscription: AutoCloseable? = null
     private var activeGoogleId: String? = null
     private var currentDeviceId: String? = null
     private var onKickedCallback: (() -> Unit)? = null
+
+    val activeBackgroundJobs = java.util.concurrent.ConcurrentHashMap.newKeySet<kotlinx.coroutines.Job>()
+
+    fun trackJob(job: kotlinx.coroutines.Job): kotlinx.coroutines.Job {
+        activeBackgroundJobs.add(job)
+        job.invokeOnCompletion { activeBackgroundJobs.remove(job) }
+        return job
+    }
+
+    suspend fun awaitAllBackgroundJobs() {
+        activeBackgroundJobs.toList().forEach { it.join() }
+    }
 
     // ─────────────────────────────────────────────────────────────
     // HTTPS Cloud Storage Engine (KeyVal + ExtendsClass)
@@ -133,12 +148,55 @@ class AccountSessionManager(
     interface CloudStorageGateway {
         suspend fun getKeyValue(key: String): String?
         suspend fun setKeyValue(key: String, value: String): Boolean
+        suspend fun setKeyValueConditional(key: String, expected: String?, value: String): Boolean =
+            if (getKeyValue(key) == expected) setKeyValue(key, value) else false
         suspend fun createJsonBin(jsonPayload: String): String?
         suspend fun updateJsonBin(binId: String, jsonPayload: String): Boolean
         suspend fun getJsonBin(binId: String): String?
     }
 
-    private suspend fun setKeyValue(key: String, value: String): Boolean = withContext(Dispatchers.IO) {
+    private suspend fun setKeyValueConditional(key: String, expected: String?, value: String): Boolean = withContext(Dispatchers.IO) {
+        customCloudGateway?.let { return@withContext it.setKeyValueConditional(key, expected, value) }
+        when (val recheck = getKeyValueResult(key)) {
+            is KeyValueResult.Found -> {
+                if (recheck.value != expected) return@withContext false
+            }
+            is KeyValueResult.NotFound -> {
+                if (expected != null) return@withContext false
+            }
+            is KeyValueResult.Unavailable -> return@withContext false
+        }
+        try {
+            val encKey = URLEncoder.encode(key.trim(), "UTF-8")
+            val encVal = URLEncoder.encode(value.trim(), "UTF-8")
+            val urlBuilder = StringBuilder("${NetworkConfig.KEYVALUE_API_URL}/UpdateValue/$appKey/$encKey?value=$encVal")
+            if (expected != null) {
+                val encExp = URLEncoder.encode(expected.trim(), "UTF-8")
+                urlBuilder.append("&expected=").append(encExp)
+            } else {
+                urlBuilder.append("&expected=")
+            }
+            val emptyBody = "".toRequestBody(null)
+            val reqBuilder = Request.Builder()
+                .url(urlBuilder.toString())
+                .post(emptyBody)
+                .header("Content-Length", "0")
+            if (expected != null) {
+                reqBuilder.header("If-Match", expected)
+            }
+            val ok = httpClient.newCall(reqBuilder.build()).execute().use { response ->
+                response.isSuccessful
+            }
+            if (!ok) return@withContext false
+            val verified = getKeyValue(key)
+            verified == value
+        } catch (e: Exception) {
+            Log.w("AccountSessionManager", "setKeyValueConditional error for $key: ${e.message}")
+            false
+        }
+    }
+
+    internal suspend fun setKeyValue(key: String, value: String): Boolean = withContext(Dispatchers.IO) {
         customCloudGateway?.let { return@withContext it.setKeyValue(key, value) }
         try {
             val encKey = URLEncoder.encode(key.trim(), "UTF-8")
@@ -159,29 +217,52 @@ class AccountSessionManager(
         }
     }
 
-    private suspend fun getKeyValue(key: String): String? = withContext(Dispatchers.IO) {
-        customCloudGateway?.let { return@withContext it.getKeyValue(key) }
-        val encKey = URLEncoder.encode(key.trim(), "UTF-8")
-        val clean = fetchKeyValueInternal("$appKey/$encKey")
-        if (!clean.isNullOrBlank()) return@withContext clean
-        // Fallback to legacy key namespace if not found
-        fetchKeyValueInternal("$legacyAppKey/$encKey")
+    sealed interface KeyValueResult {
+        data class Found(val value: String) : KeyValueResult
+        object NotFound : KeyValueResult
+        data class Unavailable(val cause: Throwable? = null) : KeyValueResult
     }
 
-    private fun fetchKeyValueInternal(path: String): String? {
+    private suspend fun getKeyValueResult(key: String): KeyValueResult = withContext(Dispatchers.IO) {
+        customCloudGateway?.let {
+            return@withContext try {
+                val value = it.getKeyValue(key)
+                if (value.isNullOrBlank()) KeyValueResult.NotFound else KeyValueResult.Found(value)
+            } catch (e: Exception) {
+                KeyValueResult.Unavailable(e)
+            }
+        }
+        val encKey = URLEncoder.encode(key.trim(), "UTF-8")
+        when (val primary = fetchKeyValueResult("$appKey/$encKey")) {
+            is KeyValueResult.Found -> primary
+            is KeyValueResult.Unavailable -> primary
+            is KeyValueResult.NotFound -> fetchKeyValueResult("$legacyAppKey/$encKey")
+        }
+    }
+
+    internal suspend fun getKeyValue(key: String): String? {
+        return (getKeyValueResult(key) as? KeyValueResult.Found)?.value
+    }
+
+    private fun fetchKeyValueResult(path: String): KeyValueResult {
         return try {
             val url = "${NetworkConfig.KEYVALUE_API_URL}/GetValue/$path"
             val request = Request.Builder().url(url).get().build()
             httpClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return null
-                val raw = response.body?.string()?.trim() ?: return null
-                if (raw.isBlank() || raw == "\"\"" || raw == "null") return null
+                if (response.code == 404) return KeyValueResult.NotFound
+                if (!response.isSuccessful) return KeyValueResult.Unavailable(IOException("HTTP ${response.code}"))
+                val raw = response.body?.string()?.trim() ?: return KeyValueResult.NotFound
+                if (raw.isBlank() || raw == "\"\"" || raw == "null") return KeyValueResult.NotFound
                 val clean = raw.removeSurrounding("\"").trim()
-                if (clean.isBlank() || clean == "null") null else clean
+                if (clean.isBlank() || clean == "null") KeyValueResult.NotFound else KeyValueResult.Found(clean)
             }
         } catch (e: Exception) {
-            null
+            KeyValueResult.Unavailable(e)
         }
+    }
+
+    private fun fetchKeyValueInternal(path: String): String? {
+        return (fetchKeyValueResult(path) as? KeyValueResult.Found)?.value
     }
 
     private suspend fun createJsonBin(jsonPayload: String): String? = withContext(Dispatchers.IO) {
@@ -282,23 +363,28 @@ class AccountSessionManager(
                 val jsonPayload = json.encodeToString(backup)
 
                 var binId = binIdCache[gid]
-                if (binId.isNullOrBlank() && cleanUser.isNotBlank()) {
-                    binId = binIdCache["user_$cleanUser"]
-                }
                 if (binId.isNullOrBlank()) {
                     binId = getKeyValue("gid_$gid")
-                }
-                if (binId.isNullOrBlank() && cleanUser.isNotBlank()) {
-                    binId = getKeyValue("user_$cleanUser")
                 }
 
                 var success = false
                 if (!binId.isNullOrBlank()) {
-                    val updated = updateJsonBin(binId, jsonPayload)
-                    if (updated) {
-                        binIdCache[gid] = binId
-                        if (cleanUser.isNotBlank()) binIdCache["user_$cleanUser"] = binId
-                        success = true
+                    val rawJson = getJsonBin(binId)
+                    val existingBackup = rawJson?.let {
+                        try { json.decodeFromString<com.bingo.multiplayer.domain.model.CloudUserDataBackup>(it) } catch (_: Exception) { null }
+                    }
+                    if (existingBackup == null) {
+                        Log.w("AccountSessionManager", "backupUserDataSync rejected bin $binId: unable to read/verify owner (read failure or decode error)")
+                        return@withContext false
+                    } else if (existingBackup.profile.uid != backup.profile.uid) {
+                        Log.w("AccountSessionManager", "backupUserDataSync rejected bin $binId: owner mismatch (${existingBackup.profile.uid} != ${backup.profile.uid})")
+                        return@withContext false
+                    } else {
+                        val updated = updateJsonBin(binId, jsonPayload)
+                        if (updated) {
+                            binIdCache[gid] = binId
+                            success = true
+                        }
                     }
                 }
 
@@ -306,19 +392,66 @@ class AccountSessionManager(
                     val newBin = createJsonBin(jsonPayload)
                     if (!newBin.isNullOrBlank()) {
                         binId = newBin
-                        binIdCache[gid] = newBin
-                        setKeyValue("gid_$gid", newBin)
-                        success = true
+                        val gidOk = setKeyValue("gid_$gid", newBin)
+                        if (gidOk) {
+                            binIdCache[gid] = newBin
+                            success = true
+                        }
                     }
                 }
 
-                backupMemoryCache[gid] = backup
-                if (cleanUser.isNotBlank()) {
-                    backupMemoryCache["user_$cleanUser"] = backup
+                if (success && cleanUser.isNotBlank() && !binId.isNullOrBlank()) {
+                    when (val currentRes = getKeyValueResult("user_$cleanUser")) {
+                        is KeyValueResult.Unavailable -> {
+                            Log.w("AccountSessionManager", "backupUserDataSync user_$cleanUser unavailable, refusing overwrite")
+                            success = false
+                        }
+                        is KeyValueResult.NotFound -> {
+                            val userOk = setKeyValueConditional("user_$cleanUser", expected = null, value = binId)
+                            if (userOk) {
+                                binIdCache["user_$cleanUser"] = binId
+                            } else {
+                                success = false
+                            }
+                        }
+                        is KeyValueResult.Found -> {
+                            val currentMapping = currentRes.value
+                            if (currentMapping == binId) {
+                                val userOk = setKeyValueConditional("user_$cleanUser", expected = currentMapping, value = binId)
+                                if (userOk) {
+                                    binIdCache["user_$cleanUser"] = binId
+                                } else {
+                                    success = false
+                                }
+                            } else {
+                                val rawOwner = getJsonBin(currentMapping)
+                                val ownerBackup = rawOwner?.let {
+                                    try { json.decodeFromString<com.bingo.multiplayer.domain.model.CloudUserDataBackup>(it) } catch (_: Exception) { null }
+                                }
+                                if (ownerBackup == null) {
+                                    Log.w("AccountSessionManager", "backupUserDataSync user_$cleanUser owner read failed, refusing overwrite")
+                                    success = false
+                                } else if (ownerBackup.profile.uid != backup.profile.uid) {
+                                    Log.w("AccountSessionManager", "backupUserDataSync user_$cleanUser belongs to ${ownerBackup.profile.uid}, refusing overwrite")
+                                    success = false
+                                } else {
+                                    val userOk = setKeyValueConditional("user_$cleanUser", expected = currentMapping, value = binId)
+                                    if (userOk) {
+                                        binIdCache["user_$cleanUser"] = binId
+                                    } else {
+                                        success = false
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
-                if (cleanUser.isNotBlank() && !binId.isNullOrBlank()) {
-                    setKeyValue("user_$cleanUser", binId)
-                    binIdCache["user_$cleanUser"] = binId
+
+                if (success) {
+                    backupMemoryCache[gid] = backup
+                    if (cleanUser.isNotBlank()) {
+                        backupMemoryCache["user_$cleanUser"] = backup
+                    }
                 }
 
                 // Also broadcast lightweight entry to MQTT as secondary notification
@@ -333,7 +466,8 @@ class AccountSessionManager(
                         currentStreak = backup.profile.currentStreak,
                         bestStreak = backup.profile.bestStreak,
                         level = backup.profile.level,
-                        lastSeenTimestamp = backup.lastBackupTimestamp
+                        lastSeenTimestamp = backup.lastBackupTimestamp,
+                        publicKey = com.bingo.multiplayer.domain.network.AccountKeyStore.getPublicKeyBase64(backup.profile.uid)
                     )
                     claimUsernameMqtt(entry, gid)
                 } catch (_: Exception) {}
@@ -353,13 +487,13 @@ class AccountSessionManager(
     fun backupUserData(googleId: String, backup: com.bingo.multiplayer.domain.model.CloudUserDataBackup) {
         val gid = googleId.trim()
         if (gid.isBlank()) return
-        scope.launch(Dispatchers.IO) {
+        trackJob(scope.launch(Dispatchers.IO) {
             val ok = backupUserDataSync(gid, backup)
             if (!ok) {
                 kotlinx.coroutines.delay(2000L)
                 backupUserDataSync(gid, backup)
             }
-        }
+        })
     }
 
     /**
@@ -472,6 +606,15 @@ class AccountSessionManager(
             val cached = registryCache[clean]
             if (cached != null && (System.currentTimeMillis() - cached.first) < 30_000L) {
                 return@withContext cached.second
+            }
+        }
+
+        // Firebase is the current public profile store, including photos for non-friend searches.
+        if (customCloudGateway == null) {
+            val profile = FirestoreSyncManager.getInstance().findPlayerByUsername(clean)
+            if (profile != null) {
+                registryCache[clean] = Pair(System.currentTimeMillis(), profile)
+                return@withContext profile
             }
         }
 
@@ -669,24 +812,270 @@ class AccountSessionManager(
 
         withTimeoutOrNull(timeoutMs) {
             try {
-                val binId = getKeyValue("user_$clean")
-                if (binId.isNullOrBlank()) {
-                    return@withTimeoutOrNull true
+                when (val result = getKeyValueResult("user_$clean")) {
+                    is KeyValueResult.Unavailable -> return@withTimeoutOrNull false
+                    is KeyValueResult.NotFound -> return@withTimeoutOrNull true
+                    is KeyValueResult.Found -> {
+                        val binId = result.value
+                        val rawJson = getJsonBin(binId) ?: return@withTimeoutOrNull false
+                        val backup = json.decodeFromString<com.bingo.multiplayer.domain.model.CloudUserDataBackup>(rawJson)
+                        val ownerUid = backup.profile.uid
+                        val curUidNorm = if (currentUid.startsWith("google_")) currentUid else "google_$currentUid"
+                        val ownerUidNorm = if (ownerUid.startsWith("google_")) ownerUid else "google_$ownerUid"
+
+                        ownerUidNorm == curUidNorm
+                    }
                 }
-
-                // If binId exists, check who owns it
-                val rawJson = getJsonBin(binId) ?: return@withTimeoutOrNull true
-                val backup = json.decodeFromString<com.bingo.multiplayer.domain.model.CloudUserDataBackup>(rawJson)
-                val ownerUid = backup.profile.uid
-                val curUidNorm = if (currentUid.startsWith("google_")) currentUid else "google_$currentUid"
-                val ownerUidNorm = if (ownerUid.startsWith("google_")) ownerUid else "google_$ownerUid"
-
-                ownerUidNorm == curUidNorm
             } catch (e: Exception) {
                 Log.w("AccountSessionManager", "checkUsernameAvailable error: ${e.message}")
-                true
+                false
             }
-        } ?: true
+        } ?: false
+    }
+
+    /**
+     * Claims and registers a unique username (Player ID) globally and synchronously.
+     * Returns true if the cloud registry acknowledges the claim.
+     */
+    suspend fun claimUsernameSync(entry: PlayerRegistryEntry, googleId: String? = null): Boolean = withContext(Dispatchers.IO) {
+        val clean = entry.username.trim().lowercase().removePrefix("@")
+        if (clean.isBlank()) return@withContext false
+        val gid = googleId ?: entry.uid.removePrefix("google_").takeIf { entry.uid.startsWith("google_") }
+
+        try {
+            // 1. Authoritative conditional check: ensure user_$clean is not already claimed by a different UID
+            when (val res = getKeyValueResult("user_$clean")) {
+                is KeyValueResult.Found -> {
+                    val existingBinId = res.value
+                    if (existingBinId.isNotBlank()) {
+                        val rawJson = getJsonBin(existingBinId)
+                        if (rawJson == null) {
+                            Log.w("AccountSessionManager", "claimUsernameSync rejected: existing bin unreadable for user_$clean")
+                            return@withContext false
+                        }
+                        val backup = try { json.decodeFromString<com.bingo.multiplayer.domain.model.CloudUserDataBackup>(rawJson) } catch (_: Exception) { null }
+                        if (backup == null) {
+                            Log.w("AccountSessionManager", "claimUsernameSync rejected: existing backup unparseable for user_$clean")
+                            return@withContext false
+                        }
+                        val curUidNorm = if (entry.uid.startsWith("google_")) entry.uid else "google_${entry.uid}"
+                        val ownerUidNorm = if (backup.profile.uid.startsWith("google_")) backup.profile.uid else "google_${backup.profile.uid}"
+                        if (curUidNorm != ownerUidNorm) {
+                            Log.w("AccountSessionManager", "claimUsernameSync rejected: user_$clean already owned by $ownerUidNorm, attempting claim by $curUidNorm")
+                            return@withContext false
+                        }
+                    }
+                }
+                is KeyValueResult.Unavailable -> return@withContext false
+                is KeyValueResult.NotFound -> { /* free to claim */ }
+            }
+
+            // 2. Resolve or create binId for user alias mapping (supported for all account types)
+            var targetBinId: String? = null
+            val accountKey = gid ?: entry.uid
+            if (accountKey.isNotBlank()) {
+                targetBinId = binIdCache[accountKey] ?: getKeyValue("acc_$accountKey")
+                if (targetBinId.isNullOrBlank() && !gid.isNullOrBlank()) {
+                    targetBinId = binIdCache[gid] ?: getKeyValue("gid_$gid")
+                }
+                if (targetBinId.isNullOrBlank()) {
+                    val initialBackup = com.bingo.multiplayer.domain.model.CloudUserDataBackup(
+                        profile = com.bingo.multiplayer.domain.model.UserProfile(
+                            uid = entry.uid,
+                            username = clean,
+                            displayName = entry.displayName,
+                            avatarUrl = entry.avatarUrl,
+                            gamesPlayed = entry.gamesPlayed,
+                            gamesWon = entry.gamesWon,
+                            currentStreak = entry.currentStreak,
+                            bestStreak = entry.bestStreak,
+                            level = entry.level,
+                            provider = if (entry.uid.startsWith("google_")) com.bingo.multiplayer.domain.model.AuthProvider.GOOGLE else com.bingo.multiplayer.domain.model.AuthProvider.GUEST
+                        ),
+                        settings = com.bingo.multiplayer.domain.model.UserSettings(),
+                        matchHistory = emptyList(),
+                        lastBackupTimestamp = System.currentTimeMillis()
+                    )
+                    targetBinId = createJsonBin(json.encodeToString(initialBackup))
+                    if (!targetBinId.isNullOrBlank()) {
+                        binIdCache[accountKey] = targetBinId
+                        setKeyValue("acc_$accountKey", targetBinId)
+                        if (!gid.isNullOrBlank()) {
+                            binIdCache[gid] = targetBinId
+                            setKeyValue("gid_$gid", targetBinId)
+                        }
+                    }
+                }
+                if (targetBinId.isNullOrBlank()) {
+                    Log.w("AccountSessionManager", "claimUsernameSync rejected: could not establish binId for $accountKey")
+                    return@withContext false
+                }
+                var observedExisting: String? = null
+                when (val recheck = getKeyValueResult("user_$clean")) {
+                    is KeyValueResult.Found -> {
+                        val existing = recheck.value
+                        if (existing.isNotBlank() && existing != targetBinId) {
+                            Log.w("AccountSessionManager", "claimUsernameSync rejected: user_$clean was acquired concurrently ($existing != $targetBinId)")
+                            return@withContext false
+                        }
+                        if (existing == targetBinId) {
+                            observedExisting = targetBinId
+                        }
+                    }
+                    is KeyValueResult.Unavailable -> return@withContext false
+                    is KeyValueResult.NotFound -> { /* confirmed unassigned */ }
+                }
+                val aliasOk = if (observedExisting == targetBinId) {
+                    true
+                } else {
+                    setKeyValueConditional("user_$clean", expected = null, value = targetBinId)
+                }
+                if (!aliasOk) {
+                    Log.w("AccountSessionManager", "claimUsernameSync rejected: failed to persist user_$clean alias")
+                    return@withContext false
+                }
+                val verifiedBin = if (observedExisting == targetBinId) targetBinId else getKeyValue("user_$clean")
+                if (verifiedBin != targetBinId) {
+                    Log.w("AccountSessionManager", "claimUsernameSync rejected: user_$clean alias read-back mismatch: expected $targetBinId, got $verifiedBin")
+                    return@withContext false
+                }
+                binIdCache["user_$clean"] = targetBinId
+                binIdCache[accountKey] = targetBinId
+                if (!gid.isNullOrBlank()) {
+                    binIdCache[gid] = targetBinId
+                }
+            }
+
+            val entryWithKey = if (entry.publicKey.isNullOrBlank()) {
+                val existingKey = com.bingo.multiplayer.domain.network.AccountKeyStore.getPublicKeyBase64(entry.uid)
+                entry.copy(publicKey = existingKey)
+            } else entry
+
+            val cleanAvatar = if (isLocalFilePath(entryWithKey.avatarUrl)) null else entryWithKey.avatarUrl
+            val compactEntry = if (cleanAvatar != null && cleanAvatar.length > 500) {
+                entryWithKey.copy(username = clean, avatarUrl = null)
+            } else {
+                entryWithKey.copy(username = clean, avatarUrl = cleanAvatar)
+            }
+
+            val jsonStr = json.encodeToString(compactEntry)
+            val b64 = Base64.encodeToString(jsonStr.toByteArray(StandardCharsets.UTF_8), Base64.URL_SAFE or Base64.NO_WRAP).trim()
+            val ok = setKeyValue("reg_$clean", b64)
+            if (!ok) return@withContext false
+
+            registryCache[clean] = Pair(System.currentTimeMillis(), entryWithKey.copy(username = clean))
+
+            try {
+                val currentDir = getKeyValue("user_directory")
+                if (!currentDir.isNullOrBlank() && currentDir != "null") {
+                    val users = currentDir.split(",").map { it.trim().lowercase() }.filter { it.isNotBlank() }.toMutableSet()
+                    if (users.add(clean)) {
+                        setKeyValue("user_directory", users.sorted().joinToString(","))
+                    }
+                }
+            } catch (_: Exception) {}
+
+            if (!entryWithKey.avatarUrl.isNullOrBlank() && !isLocalFilePath(entryWithKey.avatarUrl)) {
+                saveUserAvatar(clean, entryWithKey.avatarUrl)
+            }
+
+            claimUsernameMqtt(entryWithKey, gid)
+            true
+        } catch (e: Exception) {
+            Log.w("AccountSessionManager", "claimUsernameSync error: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * Releases an old username alias only if it is still owned by the specified UID.
+     */
+    suspend fun releaseUsernameAlias(oldUsername: String, currentUid: String): Boolean = withContext(Dispatchers.IO) {
+        val cleanOld = oldUsername.trim().lowercase().removePrefix("@")
+        if (cleanOld.isBlank()) return@withContext false
+        try {
+            when (val res = getKeyValueResult("user_$cleanOld")) {
+                is KeyValueResult.NotFound -> {
+                    binIdCache.remove("user_$cleanOld")
+                    backupMemoryCache.remove("user_$cleanOld")
+                    true
+                }
+                is KeyValueResult.Found -> {
+                    val binId = res.value
+                    if (binId.isBlank()) {
+                        binIdCache.remove("user_$cleanOld")
+                        backupMemoryCache.remove("user_$cleanOld")
+                        return@withContext true
+                    }
+                    val rawJson = getJsonBin(binId)
+                    if (rawJson == null) {
+                        Log.w("AccountSessionManager", "releaseUsernameAlias: failed to read bin $binId (503 or network error), keeping pending release")
+                        return@withContext false
+                    }
+                    val backup = try {
+                        json.decodeFromString<com.bingo.multiplayer.domain.model.CloudUserDataBackup>(rawJson)
+                    } catch (_: Exception) {
+                        return@withContext false
+                    }
+                    val curUidNorm = if (currentUid.startsWith("google_")) currentUid else "google_$currentUid"
+                    val ownerUidNorm = if (backup.profile.uid.startsWith("google_")) backup.profile.uid else "google_${backup.profile.uid}"
+                    if (ownerUidNorm == curUidNorm) {
+                        binIdCache.remove("user_$cleanOld")
+                        backupMemoryCache.remove("user_$cleanOld")
+                        val clearOk = setKeyValueConditional("user_$cleanOld", expected = binId, value = "")
+                        if (!clearOk) {
+                            when (val recheck = getKeyValueResult("user_$cleanOld")) {
+                                is KeyValueResult.NotFound -> true
+                                is KeyValueResult.Found -> {
+                                    if (recheck.value.isBlank()) true
+                                    else {
+                                        val newRaw = getJsonBin(recheck.value)
+                                        val newBackup = newRaw?.let {
+                                            try { json.decodeFromString<com.bingo.multiplayer.domain.model.CloudUserDataBackup>(it) } catch (_: Exception) { null }
+                                        }
+                                        if (newBackup != null && newBackup.profile.uid != backup.profile.uid) {
+                                            true
+                                        } else false
+                                    }
+                                }
+                                is KeyValueResult.Unavailable -> false
+                            }
+                        } else {
+                            true
+                        }
+                    } else {
+                        Log.w("AccountSessionManager", "releaseUsernameAlias rejected: user_$cleanOld owned by $ownerUidNorm != $curUidNorm")
+                        false
+                    }
+                }
+                else -> false
+            }
+        } catch (e: Exception) {
+            Log.w("AccountSessionManager", "releaseUsernameAlias error: ${e.message}")
+            false
+        }
+    }
+
+    internal val googleProfileCache = ConcurrentHashMap<String, PlayerRegistryEntry>()
+
+    fun lookupGoogleProfileSync(googleId: String): PlayerRegistryEntry? {
+        val gid = googleId.trim()
+        if (gid.isBlank()) return null
+        googleProfileCache[gid]?.let { return it }
+        val topic = "bingo/v3/google_account/$gid"
+        val retainedBytes = runCatching {
+            kotlinx.coroutines.runBlocking(Dispatchers.IO) { EmqxTransport.wire.readRetained(topic) }
+        }.getOrNull()
+        if (retainedBytes != null && retainedBytes.isNotEmpty()) {
+            val parsed = runCatching {
+                json.decodeFromString<PlayerRegistryEntry>(String(retainedBytes, StandardCharsets.UTF_8))
+            }.getOrNull()
+            if (parsed != null && parsed.uid == "google_$gid") {
+                googleProfileCache[gid] = parsed
+                return parsed
+            }
+        }
+        return null
     }
 
     /**
@@ -694,62 +1083,20 @@ class AccountSessionManager(
      * Links the username to the Google ID so the account can be restored on any device.
      */
     fun claimUsername(entry: PlayerRegistryEntry, googleId: String? = null) {
-        val clean = entry.username.trim().lowercase().removePrefix("@")
-        if (clean.isBlank()) return
-        val gid = googleId ?: entry.uid.removePrefix("google_").takeIf { entry.uid.startsWith("google_") }
-
-        registryCache[clean] = Pair(System.currentTimeMillis(), entry.copy(username = clean))
-
-        scope.launch(Dispatchers.IO) {
-            try {
-                // If entry has a large avatarUrl (Base64) or local path, don't put 30KB into KeyValue query param URL!
-                val cleanAvatar = if (isLocalFilePath(entry.avatarUrl)) null else entry.avatarUrl
-                val compactEntry = if (cleanAvatar != null && cleanAvatar.length > 500) {
-                    entry.copy(username = clean, avatarUrl = null)
-                } else {
-                    entry.copy(username = clean, avatarUrl = cleanAvatar)
-                }
-
-                // 1. Direct Cloud Registry Entry (Fast, persistent, 1-hop lookup)
-                val jsonStr = json.encodeToString(compactEntry)
-                val b64 = Base64.encodeToString(jsonStr.toByteArray(StandardCharsets.UTF_8), Base64.URL_SAFE or Base64.NO_WRAP).trim()
-                setKeyValue("reg_$clean", b64)
-
-                // 1b. Maintain cloud user directory index
-                try {
-                    val currentDir = getKeyValue("user_directory")
-                    if (!currentDir.isNullOrBlank() && currentDir != "null") {
-                        val users = currentDir.split(",").map { it.trim().lowercase() }.filter { it.isNotBlank() }.toMutableSet()
-                        if (users.add(clean)) {
-                            setKeyValue("user_directory", users.sorted().joinToString(","))
-                        }
-                    }
-                } catch (_: Exception) {}
-
-                // 2. Save avatar JSON bin if avatar is a Base64 string
-                if (!entry.avatarUrl.isNullOrBlank() && !isLocalFilePath(entry.avatarUrl)) {
-                    saveUserAvatar(clean, entry.avatarUrl)
-                }
-
-                // 3. Legacy binId mapping if available
-                if (!gid.isNullOrBlank()) {
-                    var binId = binIdCache[gid]
-                    if (binId.isNullOrBlank()) {
-                        binId = getKeyValue("gid_$gid")
-                    }
-                    if (!binId.isNullOrBlank()) {
-                        setKeyValue("user_$clean", binId)
-                        binIdCache["user_$clean"] = binId
-                        binIdCache[gid] = binId
-                    }
-                }
-
-                // 4. MQTT broadcast
-                claimUsernameMqtt(entry, gid)
-            } catch (e: Exception) {
-                Log.w("AccountSessionManager", "claimUsername error: ${e.message}")
-            }
+        val entryWithKey = if (entry.publicKey.isNullOrBlank()) {
+            val existingKey = com.bingo.multiplayer.domain.network.AccountKeyStore.getPublicKeyBase64(entry.uid)
+            entry.copy(publicKey = existingKey)
+        } else entry
+        val clean = entryWithKey.username.trim().lowercase().removePrefix("@")
+        if (clean.isNotBlank()) {
+            registryCache[clean] = Pair(System.currentTimeMillis(), entryWithKey.copy(username = clean))
         }
+        if (!googleId.isNullOrBlank()) {
+            googleProfileCache[googleId] = entryWithKey
+        }
+        trackJob(scope.launch(Dispatchers.IO) {
+            claimUsernameSync(entryWithKey, googleId)
+        })
     }
 
     /**
@@ -795,9 +1142,24 @@ class AccountSessionManager(
     fun broadcastAvatarUpdate(cleanUsername: String, avatarBase64: String?) {
         val clean = cleanUsername.trim().lowercase().removePrefix("@")
         if (clean.isBlank()) return
-        scope.launch(Dispatchers.IO) {
+        trackJob(scope.launch(Dispatchers.IO) {
+            val topic = "bingo/v3/avatar_update/$clean"
+            val payloadObj = org.json.JSONObject()
+                .put("username", clean)
+                .put("avatar", avatarBase64 ?: "")
+                .put("timestamp", System.currentTimeMillis())
+            val bytes = payloadObj.toString().toByteArray(StandardCharsets.UTF_8)
+
+            // Fast-path via persistent EMQX socket
+            if (EmqxTransport.wire.isHealthy) {
+                try {
+                    EmqxTransport.wire.publish(topic, bytes, retained = true)
+                    Log.i("AccountSessionManager", "Broadcast avatar update for @$clean via persistent EMQX (hasAvatar=${!avatarBase64.isNullOrBlank()})")
+                    return@launch
+                } catch (_: Exception) {}
+            }
+
             try {
-                val topic = "bingo/v3/avatar_update/$clean"
                 val tempClientId = "ava_up_${UUID.randomUUID().toString().take(8)}"
                 val client = MqttAsyncClient(brokerUrl, tempClientId, MemoryPersistence())
                 val options = MqttConnectOptions().apply {
@@ -806,22 +1168,17 @@ class AccountSessionManager(
                     NetworkConfig.applyMqttOptions(this)
                 }
                 client.connect(options).waitForCompletion(2000L)
-                val payloadObj = org.json.JSONObject()
-                    .put("username", clean)
-                    .put("avatar", avatarBase64 ?: "")
-                    .put("timestamp", System.currentTimeMillis())
-                val message = MqttMessage(payloadObj.toString().toByteArray(StandardCharsets.UTF_8)).apply {
+                val message = MqttMessage(bytes).apply {
                     qos = 1
                     isRetained = true
                 }
                 client.publish(topic, message).waitForCompletion(2000L)
-                client.disconnect()
-                client.close()
+                MqttClientShutdown.close(client)
                 Log.i("AccountSessionManager", "Broadcast avatar update for @$clean (hasAvatar=${!avatarBase64.isNullOrBlank()})")
             } catch (e: Exception) {
                 Log.w("AccountSessionManager", "Failed to broadcast avatar update for @$clean: ${e.message}")
             }
-        }
+        })
     }
 
     /**
@@ -842,7 +1199,7 @@ class AccountSessionManager(
     // Multi-Device Session Coordination (MQTT Real-time)
     // ─────────────────────────────────────────────────────────────
 
-    private fun getSessionTopic(googleId: String): String =
+    internal fun getSessionTopic(googleId: String): String =
         "bingo/v3/auth_session/${googleId.trim()}"
 
     /**
@@ -923,17 +1280,14 @@ class AccountSessionManager(
             }
 
             try {
-                if (tempClient.isConnected) {
-                    tempClient.disconnect().waitForCompletion(500)
-                }
-                tempClient.close()
+                MqttClientShutdown.close(tempClient, quiesceMillis = 500L, disconnectMillis = 500L)
             } catch (_: Exception) {}
 
             return result
         } catch (e: Exception) {
             Log.w("AccountSessionManager", "Session check completed with exception: ${e.message}")
             try {
-                tempClient.close()
+                MqttClientShutdown.close(tempClient, quiesceMillis = 500L, disconnectMillis = 500L)
             } catch (_: Exception) {}
             return null
         }
@@ -966,8 +1320,7 @@ class AccountSessionManager(
                     qos = 1
                 }
                 kickerClient.publish(topic, msg).waitForCompletion(1000)
-                kickerClient.disconnect().waitForCompletion(500)
-                kickerClient.close()
+                MqttClientShutdown.close(kickerClient)
             } catch (e: Exception) {
                 Log.w("AccountSessionManager", "forceLogoutOtherDevices error: ${e.message}")
             }
@@ -984,12 +1337,48 @@ class AccountSessionManager(
     ) {
         stopSessionWatcher()
 
+        val boundCallback = onForcedLogout
+        val targetGoogleId = googleId
         activeGoogleId = googleId
         currentDeviceId = localDeviceId
         onKickedCallback = onForcedLogout
 
         val topic = getSessionTopic(googleId)
         val clientId = "session_${localDeviceId.take(8)}_${UUID.randomUUID().toString().take(4)}"
+
+        val wire = com.bingo.multiplayer.domain.network.EmqxTransport.wireOverride
+        if (wire != null) {
+            scope.launch(Dispatchers.IO) {
+                try {
+                    wireSubscription = wire.subscribe(topic) { bytes, _ ->
+                        try {
+                            val payload = String(bytes, StandardCharsets.UTF_8)
+                            val packet = json.decodeFromString<AccountSessionPacket>(payload)
+                            if (packet.googleId == targetGoogleId && packet.deviceId != localDeviceId) {
+                                when (packet.type) {
+                                    "FORCE_LOGOUT" -> {
+                                        Log.i("AccountSessionManager", "Session claimed by device ${packet.deviceId} (${packet.deviceModel}). Forcing logout via wire.")
+                                        val dispatcher = try {
+                                            val m = Dispatchers.Main
+                                            m.isDispatchNeeded(kotlin.coroutines.EmptyCoroutineContext)
+                                            m
+                                        } catch (_: Throwable) {
+                                            Dispatchers.Default
+                                        }
+                                        scope.launch(dispatcher) {
+                                            if (activeGoogleId == targetGoogleId) {
+                                                boundCallback.invoke()
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (_: Exception) {}
+                    }
+                } catch (_: Exception) {}
+            }
+            return
+        }
 
         scope.launch(Dispatchers.IO) {
             try {
@@ -1011,12 +1400,12 @@ class AccountSessionManager(
                                 try {
                                     val payload = String(message.payload, StandardCharsets.UTF_8)
                                     val packet = json.decodeFromString<AccountSessionPacket>(payload)
-                                    if (packet.googleId == googleId && packet.deviceId != localDeviceId) {
+                                    if (packet.googleId == targetGoogleId && packet.deviceId != localDeviceId) {
                                         when (packet.type) {
                                             "CHECK_ACTIVE" -> {
                                                 val resp = AccountSessionPacket(
                                                     type = "SESSION_ACTIVE",
-                                                    googleId = googleId,
+                                                    googleId = targetGoogleId,
                                                     deviceId = localDeviceId,
                                                     deviceModel = getDeviceModelName()
                                                 )
@@ -1027,8 +1416,17 @@ class AccountSessionManager(
                                             }
                                             "FORCE_LOGOUT" -> {
                                                 Log.i("AccountSessionManager", "Session claimed by device ${packet.deviceId} (${packet.deviceModel}). Forcing logout.")
-                                                scope.launch(Dispatchers.Main) {
-                                                    onKickedCallback?.invoke()
+                                                val dispatcher = try {
+                                                    val m = Dispatchers.Main
+                                                    m.isDispatchNeeded(kotlin.coroutines.EmptyCoroutineContext)
+                                                    m
+                                                } catch (_: Throwable) {
+                                                    Dispatchers.Default
+                                                }
+                                                scope.launch(dispatcher) {
+                                                    if (activeGoogleId == targetGoogleId) {
+                                                        boundCallback.invoke()
+                                                    }
                                                 }
                                             }
                                         }
@@ -1056,60 +1454,97 @@ class AccountSessionManager(
      * Stops listening and disconnects the session client.
      */
     fun stopSessionWatcher() {
+        wireSubscription?.close()
+        wireSubscription = null
         val client = activeMqttClient
         activeMqttClient = null
         activeGoogleId = null
         currentDeviceId = null
         onKickedCallback = null
 
-        scope.launch(Dispatchers.IO) {
+        trackJob(scope.launch(Dispatchers.IO) {
             try {
                 if (client != null && client.isConnected) {
-                    client.disconnect()
-                    client.close()
+                    MqttClientShutdown.close(client)
                 }
             } catch (_: Exception) {}
-        }
+        })
     }
 
     // ─────────────────────────────────────────────────────────────
     // MQTT Secondary Fallbacks
     // ─────────────────────────────────────────────────────────────
 
-    private fun claimUsernameMqtt(entry: PlayerRegistryEntry, googleId: String?) {
-        val clean = entry.username.trim().lowercase().removePrefix("@")
+    internal fun claimUsernameMqtt(entry: PlayerRegistryEntry, googleId: String?) {
+        val entryWithKey = if (entry.publicKey.isNullOrBlank()) {
+            val key = com.bingo.multiplayer.domain.network.AccountKeyStore.getPublicKeyBase64(entry.uid)
+            entry.copy(publicKey = key)
+        } else entry
+        val clean = entryWithKey.username.trim().lowercase().removePrefix("@")
         val topic = "bingo/v3/registry/$clean"
-        try {
-            val tempClientId = "claim_${UUID.randomUUID().toString().take(8)}"
-            val client = MqttAsyncClient(brokerUrl, tempClientId, MemoryPersistence())
-            val options = MqttConnectOptions().apply {
-                isCleanSession = true
-                connectionTimeout = 3
-                NetworkConfig.applyMqttOptions(this)
-            }
-            client.connect(options).waitForCompletion(2000L)
-            val payload = json.encodeToString(entry.copy(username = clean))
-            val message = MqttMessage(payload.toByteArray(StandardCharsets.UTF_8)).apply {
-                qos = 1
-                isRetained = true
-            }
-            client.publish(topic, message).waitForCompletion(2000L)
+        trackJob(scope.launch(Dispatchers.IO) {
+            val payload = json.encodeToString(entryWithKey.copy(username = clean))
+            val bytes = payload.toByteArray(StandardCharsets.UTF_8)
 
-            if (!googleId.isNullOrBlank()) {
-                val gTopic = "bingo/v3/google_account/$googleId"
-                client.publish(gTopic, message).waitForCompletion(2000L)
+            // 1. Fast-path via persistent EMQX socket
+            if (EmqxTransport.wire.isHealthy) {
+                try {
+                    EmqxTransport.wire.publish(topic, bytes, retained = true)
+                    if (!googleId.isNullOrBlank()) {
+                        val gTopic = "bingo/v3/google_account/$googleId"
+                        EmqxTransport.wire.publish(gTopic, bytes, retained = true)
+                    }
+                    Log.i("AccountSessionManager", "Claimed username @$clean via persistent EMQX")
+                    return@launch
+                } catch (_: Exception) {}
             }
 
-            client.disconnect()
-            client.close()
-        } catch (_: Exception) {}
+            // 2. Fallback via ephemeral client
+            try {
+                val tempClientId = "claim_${UUID.randomUUID().toString().take(8)}"
+                val client = MqttAsyncClient(brokerUrl, tempClientId, MemoryPersistence())
+                val options = MqttConnectOptions().apply {
+                    isCleanSession = true
+                    connectionTimeout = 3
+                    NetworkConfig.applyMqttOptions(this)
+                }
+                client.connect(options).waitForCompletion(2000L)
+                val message = MqttMessage(bytes).apply {
+                    qos = 1
+                    isRetained = true
+                }
+                client.publish(topic, message).waitForCompletion(2000L)
+
+                if (!googleId.isNullOrBlank()) {
+                    val gTopic = "bingo/v3/google_account/$googleId"
+                    client.publish(gTopic, message).waitForCompletion(2000L)
+                }
+
+                MqttClientShutdown.close(client)
+            } catch (_: Exception) {}
+        })
     }
 
-    private suspend fun lookupGoogleProfileMqtt(googleId: String, timeoutMs: Long): PlayerRegistryEntry? = withContext(Dispatchers.IO) {
+    internal suspend fun lookupGoogleProfileMqtt(googleId: String, timeoutMs: Long): PlayerRegistryEntry? = withContext(Dispatchers.IO) {
         val gid = googleId.trim()
         if (gid.isBlank()) return@withContext null
 
         val topic = "bingo/v3/google_account/$gid"
+
+        // 1. Fast-path via persistent EMQX socket
+        try {
+            if (EmqxTransport.wire.isHealthy) {
+                val retainedBytes = withTimeoutOrNull(timeoutMs) {
+                    EmqxTransport.wire.readRetained(topic)
+                }
+                if (retainedBytes != null && retainedBytes.isNotEmpty()) {
+                    val payload = String(retainedBytes, StandardCharsets.UTF_8)
+                    return@withContext json.decodeFromString<PlayerRegistryEntry>(payload)
+                }
+            }
+        } catch (_: Exception) {}
+
+        // 2. Fallback via ephemeral client
         val responseDeferred = CompletableDeferred<PlayerRegistryEntry?>()
         val tempClientId = "glookup_${UUID.randomUUID().toString().take(8)}"
 
@@ -1154,10 +1589,7 @@ class AccountSessionManager(
             }
 
             try {
-                if (tempClient.isConnected) {
-                    tempClient.disconnect()
-                }
-                tempClient.close()
+                MqttClientShutdown.close(tempClient, quiesceMillis = 500L, disconnectMillis = 500L)
             } catch (_: Exception) {}
 
             result
@@ -1166,11 +1598,27 @@ class AccountSessionManager(
         }
     }
 
-    private suspend fun searchPlayerByUsernameMqtt(username: String, timeoutMs: Long): PlayerRegistryEntry? = withContext(Dispatchers.IO) {
+    internal suspend fun searchPlayerByUsernameMqtt(username: String, timeoutMs: Long): PlayerRegistryEntry? = withContext(Dispatchers.IO) {
         val clean = username.trim().lowercase().removePrefix("@")
         if (clean.isBlank()) return@withContext null
 
         val topic = "bingo/v3/registry/$clean"
+
+        // 1. Fast-path via persistent EMQX socket (<60ms)
+        try {
+            if (EmqxTransport.wire.isHealthy) {
+                val retainedBytes = withTimeoutOrNull(timeoutMs) {
+                    EmqxTransport.wire.readRetained(topic)
+                }
+                if (retainedBytes != null && retainedBytes.isNotEmpty()) {
+                    val payload = String(retainedBytes, StandardCharsets.UTF_8)
+                    val entry = json.decodeFromString<PlayerRegistryEntry>(payload)
+                    return@withContext entry
+                }
+            }
+        } catch (_: Exception) {}
+
+        // 2. Fallback via ephemeral client
         val responseDeferred = CompletableDeferred<PlayerRegistryEntry?>()
         val tempClientId = "search_${UUID.randomUUID().toString().take(8)}"
 
@@ -1215,10 +1663,7 @@ class AccountSessionManager(
             }
 
             try {
-                if (tempClient.isConnected) {
-                    tempClient.disconnect()
-                }
-                tempClient.close()
+                MqttClientShutdown.close(tempClient, quiesceMillis = 500L, disconnectMillis = 500L)
             } catch (_: Exception) {}
 
             result
@@ -1227,7 +1672,7 @@ class AccountSessionManager(
         }
     }
 
-    private suspend fun fetchUserDataBackupMqtt(
+    internal suspend fun fetchUserDataBackupMqtt(
         googleId: String,
         timeoutMs: Long
     ): com.bingo.multiplayer.domain.model.CloudUserDataBackup? = withContext(Dispatchers.IO) {
@@ -1235,6 +1680,26 @@ class AccountSessionManager(
         if (gid.isBlank()) return@withContext null
 
         val topic = "bingo/v3/cloud_backup/$gid"
+
+        // 1. Fast-path via persistent EMQX socket
+        try {
+            if (EmqxTransport.wire.isHealthy) {
+                val retainedBytes = withTimeoutOrNull(timeoutMs) {
+                    EmqxTransport.wire.readRetained(topic)
+                }
+                if (retainedBytes != null && retainedBytes.isNotEmpty()) {
+                    val payload = String(retainedBytes, StandardCharsets.UTF_8)
+                    return@withContext json.decodeFromString<com.bingo.multiplayer.domain.model.CloudUserDataBackup>(payload)
+                }
+            }
+        } catch (_: Exception) {}
+
+        // 2. Fallback via ephemeral client
+        if (com.bingo.multiplayer.domain.network.EmqxTransport.wireOverride != null) {
+            // Unit test isolation: do not construct ephemeral client when wire fixture is installed
+            return@withContext null
+        }
+
         val responseDeferred = CompletableDeferred<com.bingo.multiplayer.domain.model.CloudUserDataBackup?>()
         val tempClientId = "fetch_${UUID.randomUUID().toString().take(8)}"
 
@@ -1277,17 +1742,21 @@ class AccountSessionManager(
             val result = withTimeoutOrNull(timeoutMs) {
                 responseDeferred.await()
             }
-
-            try {
-                if (tempClient.isConnected) {
-                    tempClient.disconnect()
-                }
-                tempClient.close()
-            } catch (_: Exception) {}
-
             result
         } catch (_: Exception) {
             null
+        } finally {
+            try {
+                MqttClientShutdown.close(tempClient, quiesceMillis = 500L, disconnectMillis = 500L)
+            } catch (_: Exception) {}
+        }
+    }
+
+    @androidx.annotation.VisibleForTesting
+    fun drainBackgroundJobs() {
+        while (activeBackgroundJobs.isNotEmpty()) {
+            val jobs = runCatching { activeBackgroundJobs.toTypedArray().toList() }.getOrDefault(emptyList())
+            jobs.forEach { kotlinx.coroutines.runBlocking { runCatching { it.join() } } }
         }
     }
 
@@ -1306,7 +1775,15 @@ class AccountSessionManager(
         @androidx.annotation.VisibleForTesting
         var customCloudGateway: CloudStorageGateway? = null
 
+        @androidx.annotation.VisibleForTesting
+        fun drainBackgroundJobsForTests() {
+            defaultInstance.drainBackgroundJobs()
+        }
+
         val defaultInstance by lazy { AccountSessionManager() }
+
+        suspend fun setKeyValue(key: String, value: String): Boolean = defaultInstance.setKeyValue(key, value)
+        suspend fun getKeyValue(key: String): String? = defaultInstance.getKeyValue(key)
 
         fun getCachedPlayer(username: String): PlayerRegistryEntry? {
             val clean = username.trim().lowercase().removePrefix("@")

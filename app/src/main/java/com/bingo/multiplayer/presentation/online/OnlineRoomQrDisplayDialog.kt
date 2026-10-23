@@ -8,6 +8,8 @@ import android.graphics.Bitmap
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -74,6 +76,7 @@ fun OnlineRoomQrDisplayDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
                     .padding(22.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
@@ -99,7 +102,7 @@ fun OnlineRoomQrDisplayDialog(
                         )
                     }
 
-                    IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(40.dp)) {
                         Icon(
                             imageVector = Icons.Default.Close,
                             contentDescription = "Close",

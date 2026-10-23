@@ -3,15 +3,18 @@ import { ArrowLeft, ArrowRight, AlertCircle } from 'lucide-react';
 import { useTheme } from '../theme/theme';
 import { soundEffects } from '../audio/sounds';
 import { CloudRegistry } from '../network/cloudRegistry';
-import { roomSync } from '../network/mqttSync';
+import { MqttRoomManager, roomSync } from '../network/mqttSync';
+import { useMqttSync } from '../network/MqttSyncContext';
 
 interface Props {
   onJoinRoom: (roomCode: string) => void;
   onBack: () => void;
+  syncManager?: MqttRoomManager;
 }
 
-export const JoinRoomScreen: React.FC<Props> = ({ onJoinRoom, onBack }) => {
+export const JoinRoomScreen: React.FC<Props> = ({ onJoinRoom, onBack, syncManager }) => {
   const { tokens } = useTheme();
+  const sync = syncManager || useMqttSync();
   const [code, setCode] = useState('');
   const [isValidating, setIsValidating] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -38,7 +41,7 @@ export const JoinRoomScreen: React.FC<Props> = ({ onJoinRoom, onBack }) => {
 
       if (!room) {
         // Also check retained MQTT room meta (e.g. if room was created on Android mobile app)
-        const mqttMeta = await roomSync.getRoomMetaMqtt(clean);
+        const mqttMeta = await sync.getRoomMetaMqtt(clean);
         if (mqttMeta && mqttMeta.status === 'CLOSED') {
           setErrorMessage(`Room "${clean}" has already closed.`);
           setIsValidating(false);

@@ -1,6 +1,7 @@
 package com.bingo.multiplayer.domain.network
 
 import android.util.Log
+import com.bingo.multiplayer.BuildConfig
 import okhttp3.ConnectionPool
 import okhttp3.Dns
 import okhttp3.OkHttpClient
@@ -18,14 +19,14 @@ object NetworkConfig {
      */
     const val BROKER_URL = "ssl://p0812f88.ala.asia-southeast1.emqxsl.com:8883"
     const val BACKUP_BROKER_URL = "ssl://broker.emqx.io:8883"
-    const val MQTT_USERNAME = "Bora"
-    const val MQTT_PASSWORD = "bora7989"
+    const val MQTT_USERNAME = BuildConfig.BINGO_MQTT_USERNAME
+    const val MQTT_PASSWORD = BuildConfig.BINGO_MQTT_PASSWORD
 
     /**
      * KeyValue cloud storage endpoint for user registry & backups.
      */
     const val KEYVALUE_API_URL = "https://keyvalue.immanuel.co/api/KeyVal"
-    const val KEYVALUE_APP_KEY = "2464j24f"
+    const val KEYVALUE_APP_KEY = BuildConfig.BINGO_KEYVALUE_APP_KEY
 
     /**
      * Cloudflare Worker relay endpoint for secure background push notifications via FCM HTTP v1.
@@ -41,7 +42,7 @@ object NetworkConfig {
      * Current client application version metadata.
      */
     const val APP_VERSION_NAME = "1.0"
-    const val APP_VERSION_CODE = 48
+    const val APP_VERSION_CODE = 58
 
     /**
      * Configures MqttConnectOptions with credentials and tuned low-latency socket factory.

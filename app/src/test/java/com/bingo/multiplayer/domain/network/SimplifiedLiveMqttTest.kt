@@ -42,6 +42,8 @@ class SimplifiedLiveMqttTest {
             cleaner.subscribe("${PeerMatchRecovery.topic(code,seed)}/#", 1) { topic, _ -> if (!topics.contains(topic)) topics.add(topic) }.waitForCompletion(4_000)
             topics += "bingo/v5/room/$code/availability/${ids[0]}"
             topics += "bingo/v5/room/$code/availability/${ids[1]}"
+            topics += "bingo/emqx7/room/$code/availability/${ids[0]}"
+            topics += "bingo/emqx7/room/$code/availability/${ids[1]}"
             scope.launch(start = CoroutineStart.UNDISPATCHED) { a.incomingPackets.collect { aq.add(it) } }
             scope.launch(start = CoroutineStart.UNDISPATCHED) { b.incomingPackets.collect { bq.add(it) } }
             a.connectToRoom(code, roster[0], roster, seed)
@@ -92,12 +94,17 @@ class SimplifiedLiveMqttTest {
             println("PASS: durable explicit exit produces the eligible opponent's result during cold recovery")
         } finally {
             a.disconnect(); b.disconnect()
+            a.drainForTests(); b.drainForTests()
             delay(300)
             if (cleaner.isConnected) {
-                for (topic in topics.distinct()) cleaner.publish(topic,MqttMessage(ByteArray(0)).apply { qos = 1; isRetained = true }).waitForCompletion(3_000)
+                for (topic in topics.distinct()) {
+                    cleaner.publish(topic, MqttMessage(ByteArray(0)).apply { qos = 1; isRetained = true }).waitForCompletion(3_000)
+                }
                 cleaner.disconnect().waitForCompletion(2_000)
             }
             runCatching { cleaner.close(true) }
+            scope.coroutineContext[kotlinx.coroutines.Job]?.cancelChildren()
+            scope.coroutineContext[kotlinx.coroutines.Job]?.cancelAndJoin()
             scope.cancel()
         }
     }

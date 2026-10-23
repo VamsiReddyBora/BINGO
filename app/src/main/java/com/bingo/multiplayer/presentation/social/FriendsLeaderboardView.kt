@@ -1,5 +1,7 @@
 package com.bingo.multiplayer.presentation.social
 
+import com.bingo.multiplayer.presentation.common.noRippleClickable
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -403,7 +405,7 @@ private fun PodiumPlayer(
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
+            .noRippleClickable(onClick = onClick)
             .padding(4.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -468,7 +470,7 @@ private fun RankedListRow(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
-            .clickable(onClick = onClick),
+            .noRippleClickable(onClick = onClick),
         shape = RoundedCornerShape(10.dp),
         color = if (entry.isCurrentUser) tokens.backgroundSecondary else Color.Transparent,
         border = if (entry.isCurrentUser) BorderStroke(1.dp, if (tokens.isDark) Color(0xFF383838) else tokens.accentBrand.copy(alpha = 0.5f)) else null

@@ -22,41 +22,40 @@ class RoomMetadataStoreTest {
     private fun room() = OnlineRoomSession("ABC123", host.id, "kevin", "Kevin",
         players = listOf(host, guest), revision = 1L, metadataProtocolVersion = 3)
 
-    // The fixture supplies atomic storage behavior; Android production HTTP/serialization,
-    // conflict handling and transforms run unchanged. Worker tests execute the real server CAS.
+    // Controlled EMQX wire, actual production serialization/host writer/conflict coordinator.
+    // Test method names and gameplay/state assertions are retained across transport migration.
     private inner class StoreFixture(initial: OnlineRoomSession) {
-        var value = initial
+        val wire = EmqxWireFixture()
+        val value: OnlineRoomSession get() = json.decodeFromString(wire.retained.getValue("bingo/emqx7/metadata/ABC123/state").toString(Charsets.UTF_8))
         val arrived = CountDownLatch(1)
         val release = CountDownLatch(1)
         val heldOnce = AtomicBoolean(false)
         val loseNextWriteReply = AtomicBoolean(false)
-        val client = OkHttpClient.Builder().addInterceptor { chain ->
-            val request = chain.request()
-            val body = request.body?.let { b -> okio.Buffer().also { b.writeTo(it) }.readUtf8() }
-            if (request.method == "POST" && request.header("Authorization") == "Bearer guest" && heldOnce.compareAndSet(false, true)) {
-                arrived.countDown()
-                check(release.await(5, TimeUnit.SECONDS)) { "Test did not release held write" }
-            }
-            val result = synchronized(this) {
-                var status = 200
-                if (body != null) {
-                    val input = json.parseToJsonElement(body).jsonObject
-                    val expectedRevision = input.getValue("expectedRevision").jsonPrimitive.long
-                    val expectedSeed = input.getValue("expectedSeed").jsonPrimitive.contentOrNull
-                    if (expectedRevision != value.revision || expectedSeed != value.currentSeed.toString()) status = 409
-                    else value = json.decodeFromString<OnlineRoomSession>(input.getValue("payload").jsonPrimitive.content)
+        private val hostStore = MqttRoomMetadataTransport(wire, { host.id })
+        private val guestStore = MqttRoomMetadataTransport(wire, { guest.id })
+        init {
+            val boundKey = AccountKeyStore.getPublicKeyBase64(host.id)
+            AccountKeyStore.bindHostKey(host.id, boundKey)
+            val unsigned = initial.copy(metadataProtocolVersion = 7, sessionId = "fixture-session", publisherKey = boundKey, publisherSignature = null)
+            val authPayload = AccountKeyStore.computeAuthPayload("ABC123", unsigned)
+            val sig = AccountKeyStore.sign(host.id, authPayload)
+            val record = unsigned.copy(publisherSignature = sig)
+            val payloadBytes = json.encodeToString(record).toByteArray()
+            wire.retained["bingo/emqx7/metadata/ABC123/state"] = payloadBytes
+            wire.retained["bingo/emqx7/metadata/ABC123/auth"] = payloadBytes
+            wire.beforePublish = { topic, _ ->
+                if (topic.endsWith("/command") && heldOnce.compareAndSet(false, true)) {
+                    arrived.countDown()
+                    check(release.await(5, TimeUnit.SECONDS)) { "Test did not release held guest proposal" }
                 }
-                status to buildJsonObject {
-                    put("payload", json.encodeToString(value)); put("revision", value.revision)
-                    put("closed", value.status == "CLOSED")
-                }.toString()
             }
-            if (request.method == "POST" && loseNextWriteReply.compareAndSet(true, false))
-                throw java.io.IOException("Committed response lost in transit")
-            Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(result.first)
-                .message("Controlled room storage").body(result.second.toResponseBody()).build()
-        }.build()
-        fun coordinator(actor: String) = RoomMetadataCoordinator(HttpRoomMetadataTransport(client, "https://rooms.invalid") { actor })
+            wire.afterPublish = { topic, _ ->
+                if (topic.endsWith("/state") && loseNextWriteReply.compareAndSet(true, false))
+                    throw java.io.IOException("Committed PUBACK lost in transit")
+            }
+            runBlocking { hostStore.read("ABC123") }
+        }
+        fun coordinator(actor: String) = RoomMetadataCoordinator(if (actor == "host") hostStore else guestStore)
     }
 
     @Test
@@ -128,30 +127,28 @@ class RoomMetadataStoreTest {
 
     @Test
     fun unavailableStorageNeverPublishesAnUnconditionalWrite() = runBlocking {
-        val methods = mutableListOf<String>()
-        val client = OkHttpClient.Builder().addInterceptor { chain ->
-            synchronized(methods) { methods += chain.request().method }
-            Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(503)
-                .message("Unavailable").body("{\"error\":\"Unavailable\"}".toResponseBody()).build()
-        }.build()
-        val coordinator = RoomMetadataCoordinator(HttpRoomMetadataTransport(client, "https://rooms.invalid") { "host" })
+        val wire = EmqxWireFixture().also { it.isHealthy = false }
+        val coordinator = RoomMetadataCoordinator(MqttRoomMetadataTransport(wire, { host.id }))
         assertTrue(coordinator.mutate("ABC123") { it.copy(status = "CLOSED") } is MutationResult.Unavailable)
-        assertEquals(listOf("GET"), methods)
+        assertTrue(wire.published.isEmpty())
     }
 
     @Test
     fun cancelledMetadataReadCancelsTheActualHttpCall() = runBlocking {
-        val arrived = CountDownLatch(1)
-        val callRef = AtomicReference<okhttp3.Call>()
-        val client = OkHttpClient.Builder().addInterceptor { chain ->
-            callRef.set(chain.call()); arrived.countDown()
-            while (!chain.call().isCanceled()) Thread.sleep(5)
-            throw java.io.IOException("Cancelled by production continuation")
-        }.build()
-        val transport = HttpRoomMetadataTransport(client, "https://rooms.invalid") { "host" }
-        val job = launch(Dispatchers.IO) { transport.read("ABC123") }
-        assertTrue(arrived.await(5, TimeUnit.SECONDS))
+        // Historical name retained: cancellation now cancels the actual production MQTT read,
+        // without closing the shared connection or allowing a detached write to run later.
+        val arrived = CompletableDeferred<Unit>()
+        var cancelled = false
+        val wire = EmqxWireFixture()
+        wire.beforeFence = {
+            arrived.complete(Unit)
+            try { awaitCancellation() } finally { cancelled = true }
+        }
+        val transport = MqttRoomMetadataTransport(wire, { host.id })
+        val job = launch { transport.read("ABC123") }
+        withTimeout(5000L) { arrived.await() }
         job.cancelAndJoin()
-        assertTrue(callRef.get().isCanceled())
+        assertTrue(cancelled)
+        assertTrue(wire.published.isEmpty())
     }
 }

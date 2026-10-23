@@ -28,18 +28,50 @@ import java.util.UUID
 class NetworkRound1RegressionTest {
 
     private var originalPublisher: (suspend (OnlineRoomSession) -> Boolean)? = null
+    private var originalTransport: RoomMetadataTransport? = null
+    private val records = java.util.concurrent.ConcurrentHashMap<String, OnlineRoomSession>()
+    private fun recordRoom(code: String, room: OnlineRoomSession) {
+        records[code] = room
+        OnlineRoomRegistry.recentRoomCache[code] = OnlineRoomRegistry.CachedRoom(room, System.currentTimeMillis())
+    }
+    private fun wireStatus(code: String, status: String, seed: Long, revision: Long) {
+        val previous = records[code] ?: OnlineRoomRegistry.recentRoomCache[code]?.session ?: return
+        records[code] = previous.copy(status = status, currentSeed = seed, revision = revision,
+            isTerminalClosed = status == "CLOSED")
+    }
 
     @Before
     fun isolateMetadataPublicationFromTheLiveBroker() {
         originalPublisher = OnlineRoomRegistry.roomMetaPublisherOverride
-        // Unit fixtures exercise registry decisions with an available metadata transport.
-        // Actual broker behavior is exercised only by explicit opt-in integration tests.
+        originalTransport = RoomMetadataApi.transportOverride
         OnlineRoomRegistry.roomMetaPublisherOverride = { true }
+        // Only the network is controlled. Actual registry / conditional coordinator transitions run.
+        // simulatedHttpException is a historical fixture field; where no MQTT record exists it
+        // now represents an unavailable broker read. A healthy EMQX record needs no HTTP mirror.
+        RoomMetadataApi.transportOverride = object : RoomMetadataTransport {
+            override suspend fun read(code: String): Result<OnlineRoomSession?> {
+                if (code.contains("CANCEL_")) awaitCancellation()
+                val live = OnlineRoomRegistry.simulatedMqttSession?.takeIf { it.roomCode == code }
+                val room = live ?: records[code]
+                if (room == null && (OnlineRoomRegistry.simulatedHttpException != null || code.startsWith("OUTAGE_") || code.startsWith("DURABLE_")))
+                    return Result.failure(java.io.IOException("Controlled EMQX read outage"))
+                return Result.success(room)
+            }
+            override suspend fun commit(code: String, base: OnlineRoomSession?, next: OnlineRoomSession): RoomMetadataCommit = synchronized(records) {
+                val live = records[code]
+                if (live?.revision != base?.revision || live?.currentSeed != base?.currentSeed)
+                    RoomMetadataCommit.Conflict(live)
+                else { records[code] = next; RoomMetadataCommit.Applied(next) }
+            }
+        }
     }
 
     @After
     fun restoreMetadataPublisher() {
         OnlineRoomRegistry.roomMetaPublisherOverride = originalPublisher
+        RoomMetadataApi.transportOverride = originalTransport
+        records.keys.forEach { OnlineRoomRegistry.pendingClosures.remove(it) }
+        records.clear()
     }
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true; encodeDefaults = true }
@@ -1538,7 +1570,7 @@ class NetworkRound1RegressionTest {
     fun testNR04_invitePushFailureDoesNotReportFalseSent() {
         assertEquals("Invitation queued. It will be sent when connected.", InviteSendResult.QUEUED.message)
         assertEquals("Invitation sent.", InviteSendResult.SENT.message)
-        assertEquals("Could not queue invitation. Please try again.", InviteSendResult.FAILED.message)
+        assertEquals("EMQX unavailable or recipient unavailable. Please try again.", InviteSendResult.FAILED.message)
     }
 
     @Test
@@ -1591,13 +1623,13 @@ class NetworkRound1RegressionTest {
                 status = "WAITING",
                 players = listOf(host)
             )
-            OnlineRoomRegistry.recentRoomCache[roomCode] = OnlineRoomRegistry.CachedRoom(session, System.currentTimeMillis())
+            recordRoom(roomCode, session)
             val nonHostReady = OnlineRoomRegistry.ensureInvitationReadiness(roomCode, nonHost)
             assertFalse("Non-host player must not be allowed to prepare invitation readiness", nonHostReady)
 
             // Room in PLAYING status: must be rejected
             val playingSession = session.copy(status = "PLAYING", currentSeed = 12345L)
-            OnlineRoomRegistry.recentRoomCache[roomCode] = OnlineRoomRegistry.CachedRoom(playingSession, System.currentTimeMillis())
+            recordRoom(roomCode, playingSession)
             val playingReady = OnlineRoomRegistry.ensureInvitationReadiness(roomCode, host)
             assertFalse("Room in PLAYING status must be rejected from lobby invitation readiness", playingReady)
 
@@ -1614,24 +1646,24 @@ class NetworkRound1RegressionTest {
                 revision = 1L,
                 players = listOf(host)
             )
-            OnlineRoomRegistry.recentRoomCache[roomCode] = OnlineRoomRegistry.CachedRoom(cachedWaitingSession, System.currentTimeMillis())
+            recordRoom(roomCode, cachedWaitingSession)
             // Simulate newer PLAYING in HTTP storage:
             val newerPlayingSession = cachedWaitingSession.copy(status = "PLAYING", revision = 2L, currentSeed = 112233L)
-            OnlineRoomRegistry.recentRoomCache[roomCode] = OnlineRoomRegistry.CachedRoom(newerPlayingSession, System.currentTimeMillis())
+            recordRoom(roomCode, newerPlayingSession)
             val playingReadiness = OnlineRoomRegistry.ensureInvitationReadinessDetailed(roomCode, host)
             assertTrue("Cached WAITING with newer PLAYING in HTTP must be rejected", playingReadiness is InvitationReadinessResult.Rejected)
             assertTrue("Reason must mention PLAYING status", (playingReadiness as InvitationReadinessResult.Rejected).reason.contains("PLAYING"))
 
             // Case 2: Newer CLOSED room in HTTP overrides cached WAITING
             val closedSession = cachedWaitingSession.copy(status = "CLOSED", isTerminalClosed = true, revision = 3L)
-            OnlineRoomRegistry.recentRoomCache[roomCode] = OnlineRoomRegistry.CachedRoom(closedSession, System.currentTimeMillis())
+            recordRoom(roomCode, closedSession)
             val closedReadiness = OnlineRoomRegistry.ensureInvitationReadinessDetailed(roomCode, host)
             assertTrue("Closed room in HTTP must be rejected", closedReadiness is InvitationReadinessResult.Rejected)
             assertTrue("Room must be marked in terminallyClosedRooms", OnlineRoomRegistry.terminallyClosedRooms.contains(roomCode))
 
             // Case 3: Changed host authority in HTTP
             val differentHostSession = cachedWaitingSession.copy(hostId = "other_host", revision = 4L, players = listOf(Player("other_host", "Other", "other", isHost = true)))
-            OnlineRoomRegistry.recentRoomCache[roomCode] = OnlineRoomRegistry.CachedRoom(differentHostSession, System.currentTimeMillis())
+            recordRoom(roomCode, differentHostSession)
             OnlineRoomRegistry.terminallyClosedRooms.remove(roomCode)
             val diffHostReadiness = OnlineRoomRegistry.ensureInvitationReadinessDetailed(roomCode, host)
             assertTrue("Host authority mismatch must be rejected", diffHostReadiness is InvitationReadinessResult.Rejected)
@@ -1650,17 +1682,17 @@ class NetworkRound1RegressionTest {
                     revision = 1L,
                     players = listOf(host)
                 )
-                OnlineRoomRegistry.recentRoomCache[mirrorPendingCode] = OnlineRoomRegistry.CachedRoom(mirrorSession, System.currentTimeMillis())
+                recordRoom(mirrorPendingCode, mirrorSession)
                 val mirrorPendingReadiness = OnlineRoomRegistry.ensureInvitationReadinessDetailed(mirrorPendingCode, host)
-                assertTrue("HTTP mirror failure with successful MQTT must return MirrorPending", mirrorPendingReadiness is InvitationReadinessResult.MirrorPending)
+                assertEquals("A discoverable EMQX lobby needs no HTTP mirror", InvitationReadinessResult.Ready, mirrorPendingReadiness)
 
                 // When MirrorPending, GameInviteManager returns QUEUED:
-                val dispatchResult = if (mirrorPendingReadiness is InvitationReadinessResult.MirrorPending) InviteSendResult.QUEUED else InviteSendResult.SENT
-                assertEquals("Invitation with MirrorPending must return QUEUED", InviteSendResult.QUEUED, dispatchResult)
+                val dispatchResult = if (mirrorPendingReadiness is InvitationReadinessResult.Ready) InviteSendResult.SENT else InviteSendResult.FAILED
+                assertEquals("A healthy EMQX invitation can send immediately", InviteSendResult.SENT, dispatchResult)
 
                 // NotificationWorker on MirrorPending returns Result.retry()
-                val workerResultIsRetry = mirrorPendingReadiness is InvitationReadinessResult.MirrorPending
-                assertTrue("NotificationWorker on MirrorPending must retry", workerResultIsRetry)
+                val workerResultIsRetry = mirrorPendingReadiness is InvitationReadinessResult.TransientUnavailable
+                assertFalse("Healthy EMQX must not queue HTTP work", workerResultIsRetry)
 
                 OnlineRoomRegistry.recentRoomCache.remove(mirrorPendingCode)
             } finally {
@@ -1687,8 +1719,8 @@ class NetworkRound1RegressionTest {
             try {
                 val coldResult = OnlineRoomRegistry.ensureInvitationReadinessDetailed(coldCode, host)
                 // Must NOT recreate as host-only session; must preserve guest list and return MirrorPending
-                assertTrue("Cold invitation with MQTT WAITING-with-guests must return MirrorPending when HTTP mirror is absent", coldResult is InvitationReadinessResult.MirrorPending)
-                val preservedSession = (coldResult as InvitationReadinessResult.MirrorPending).session
+                assertEquals("Cold EMQX lobby is ready without HTTP", InvitationReadinessResult.Ready, coldResult)
+                val preservedSession = OnlineRoomRegistry.getRoomCachedOnly(coldCode)!!
                 assertEquals("Must preserve all players including guests", 2, preservedSession.players.size)
                 assertTrue("Must contain guest2", preservedSession.players.any { it.id == guest2.id })
 
@@ -1756,7 +1788,7 @@ class NetworkRound1RegressionTest {
                 revision = 1L,
                 players = listOf(host)
             )
-            OnlineRoomRegistry.recentRoomCache[cleanCode] = OnlineRoomRegistry.CachedRoom(validSession, System.currentTimeMillis())
+            recordRoom(cleanCode, validSession)
 
             try {
                 // 1. MQTT publication fails transiently -> ensureInvitationReadinessDetailed returns TransientUnavailable
@@ -1901,7 +1933,7 @@ class NetworkRound1RegressionTest {
                 hostDisplayName = "Host",
                 status = "WAITING"
             )
-            OnlineRoomRegistry.recentRoomCache[fastRoomCode] = OnlineRoomRegistry.CachedRoom(fastSession, System.currentTimeMillis())
+            recordRoom(fastRoomCode, fastSession)
             val fastStart = System.currentTimeMillis()
             val cachedResult = OnlineRoomRegistry.getRoom(fastRoomCode)
             val fastElapsed = System.currentTimeMillis() - fastStart
@@ -2264,7 +2296,7 @@ class NetworkRound1RegressionTest {
                 revision = 1L,
                 players = listOf(host)
             )
-            OnlineRoomRegistry.recentRoomCache[cleanCode] = OnlineRoomRegistry.CachedRoom(waitingSession, System.currentTimeMillis())
+            recordRoom(cleanCode, waitingSession)
 
             try {
                 // Scenario 1: Join -> Close -> Late Completion
@@ -2286,7 +2318,7 @@ class NetworkRound1RegressionTest {
                     revision = 2L,
                     players = listOf(host, guest)
                 )
-                OnlineRoomRegistry.recentRoomCache[cleanCode] = OnlineRoomRegistry.CachedRoom(playingSession, System.currentTimeMillis())
+                recordRoom(cleanCode, playingSession)
 
                 // Device A's held WAITING write attempts to downgrade PLAYING without authorization (allowResetToWaiting = false)
                 val staleWaitingMutation = OnlineRoomRegistry.mutateCloudSession(cleanCode, allowResetToWaiting = false) { current ->
@@ -2309,7 +2341,7 @@ class NetworkRound1RegressionTest {
                     currentSeed = 99999L,
                     revision = 3L
                 )
-                OnlineRoomRegistry.recentRoomCache[cleanCode] = OnlineRoomRegistry.CachedRoom(rematchBSession, System.currentTimeMillis())
+                recordRoom(cleanCode, rematchBSession)
                 val oldSeedAMutation = OnlineRoomRegistry.mutateCloudSession(cleanCode, expectedSeed = 11111L) { current ->
                     current.copy(status = "CLOSED")
                 }
@@ -2327,7 +2359,7 @@ class NetworkRound1RegressionTest {
 
                 // Device B concurrently closes the room and sets server status tag to CLOSED
                 OnlineRoomRegistry.terminallyClosedRooms.add(cleanCode)
-                OnlineRoomRegistry.setRoomStatusHttp(cleanCode, "CLOSED", 0L, 2L)
+                wireStatus(cleanCode, "CLOSED", 0L, 2L)
 
                 // Device A's held write executes
                 val heldJoinMutation = OnlineRoomRegistry.mutateCloudSession(cleanCode) { current ->
@@ -2354,9 +2386,9 @@ class NetworkRound1RegressionTest {
                     revision = 2L,
                     players = listOf(host, guest)
                 )
-                OnlineRoomRegistry.putRoomRevisionHttp(cleanCode, authoritativePlayingSession)
-                OnlineRoomRegistry.setRoomStatusHttp(cleanCode, "PLAYING", 54321L, 2L)
-                OnlineRoomRegistry.recentRoomCache[cleanCode] = OnlineRoomRegistry.CachedRoom(authoritativePlayingSession, System.currentTimeMillis())
+                records[cleanCode] = authoritativePlayingSession
+                wireStatus(cleanCode, "PLAYING", 54321L, 2L)
+                recordRoom(cleanCode, authoritativePlayingSession)
 
                 val heldWaitingMutation = OnlineRoomRegistry.mutateCloudSession(cleanCode, allowResetToWaiting = false) { current ->
                     current.copy(status = "WAITING", currentSeed = 0L)
@@ -2374,7 +2406,7 @@ class NetworkRound1RegressionTest {
 
                 // Context C: Device A reads revision 1; server advances to revision 3; Device A attempts revision 2 write
                 OnlineRoomRegistry.recentRoomCache[cleanCode] = OnlineRoomRegistry.CachedRoom(waitingSession.copy(revision = 1L), System.currentTimeMillis())
-                OnlineRoomRegistry.setRoomStatusHttp(cleanCode, "WAITING", 0L, 3L)
+                wireStatus(cleanCode, "WAITING", 0L, 3L)
                 val staleRevMutation = OnlineRoomRegistry.mutateCloudSession(cleanCode) { current ->
                     current.copy(revision = 1L, players = current.players.map { if (it.id == guest.id) it.copy(lobbyReadyStatus = "READY") else it })
                 }
@@ -2405,7 +2437,7 @@ class NetworkRound1RegressionTest {
                 currentSeed = seedRematchB
             )
             // Populate recent cache simulating active rematch B
-            OnlineRoomRegistry.recentRoomCache[roomCode] = OnlineRoomRegistry.CachedRoom(sessionRematchB, System.currentTimeMillis())
+            recordRoom(roomCode, sessionRematchB)
 
             try {
                 // 1. Queue a failed closure retry for obsolete seed A
@@ -2491,9 +2523,9 @@ class NetworkRound1RegressionTest {
                     val codeAB = "REV_AB_${UUID.randomUUID().toString().take(4).uppercase()}"
                     val seedA = 111111L
                     val seedB = 222222L
-                    OnlineRoomRegistry.setRoomStatusHttp(codeAB, "WAITING", seedA, 1L)
+                    wireStatus(codeAB, "WAITING", seedA, 1L)
                     val sessionB = OnlineRoomSession(roomCode = codeAB, hostId = host.id, hostUsername = host.username, hostDisplayName = host.displayName, status = "PLAYING", currentSeed = seedB, revision = 2L)
-                    OnlineRoomRegistry.recentRoomCache[codeAB] = OnlineRoomRegistry.CachedRoom(sessionB, System.currentTimeMillis())
+                    recordRoom(codeAB, sessionB)
                     val closeWithTagAResult = OnlineRoomRegistry.executeClosurePersist(codeAB, expectedSeed = seedA)
                     assertFalse("Closure retry for seed A must abort when fetched/cached room is seed B", closeWithTagAResult)
                     assertFalse("Room with seed B must NOT be closed", OnlineRoomRegistry.terminallyClosedRooms.contains(codeAB))
@@ -2515,7 +2547,7 @@ class NetworkRound1RegressionTest {
                     val mqttBCode = "MQTT_B_${UUID.randomUUID().toString().take(4).uppercase()}"
                     val staleCachedSessionA = OnlineRoomSession(roomCode = mqttBCode, hostId = host.id, hostUsername = host.username, hostDisplayName = host.displayName, status = "WAITING", currentSeed = seedA, revision = 1L)
                     val liveMqttSessionB = OnlineRoomSession(roomCode = mqttBCode, hostId = host.id, hostUsername = host.username, hostDisplayName = host.displayName, status = "PLAYING", currentSeed = seedB, revision = 3L)
-                    OnlineRoomRegistry.recentRoomCache[mqttBCode] = OnlineRoomRegistry.CachedRoom(staleCachedSessionA, System.currentTimeMillis())
+                    recordRoom(mqttBCode, staleCachedSessionA)
                     OnlineRoomRegistry.simulatedMqttSession = liveMqttSessionB
                     OnlineRoomRegistry.simulatedHttpException = java.io.IOException("HTTP unavailable during rematch")
                     try {
@@ -2592,7 +2624,7 @@ class NetworkRound1RegressionTest {
                 currentSeed = 12345L,
                 players = listOf(host, existingGuest)
             )
-            OnlineRoomRegistry.recentRoomCache[roomCode] = OnlineRoomRegistry.CachedRoom(playingSession, System.currentTimeMillis())
+            recordRoom(roomCode, playingSession)
 
             try {
                 val rejoinResult = OnlineRoomRegistry.validateAndJoinRoom(roomCode, existingGuest)
@@ -2621,7 +2653,7 @@ class NetworkRound1RegressionTest {
                     currentSeed = 0L,
                     players = listOf(host)
                 )
-                OnlineRoomRegistry.recentRoomCache[waitingCode] = OnlineRoomRegistry.CachedRoom(waitingSession, System.currentTimeMillis())
+                recordRoom(waitingCode, waitingSession)
                 val waitJoinResult = OnlineRoomRegistry.validateAndJoinRoom(waitingCode, stranger)
                 assertTrue("Valid WAITING room via MQTT/cache must be admitted", waitJoinResult is RoomJoinResult.Success)
                 OnlineRoomRegistry.recentRoomCache.remove(waitingCode)
@@ -2662,7 +2694,7 @@ class NetworkRound1RegressionTest {
                         turnClock = clockB,
                         players = listOf(host, existingGuest)
                     )
-                    OnlineRoomRegistry.recentRoomCache[joinRoomCode] = OnlineRoomRegistry.CachedRoom(rematchBSession, System.currentTimeMillis())
+                    recordRoom(joinRoomCode, rematchBSession)
 
                     // Execute production validateAndJoinRoom:
                     val joinRematchResult = OnlineRoomRegistry.validateAndJoinRoom(joinRoomCode, existingGuest)
@@ -2704,7 +2736,7 @@ class NetworkRound1RegressionTest {
                         turnClock = MultiplayerTurnClock.start(1, host.id, System.currentTimeMillis() + 30000L),
                         players = listOf(host, existingGuest)
                     )
-                    OnlineRoomRegistry.recentRoomCache[manualCode] = OnlineRoomRegistry.CachedRoom(manualRunningSession, System.currentTimeMillis())
+                    recordRoom(manualCode, manualRunningSession)
 
                     val manualJoinResult = OnlineRoomRegistry.validateAndJoinRoom(manualCode, existingGuest)
                     assertTrue("Existing participant in manual running room must be admitted", manualJoinResult is RoomJoinResult.Success)
@@ -2804,7 +2836,7 @@ class NetworkRound1RegressionTest {
                 currentSeed = 0L,
                 players = listOf(host, guest)
             )
-            OnlineRoomRegistry.recentRoomCache[roomCode] = OnlineRoomRegistry.CachedRoom(initialSession, System.currentTimeMillis())
+            recordRoom(roomCode, initialSession)
 
             try {
                 // When HTTP mirror fails (offline or non-200), updateRoomStatus executes fallback
@@ -2874,7 +2906,7 @@ class NetworkRound1RegressionTest {
                         currentSeed = activeSeedB,
                         players = listOf(host, guest)
                     )
-                    OnlineRoomRegistry.recentRoomCache[outageCode] = OnlineRoomRegistry.CachedRoom(mqttRematchBSession, System.currentTimeMillis())
+                    recordRoom(outageCode, mqttRematchBSession)
 
                     // Close A arrives with expectedSeed = obsoleteSeedA
                     OnlineRoomRegistry.updateRoomStatus(
@@ -3443,5 +3475,68 @@ class NetworkRound1RegressionTest {
         assertFalse("Unsubscribed match must not be marked reliable", failedSub.isReliable)
         assertTrue("Direct peer RTT must be marked reliable", peerRtt.isReliable)
         assertTrue("LAN peer must be marked reliable", lanNearby.isReliable)
+    }
+
+    @Test
+    fun testR01_handleMetadataSession_ignoresStaleClosureAfterRoomRebind() = runTest {
+        val syncManager = OnlineRoomSyncManager()
+        val roomACode = "ROOMA"
+        val roomBCode = "ROOMB"
+        val sessionA = OnlineRoomSession(
+            roomCode = roomACode,
+            hostId = "host_a",
+            hostUsername = "host_a",
+            hostDisplayName = "Host A",
+            sessionId = "lobby_session_a",
+            status = "CLOSED",
+            isTerminalClosed = true,
+            metadataProtocolVersion = 7
+        )
+
+        val guest = Player(id = "guest_1", displayName = "Guest", username = "guest", isHost = false)
+        syncManager.currentRoomCode = roomACode
+        syncManager.localPlayer = guest
+        val genA = syncManager.roomConnectionId
+
+        val startedLatch = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val readLatch = kotlinx.coroutines.CompletableDeferred<OnlineRoomSession?>()
+        val previousTransport = RoomMetadataApi.transportOverride
+        RoomMetadataApi.transportOverride = object : RoomMetadataTransport {
+            override suspend fun read(code: String): Result<OnlineRoomSession?> {
+                return if (code == roomACode) {
+                    startedLatch.complete(Unit)
+                    val res = readLatch.await()
+                    Result.success(res)
+                } else {
+                    Result.success(null)
+                }
+            }
+            override suspend fun commit(code: String, base: OnlineRoomSession?, next: OnlineRoomSession): RoomMetadataCommit =
+                RoomMetadataCommit.Applied(next)
+        }
+
+        try {
+            // Launch handleMetadataSession while in Room A. It passes initial guard (line 1361)
+            // and suspends on RoomMetadataApi.read(roomACode).
+            val job = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
+                syncManager.handleMetadataSession(sessionA, roomACode, retained = true, expectedGeneration = genA)
+            }
+
+            // Await deterministic entrance into read() suspension
+            startedLatch.await()
+
+            // Rebind to Room B while Room A read is suspended
+            syncManager.currentRoomCode = roomBCode
+            syncManager.roomConnectionId = UUID.randomUUID().toString()
+            syncManager.lobbyMetadataClosed = false
+
+            // Release the suspended read with the closed session
+            readLatch.complete(sessionA)
+            job.join()
+
+            assertFalse("Room B lobbyMetadataClosed must remain false when stale Room A closure arrives after suspension", syncManager.lobbyMetadataClosed)
+        } finally {
+            RoomMetadataApi.transportOverride = previousTransport
+        }
     }
 }

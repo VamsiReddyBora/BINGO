@@ -1,6 +1,7 @@
 package com.bingo.multiplayer.domain.network
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -12,7 +13,7 @@ import com.bingo.multiplayer.domain.engine.MatchPick
 
 /** Retained, match-scoped recovery. This is transport/storage, not a match referee. */
 object PeerMatchRecovery {
-    fun topic(room: String, seed: Long) = "bingo/v5/match/${room.trim().uppercase()}/$seed"
+    fun topic(room: String, seed: Long) = "bingo/emqx7/match/${room.trim().uppercase()}/$seed"
     data class Lookup(val available: Boolean, val packets: List<RoomMessagePacket> = emptyList())
 
     /** Validates retained data before it may refresh inactivity, change a board or establish finality. */
@@ -20,7 +21,7 @@ object PeerMatchRecovery {
         if (local.isMatchFinished) return local
         var data = local
         val ids = local.participants.map { it.id }
-        val acceptedPackets = packets.filter { SimplifiedMatchPacketGate.accepts(it, local.matchSeed, local.roomCode, ids.toSet()) }
+        val acceptedPackets = packets.map { MatchPacketClock.localize(it, local.clockOffsetMillis) }.filter { SimplifiedMatchPacketGate.accepts(it, local.matchSeed, local.roomCode, ids.toSet()) }
         for (packet in acceptedPackets.filter { it.type == "GAME_SYNC" }.sortedWith(
             compareBy<RoomMessagePacket> { it.turnNumber }.thenBy { it.timestamp }.thenBy { it.sequence })) {
             val player = data.playerBoard ?: continue
@@ -213,39 +214,49 @@ object PeerMatchRecovery {
             val packets = mutableListOf<RoomMessagePacket>()
             val done = CompletableDeferred<Unit>()
             val marker = "${topic(room, seed)}/probe/${UUID.randomUUID()}"
+            val listener = org.eclipse.paho.client.mqttv3.IMqttMessageListener { t, message ->
+                println("PeerMatchRecovery.read arrived: topic=$t retained=${message?.isRetained}")
+                if (t == marker) { done.complete(Unit); return@IMqttMessageListener }
+                val bytes = message?.payload?.takeIf { it.isNotEmpty() } ?: return@IMqttMessageListener
+                val decoded = FastPacketCodec.decode(bytes.toString(Charsets.UTF_8))
+                val isOutcome = t?.contains("/outcome/") == true
+                val isAcceptedDeparture = t?.contains("/accepted_exit/") == true
+                val isExitReceipt = (t?.contains("/exit/") == true || decoded.closedTurnNumber > 0 || decoded.recoveryReplay) && decoded.type in setOf("SURRENDER", "LEAVE", "HOST_LEFT")
+                val packet = decoded.copy(
+                    recoveryReplay = decoded.recoveryReplay || isOutcome || isAcceptedDeparture || isExitReceipt,
+                    isRetainedDelivery = message.isRetained)
+                if (packet.seed == seed && (packet.roomCode.isBlank() || packet.roomCode == room.trim().uppercase()) &&
+                    packet.type in setOf("GAME_SYNC", "SURRENDER", "PICK_NUMBER", "TURN_TIMEOUT")) {
+                    synchronized(packets) { packets.add(packet.copy(roomCode = room.trim().uppercase())) }
+                }
+            }
             client.setCallback(object : MqttCallback {
                 override fun connectionLost(cause: Throwable?) { done.completeExceptionally(cause ?: IllegalStateException("Connection lost")) }
                 override fun deliveryComplete(token: IMqttDeliveryToken?) {}
                 override fun messageArrived(t: String?, message: MqttMessage?) {
-                    if (t == marker) { done.complete(Unit); return }
-                    val bytes = message?.payload?.takeIf { it.isNotEmpty() } ?: return
-                    val decoded = FastPacketCodec.decode(bytes.toString(Charsets.UTF_8))
-                    val isOutcome = t?.contains("/outcome/") == true
-                    val isAcceptedDeparture = t?.contains("/accepted_exit/") == true
-                    val isExitReceipt = (decoded.closedTurnNumber > 0 || decoded.recoveryReplay) && decoded.type in setOf("SURRENDER", "LEAVE", "HOST_LEFT")
-                    val packet = decoded.copy(
-                        recoveryReplay = decoded.recoveryReplay || isOutcome || isAcceptedDeparture || (isExitReceipt && t?.contains("/exit/") == true),
-                        isRetainedDelivery = message.isRetained)
-                    if (packet.seed == seed && packet.roomCode == room.trim().uppercase() &&
-                        packet.type in setOf("GAME_SYNC", "SURRENDER", "PICK_NUMBER", "TURN_TIMEOUT")) synchronized(packets) { packets.add(packet) }
+                    listener.messageArrived(t, message)
                 }
             })
             client.connect(MqttConnectOptions().apply {
                 isCleanSession = true; connectionTimeout = 4; NetworkConfig.applyMqttOptions(this)
             }).waitForCompletion(5_000L)
-            client.subscribe("${topic(room, seed)}/#", 1).waitForCompletion(3_000L)
+            client.subscribe("${topic(room, seed)}/#", 1, listener).waitForCompletion(3_000L)
+            delay(1500L)
             client.publish(marker, MqttMessage(byteArrayOf(1)).apply { qos = 1 }).waitForCompletion(3_000L)
             withTimeout(4_000L) { done.await() }
+            delay(500L)
             Lookup(true, synchronized(packets) { packets.toList() })
         } catch (_: Exception) { Lookup(false) }
         finally {
-            runCatching { if (client.isConnected) client.disconnect().waitForCompletion(500L) }
-            runCatching { client.close() }
+            MqttClientShutdown.close(client, quiesceMillis = 500L, disconnectMillis = 500L)
         }
     }
 
     /** An independent connection makes old exit retries unable to disconnect a replacement lobby. */
     suspend fun publishExit(exit: PendingMatchExit): Boolean = withContext(Dispatchers.IO) {
+        // A successor follows the existing gameplay authority only after this exit is seen.
+        // Drain the retired writer first so its earlier publish cannot arrive after handoff.
+        RoomMetadataApi.prepareExitDelivery(exit)
         val client = MqttAsyncClient(NetworkConfig.BROKER_URL, "exit_${UUID.randomUUID()}", MemoryPersistence())
         try {
             val packet = exit.packet.copy(roomCode = exit.roomCode.trim().uppercase(), senderPlayerId = exit.accountUid,
@@ -257,13 +268,12 @@ object PeerMatchRecovery {
             // Store the receipt before notifying live subscribers. All returning peers subscribe to this prefix.
             client.publish("${topic(exit.roomCode, packet.seed)}/exit/${exit.accountUid}",
                 MqttMessage(payload).apply { qos = 1; isRetained = true }).waitForCompletion(4_000L)
-            client.publish("bingo/v3/room/${exit.roomCode.trim().uppercase()}",
+            client.publish("bingo/emqx7/room/${exit.roomCode.trim().uppercase()}",
                 MqttMessage(payload).apply { qos = 1 }).waitForCompletion(4_000L)
             true
         } catch (_: Exception) { false }
         finally {
-            runCatching { if (client.isConnected) client.disconnect().waitForCompletion(500L) }
-            runCatching { client.close() }
+            MqttClientShutdown.close(client, quiesceMillis = 500L, disconnectMillis = 500L)
         }
     }
 

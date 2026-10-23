@@ -21,36 +21,60 @@ class FriendsRepositoryTest {
     private fun request(id: String = "request-1", sender: String = "kevin") =
         FriendRequest(id, "$sender-id", sender, sender, toUsername = "bob", timestamp = 1L)
 
-    private class Remote : FriendsDataSource {
+    private open class Remote : FriendsDataSource {
         var cloud: List<Friend>? = emptyList()
         var backup: FriendsBackup? = FriendsBackup(emptyList())
         var requests: List<FriendRequest>? = emptyList()
         val saves = mutableListOf<Pair<String, List<Friend>>>()
+        val savedVersions = mutableListOf<String?>()
         var callback: ((FriendRequestPacket) -> Unit)? = null
         var acceptSucceeds = true
         var gate: CompletableDeferred<Unit>? = null
         var reads = 0
         var lastRemovalId: String? = null
+        var version: String = ""
+        val sentRequests = mutableListOf<FriendRequest>()
+        val tombstones = mutableMapOf<String, Long>()
         override suspend fun fetchFriends(username: String): List<Friend>? {
             reads++
             val snapshot = cloud
             gate?.await()
             return snapshot
         }
+        override suspend fun fetchFriendsWithVersion(username: String): com.bingo.multiplayer.domain.network.FriendsCloudStore.VersionedSnapshot<Friend>? {
+            reads++
+            val snapshot = cloud ?: return null
+            val ver = version
+            gate?.await()
+            return com.bingo.multiplayer.domain.network.FriendsCloudStore.VersionedSnapshot(snapshot, ver)
+        }
         override suspend fun fetchBackup(uid: String) = backup
         override suspend fun fetchRequests(username: String) = requests
-        override suspend fun saveFriends(username: String, friends: List<Friend>): Boolean {
+        override suspend fun saveFriends(username: String, friends: List<Friend>, expectedVersion: String?): Boolean {
             saves += username to friends
+            savedVersions += expectedVersion
             cloud = friends
+            return true
+        }
+        override suspend fun removeFriend(username: String, friendIdentifier: String): Boolean {
+            cloud = cloud?.filterNot { it.uid == friendIdentifier || friendUsername(it.username) == friendUsername(friendIdentifier) }
             return true
         }
         override fun saveBackup(uid: String, friends: List<Friend>) {}
         override fun removeFromBackup(uid: String, friend: Friend, removalId: String) { lastRemovalId = removalId }
-        override suspend fun send(request: FriendRequest) = true
+        override suspend fun send(request: FriendRequest): Boolean {
+            sentRequests += request
+            return true
+        }
         override suspend fun accept(request: FriendRequest, user: UserProfile): Boolean {
+            val matching = requests?.find { it.id == request.id } ?: request
+            val tombstone = tombstones[matching.fromUid] ?: tombstones[friendUsername(matching.fromUsername)]
+            if (tombstone != null && (matching.timestamp <= 0L || matching.timestamp <= tombstone)) {
+                return false
+            }
             if (acceptSucceeds) {
                 requests = requests?.filterNot { it.id == request.id }
-                backup = FriendsBackup(backup?.friends.orEmpty(), backup?.removedKeys.orEmpty() - friendKeys(Friend(request.fromUid, request.fromUsername, request.fromDisplayName)))
+                backup = FriendsBackup(backup?.friends.orEmpty(), backup?.removedKeys.orEmpty() - friendKeys(Friend(matching.fromUid, matching.fromUsername, matching.fromDisplayName)))
             }
             return acceptSucceeds
         }
@@ -368,4 +392,107 @@ class FriendsRepositoryTest {
         assertEquals(0, repo.friends.value.single().currentStreak)
     }
 
+    @Test fun removingLocalFriendDoesNotOverwriteIndependentlyAddedRemoteFriend() = runTest {
+        val alice = Friend("a-id", "alice", "Alice")
+        val remoteBob = Friend("b-id", "bob-remote", "Bob Remote")
+        val prefs = AuthRepositoryTest.FakeSharedPreferences()
+        prefs.edit().putString("friends_list", Json.encodeToString(listOf(alice))).commit()
+
+        val remote = Remote().apply {
+            cloud = listOf(alice, remoteBob)
+            backup = FriendsBackup(listOf(alice, remoteBob))
+        }
+
+        val repo = repository(this, remote, prefs)
+        repo.removeFriend("alice", "bob")
+        runCurrent()
+
+        val remainingCloud = remote.cloud.orEmpty()
+        assertTrue("Remote friend Bob must be preserved when removing Alice", remainingCloud.any { it.uid == "b-id" })
+        assertFalse("Alice must be removed", remainingCloud.any { it.uid == "a-id" })
+
+        val restarted = repository(this, remote, prefs)
+        restarted.syncFriendsAndRequests("bob")
+        runCurrent()
+        assertTrue("Bob must remain in friends after reconciliation", restarted.friends.value.any { it.uid == "b-id" })
+        assertFalse("Alice must not be in friends", restarted.friends.value.any { it.uid == "a-id" })
+    }
+
+    @Test fun reconciliationWithInterveningAdditionCarriesVersionAndPreservesAddition() = runTest {
+        val alice = Friend("a-id", "alice", "Alice")
+        val dave = Friend("d-id", "dave", "Dave")
+        val stuart = Friend("s-id", "stuart", "Stuart")
+        val prefs = AuthRepositoryTest.FakeSharedPreferences()
+        prefs.edit().putString("friends_list", Json.encodeToString(listOf(alice, dave))).commit()
+
+        val remote = Remote()
+        remote.cloud = listOf(alice)
+        remote.version = "1"
+
+        val gate = CompletableDeferred<Unit>()
+        remote.gate = gate
+
+        val repo = repository(this, remote, prefs)
+        repo.syncFriendsAndRequests("bob")
+        runCurrent()
+
+        // At this point, repo is paused inside fetchFriendsWithVersion holding version "1"
+        // Intervening client adds Stuart and increments version to "2"
+        remote.cloud = listOf(alice, stuart)
+        remote.version = "2"
+
+        // Release repo
+        gate.complete(Unit)
+        runCurrent()
+
+        // Reconciliation passed expectedVersion
+        assertTrue("Saved versions must capture expected version", remote.savedVersions.isNotEmpty())
+        assertEquals("First save attempt must pass version 1", "1", remote.savedVersions.first())
+    }
+
+    @Test fun testSendFriendRequestAssignsPositiveCreationProvenance() = runTest {
+        val remote = Remote()
+        val repo = repository(this, remote)
+        val before = System.currentTimeMillis()
+        val success = repo.sendFriendRequest("kevin", bob)
+        val after = System.currentTimeMillis()
+        assertTrue("sendFriendRequest must return true on success", success)
+        assertEquals("Exactly one request must be dispatched", 1, remote.sentRequests.size)
+        val sent = remote.sentRequests.single()
+        assertEquals("kevin", sent.toUsername)
+        assertEquals("bob", sent.fromUsername)
+        assertEquals("bob-id", sent.fromUid)
+        assertTrue("Sent request timestamp must be strictly positive", sent.timestamp > 0L)
+        assertTrue("Sent request timestamp must be in execution window", sent.timestamp in before..after)
+    }
+
+    @Test fun testFriendshipAcceptanceDerivesFreshnessFromPersistedProvenanceAndRejectsTombstone() = runTest {
+        val stalePersistedReq = request("stale-req", "kevin").copy(timestamp = 1000L)
+        val remote = Remote().apply {
+            requests = listOf(stalePersistedReq)
+            tombstones["kevin-id"] = 2000L
+        }
+        val repo = repository(this, remote)
+        repo.syncFriendsAndRequests("bob")
+        runCurrent()
+
+        // 1. Caller attempts to accept passing a fabricated request with newer timestamp (3000L).
+        // Acceptance must derive freshness from the persisted request (1000L), NOT caller's payload,
+        // and reject against the tombstone (2000L).
+        val fabricatedReq = stalePersistedReq.copy(timestamp = 3000L)
+        val acceptedWithFabricatedTimestamp = repo.acceptFriendRequest(fabricatedReq, bob)
+        assertFalse("Acceptance must reject when persisted request is older than tombstone", acceptedWithFabricatedTimestamp)
+        assertTrue("Friends must remain empty after rejected acceptance", repo.friends.value.isEmpty())
+
+        // 2. Now update persisted request with fresh provenance (3000L > tombstone 2000L).
+        val freshPersistedReq = stalePersistedReq.copy(id = "fresh-req", timestamp = 3000L)
+        remote.requests = listOf(freshPersistedReq)
+        repo.syncFriendsAndRequests("bob")
+        runCurrent()
+
+        val acceptedFresh = repo.acceptFriendRequest(freshPersistedReq, bob)
+        assertTrue("Acceptance must succeed when persisted provenance is newer than tombstone", acceptedFresh)
+        assertEquals(1, repo.friends.value.size)
+        assertEquals("kevin-id", repo.friends.value.single().uid)
+    }
 }

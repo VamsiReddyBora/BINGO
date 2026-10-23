@@ -4,6 +4,8 @@ import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -30,6 +32,8 @@ import com.bingo.multiplayer.domain.model.Player
 import com.bingo.multiplayer.domain.model.UserProfile
 import com.bingo.multiplayer.domain.network.PlayerRegistryEntry
 import com.bingo.multiplayer.domain.repository.FriendsRepository
+import com.bingo.multiplayer.domain.repository.FriendshipStatus
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -194,14 +198,17 @@ fun PlayerProfileDialog(
         } else null
     }
 
-    val isAlreadyFriend = remember(playerData.username, playerData.playerId) {
+    val friendship by remember(friendsRepository, playerData.username, playerData.playerId) {
+        friendsRepository?.observeFriendship(playerData.playerId, playerData.username)
+            ?: flowOf(FriendshipStatus.NONE)
+    }.collectAsState(initial = when {
         friendsRepository?.isFriend(playerData.username) == true ||
-                friendsRepository?.isFriend(playerData.playerId) == true
-    }
-
-    var requestSentLocally by remember {
-        mutableStateOf(friendsRepository?.hasSentRequest(playerData.username) == true)
-    }
+            friendsRepository?.isFriend(playerData.playerId) == true -> FriendshipStatus.FRIEND
+        friendsRepository?.hasSentRequest(playerData.username) == true -> FriendshipStatus.PENDING
+        else -> FriendshipStatus.NONE
+    })
+    val isAlreadyFriend = friendship == FriendshipStatus.FRIEND
+    val requestSentLocally = friendship == FriendshipStatus.PENDING
     var isSendingRequest by remember { mutableStateOf(false) }
 
     var effectiveData by remember(playerData) { mutableStateOf(playerData) }
@@ -282,6 +289,7 @@ fun PlayerProfileDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
                     .padding(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
@@ -300,7 +308,7 @@ fun PlayerProfileDialog(
                     Spacer(modifier = Modifier.weight(1f))
                     IconButton(
                         onClick = onDismiss,
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier.size(40.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Close,
@@ -583,11 +591,16 @@ fun PlayerProfileDialog(
                     ) {
                         // Challenge / Play Now Button
                         if (onChallengeFriend != null) {
-                            val isInviteCooldown = com.bingo.multiplayer.domain.network.ActionCooldownManager.isInviteOnCooldown(effectiveData.username)
+                            val availability = com.bingo.multiplayer.domain.network.FriendPlayAvailability.of(
+                                presenceMap[effectiveData.username.trim().lowercase().removePrefix("@")])
+                            val isRequest = availability == com.bingo.multiplayer.domain.network.FriendPlayAvailability.BUSY
+                            val isInviteCooldown = if (isRequest) com.bingo.multiplayer.domain.network.ActionCooldownManager.isPlayRequestOnCooldown(effectiveData.username)
+                                else com.bingo.multiplayer.domain.network.ActionCooldownManager.isInviteOnCooldown(effectiveData.username)
                             val challengeContentColor = if (isInviteCooldown) tokens.textMuted else tokens.primaryButtonText
                             Button(
                                 onClick = {
-                                    com.bingo.multiplayer.domain.network.ActionCooldownManager.startInviteCooldown(effectiveData.username)
+                                    if (isRequest) com.bingo.multiplayer.domain.network.ActionCooldownManager.startPlayRequestCooldown(effectiveData.username)
+                                    else com.bingo.multiplayer.domain.network.ActionCooldownManager.startInviteCooldown(effectiveData.username)
                                     onDismiss()
                                     onChallengeFriend(
                                         Friend(
@@ -598,7 +611,7 @@ fun PlayerProfileDialog(
                                         )
                                     )
                                 },
-                                enabled = !isInviteCooldown,
+                                enabled = !isInviteCooldown && availability.canContact,
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = tokens.primaryButtonBg,
                                     contentColor = tokens.primaryButtonText,
@@ -616,7 +629,7 @@ fun PlayerProfileDialog(
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = if (isInviteCooldown) "Challenge Sent ⚔️" else "Challenge to Match ⚔️",
+                                    text = if (isRequest) { if (isInviteCooldown) "Requested" else "Request" } else { if (isInviteCooldown) "Invited" else "Invite" },
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = challengeContentColor
@@ -696,7 +709,6 @@ fun PlayerProfileDialog(
                                         ) ?: false
                                         isSendingRequest = false
                                         if (success) {
-                                            requestSentLocally = true
                                             Toast.makeText(context, "Friend request sent to @${effectiveData.username}!", Toast.LENGTH_SHORT).show()
                                         } else {
                                             Toast.makeText(context, "Could not send friend request. Try again.", Toast.LENGTH_SHORT).show()

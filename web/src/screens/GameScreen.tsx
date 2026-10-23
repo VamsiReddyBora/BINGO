@@ -21,7 +21,8 @@ import {
   CloudUserDataBackup
 } from '../types/models';
 import { BingoEngine } from '../engine/bingoEngine';
-import { roomSync } from '../network/mqttSync';
+import { MqttRoomManager, roomSync } from '../network/mqttSync';
+import { useMqttSync } from '../network/MqttSyncContext';
 import { CloudRegistry } from '../network/cloudRegistry';
 import { soundEffects } from '../audio/sounds';
 import { useTheme } from '../theme/theme';
@@ -41,6 +42,8 @@ interface Props {
   seed: number;
   initialTurnPlayerId: string;
   isAiMode?: boolean;
+  participants?: Player[];
+  syncManager?: MqttRoomManager;
   onLeaveGame: () => void;
   onReturnToLobby?: () => void;
   onUpdatePlayerStats?: (updated: Player) => void;
@@ -53,11 +56,14 @@ export const GameScreen: React.FC<Props> = ({
   seed,
   initialTurnPlayerId,
   isAiMode = false,
+  participants,
+  syncManager,
   onLeaveGame,
   onReturnToLobby,
   onUpdatePlayerStats
 }) => {
   const { tokens, isDark } = useTheme();
+  const sync = syncManager || useMqttSync();
 
   // CRITICAL: AI mode is strictly ONLY active if roomCode is explicitly 'AI_SOLO' AND isAiMode is true.
   // In an online room match (6-digit room code or P2P code), effectiveAiMode is ALWAYS false.
@@ -66,10 +72,22 @@ export const GameScreen: React.FC<Props> = ({
   // Resolve authentic opponent from prop or MQTT player registry
   const resolvedOpponent = useMemo(() => {
     if (opponent && opponent.id && opponent.id !== localPlayer.id) return opponent;
-    const fromMqtt = roomSync.getPlayers().find((p) => p.id !== localPlayer.id);
+    const fromMqtt = sync.getPlayers().find((p) => p.id !== localPlayer.id);
     if (fromMqtt) return fromMqtt;
     return opponent;
-  }, [opponent, localPlayer.id]);
+  }, [opponent, localPlayer.id, sync]);
+
+  const [activeParticipants, setActiveParticipants] = useState<Player[]>(() => {
+    if (participants && participants.length > 0) return participants;
+    if (opponent && opponent.id) return [localPlayer, opponent];
+    return [localPlayer];
+  });
+
+  useEffect(() => {
+    if (participants && participants.length > 0) {
+      setActiveParticipants(participants);
+    }
+  }, [participants]);
 
   const mySeed = effectiveAiMode
     ? (localPlayer.isHost ? seed : seed + 1)
@@ -225,6 +243,17 @@ export const GameScreen: React.FC<Props> = ({
     [localPlayer, onUpdatePlayerStats, opponent?.avatarUrl, myLinesCount, opponentLinesCount, roomCode]
   );
 
+  const getNextTurnPlayerId = useCallback(
+    (currentId: string): string => {
+      if (effectiveAiMode) return currentId === localPlayer.id ? 'ai_bot' : localPlayer.id;
+      if (activeParticipants.length <= 1) return resolvedOpponent?.id || 'opponent';
+      const curIdx = activeParticipants.findIndex((p) => p.id === currentId);
+      const nextIdx = curIdx >= 0 ? (curIdx + 1) % activeParticipants.length : 0;
+      return activeParticipants[nextIdx].id;
+    },
+    [effectiveAiMode, localPlayer.id, activeParticipants, resolvedOpponent?.id]
+  );
+
   // Turn timer countdown
   useEffect(() => {
     if (isGameOver || isGamePaused) return;
@@ -234,13 +263,13 @@ export const GameScreen: React.FC<Props> = ({
         if (prev <= 1) {
           // Timeout switch turn
           if (isMyTurn) {
-            const nextTurnId = effectiveAiMode ? 'ai_bot' : resolvedOpponent?.id || 'opponent';
+            const nextTurnId = getNextTurnPlayerId(localPlayer.id);
             setCurrentTurnPlayerId(nextTurnId);
             setTurnNumber((t) => t + 1);
             soundEffects.playTurnAlert();
 
             if (!effectiveAiMode) {
-              roomSync.sendTurnTimeout(turnNumber, nextTurnId, pickedNumbersHistory, seed);
+              sync.sendTurnTimeout(turnNumber, nextTurnId, pickedNumbersHistory, seed);
             }
           }
           return 30;
@@ -250,7 +279,7 @@ export const GameScreen: React.FC<Props> = ({
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [isGameOver, isGamePaused, isMyTurn, effectiveAiMode, resolvedOpponent?.id, turnNumber, pickedNumbersHistory, seed]);
+  }, [isGameOver, isGamePaused, isMyTurn, effectiveAiMode, getNextTurnPlayerId, localPlayer.id, sync, turnNumber, pickedNumbersHistory, seed]);
 
   // Execute pick
   const handlePickNumber = useCallback(
@@ -298,7 +327,7 @@ export const GameScreen: React.FC<Props> = ({
         syncMatchResults(true, resolvedOpponent?.displayName || (effectiveAiMode ? 'AI Bot' : 'Opponent'));
 
         if (!effectiveAiMode) {
-          roomSync.sendPacket({
+          sync.sendPacket({
             type: 'BINGO_CLAIMED',
             playerId: localPlayer.id,
             displayName: localPlayer.displayName,
@@ -309,14 +338,14 @@ export const GameScreen: React.FC<Props> = ({
       }
 
       // Switch turn
-      const nextTurnId = effectiveAiMode ? 'ai_bot' : resolvedOpponent?.id || 'opponent';
+      const nextTurnId = getNextTurnPlayerId(localPlayer.id);
       setCurrentTurnPlayerId(nextTurnId);
       setTurnNumber((prev) => prev + 1);
       setTurnTimer(30);
 
       // Broadcast move to opponent
       if (!effectiveAiMode) {
-        roomSync.sendPick(number, turnNumber, nextTurnId, updatedHistory, seed);
+        sync.sendPick(number, turnNumber, nextTurnId, updatedHistory, seed);
       }
     },
     [
@@ -331,7 +360,9 @@ export const GameScreen: React.FC<Props> = ({
       pickedNumbersHistory,
       turnNumber,
       syncMatchResults,
-      seed
+      seed,
+      getNextTurnPlayerId,
+      sync
     ]
   );
 
@@ -420,7 +451,7 @@ export const GameScreen: React.FC<Props> = ({
   useEffect(() => {
     if (effectiveAiMode) return;
 
-    const unsubscribe = roomSync.addPacketListener((packet: RoomMessagePacket) => {
+    const unsubscribe = sync.addPacketListener((packet: RoomMessagePacket) => {
       if (packet.type === 'PICK_NUMBER' && packet.number) {
         const pickNum = packet.number;
         const incomingHistory = packet.pickedHistory || [pickNum];
@@ -490,12 +521,14 @@ export const GameScreen: React.FC<Props> = ({
           return;
         }
 
-        setCurrentTurnPlayerId(localPlayer.id);
+        const nextTurnId = packet.currentTurnPlayerId || getNextTurnPlayerId(packet.playerId);
+        setCurrentTurnPlayerId(nextTurnId);
         setTurnNumber((prev) => (packet.turnNumber ? packet.turnNumber + 1 : prev + 1));
         setTurnTimer(30);
         soundEffects.playTurnAlert();
       } else if (packet.type === 'TURN_TIMEOUT') {
-        setCurrentTurnPlayerId(localPlayer.id);
+        const nextTurnId = packet.currentTurnPlayerId || getNextTurnPlayerId(currentTurnPlayerId);
+        setCurrentTurnPlayerId(nextTurnId);
         setTurnNumber((prev) => (packet.turnNumber ? packet.turnNumber + 1 : prev + 1));
         setTurnTimer(30);
         soundEffects.playTurnAlert();
@@ -548,12 +581,22 @@ export const GameScreen: React.FC<Props> = ({
         setIsGamePaused(false);
         setPausedByPlayerName('');
       } else if (packet.type === 'SURRENDER' || packet.type === 'LEAVE') {
-        soundEffects.playBingoWin();
-        setIsGameOver(true);
-        setIsWinner(true);
-        setWinnerName(localPlayer.displayName);
-        syncMatchResults(true, packet.displayName || resolvedOpponent?.displayName || 'Opponent');
-        alert(`${packet.displayName || resolvedOpponent?.displayName || 'Opponent'} left the game. You win! 🏆`);
+        const remaining = activeParticipants.filter((p) => p.id !== packet.playerId);
+        setActiveParticipants(remaining);
+        if (remaining.length <= 1) {
+          soundEffects.playBingoWin();
+          setIsGameOver(true);
+          setIsWinner(true);
+          setWinnerName(localPlayer.displayName);
+          syncMatchResults(true, packet.displayName || resolvedOpponent?.displayName || 'Opponent');
+        } else {
+          if (currentTurnPlayerId === packet.playerId) {
+            const nextTurnId = getNextTurnPlayerId(packet.playerId);
+            setCurrentTurnPlayerId(nextTurnId);
+            setTurnTimer(30);
+            soundEffects.playTurnAlert();
+          }
+        }
       }
     });
 
@@ -566,7 +609,11 @@ export const GameScreen: React.FC<Props> = ({
     resolvedOpponent,
     turnNumber,
     spawnEmote,
-    syncMatchResults
+    syncMatchResults,
+    activeParticipants,
+    currentTurnPlayerId,
+    getNextTurnPlayerId,
+    sync
   ]);
 
   // Send Emote
@@ -574,7 +621,7 @@ export const GameScreen: React.FC<Props> = ({
     spawnEmote(emoji, true, localPlayer.displayName, scale);
     soundEffects.playEmotePop();
     if (!effectiveAiMode) {
-      roomSync.sendPacket({
+      sync.sendPacket({
         type: 'EMOTE',
         playerId: localPlayer.id,
         displayName: localPlayer.displayName,
@@ -596,7 +643,7 @@ export const GameScreen: React.FC<Props> = ({
       }
     ]);
     if (!effectiveAiMode) {
-      roomSync.sendPacket({
+      sync.sendPacket({
         type: 'CHAT_MESSAGE',
         playerId: localPlayer.id,
         displayName: localPlayer.displayName,
@@ -610,7 +657,7 @@ export const GameScreen: React.FC<Props> = ({
     const nextState = !isGamePaused;
     setIsGamePaused(nextState);
     if (!effectiveAiMode) {
-      roomSync.sendPacket({
+      sync.sendPacket({
         type: nextState ? 'PAUSE_GAME' : 'RESUME_GAME',
         playerId: localPlayer.id,
         displayName: localPlayer.displayName
@@ -644,7 +691,7 @@ export const GameScreen: React.FC<Props> = ({
     setCurrentTurnPlayerId(localPlayer.id);
 
     if (!effectiveAiMode) {
-      roomSync.sendPacket({
+      sync.sendPacket({
         type: 'PLAY_AGAIN',
         playerId: localPlayer.id,
         displayName: localPlayer.displayName,
@@ -659,7 +706,7 @@ export const GameScreen: React.FC<Props> = ({
     setIsSyncing(true);
     soundEffects.playTap();
     if (!effectiveAiMode) {
-      roomSync.sendPacket({
+      sync.sendPacket({
         type: 'SYNC_GAME',
         playerId: localPlayer.id,
         displayName: localPlayer.displayName
@@ -928,48 +975,40 @@ export const GameScreen: React.FC<Props> = ({
               {/* Item 5: Recent Picks Queue Pill (Left) */}
               <RecentPicksQueuePill pickedNumbersHistory={pickedNumbersHistory} />
 
-              {/* Item 6 Center: Turn Spotlight Profile vs Profile (Zoomed avatar on active turn) */}
-              <div className="flex items-center gap-2">
-                <div
-                  style={{
-                    borderColor: isMyTurn ? tokens.accentBrand : tokens.surfaceBorder,
-                    boxShadow: isMyTurn ? `0 0 8px ${tokens.accentBrand}88` : 'none'
-                  }}
-                  className={`rounded-full border-2 transition-all duration-300 ${
-                    isMyTurn ? 'scale-110' : 'scale-95 opacity-75'
-                  }`}
-                  title={`${localPlayer.displayName} ${isMyTurn ? '(Your Turn)' : ''}`}
-                >
-                  <PlayerAvatar
-                    avatarUrl={localPlayer.avatarUrl}
-                    displayName={localPlayer.displayName}
-                    size={26}
-                  />
-                </div>
-
-                <span
-                  style={{ color: tokens.textMuted }}
-                  className="text-[10px] font-black uppercase tracking-wider select-none"
-                >
-                  vs
-                </span>
-
-                <div
-                  style={{
-                    borderColor: !isMyTurn ? tokens.accentOpponent : tokens.surfaceBorder,
-                    boxShadow: !isMyTurn ? `0 0 8px ${tokens.accentOpponent}88` : 'none'
-                  }}
-                  className={`rounded-full border-2 transition-all duration-300 ${
-                    !isMyTurn ? 'scale-110' : 'scale-95 opacity-75'
-                  }`}
-                  title={`${activeOpponentName} ${!isMyTurn ? '(Their Turn)' : ''}`}
-                >
-                  <PlayerAvatar
-                    avatarUrl={opponent?.avatarUrl || null}
-                    displayName={activeOpponentName}
-                    size={26}
-                  />
-                </div>
+              {/* Item 6 Center: Turn Spotlight Profile Queue (Pulsing avatar on active turn) */}
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar max-w-[140px] sm:max-w-none">
+                {activeParticipants.map((p, idx) => {
+                  const isCurrent = p.id === currentTurnPlayerId;
+                  const isSelf = p.id === localPlayer.id;
+                  return (
+                    <React.Fragment key={p.id}>
+                      {idx > 0 && (
+                        <span style={{ color: tokens.textMuted }} className="text-[9px] font-bold opacity-60">
+                          →
+                        </span>
+                      )}
+                      <div
+                        style={{
+                          borderColor: isCurrent ? (isSelf ? tokens.accentBrand : tokens.accentOpponent) : tokens.surfaceBorder,
+                          boxShadow: isCurrent ? `0 0 8px ${isSelf ? tokens.accentBrand : tokens.accentOpponent}88` : 'none'
+                        }}
+                        className={`rounded-full border-2 transition-all duration-300 relative ${
+                          isCurrent ? 'scale-110 z-10 ring-2 ring-emerald-400/40' : 'scale-95 opacity-70'
+                        }`}
+                        title={`${p.displayName} ${isCurrent ? '(Active Turn)' : ''}`}
+                      >
+                        <PlayerAvatar
+                          avatarUrl={p.avatarUrl}
+                          displayName={p.displayName}
+                          size={24}
+                        />
+                        {isCurrent && (
+                          <span className="w-2 h-2 rounded-full bg-emerald-400 absolute -top-0.5 -right-0.5 animate-pulse" />
+                        )}
+                      </div>
+                    </React.Fragment>
+                  );
+                })}
               </div>
 
               {/* Item 6 Right: Clockwise Rotating Refresh / Sync Button */}

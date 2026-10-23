@@ -84,7 +84,7 @@ object NotificationRuntime {
             store.revocation()?.let { NotificationWork.revoke(context, it.first, it.second) }
             if (old != null) NotificationWork.cancelAccount(context, old)
             BingoNotificationManager.cancelAccountNotifications(context)
-            GameInviteManager.clearForegroundInvite()
+            GameInviteManager.onAccountChanged()
             BingoNotificationManager.clearPendingActions()
             BroadcastMessageManager.onAccountChanged()
             NotificationDeliveryStatus.clear()
@@ -105,9 +105,7 @@ object NotificationRuntime {
             }
         } else scope.launch { showNextInvite(context) }
     }
-    fun isBusy(context: Context): Boolean = matchActive || account(context)?.let {
-        OngoingMatchStore.getOngoingMatch(context, it.uid) != null
-    } == true
+    fun isBusy(context: Context): Boolean = matchActive
 
     fun friends(context: Context, account: NotificationAccount): List<Friend> {
         val repo = FriendsRepository.activeInstance
@@ -162,6 +160,11 @@ object NotificationRuntime {
             receive(context, event, ::pending, ::roster)
         }
         withContext(Dispatchers.Main.immediate) { showNextInvite(context) }
+    }
+    /** A notification tap already carries the original invite; opening its popup needs no room lookup. */
+    fun openInvite(context: Context, event: NotificationEvent) {
+        if (event.kind != NotificationKind.GAME_INVITE) return
+        scope.launch { receive(context, event, { null }, { null }) }
     }
     private suspend fun receive(context: Context, event: NotificationEvent,
         pendingRequests: suspend () -> List<com.bingo.multiplayer.domain.model.FriendRequest>?,
@@ -236,13 +239,41 @@ object NotificationRuntime {
             GameInviteManager.stageInvite(event.toInvite())
         }
     }
+    /** Direct MQTT ingress. Requests are ephemeral notices even during gameplay, never invites. */
+    fun receiveMqttInvite(context: Context, expected: NotificationAccount, invite: GameInvite) {
+        scope.launch {
+            withAccount(context, expected) {
+                if (invite.recipientUid != expected.uid || invite.recipientUsername != expected.username ||
+                    invite.expiresAt <= System.currentTimeMillis() || ledger(context).handled(expected.uid, invite.eventId)) return@withAccount
+                if (invite.isPlayRequest) {
+                    if (AppLifecycleObserver.isAppInForeground.value && NotificationPreferences.inAppNotificationsEnabled.value) {
+                        ledger(context).markHandled(invite.toEvent())
+                        Toast.makeText(context, "${invite.fromDisplayName} wants to play with you", Toast.LENGTH_LONG).show()
+                    }
+                    return@withAccount
+                }
+                if (isBusy(context)) {
+                    ledger(context).markHandled(invite.toEvent()); GameInviteManager.clearRetained(invite)
+                    return@withAccount
+                }
+                preparePresentation(context)
+                if (!AppLifecycleObserver.isAppInForeground.value) BingoNotificationManager.showEvent(context, invite.toEvent())
+                else if (NotificationPreferences.canShowInAppInvite(context)) {
+                    if (ledger(context).present(invite.toEvent(), system = false).show) GameInviteManager.stageInvite(invite)
+                }
+            }
+        }
+    }
     fun finishInvite(context: Context, invite: GameInvite): Boolean {
         val a = account(context) ?: return false
         val event = invite.toEvent()
-        if (event.recipientUid != a.uid || notificationUsername(event.recipientUsername) != a.username) return false
-        if (!ledger(context).markHandled(event)) return false
-        BingoNotificationManager.cancelEvent(context, event)
-        NotificationWork.acknowledge(context, a, event)
+        if (event.recipientUid.isNotBlank() && event.recipientUid != a.uid) return false
+        if (event.recipientUsername.isNotBlank() && notificationUsername(event.recipientUsername) != a.username) return false
+        val enrichedEvent = if (event.recipientUid.isBlank()) event.copy(recipientUid = a.uid) else event
+        if (!ledger(context).markHandled(enrichedEvent)) return false
+        NotificationWork.acknowledge(context, a, enrichedEvent)
+        BingoNotificationManager.cancelEvent(context, enrichedEvent)
+        GameInviteManager.clearRetained(invite)
         scope.launch {
             if (account(context) != a) return@launch
             preparePresentation(context)

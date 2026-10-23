@@ -358,6 +358,17 @@ object BroadcastMessageManager {
 
     private fun publishMqttBroadcast(jsonPayload: String) {
         scope.launch {
+            val bytes = jsonPayload.toByteArray(StandardCharsets.UTF_8)
+            // 1. Fast-path via persistent EMQX socket
+            if (EmqxTransport.wire.isHealthy) {
+                try {
+                    EmqxTransport.wire.publish(MQTT_BROADCAST_TOPIC, bytes, retained = true)
+                    Log.d(TAG, "Dispatched broadcast message via persistent EMQX socket")
+                    return@launch
+                } catch (_: Exception) {}
+            }
+
+            // 2. Fallback via ephemeral client
             try {
                 val clientId = "bcast_pub_${UUID.randomUUID().toString().take(8)}"
                 val client = MqttAsyncClient(NetworkConfig.BROKER_URL, clientId, MemoryPersistence())
@@ -369,19 +380,23 @@ object BroadcastMessageManager {
 
                 client.connect(options, null, object : IMqttActionListener {
                     override fun onSuccess(asyncActionToken: IMqttToken?) {
-                        try {
-                            val mqttMsg = MqttMessage(jsonPayload.toByteArray(StandardCharsets.UTF_8)).apply {
-                                qos = 1
-                                isRetained = true
+                        // Paho must not be quiesced/closed on its own callback
+                        // thread. Finish the existing QoS 1 publish on IO first.
+                        scope.launch(Dispatchers.IO) {
+                            try {
+                                val mqttMsg = MqttMessage(bytes).apply {
+                                    qos = 1
+                                    isRetained = true
+                                }
+                                client.publish(MQTT_BROADCAST_TOPIC, mqttMsg).waitForCompletion(4000L)
+                            } catch (_: Exception) {} finally {
+                                MqttClientShutdown.close(client)
                             }
-                            client.publish(MQTT_BROADCAST_TOPIC, mqttMsg)
-                            client.disconnect()
-                            client.close()
-                        } catch (_: Exception) {}
+                        }
                     }
 
                     override fun onFailure(asyncActionToken: IMqttToken?, exception: Throwable?) {
-                        try { client.close() } catch (_: Exception) {}
+                        MqttClientShutdown.closeAsync(client)
                     }
                 })
             } catch (e: Exception) {

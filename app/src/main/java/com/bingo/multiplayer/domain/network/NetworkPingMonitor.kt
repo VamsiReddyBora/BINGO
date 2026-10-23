@@ -10,14 +10,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import okhttp3.Request
-import java.net.InetSocketAddress
-import java.net.Socket
 
 /**
  * Continuous real-time network latency monitor.
- * Probes low-latency socket handshakes and HTTP fast-checks every 1.5 - 2.0s
- * to provide authentic, live ping (RTT in ms) to the UI.
+ * Reads fresh subscribed EMQX echo RTT from the persistent connection.
+ * An Internet ping or TCP handshake never establishes broker health.
  */
 object NetworkPingMonitor {
 
@@ -29,10 +26,11 @@ object NetworkPingMonitor {
         private set
 
     val isInternetFresh: Boolean
-        get() = (System.currentTimeMillis() - lastSuccessfulProbeTimestamp) < 15000L && _pingMs.value > 0L
+        get() = EmqxTransport.connection.isHealthy && _pingMs.value > 0L
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var monitorJob: Job? = null
+    private var lastBrokerEcho: EmqxConnection.EchoSample? = null
 
     init {
         start()
@@ -43,8 +41,8 @@ object NetworkPingMonitor {
 
         monitorJob = scope.launch {
             while (isActive) {
-                val measuredRtt = measureRealtimePing()
-                updateSmoothedPing(measuredRtt)
+                val connection = EmqxTransport.connection
+                recordBrokerEcho(connection.lastEchoSample.takeIf { connection.isHealthy })
                 delay(1000L)
             }
         }
@@ -55,6 +53,20 @@ object NetworkPingMonitor {
         monitorJob = null
     }
 
+    internal suspend fun stopAndAwait() {
+        val running = monitorJob
+        stop()
+        running?.join()
+    }
+
+    /** Sampling the same RTT again is not a new successful network round trip. */
+    internal fun recordBrokerEcho(sample: EmqxConnection.EchoSample?, now: Long = System.currentTimeMillis()) {
+        if (sample != null && sample !== lastBrokerEcho) {
+            lastBrokerEcho = sample
+            updateSmoothedPing(sample.rttMillis, sample.receivedAtMillis)
+        } else updateSmoothedPing(0L, now)
+    }
+
     fun recordExternalPing(rttMs: Long) {
         if (rttMs > 0L) {
             lastSuccessfulProbeTimestamp = System.currentTimeMillis()
@@ -62,14 +74,14 @@ object NetworkPingMonitor {
         }
     }
 
-    private fun updateSmoothedPing(newRtt: Long) {
+    private fun updateSmoothedPing(newRtt: Long, observedAt: Long = System.currentTimeMillis()) {
         if (newRtt <= 0L) {
-            if (System.currentTimeMillis() - lastSuccessfulProbeTimestamp >= 15000L) {
+            if (observedAt - lastSuccessfulProbeTimestamp >= 15000L) {
                 _pingMs.value = 0L
             }
             return
         }
-        lastSuccessfulProbeTimestamp = System.currentTimeMillis()
+        lastSuccessfulProbeTimestamp = observedAt
         val cur = _pingMs.value
         val clamped = newRtt.coerceIn(1L, 9999L)
         _pingMs.value = if (cur <= 0L) {
@@ -80,42 +92,4 @@ object NetworkPingMonitor {
         }
     }
 
-    private fun measureRealtimePing(): Long {
-        // Fast probe 1: TCP handshake to high-availability Google DNS (port 53)
-        val socketStart = System.nanoTime()
-        val socket = Socket()
-        try {
-            socket.tcpNoDelay = true
-            socket.connect(InetSocketAddress("8.8.8.8", 53), 1200)
-            val elapsedMs = (System.nanoTime() - socketStart) / 1_000_000L
-            return elapsedMs.coerceAtLeast(1L)
-        } catch (_: Exception) {
-            // Socket connect failed; try HTTP generate_204 fallback
-        } finally {
-            try {
-                socket.close()
-            } catch (_: Exception) {}
-        }
-
-        // Fast probe 2: HTTP HEAD to connectivity check endpoint
-        val httpStart = System.nanoTime()
-        try {
-            val request = Request.Builder()
-                .url("https://connectivitycheck.gstatic.com/generate_204")
-                .head()
-                .build()
-
-            NetworkConfig.httpClient.newCall(request).execute().use { response ->
-                if (response.isSuccessful) {
-                    val elapsedMs = (System.nanoTime() - httpStart) / 1_000_000L
-                    return elapsedMs.coerceAtLeast(1L)
-                }
-            }
-        } catch (_: Exception) {
-            // Complete network unreachable / timeout
-            return 0L
-        }
-
-        return 0L
-    }
 }

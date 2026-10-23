@@ -55,6 +55,18 @@ object ActionCooldownManager {
         return if (remaining > 0) remaining else 0
     }
 
+    // Reuse the established 15-second social cooldown. Separate keys make a fresh
+    // available friend's Invite immediately usable after sending a Request.
+    private val playRequestCooldowns = mutableStateMapOf<String, Long>()
+    fun startPlayRequestCooldown(username: String) {
+        val key = username.trim().lowercase().removePrefix("@")
+        val expiry = System.currentTimeMillis() + COOLDOWN_DURATION_MS
+        playRequestCooldowns[key] = expiry
+        scope.launch { delay(COOLDOWN_DURATION_MS); if (playRequestCooldowns[key] == expiry) playRequestCooldowns.remove(key) }
+    }
+    fun isPlayRequestOnCooldown(username: String): Boolean =
+        (playRequestCooldowns[username.trim().lowercase().removePrefix("@")] ?: 0L) > System.currentTimeMillis()
+
     // ── Friend Request Cooldowns ──
     fun startFriendRequestCooldown(username: String, durationMs: Long = COOLDOWN_DURATION_MS) {
         val clean = username.trim().lowercase().removePrefix("@")

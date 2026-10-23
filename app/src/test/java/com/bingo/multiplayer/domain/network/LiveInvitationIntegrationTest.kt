@@ -22,43 +22,79 @@ class LiveInvitationIntegrationTest {
         val invite = GameInvite("qa_sender", "Owned QA sender", roomCode = "QA4812",
             timestamp = now, eventId = "qa-live-" + UUID.randomUUID(), recipientUsername = recipient,
             senderUid = "qa-sender", expiresAt = now + 120_000L)
-        val cleaner = MqttAsyncClient(NetworkConfig.BROKER_URL, "qa-inv-clean-" + UUID.randomUUID().toString().take(8), MemoryPersistence())
+        val publisher = EmqxConnection("qa-inv-pub-" + UUID.randomUUID())
+        var subscriber = EmqxConnection("qa-inv-sub-" + UUID.randomUUID())
         var listener: AutoCloseable? = null
+        val topics = mutableListOf<String>()
+        suspend fun awaitListener() {
+            withTimeout(12_000L) {
+                while (!subscriber.hasSubscription("bingo/emqx7/social/request/$recipient/+") || !subscriber.isHealthy) delay(10L)
+            }
+        }
+        var failure: Throwable? = null
         try {
             GameInviteManager.clearForegroundInvite()
-            listener = GameInviteManager.startInviteListener(recipient) {}
-            val live = async(start = CoroutineStart.UNDISPATCHED) {
-                withTimeout(15_000L) { GameInviteManager.foregroundInviteFlow.first { it.eventId == invite.eventId } }
+            listener = GameInviteManager.listen(recipient, subscriber) {}
+            val healthy = publisher.awaitHealthy(12_000L)
+            assertTrue("Publisher EMQX health failed: ${publisher.diagnostics}", healthy); awaitListener()
+            val elapsed = mutableListOf<Long>()
+            for (index in 0 until 5) {
+                val payload = if (index == 0) invite else invite.copy(eventId = "qa-live-" + UUID.randomUUID())
+                topics += "bingo/emqx7/social/invite/$recipient/${payload.eventId}"
+                val live = async(start = CoroutineStart.UNDISPATCHED) {
+                    withTimeout(5_000L) { GameInviteManager.foregroundInviteFlow.first { it.eventId == payload.eventId } }
+                }
+                val begin = System.nanoTime()
+                GameInviteManager.publishMqttInviteAwaited(recipient, payload, publisher)
+                val ackMillis = (System.nanoTime() - begin) / 1_000_000L
+                val received = live.await()
+                val receiptMillis = (System.nanoTime() - begin) / 1_000_000L
+                elapsed += receiptMillis
+                assertEquals(payload.eventId, received.eventId)
+                assertEquals(payload.roomCode, received.roomCode)
+                assertTrue(NotificationPolicy.eligible(received.copy(recipientUid = account.uid).toEvent(), account, System.currentTimeMillis()))
+                println("INVITATION sample=$index publisher_to_puback_ms=$ackMillis publisher_to_recipient_flow_ms=$receiptMillis ui_not_measured=true")
+                assertTrue("Warm actual publisher -> recipient flow should be near immediate", receiptMillis < 1500L)
             }
-            GameInviteManager.publishMqttInvite(recipient, invite)
-            val received = live.await()
-            assertEquals(invite.eventId, received.eventId)
-            assertEquals(invite.roomCode, received.roomCode)
-            assertTrue(NotificationPolicy.eligible(received.copy(recipientUid = account.uid).toEvent(), account, System.currentTimeMillis()))
-            println("PASS actual invitation publisher -> private broker -> production listener -> foreground flow")
-
-            listener.close()
+            listener.close(); subscriber.close()
             GameInviteManager.clearForegroundInvite()
             val retained = async(start = CoroutineStart.UNDISPATCHED) {
                 withTimeout(15_000L) { GameInviteManager.foregroundInviteFlow.first { it.eventId == invite.eventId } }
             }
-            listener = GameInviteManager.startInviteListener(recipient) {}
+            val reconnectBegin = System.nanoTime()
+            subscriber = EmqxConnection("qa-inv-reconnect-" + UUID.randomUUID())
+            listener = GameInviteManager.listen(recipient, subscriber) {}
             assertEquals(invite, retained.await())
-            println("PASS retained invitation reaches a newly connected production listener")
-        } finally {
-            listener?.close()
+            println("INVITATION reconnect_to_retained_recipient_flow_ms=${(System.nanoTime() - reconnectBegin) / 1_000_000L} ui_not_measured=true")
+            awaitListener()
+
+            val request = invite.copy(eventId = "qa-request-" + UUID.randomUUID(), isPlayRequest = true, roomCode = "")
+            val receipt = async(start = CoroutineStart.UNDISPATCHED) {
+                withTimeout(5000L) { GameInviteManager.playRequestReceipts.first { it.eventId == request.eventId } }
+            }
+            GameInviteManager.clearForegroundInvite()
+            GameInviteManager.publishMqttInviteAwaited(recipient, request, publisher)
+            assertEquals(request, receipt.await())
+            assertNull("A Request never stages the invitation popup", GameInviteManager.stagedInvite)
+            listener.close(); subscriber.close()
+            val requestReplay = async(start = CoroutineStart.UNDISPATCHED) {
+                withTimeoutOrNull(2500L) { GameInviteManager.playRequestReceipts.first { it.eventId == request.eventId } }
+            }
+            subscriber = EmqxConnection("qa-req-reconnect-" + UUID.randomUUID())
+            listener = GameInviteManager.listen(recipient, subscriber) {}
+            awaitListener()
+            assertNull("Requests are not retained or delivered after reconnect", requestReplay.await())
+            println("PASS request receipt uses transient EMQX, creates no invite, and does not replay after reconnect; Android Toast not measured")
+        } catch (error: Throwable) { failure = error; throw error }
+        finally {
+            listener?.close(); subscriber.close()
             GameInviteManager.clearForegroundInvite()
             try {
-                cleaner.connect(MqttConnectOptions().apply {
-                    isCleanSession = true; connectionTimeout = 5; NetworkConfig.applyMqttOptions(this)
-                }).waitForCompletion(7_000L)
-                cleaner.publish("bingo/v3/invites/$recipient", MqttMessage(ByteArray(0)).apply {
-                    qos = 1; isRetained = true
-                }).waitForCompletion(4_000L)
-            } finally {
-                runCatching { cleaner.disconnectForcibly(0L, 50L) }
-                runCatching { cleaner.close(true) }
-            }
+                check(publisher.awaitHealthy(10_000L)) { "Owned invitation cleanup connection unavailable" }
+                for (topic in topics) publisher.publish(topic, ByteArray(0), retained = true)
+            } catch (cleanup: Throwable) {
+                if (failure != null) failure.addSuppressed(cleanup) else throw cleanup
+            } finally { publisher.close() }
         }
     }
 }

@@ -81,6 +81,9 @@ class LanDiscoveryManager(
     private var tcpProbeJob: Job? = null
     private var tcpServerJob: Job? = null
     private var cleanupJob: Job? = null
+    private var broadcastCleanupJob: Job? = null
+    private var discoveryCleanupJob: Job? = null
+    @Volatile private var activeTcpSocket: Socket? = null
 
     private var sharedUdpSocket: DatagramSocket? = null
     private var tcpServerSocket: ServerSocket? = null
@@ -90,6 +93,8 @@ class LanDiscoveryManager(
 
     private var isBroadcasting = false
     private var isDiscovering = false
+    val isBroadcastingActive: Boolean get() = isBroadcasting
+    val isDiscoveringActive: Boolean get() = isDiscovering
     private var localPlayerId: String? = null
     private var currentBroadcastingRoomCode: String? = null
     private var currentBroadcastGameInfo: LanDiscoveredGame? = null
@@ -192,20 +197,25 @@ class LanDiscoveryManager(
             releaseMulticastLock()
         }
 
-        scope.launch(Dispatchers.IO) {
-            try {
-                if (codeToClear != null && mqttPublisherClient?.isConnected == true) {
-                    val topic = "bingo/v4/lan_hosts/$codeToClear"
-                    val emptyMsg = MqttMessage(ByteArray(0)).apply {
-                        qos = 1
-                        isRetained = false
-                    }
-                    mqttPublisherClient?.publish(topic, emptyMsg)?.waitForCompletion(1000L)
-                }
-                mqttPublisherClient?.disconnect()
-                mqttPublisherClient?.close()
-            } catch (_: Exception) {}
+        if (!PresenceManager.networkEnabled || EmqxTransport.wireOverride != null) {
             mqttPublisherClient = null
+        } else {
+            val retiredPublisher = mqttPublisherClient
+            mqttPublisherClient = null
+            broadcastCleanupJob = scope.launch(Dispatchers.IO) {
+                try {
+                    if (codeToClear != null && retiredPublisher?.isConnected == true) {
+                        val topic = "bingo/v4/lan_hosts/$codeToClear"
+                        val emptyMsg = MqttMessage(ByteArray(0)).apply {
+                            qos = 1
+                            isRetained = false
+                        }
+                        retiredPublisher.publish(topic, emptyMsg).waitForCompletion(1000L)
+                    }
+                } catch (_: Exception) {} finally {
+                    MqttClientShutdown.close(retiredPublisher)
+                }
+            }
         }
     }
 
@@ -249,16 +259,21 @@ class LanDiscoveryManager(
                     if (!isActive || !isDiscovering) break
                     try {
                         val socket = Socket()
-                        socket.connect(InetSocketAddress(targetIp, tcpPort), 300)
-                        socket.soTimeout = 600
-                        val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
-                        val line = reader.readLine()
-                        socket.close()
-                        if (!line.isNullOrBlank() && line.contains("\"hostId\"")) {
-                            val game = json.decodeFromString<LanDiscoveredGame>(line)
-                            val resolvedGame = game.copy(hostIp = targetIp)
-                            onGameDiscovered(resolvedGame)
-                            Log.d("LanDiscovery", "Discovered game via TCP 9877 from $targetIp: ${game.roomCode}")
+                        activeTcpSocket = socket
+                        try {
+                            socket.connect(InetSocketAddress(targetIp, tcpPort), 300)
+                            socket.soTimeout = 600
+                            val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
+                            val line = reader.readLine()
+                            if (!line.isNullOrBlank() && line.contains("\"hostId\"")) {
+                                val game = json.decodeFromString<LanDiscoveredGame>(line)
+                                val resolvedGame = game.copy(hostIp = targetIp)
+                                onGameDiscovered(resolvedGame)
+                                Log.d("LanDiscovery", "Discovered game via TCP 9877 from $targetIp: ${game.roomCode}")
+                            }
+                        } finally {
+                            try { socket.close() } catch (_: Exception) {}
+                            activeTcpSocket = null
                         }
                     } catch (_: Exception) {}
                 }
@@ -292,20 +307,48 @@ class LanDiscoveryManager(
         cleanupJob?.cancel()
         cleanupJob = null
 
+        activeTcpSocket?.let {
+            try { it.close() } catch (_: Exception) {}
+            activeTcpSocket = null
+        }
+
         if (!isBroadcasting) {
             stopUdpReceiver()
             releaseMulticastLock()
         }
 
-        scope.launch(Dispatchers.IO) {
-            try {
-                mqttSubscriberClient?.disconnect()
-                mqttSubscriberClient?.close()
-            } catch (_: Exception) {}
+        if (!PresenceManager.networkEnabled || EmqxTransport.wireOverride != null) {
             mqttSubscriberClient = null
+        } else {
+            val retiredSubscriber = mqttSubscriberClient
+            mqttSubscriberClient = null
+            discoveryCleanupJob = scope.launch(Dispatchers.IO) {
+                MqttClientShutdown.close(retiredSubscriber)
+            }
         }
         gamesCache.clear()
         _discoveredGames.value = emptyList()
+    }
+
+    suspend fun awaitTermination() {
+        activeTcpSocket?.let {
+            try { it.close() } catch (_: Exception) {}
+            activeTcpSocket = null
+        }
+        broadcastJob?.cancelAndJoin()
+        broadcastJob = null
+        tcpProbeJob?.cancelAndJoin()
+        tcpProbeJob = null
+        udpProbeJob?.cancelAndJoin()
+        udpProbeJob = null
+        cleanupJob?.cancelAndJoin()
+        cleanupJob = null
+        broadcastCleanupJob?.join()
+        broadcastCleanupJob = null
+        discoveryCleanupJob?.join()
+        discoveryCleanupJob = null
+        stopUdpReceiver()
+        releaseMulticastLock()
     }
 
     /**
@@ -577,6 +620,7 @@ class LanDiscoveryManager(
     }
 
     private fun publishMqttBroadcast(game: LanDiscoveredGame) {
+        if (!PresenceManager.networkEnabled || EmqxTransport.wireOverride != null) return
         val client = mqttPublisherClient ?: return
         if (!client.isConnected) return
         try {
@@ -591,7 +635,9 @@ class LanDiscoveryManager(
     }
 
     private fun startMqttPublisher(game: LanDiscoveredGame) {
+        if (!PresenceManager.networkEnabled || EmqxTransport.wireOverride != null) return
         scope.launch(Dispatchers.IO) {
+            if (!PresenceManager.networkEnabled || EmqxTransport.wireOverride != null) return@launch
             try {
                 val clientId = "lan_host_${UUID.randomUUID().toString().take(8)}"
                 val client = MqttAsyncClient(brokerUrl, clientId, MemoryPersistence())
@@ -611,7 +657,9 @@ class LanDiscoveryManager(
     }
 
     private fun startMqttSubscriber() {
+        if (!PresenceManager.networkEnabled || EmqxTransport.wireOverride != null) return
         scope.launch(Dispatchers.IO) {
+            if (!PresenceManager.networkEnabled || EmqxTransport.wireOverride != null) return@launch
             try {
                 val clientId = "lan_disc_${UUID.randomUUID().toString().take(8)}"
                 val client = MqttAsyncClient(brokerUrl, clientId, MemoryPersistence())

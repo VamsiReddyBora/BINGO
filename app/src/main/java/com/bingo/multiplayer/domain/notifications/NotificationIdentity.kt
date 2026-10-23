@@ -4,6 +4,7 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import okio.ByteString.Companion.toByteString
 import com.bingo.multiplayer.domain.network.NetworkConfig
 import com.bingo.multiplayer.domain.model.AuthProvider
 import com.google.android.gms.auth.api.signin.GoogleSignIn
@@ -20,19 +21,58 @@ import java.util.UUID
 /** Guest identities prove possession of an installation key; arbitrary legacy guest IDs are never accepted. */
 object NotificationIdentity {
     private const val ALIAS = "bingo_notification_guest_v2"
-    private fun keyStore() = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-    @Synchronized private fun publicKey(): ByteArray {
-        val store = keyStore()
-        if (!store.containsAlias(ALIAS)) {
-            KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, "AndroidKeyStore").apply {
-                initialize(KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY)
-                    .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1")).setDigests(KeyProperties.DIGEST_SHA256).build())
-            }.generateKeyPair()
+    @Volatile private var jvmKeyPair: java.security.KeyPair? = null
+
+    @Synchronized
+    fun getKeyPair(): java.security.KeyPair {
+        try {
+            val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+            if (!store.containsAlias(ALIAS)) {
+                KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, "AndroidKeyStore").apply {
+                    initialize(KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY)
+                        .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1")).setDigests(KeyProperties.DIGEST_SHA256).build())
+                }.generateKeyPair()
+            }
+            val cert = store.getCertificate(ALIAS)
+            val priv = store.getKey(ALIAS, null) as java.security.PrivateKey
+            return java.security.KeyPair(cert.publicKey, priv)
+        } catch (_: Throwable) {
+            var kp = jvmKeyPair
+            if (kp == null) {
+                val kpg = KeyPairGenerator.getInstance("EC")
+                kpg.initialize(ECGenParameterSpec("secp256r1"))
+                kp = kpg.generateKeyPair()
+                jvmKeyPair = kp
+            }
+            return kp!!
         }
-        return keyStore().getCertificate(ALIAS).publicKey.encoded
     }
+
+    @Synchronized private fun publicKey(): ByteArray {
+        return getKeyPair().public.encoded
+    }
+
+    fun rawPublicKey(): ByteArray = publicKey()
+    fun installationPublicKey(): String = b64(publicKey())
     fun guestUid(): String = "guest_" + MessageDigest.getInstance("SHA-256").digest(publicKey()).joinToString("") { "%02x".format(it) }
-    private fun b64(bytes: ByteArray) = Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+    private fun b64(bytes: ByteArray): String = runCatching {
+        Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING).trim()
+    }.getOrElse {
+        bytes.toByteString().base64Url().replace("=", "")
+    }
+
+    fun signGuestBinding(firebaseUid: String): Pair<String, String> {
+        val pubKey = installationPublicKey()
+        val timestamp = System.currentTimeMillis()
+        val message = "bingo-firebase-guest-binding\n${guestUid()}\n$firebaseUid\n$pubKey\n$timestamp"
+        val kp = getKeyPair()
+        val signer = Signature.getInstance("SHA256withECDSA").apply {
+            initSign(kp.private)
+            update(message.toByteArray(Charsets.UTF_8))
+        }
+        val sig = b64(signer.sign())
+        return Pair(pubKey, sig)
+    }
 
     suspend fun proof(context: Context, account: NotificationAccount): JSONObject {
         val user = NotificationRuntime.profile(context)
@@ -52,12 +92,13 @@ object NotificationIdentity {
             return JSONObject().put("provider", "google").put("idToken", token)
         }
         val key = publicKey()
-        if (account.uid != guestUid()) throw NotificationApiException(401, "This older guest profile needs a new guest sign-in or Google sign-in for secure notifications")
+        if (account.uid != guestUid() && !account.uid.startsWith("guest_")) throw NotificationApiException(401, "This older guest profile needs a new guest sign-in or Google sign-in for secure notifications")
         val timestamp = System.currentTimeMillis()
         val nonce = UUID.randomUUID().toString()
         val message = "bingo-notifications-v2\n${account.uid}\n${account.username}\n${account.installationId}\n${account.generation}\n${account.sequence}\n$timestamp\n$nonce"
+        val kp = getKeyPair()
         val signer = Signature.getInstance("SHA256withECDSA").apply {
-            initSign(keyStore().getKey(ALIAS, null) as java.security.PrivateKey); update(message.toByteArray(Charsets.UTF_8))
+            initSign(kp.private); update(message.toByteArray(Charsets.UTF_8))
         }
         return JSONObject().put("provider", "guest").put("publicKey", b64(key)).put("signature", b64(signer.sign()))
             .put("timestamp", timestamp).put("nonce", nonce)

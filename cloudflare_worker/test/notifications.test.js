@@ -392,21 +392,64 @@ test("Legacy username owner must match verified account", async () => {
   );
   assert.equal(r.status, 403);
 });
-test("Only actual waiting room host may invite", async () => {
-  const { instance: i } = setup(),
-    s = await enroll(i);
-  assert.equal((await call(i, s, "/v2/events", input())).status, 403);
-  room(s);
+test("Authenticated lobby members can notify without an HTTP host record", async () => {
+  const { instance: i } = setup(), s = await enroll(i);
   assert.equal((await call(i, s, "/v2/events", input())).status, 202);
-  legacy.set("room_ABC123", {
-    hostId: "other",
-    hostUsername: "other",
-    status: "WAITING",
-  });
-  assert.equal(
-    (await call(i, s, "/v2/events", input("GAME_INVITE", "other"))).status,
-    403,
-  );
+  legacy.set("room_ABC123", { hostId: "other", hostUsername: "other", status: "WAITING" });
+  assert.equal((await call(i, s, "/v2/events", input("GAME_INVITE", "other"))).status, 202);
+});
+test("MQTT-only room invitation push does not require an HTTP room mirror", async () => {
+  const { instance: i } = setup();
+  const s = await enroll(i), t = await enroll(i, targetIdentity());
+  // Neither a legacy room nor an HTTP room metadata record exists.
+  const response = await call(i, s, "/v2/events", input("GAME_INVITE", "mqtt-only"));
+  assert.equal(response.status, 202, await response.clone().text());
+  await i.alarm();
+  assert.equal(pushes.length, 1);
+  const sent = JSON.parse(pushes[0].message.data.event);
+  assert.equal(sent.id, "mqtt-only");
+  assert.equal(sent.roomCode, "ABC123");
+  assert.equal((await inbox(i, t))[0].id, "mqtt-only");
+});
+test("Push and MQTT invitation retain the same room session", async () => {
+  const { instance: i } = setup();
+  const s = await enroll(i), t = await enroll(i, targetIdentity());
+  room(s);
+  const body = { ...input(), roomSessionId: "friendly-room-session" };
+  const response = await call(i, s, "/v2/events", body);
+  assert.equal(response.status, 202, await response.clone().text());
+  assert.equal((await inbox(i, t))[0].roomSessionId, body.roomSessionId);
+  await i.alarm();
+  assert.equal(JSON.parse(pushes[0].message.data.event).roomSessionId, body.roomSessionId);
+  const conflict = await call(i, s, "/v2/events", { ...body, roomSessionId: "different-session" });
+  assert.equal(conflict.status, 409);
+});
+test("Firebase-backed notification enrollment survives a legacy directory outage", async () => {
+  const storage = new Storage();
+  const i = new NotificationInbox({ storage }, { ...env, FIREBASE_PROJECT_ID: "test-project" });
+  const previous = fetch; let legacyReads = 0;
+  globalThis.fetch = async (url, options) => {
+    const host = new URL(url).hostname;
+    if (host === "legacy.invalid") { legacyReads++; return new Response("", { status: 503 }); }
+    if (host === "firestore.googleapis.com") {
+      const name = url.endsWith("google_123456") ? "bob" : "stuart";
+      return Response.json({ fields: { username: { stringValue: name } } });
+    }
+    return previous(url, options);
+  };
+  const s = await enroll(i); await enroll(i, targetIdentity());
+  assert.equal((await call(i, s, "/v2/events", input())).status, 202);
+  assert.equal(legacyReads, 0);
+  await i.alarm(); assert.equal(pushes.length, 1);
+});
+test("Firebase directory failure retries enrollment without accepting a mismatched profile", async () => {
+  const storage = new Storage();
+  const i = new NotificationInbox({ storage }, { ...env, FIREBASE_PROJECT_ID: "test-project" });
+  globalThis.fetch = async () => new Response("", { status: 503 });
+  const enrollRequest = () => new Request("https://internal/internal/enroll", { method: "POST", body: JSON.stringify(identity()) });
+  assert.equal((await i.fetch(enrollRequest())).status, 503);
+  globalThis.fetch = async () => Response.json({ fields: { username: { stringValue: "someoneelse" } } });
+  assert.equal((await i.fetch(enrollRequest())).status, 403);
 });
 test("Concurrent invitation writes preserve all distinct events", async () => {
   const { instance: i } = setup(),
@@ -591,7 +634,7 @@ test("Acknowledged jobs are discarded without FCM", async () => {
   await i.alarm();
   assert.equal(pushes.length, 0);
 });
-test("Failed legacy read never replaces existing inbox", async () => {
+test("Legacy directory outage does not block invitation push or erase existing inbox", async () => {
   const { instance: i } = setup(),
     s = await enroll(i),
     t = await enroll(i, targetIdentity());
@@ -605,9 +648,9 @@ test("Failed legacy read never replaces existing inbox", async () => {
   assert.equal(
     (await call(i, s, "/v2/events", input("GAME_INVITE", "failed-read")))
       .status,
-    503,
+    202,
   );
-  assert.equal((await inbox(i, t)).length, 1);
+  assert.equal((await inbox(i, t)).length, 2);
 });
 test("Legacy migration decoding supports raw and base64 JSON", async () => {
   const e = { uid: "google_123456" };

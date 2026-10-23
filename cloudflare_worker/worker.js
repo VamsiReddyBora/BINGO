@@ -5,7 +5,8 @@ import {
   requireThat,
   digest,
 } from "./protocol.js";
-import { verifyIdentity } from "./auth.js";
+import { verifyIdentity, verifyGuestBinding } from "./auth.js";
+import { createCustomToken } from "./fcm.js";
 export { NotificationInbox } from "./inbox.js";
 
 export default {
@@ -91,6 +92,32 @@ export default {
             body: JSON.stringify(identity),
           }),
         );
+      }
+      if (
+        url.pathname === "/v2/auth/firebase-guest-binding" &&
+        request.method === "POST"
+      ) {
+        const body = await readBody(request);
+        const binding = await verifyGuestBinding(body, env);
+        const nonceRes = await store.fetch(
+          new Request("https://internal/internal/guest-binding-nonce", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ uid: binding.guestUid, nonce: binding.nonce }),
+          }),
+        );
+        if (!nonceRes.ok) return nonceRes;
+        const customToken = env.SERVICE_ACCOUNT_JSON
+          ? await createCustomToken(env.SERVICE_ACCOUNT_JSON, binding.guestUid, {
+              guest_uid: binding.guestUid,
+            })
+          : null;
+        return response({
+          ok: true,
+          guestUid: binding.guestUid,
+          firebaseUid: binding.firebaseUid,
+          customToken,
+        });
       }
       return store.fetch(request);
     } catch (e) {

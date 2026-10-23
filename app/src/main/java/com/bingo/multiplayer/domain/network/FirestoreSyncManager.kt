@@ -11,6 +11,7 @@ import com.bingo.multiplayer.domain.model.UserProfile
 import com.bingo.multiplayer.domain.model.UserSettings
 import com.bingo.multiplayer.domain.repository.FriendsBackup
 import com.bingo.multiplayer.domain.repository.friendKeys
+import com.bingo.multiplayer.domain.repository.AuthRepository
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreSettings
@@ -55,8 +56,43 @@ class FirestoreSyncManager(
     }
 
     private var profileListenerRegistration: ListenerRegistration? = null
+    private var privateSettingsListenerRegistration: ListenerRegistration? = null
+    private var privateAccountListenerRegistration: ListenerRegistration? = null
 
     // ── 1. USER PROFILE & THEME SETTINGS SYNC ──
+
+    internal fun friendDocuments(): FriendDocuments = FirestoreFriendDocuments(firestore)
+
+    private fun publicAvatarFor(user: UserProfile): String? = publicProfileAvatar(
+        user, AuthRepository.activeInstance?.getPersistedUserSync())
+
+    internal fun watchAvatar(username: String, changed: (ProfileAvatar) -> Unit): AutoCloseable {
+        // Indexed name lookup works equally for friends, search results and unknown players;
+        // it cannot get stuck watching an obsolete UID from a screen's cached model.
+        val listener = firestore.collection(COLLECTION_USERS).whereEqualTo("username", username).limit(1)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null || snapshot == null) return@addSnapshotListener
+                val document = snapshot.documents.firstOrNull()
+                if (document == null) {
+                    if (!snapshot.metadata.isFromCache) changed(ProfileAvatar(null))
+                } else if (document.contains("avatarUrl")) {
+                    changed(ProfileAvatar(document.getString("avatarUrl")
+                        ?.takeIf { it.isNotBlank() && !isLocalFilePath(it) }))
+                }
+            }
+        return AutoCloseable { listener.remove() }
+    }
+
+    /** Public profile lookup also works for somebody outside the current friends list. */
+    internal suspend fun findPlayerByUsername(username: String): PlayerRegistryEntry? =
+        kotlinx.coroutines.withTimeoutOrNull(2500L) {
+            try {
+                val document = firestore.collection(COLLECTION_USERS).whereEqualTo("username", username).limit(1)
+                    .get().await().documents.firstOrNull() ?: return@withTimeoutOrNull null
+                fetchPlayerProfile(document.id)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (_: Exception) { null }
+        }
 
     /**
      * Uploads the full user profile and settings to Firestore: `users/{uid}`.
@@ -67,12 +103,13 @@ class FirestoreSyncManager(
         scope.launch {
             try {
                 val userDocRef = firestore.collection(COLLECTION_USERS).document(user.uid)
-                val payload = hashMapOf<String, Any?>(
+                // Public profile projection contains only permitted non-sensitive fields.
+                // Explicitly delete email and settings from public doc to migrate existing mixed records.
+                val publicPayload = hashMapOf<String, Any?>(
                     "uid" to user.uid,
-                    "username" to user.username,
+                    "username" to user.username.trim().lowercase().removePrefix("@"),
                     "displayName" to user.displayName,
-                    "email" to user.email,
-                    "avatarUrl" to (user.avatarBase64 ?: user.avatarUrl),
+                    "avatarUrl" to publicAvatarFor(user),
                     "provider" to user.provider.name,
                     "gamesPlayed" to user.gamesPlayed,
                     "gamesWon" to user.gamesWon,
@@ -82,32 +119,28 @@ class FirestoreSyncManager(
                     "xp" to user.xp,
                     "lastSeenTimestamp" to FieldValue.serverTimestamp(),
                     "appVersion" to user.appVersion,
-                    "settings" to hashMapOf(
-                        "soundEnabled" to settings.soundEnabled,
-                        "hapticsEnabled" to settings.hapticsEnabled,
-                        "pickSoundPresetId" to settings.pickSoundPresetId,
-                        "preferredBoardSize" to settings.preferredBoardSize,
-                        "darkTheme" to settings.darkTheme,
-                        "accentColorId" to settings.accentColorId,
-                        "customAccentHex" to settings.customAccentHex,
-                        "customMyPickHex" to settings.customMyPickHex,
-                        "customOpponentPickHex" to settings.customOpponentPickHex,
-                        "customRecentPickHex" to settings.customRecentPickHex,
-                        "customCompletedLineHex" to settings.customCompletedLineHex,
-                        "cellBorderEnabled" to settings.cellBorderEnabled,
-                        "cellBorderColorHex" to settings.cellBorderColorHex,
-                        "isLiquidMetalTheme" to settings.isLiquidMetalTheme,
-                        "systemNotificationsEnabled" to settings.systemNotificationsEnabled,
-                        "playerOnlineNotificationsEnabled" to settings.playerOnlineNotificationsEnabled,
-                        "playerInvitesNotificationsEnabled" to settings.playerInvitesNotificationsEnabled,
-                        "inAppNotificationsEnabled" to settings.inAppNotificationsEnabled,
-                        "inAppPlayerOnlineEnabled" to settings.inAppPlayerOnlineEnabled,
-                        "inAppPlayerInvitesEnabled" to settings.inAppPlayerInvitesEnabled
-                    )
+                    "email" to FieldValue.delete(),
+                    "settings" to FieldValue.delete()
                 )
+                val myKey = com.bingo.multiplayer.domain.network.AccountKeyStore.getPublicKeyBase64(user.uid)
+                com.bingo.multiplayer.domain.network.AccountKeyStore.recordAuthoritativeKey(user.uid, myKey)
+                val currentFirebaseUid = runCatching { com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid }.getOrNull()
+                if (!currentFirebaseUid.isNullOrBlank()) {
+                    publicPayload["firebaseUid"] = currentFirebaseUid
+                    if (user.uid.startsWith("guest_")) {
+                        runCatching {
+                            val (pubKey, sig) = com.bingo.multiplayer.domain.notifications.NotificationIdentity.signGuestBinding(currentFirebaseUid)
+                            publicPayload["installationPublicKey"] = pubKey
+                            publicPayload["installationSignature"] = sig
+                            val rawPub = com.bingo.multiplayer.domain.notifications.NotificationIdentity.rawPublicKey()
+                            publicPayload["installationPublicKeyBlob"] = com.google.firebase.firestore.Blob.fromBytes(rawPub)
+                        }
+                    } else if (myKey.isNotBlank()) {
+                        publicPayload["installationPublicKey"] = myKey
+                    }
+                }
 
-                userDocRef.set(payload, SetOptions.merge()).await()
-                Log.d(TAG, "Successfully synced user profile and settings to Firestore for uid: ${user.uid}")
+                userDocRef.set(publicPayload, SetOptions.merge()).await()
 
                 // Claim / index username if present
                 if (user.username.isNotBlank()) {
@@ -123,16 +156,75 @@ class FirestoreSyncManager(
                             SetOptions.merge()
                         ).await()
                 }
+
+                // Save private settings in owner-only /private/settings subcollection
+                val settingsPayload = hashMapOf<String, Any?>(
+                    "soundEnabled" to settings.soundEnabled,
+                    "hapticsEnabled" to settings.hapticsEnabled,
+                    "pickSoundPresetId" to settings.pickSoundPresetId,
+                    "preferredBoardSize" to settings.preferredBoardSize,
+                    "darkTheme" to settings.darkTheme,
+                    "accentColorId" to settings.accentColorId,
+                    "customAccentHex" to settings.customAccentHex,
+                    "customMyPickHex" to settings.customMyPickHex,
+                    "customOpponentPickHex" to settings.customOpponentPickHex,
+                    "customRecentPickHex" to settings.customRecentPickHex,
+                    "customCompletedLineHex" to settings.customCompletedLineHex,
+                    "cellBorderEnabled" to settings.cellBorderEnabled,
+                    "cellBorderColorHex" to settings.cellBorderColorHex,
+                    "isLiquidMetalTheme" to settings.isLiquidMetalTheme,
+                    "systemNotificationsEnabled" to settings.systemNotificationsEnabled,
+                    "playerOnlineNotificationsEnabled" to settings.playerOnlineNotificationsEnabled,
+                    "playerInvitesNotificationsEnabled" to settings.playerInvitesNotificationsEnabled,
+                    "inAppNotificationsEnabled" to settings.inAppNotificationsEnabled,
+                    "inAppPlayerOnlineEnabled" to settings.inAppPlayerOnlineEnabled,
+                    "inAppPlayerInvitesEnabled" to settings.inAppPlayerInvitesEnabled
+                )
+                userDocRef.collection("private").document("settings")
+                    .set(settingsPayload, SetOptions.merge()).await()
+
+                if (!user.email.isNullOrBlank()) {
+                    userDocRef.collection("private").document("account")
+                        .set(mapOf("email" to user.email), SetOptions.merge()).await()
+                }
+
+                Log.d(TAG, "Successfully synced user profile and private settings to Firestore for uid: ${user.uid}")
+
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to sync user profile to Firestore: ${e.message}")
             }
         }
     }
 
+    private fun parseSettings(settingsMap: Map<String, Any?>): UserSettings {
+        return UserSettings(
+            soundEnabled = settingsMap["soundEnabled"] as? Boolean ?: true,
+            hapticsEnabled = settingsMap["hapticsEnabled"] as? Boolean ?: true,
+            pickSoundPresetId = settingsMap["pickSoundPresetId"] as? String ?: "classic_pop",
+            preferredBoardSize = (settingsMap["preferredBoardSize"] as? Long)?.toInt() ?: 5,
+            darkTheme = settingsMap["darkTheme"] as? Boolean ?: com.bingo.multiplayer.core.designsystem.ThemePreferences.isDarkTheme.value,
+            accentColorId = settingsMap["accentColorId"] as? String ?: "matte_slate",
+            customAccentHex = settingsMap["customAccentHex"] as? String ?: "#64748B",
+            customMyPickHex = settingsMap["customMyPickHex"] as? String,
+            customOpponentPickHex = settingsMap["customOpponentPickHex"] as? String,
+            customRecentPickHex = settingsMap["customRecentPickHex"] as? String,
+            customCompletedLineHex = settingsMap["customCompletedLineHex"] as? String,
+            cellBorderEnabled = settingsMap["cellBorderEnabled"] as? Boolean ?: false,
+            cellBorderColorHex = settingsMap["cellBorderColorHex"] as? String ?: "#FFFFFF",
+            isLiquidMetalTheme = settingsMap["isLiquidMetalTheme"] as? Boolean ?: false,
+            systemNotificationsEnabled = settingsMap["systemNotificationsEnabled"] as? Boolean ?: true,
+            playerOnlineNotificationsEnabled = settingsMap["playerOnlineNotificationsEnabled"] as? Boolean ?: true,
+            playerInvitesNotificationsEnabled = settingsMap["playerInvitesNotificationsEnabled"] as? Boolean ?: true,
+            inAppNotificationsEnabled = settingsMap["inAppNotificationsEnabled"] as? Boolean ?: true,
+            inAppPlayerOnlineEnabled = settingsMap["inAppPlayerOnlineEnabled"] as? Boolean ?: true,
+            inAppPlayerInvitesEnabled = settingsMap["inAppPlayerInvitesEnabled"] as? Boolean ?: true
+        )
+    }
+
     /**
-     * Subscribes to real-time changes on the user's Firestore document.
+     * Subscribes to real-time changes on the user's Firestore document and private settings.
      * When remote changes occur (e.g. from another device or cloud admin),
-     * automatically invokes the callback to update local state.
+     * automatically invokes the callback to update local state without emitting defaults on empty schemas.
      */
     fun startRealtimeProfileListener(
         uid: String,
@@ -142,7 +234,23 @@ class FirestoreSyncManager(
         stopRealtimeProfileListener()
 
         try {
+            var currentProfile: UserProfile? = null
+            var currentSettings: UserSettings? = null
+            var privateEmail: String? = null
+
             val userDocRef = firestore.collection(COLLECTION_USERS).document(uid)
+            val settingsDocRef = userDocRef.collection("private").document("settings")
+            val accountDocRef = userDocRef.collection("private").document("account")
+
+            fun notifyIfReady() {
+                val p = currentProfile ?: return
+                val s = currentSettings ?: return
+                val effectiveProfile = if (p.email.isNullOrBlank() && !privateEmail.isNullOrBlank()) {
+                    p.copy(email = privateEmail)
+                } else p
+                onProfileUpdated(effectiveProfile, s)
+            }
+
             profileListenerRegistration = userDocRef.addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     Log.w(TAG, "Profile snapshot listener error: ${error.message}")
@@ -168,7 +276,7 @@ class FirestoreSyncManager(
                         val level = snapshot.getLong("level")?.toInt() ?: 1
                         val xp = snapshot.getLong("xp")?.toInt() ?: 0
 
-                        val profile = UserProfile(
+                        currentProfile = UserProfile(
                             uid = uid,
                             username = username,
                             displayName = displayName,
@@ -185,37 +293,37 @@ class FirestoreSyncManager(
 
                         @Suppress("UNCHECKED_CAST")
                         val settingsMap = snapshot.get("settings") as? Map<String, Any?>
-                        val settings = if (settingsMap != null) {
-                            UserSettings(
-                                soundEnabled = settingsMap["soundEnabled"] as? Boolean ?: true,
-                                hapticsEnabled = settingsMap["hapticsEnabled"] as? Boolean ?: true,
-                                pickSoundPresetId = settingsMap["pickSoundPresetId"] as? String ?: "classic_pop",
-                                preferredBoardSize = (settingsMap["preferredBoardSize"] as? Long)?.toInt() ?: 5,
-                                darkTheme = settingsMap["darkTheme"] as? Boolean ?: com.bingo.multiplayer.core.designsystem.ThemePreferences.isDarkTheme.value,
-                                accentColorId = settingsMap["accentColorId"] as? String ?: "matte_slate",
-                                customAccentHex = settingsMap["customAccentHex"] as? String ?: "#64748B",
-                                customMyPickHex = settingsMap["customMyPickHex"] as? String,
-                                customOpponentPickHex = settingsMap["customOpponentPickHex"] as? String,
-                                customRecentPickHex = settingsMap["customRecentPickHex"] as? String,
-                                customCompletedLineHex = settingsMap["customCompletedLineHex"] as? String,
-                                cellBorderEnabled = settingsMap["cellBorderEnabled"] as? Boolean ?: false,
-                                cellBorderColorHex = settingsMap["cellBorderColorHex"] as? String ?: "#FFFFFF",
-                                isLiquidMetalTheme = settingsMap["isLiquidMetalTheme"] as? Boolean ?: false,
-                                systemNotificationsEnabled = settingsMap["systemNotificationsEnabled"] as? Boolean ?: true,
-                                playerOnlineNotificationsEnabled = settingsMap["playerOnlineNotificationsEnabled"] as? Boolean ?: true,
-                                playerInvitesNotificationsEnabled = settingsMap["playerInvitesNotificationsEnabled"] as? Boolean ?: true,
-                                inAppNotificationsEnabled = settingsMap["inAppNotificationsEnabled"] as? Boolean ?: true,
-                                inAppPlayerOnlineEnabled = settingsMap["inAppPlayerOnlineEnabled"] as? Boolean ?: true,
-                                inAppPlayerInvitesEnabled = settingsMap["inAppPlayerInvitesEnabled"] as? Boolean ?: true
-                            )
-                        } else {
-                            UserSettings()
+                        if (settingsMap != null) {
+                            currentSettings = parseSettings(settingsMap)
                         }
 
-                        onProfileUpdated(profile, settings)
+                        notifyIfReady()
                     } catch (e: Exception) {
                         Log.e(TAG, "Error parsing Firestore profile snapshot: ${e.message}")
                     }
+                }
+            }
+
+            privateSettingsListenerRegistration = settingsDocRef.addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    Log.w(TAG, "Private settings snapshot listener error: ${error.message}")
+                    return@addSnapshotListener
+                }
+                if (snapshot != null && snapshot.exists()) {
+                    if (snapshot.metadata.hasPendingWrites()) return@addSnapshotListener
+                    val data = snapshot.data
+                    if (data != null) {
+                        currentSettings = parseSettings(data)
+                        notifyIfReady()
+                    }
+                }
+            }
+
+            privateAccountListenerRegistration = accountDocRef.addSnapshotListener { snapshot, error ->
+                if (error != null) return@addSnapshotListener
+                if (snapshot != null && snapshot.exists()) {
+                    privateEmail = snapshot.getString("email")
+                    notifyIfReady()
                 }
             }
         } catch (e: Exception) {
@@ -226,6 +334,10 @@ class FirestoreSyncManager(
     fun stopRealtimeProfileListener() {
         profileListenerRegistration?.remove()
         profileListenerRegistration = null
+        privateSettingsListenerRegistration?.remove()
+        privateSettingsListenerRegistration = null
+        privateAccountListenerRegistration?.remove()
+        privateAccountListenerRegistration = null
     }
 
     // ── 2. MATCH HISTORY SYNC ──
@@ -421,36 +533,34 @@ class FirestoreSyncManager(
      * Uploads the player's full friends list into Firestore subcollection `users/{uid}/friends`.
      */
     fun syncFriendsList(uid: String, friends: List<Friend>) {
-        if (uid.isBlank()) return
-        scope.launch {
-            try {
-                val batch = firestore.batch()
-                val friendsColl = firestore.collection(COLLECTION_USERS).document(uid).collection(SUBCOLLECTION_FRIENDS)
+        scope.launch { syncFriendsListConfirmed(uid, friends) }
+    }
 
-                friends.forEach { friend ->
+    /** Success is acknowledged before reconciliation remembers a card as synchronized. */
+    internal suspend fun syncFriendsListConfirmed(uid: String, friends: List<Friend>): Boolean = withContext(Dispatchers.IO) {
+        if (uid.isBlank()) return@withContext false
+        if (friends.isEmpty()) return@withContext true
+        try {
+            for (chunk in friends.chunked(400)) {
+                val batch = firestore.batch()
+                val collection = firestore.collection(COLLECTION_USERS).document(uid).collection(SUBCOLLECTION_FRIENDS)
+                chunk.forEach { friend ->
                     val docId = friend.uid.ifBlank { friend.username.trim().lowercase().removePrefix("@") }
-                    if (docId.isNotBlank()) {
-                        val docRef = friendsColl.document(docId)
-                        val data = hashMapOf(
-                            "uid" to friend.uid,
-                            "username" to friend.username,
-                            "displayName" to friend.displayName,
-                            "avatarUrl" to friend.avatarUrl,
-                            "isOnline" to friend.isOnline,
-                            "lastSeenTimestamp" to friend.lastSeenTimestamp,
-                            "gamesPlayed" to friend.gamesPlayed,
-                            "gamesWon" to friend.gamesWon,
-                            "currentStreak" to friend.currentStreak,
-                            "level" to friend.level
-                        )
-                        batch.set(docRef, data, SetOptions.merge())
-                    }
+                    if (docId.isNotBlank()) batch.set(collection.document(docId), mapOf(
+                        "uid" to friend.uid, "username" to friend.username,
+                        "displayName" to friend.displayName, "avatarUrl" to friend.avatarUrl,
+                        "gamesPlayed" to friend.gamesPlayed, "gamesWon" to friend.gamesWon,
+                        "currentStreak" to friend.currentStreak, "level" to friend.level
+                    ), SetOptions.merge())
                 }
                 batch.commit().await()
-                Log.d(TAG, "Synced ${friends.size} friends to Firestore subcollection for uid $uid")
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to sync friends to Firestore: ${e.message}")
             }
+            true
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to sync friends to Firestore: ${e.message}")
+            false
         }
     }
 
@@ -525,7 +635,7 @@ class FirestoreSyncManager(
             firestore.collection(COLLECTION_USERS).document(uid).collection(SUBCOLLECTION_FRIENDS)
                 .document(docId).set(mapOf(
                     "uid" to friend.uid, "username" to friend.username,
-                    "removed" to true, "removalId" to removalId
+                    "removed" to true, "removalId" to removalId, "removedAt" to System.currentTimeMillis()
                 ), SetOptions.merge()).addOnFailureListener {
                     Log.w(TAG, "Could not back up friend removal: ${it.message}")
                 }
@@ -550,6 +660,10 @@ class FirestoreSyncManager(
                 val currentStreak = snapshot.getLong("currentStreak")?.toInt() ?: 0
                 val bestStreak = snapshot.getLong("bestStreak")?.toInt() ?: currentStreak
                 val level = snapshot.getLong("level")?.toInt() ?: 1
+                val pubKey = snapshot.getString("installationPublicKey") ?: snapshot.getString("publicKey")
+                if (!pubKey.isNullOrBlank()) {
+                    com.bingo.multiplayer.domain.network.AccountKeyStore.recordAuthoritativeKey(uid, pubKey)
+                }
                 return@withContext PlayerRegistryEntry(
                     username = username,
                     uid = uid,
@@ -559,7 +673,8 @@ class FirestoreSyncManager(
                     gamesWon = gamesWon,
                     currentStreak = currentStreak,
                     bestStreak = bestStreak,
-                    level = level
+                    level = level,
+                    publicKey = pubKey
                 )
             }
         } catch (e: Exception) {
@@ -594,6 +709,10 @@ class FirestoreSyncManager(
                         val currentStreak = (doc.get("currentStreak") as? Number)?.toInt() ?: doc.getString("currentStreak")?.toIntOrNull() ?: doc.getLong("currentStreak")?.toInt() ?: 0
                         val bestStreak = (doc.get("bestStreak") as? Number)?.toInt() ?: doc.getString("bestStreak")?.toIntOrNull() ?: doc.getLong("bestStreak")?.toInt() ?: currentStreak
                         val level = (doc.get("level") as? Number)?.toInt() ?: doc.getString("level")?.toIntOrNull() ?: doc.getLong("level")?.toInt() ?: 1
+                        val pubKey = doc.getString("installationPublicKey") ?: doc.getString("publicKey")
+                        if (!pubKey.isNullOrBlank()) {
+                            com.bingo.multiplayer.domain.network.AccountKeyStore.recordAuthoritativeKey(uid, pubKey)
+                        }
                         result[uid] = PlayerRegistryEntry(
                             username = username,
                             uid = uid,
@@ -603,7 +722,8 @@ class FirestoreSyncManager(
                             gamesWon = gamesWon,
                             currentStreak = currentStreak,
                             bestStreak = bestStreak,
-                            level = level
+                            level = level,
+                            publicKey = pubKey
                         )
                     }
                 } catch (e: Exception) {
@@ -632,4 +752,11 @@ class FirestoreSyncManager(
             }
         }
     }
+}
+
+/** A delayed profile backup must not put an older photo back over the current local photo. */
+internal fun publicProfileAvatar(user: UserProfile, latest: UserProfile?): String? {
+    val current = latest?.takeIf { it.uid == user.uid } ?: user
+    return (current.avatarBase64?.takeIf { it.isNotBlank() } ?: current.avatarUrl)
+        ?.takeIf { it.isNotBlank() && !isLocalFilePath(it) }
 }

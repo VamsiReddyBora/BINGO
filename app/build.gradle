@@ -5,6 +5,15 @@ plugins {
     id 'com.google.gms.google-services'
 }
 
+// Deployment credentials are supplied privately, never committed to the release source.
+def localReleaseSettings = new Properties()
+def localReleaseFile = rootProject.file('local.release.properties')
+if (localReleaseFile.isFile()) localReleaseFile.withInputStream { localReleaseSettings.load(it) }
+def releaseValue = { String key, String fallback = '' ->
+    providers.gradleProperty(key).getOrElse(System.getenv(key) ?: localReleaseSettings.getProperty(key, fallback))
+}
+def publicReleaseKeystore = releaseValue('BINGO_KEYSTORE_PATH')
+
 android {
     namespace 'com.bingo.multiplayer'
     compileSdk 34
@@ -13,10 +22,13 @@ android {
         applicationId "com.bingo.multiplayer"
         minSdk 24
         targetSdk 34
-        versionCode 48
+        versionCode 65
         versionName "1.0"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField "String", "BINGO_MQTT_USERNAME", groovy.json.JsonOutput.toJson(releaseValue("BINGO_MQTT_USERNAME"))
+        buildConfigField "String", "BINGO_MQTT_PASSWORD", groovy.json.JsonOutput.toJson(releaseValue("BINGO_MQTT_PASSWORD"))
+        buildConfigField "String", "BINGO_KEYVALUE_APP_KEY", groovy.json.JsonOutput.toJson(releaseValue("BINGO_KEYVALUE_APP_KEY"))
     }
 
     testOptions {
@@ -25,12 +37,14 @@ android {
 
     signingConfigs {
         release {
-            storeFile file('release-key.jks')
-            storePassword 'bingosecure123'
-            keyAlias 'bingo'
-            keyPassword 'bingosecure123'
-            v1SigningEnabled true
-            v2SigningEnabled true
+            if (publicReleaseKeystore) {
+                storeFile rootProject.file(publicReleaseKeystore)
+                storePassword releaseValue('BINGO_KEYSTORE_PASSWORD')
+                keyAlias releaseValue('BINGO_KEY_ALIAS')
+                keyPassword releaseValue('BINGO_KEY_PASSWORD')
+                v1SigningEnabled true
+                v2SigningEnabled true
+            }
         }
     }
 
@@ -38,12 +52,11 @@ android {
         release {
             minifyEnabled true
             shrinkResources true
-            signingConfig signingConfigs.release
+            if (publicReleaseKeystore) signingConfig signingConfigs.release
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
         debug {
             applicationIdSuffix ""
-            signingConfig signingConfigs.release
         }
     }
 
@@ -62,6 +75,7 @@ android {
 
     buildFeatures {
         compose true
+        buildConfig true
     }
 
     composeOptions {
@@ -69,40 +83,9 @@ android {
     }
 
     applicationVariants.all { variant ->
-        variant.outputs.all {
-            outputFileName = "Bingo-${variant.versionName}.apk"
-        }
-        if (variant.name == "release") {
-            variant.assembleProvider.configure {
-                doLast {
-                    copy {
-                        from "${layout.buildDirectory.get()}/outputs/apk/release/Bingo-${variant.versionName}.apk"
-                        into "${rootDir}/releases/"
-                    }
-                    copy {
-                        from "${layout.buildDirectory.get()}/outputs/apk/release/Bingo-${variant.versionName}.apk"
-                        into "${rootDir}/.."
-                    }
-                }
-            }
-        }
-        variant.assembleProvider.configure {
-            doLast {
-                def deliveryConfig = new File(System.getenv("BINGO_APK_DELIVERY_CONFIG") ?:
-                    "${System.getProperty('user.home')}/.config/bingo/apk-delivery.json")
-                if (deliveryConfig.isFile()) {
-                    def builtApk = layout.buildDirectory.file(
-                        "outputs/apk/${variant.dirName}/Bingo-${variant.versionName}.apk").get().asFile
-                    project.exec {
-                        commandLine "python3", "${rootDir}/tools/deliver_apk.py",
-                            builtApk.absolutePath, "--config", deliveryConfig.absolutePath
-                    }
-                } else {
-                    logger.lifecycle("Remote APK delivery is not configured on this machine.")
-                }
-            }
-        }
+        variant.outputs.all { outputFileName = "Bingo-${variant.versionName}.apk" }
     }
+
 }
 
 
@@ -148,6 +131,7 @@ dependencies {
     implementation platform('com.google.firebase:firebase-bom:33.4.0')
     implementation 'com.google.firebase:firebase-messaging-ktx'
     implementation 'com.google.firebase:firebase-firestore-ktx'
+    implementation 'com.google.firebase:firebase-auth-ktx'
     implementation 'com.google.guava:guava:33.2.1-android'
 
     testImplementation 'junit:junit:4.13.2'

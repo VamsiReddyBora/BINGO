@@ -41,12 +41,13 @@ object LeaderboardSyncManager {
         val appContext = context.applicationContext
         val friends = friendsRepository ?: FriendsRepository.activeInstance
         val auth = authRepository ?: AuthRepository.activeInstance
+        val originGeneration = auth?.sessionGeneration?.get() ?: 0L
         syncJob = scope.launch {
             try {
                 _syncStageText.value = "Loading match history…"
                 _syncProgress.value = .1f
                 val matches = FirestoreSyncManager.getInstance(appContext).fetchMatchHistoryOnce(uid)
-                if (matches.isNotEmpty() && accountKey == key) auth?.persistMatchHistory(matches)
+                if (matches.isNotEmpty() && accountKey == key) auth?.persistMatchHistory(matches, uid = uid, expectedGeneration = originGeneration)
                 _syncProgress.value = .5f
                 _syncStageText.value = "Updating friend statistics…"
                 friends?.refreshFriendsStats()

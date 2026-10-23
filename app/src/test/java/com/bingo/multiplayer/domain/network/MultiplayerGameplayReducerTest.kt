@@ -303,4 +303,50 @@ class MultiplayerGameplayReducerTest {
         } finally { OngoingMatchStore.customPrefs = null }
     }
 
+    @Test fun `timeoutFromPeerWithSlightClockOffsetIsAcceptedAndAdvancesTurn`() {
+        val now = 200_000L
+        val phoneAClock = MultiplayerTurnClock(turnNumber = 2, playerId = "A", startedAt = now - 30_050L, deadlineAt = now - 50L, initialBudgetMillis = 30_000L)
+        val phoneBClock = MultiplayerTurnClock(turnNumber = 2, playerId = "A", startedAt = now - 30_000L, deadlineAt = now, initialBudgetMillis = 30_000L)
+        val phoneBState = state(turn = 2, player = "A").copy(turnClock = phoneBClock)
+        val timeoutPacket = RoomMessagePacket(
+            type = "TURN_TIMEOUT", playerId = "A", seed = 42L,
+            turnNumber = 3, closedTurnNumber = 2, currentTurnPlayerId = "B",
+            closedTurnClock = phoneAClock, timestamp = now
+        )
+        val decision = MultiplayerGameplayReducer.timeout(wire(timeoutPacket), context, phoneBState)
+        assertTrue("Slight clock skew across devices must not reject a valid turn timeout", decision.accepted)
+        assertEquals(3, decision.state.turnNumber)
+        assertEquals("B", decision.state.currentPlayerId)
+    }
+
+    @Test fun `strictIdentityOnlineRoomParticipantWithNormalizedIdFormatIsAcceptedAndRotates`() {
+        val aliasedPlayers = listOf(
+            Player("u_host", "Kevin", isHost = true),
+            Player("u_A", "Stuart"),
+            Player("u_B", "Bob")
+        )
+        val onlineContext = MultiplayerGameplayContext(
+            seed = 42L, localId = "u_B", hostId = "u_host",
+            participants = aliasedPlayers, turnOrder = aliasedPlayers,
+            strictIdentity = true
+        )
+        val aliasedBoards = aliasedPlayers.associate { it.id to engine.generateBoard(5, 55L) }
+        val aliasedState = MultiplayerGameplayState(
+            picks = emptyList(), playerBoard = aliasedBoards.getValue("u_B"),
+            opponentBoard = aliasedBoards.getValue("u_A"), allPlayerBoards = aliasedBoards,
+            turnNumber = 2, currentPlayerId = "u_A", remainingTurnMillis = 20_000L
+        )
+
+        // Incoming pick from Stuart sent with raw or aliased id "A" instead of "u_A"
+        val pickPacket = wire(MultiplayerGameplayReducer.prepareOutgoing(RoomMessagePacket(
+            type = "PICK_NUMBER", playerId = "A", number = 14,
+            turnNumber = 3, closedTurnNumber = 2, seed = 42L
+        ), 42L, "A"))
+
+        val decision = MultiplayerGameplayReducer.pick(pickPacket, onlineContext, aliasedState)
+        assertTrue("Participant with normalized ID format must be accepted in online match", decision.accepted)
+        assertEquals(3, decision.state.turnNumber)
+        assertEquals("u_B", decision.state.currentPlayerId)
+    }
+
 }

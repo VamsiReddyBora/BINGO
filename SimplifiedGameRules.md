@@ -1,10 +1,10 @@
 # Bingo Multiplayer — Simplified Game Rules & Mechanics
 
-**Updated**: 18 October 2026, 17:54 IST (UTC+05:30)
+**Updated**: 23 October 2026 (Nearby clarification added; Online rules retained)
 **Status**: Official Active Specification
 **Design Philosophy**: Casual, friendly, zero-stress multiplayer. Zero battery-draining heartbeats, zero blocking popups, zero controller dependencies, zero unfair forfeits.
 
-**Specification priority**: The rules and clarifications in this document take priority over conflicting older version 1.5.0 plans and game-rule documents. Updating this specification does not mean the application already implements it.
+**Specification priority**: The rules and clarifications in this document take priority over conflicting older version 1.5.0 plans and game-rule documents. Updating this specification does not mean the application already implements it. Section 8 records the subsequently approved Nearby-only host-hold exception.
 
 ---
 
@@ -143,3 +143,15 @@ All exits are performed voluntarily via the existing **Exit icon** in the top ba
 
 1. **Sound on Tap Only**: Satisfying cell-click sounds play **only** when tapping a cell on the board.
 2. **Zero Siren / Alarm Sounds**: No jarring countdown beeps, turn change dings, or disconnection alerts.
+
+
+## 8. Nearby Network clarification — 23 October 2026
+
+The user approved this limited Nearby exception after observing that only the host's timer stopped when the host minimized the app. Online mode keeps the rules above.
+
+- Nearby uses the original host's local Wi-Fi connection to relay gameplay. When that host minimizes the app or becomes unreachable, hold the match on every device. Disable picks and turn expiry, and show the existing non-dismissible Host Disconnected dialog to waiting guests.
+- Host backgrounding is a temporary hold, separate from the manual Pause button. Returning restores the same board, picked-number history, chat, current turn and saved remaining countdown. Synchronize before removing the guest's hold.
+- A guest minimizing the app does not pause the host or other guests. Keep the current turn's original duration. At future turn starts, give an absent player 5 seconds; the existing one-time welcome-back grant remains 30 seconds.
+- Only the live Nearby host publishes turn-timeout decisions. Every device still validates the match, current turn and next player. Late timeout packets from before a hold cannot close the resumed turn.
+- A socket closing unexpectedly is temporary unavailability, never an intentional Exit or Surrender. Keep the player eligible and retry the local connection. Explicit Exit/Surrender retains its existing meaning.
+- This clarification covers a running Nearby session and reconnecting its sockets. It does not define or claim a new Nearby cold-start/resume flow after Android kills the entire host process; that remains distinct from returning to a minimized running app.

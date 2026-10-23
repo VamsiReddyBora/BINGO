@@ -41,37 +41,16 @@ fun RequestsTabContent(
     val tokens = BingoTheme.colors
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    var invites by remember { mutableStateOf<List<GameInvite>>(emptyList()) }
-    var loadingInvites by remember { mutableStateOf(true) }
+    val pendingInvites by GameInviteManager.pendingInvites.collectAsState()
+    val invites = pendingInvites.filter {
+        (it.recipientUid.isBlank() || it.recipientUid == user.uid) &&
+            it.recipientUsername == user.username.trim().lowercase().removePrefix("@")
+    }.distinctBy { it.roomCode }
 
-    // Initial fetch of pending invites
-    LaunchedEffect(user.username) {
-        loadingInvites = true
-        invites = GameInviteManager.fetchInvitesForUser(user.username)
-        loadingInvites = false
-    }
-
-    // Real-time reactive MQTT listener for instant sub-second invite alerts (zero polling!)
+    // The manager owns expiry and handled state for every invitation surface.
     DisposableEffect(user.username) {
-        var isDisposed = false
-        val listener = GameInviteManager.startInviteListener(user.username) { newInvite ->
-            if (!isDisposed) {
-                invites = (listOf(newInvite) + invites.filter { it.roomCode != newInvite.roomCode })
-                loadingInvites = false
-            }
-        }
-        onDispose {
-            isDisposed = true
-            listener.close()
-        }
-    }
-
-    // Also collect foreground in-memory push
-    LaunchedEffect(Unit) {
-        GameInviteManager.foregroundInviteFlow.collect { newInvite ->
-            invites = (listOf(newInvite) + invites.filter { it.roomCode != newInvite.roomCode })
-            loadingInvites = false
-        }
+        val listener = GameInviteManager.startInviteListener(user.username) {}
+        onDispose { listener.close() }
     }
 
     Column(
@@ -179,11 +158,7 @@ fun RequestsTabContent(
             modifier = Modifier.padding(bottom = 8.dp)
         )
 
-        if (loadingInvites) {
-            Box(modifier = Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = tokens.accentBrand, modifier = Modifier.size(24.dp))
-            }
-        } else if (invites.isEmpty()) {
+        if (invites.isEmpty()) {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
@@ -226,7 +201,6 @@ fun RequestsTabContent(
                                         coroutineScope.launch {
                                             GameInviteManager.removeInvite(user.username, invite)
                                         }
-                                        invites = invites.filter { it.roomCode != invite.roomCode }
                                     },
                                     shape = RoundedCornerShape(8.dp),
                                     border = BorderStroke(1.dp, if (tokens.isDark) Color(0xFF383838) else tokens.surfaceBorder),

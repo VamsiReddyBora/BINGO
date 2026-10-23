@@ -26,6 +26,9 @@ object FastPacketCodec {
     }
 
     fun encode(packet: RoomMessagePacket): String {
+        if (packet.nearbyControl != null) return encodeCompact(packet)
+        if (packet.clockOffsetMillis != 0L) return encodeCompact(packet)
+        if (packet.lobbySessionId.isNotBlank() && packet.type in setOf("READY_STATUS", "HEARTBEAT")) return encodeCompact(packet)
         return when (packet.type) {
             "PICK_NUMBER" -> {
                 if (packet.senderPlayerId.isNotBlank() || packet.closedTurnNumber > 0) {

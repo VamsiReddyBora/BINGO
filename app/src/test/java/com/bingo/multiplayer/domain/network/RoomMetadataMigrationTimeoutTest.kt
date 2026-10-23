@@ -11,14 +11,19 @@ import org.junit.Test
 class RoomMetadataMigrationTimeoutTest {
     @Test
     fun validSlowLegacyLookupIsNotMisclassifiedAsMetadataOutage() = runBlocking {
-        val client = OkHttpClient.Builder().addInterceptor { chain ->
-            // A cold legacy lookup can exceed the old native six-second deadline.
-            Thread.sleep(6_500L)
-            Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
-                .code(200).message("Valid slow discovery")
-                .body("{\"payload\":null,\"revision\":0,\"closed\":false}".toResponseBody()).build()
+        // Legacy migration no longer exists. Even a slow/unavailable legacy HTTP service
+        // must have no effect on a successful empty EMQX lookup. Historical case name retained.
+        var httpCalls = 0
+        val client = OkHttpClient.Builder().addInterceptor {
+            httpCalls++
+            throw java.io.IOException("Legacy service unavailable")
         }.build()
-        val result = HttpRoomMetadataTransport(client, "https://controlled.invalid") { "unused" }.read("QA4812")
+        val previous = OnlineRoomRegistry.client
+        OnlineRoomRegistry.client = client
+        val result = try {
+            MqttRoomMetadataTransport(EmqxWireFixture(), { "owned-test-host" }).read("QA4812")
+        } finally { OnlineRoomRegistry.client = previous }
+        assertEquals(0, httpCalls)
         assertTrue("Valid slow migration must remain a successful empty lookup", result.isSuccess)
         assertNull(result.getOrThrow())
     }

@@ -2,6 +2,8 @@
 
 package com.bingo.multiplayer.presentation.menu
 
+import com.bingo.multiplayer.presentation.common.noRippleClickable
+
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -108,6 +110,7 @@ fun MainMenuScreen(
     var ongoingMatch by remember { mutableStateOf(OngoingMatchStore.getOngoingMatch(context, currentAccountUid)) }
     var isMatchVerifiedActive by remember { mutableStateOf(false) }
     val isBrokerDown by EmqxBrokerMonitor.isBrokerDown.collectAsState()
+    val showBrokerWarning = rememberBrokerWarningVisible()
 
     // ── Ping 1-Second Stabilized Display using NetworkStatusMapper ──
     val realtimePing by com.bingo.multiplayer.domain.network.NetworkPingMonitor.pingMs.collectAsState()
@@ -480,12 +483,12 @@ fun MainMenuScreen(
             Spacer(modifier = Modifier.height(middleSpacing))
 
             // Real-Time EMQX Broker Failure Alert (Horizontal Scrolling Marquee)
-            if (isBrokerDown) {
+            if (showBrokerWarning) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 4.dp)
-                        .clickable(onClick = onOpenDeveloperNote),
+                        .noRippleClickable(onClick = onOpenDeveloperNote),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -504,7 +507,7 @@ fun MainMenuScreen(
                                     fontWeight = FontWeight.Normal
                                 )
                             ) {
-                                append("EMQX broker is down (using HTTP fallback). Please send a message through developer note to fix this issue.")
+                                append("Online server is not responding. Please use Developer Note to report this issue.")
                             }
                         },
                         fontSize = 11.sp,

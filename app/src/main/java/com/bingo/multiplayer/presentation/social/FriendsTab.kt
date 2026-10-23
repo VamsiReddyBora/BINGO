@@ -2,6 +2,8 @@
 
 package com.bingo.multiplayer.presentation.social
 
+import com.bingo.multiplayer.presentation.common.noRippleClickable
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -94,7 +96,7 @@ fun FriendsTabContent(
             val cleanF = it.username.trim().lowercase().removePrefix("@")
             val pres = presenceMap[cleanF]
             val isOnline = pres?.isOnline ?: (it.lastSeenTimestamp > 0L && (System.currentTimeMillis() - it.lastSeenTimestamp) < 15_000L)
-            isOnline && (pres?.status.equals("PLAYING", ignoreCase = true) || (pres?.currentRoomCode?.isNotBlank() == true))
+            isOnline && pres?.status.equals("PLAYING", ignoreCase = true)
         }
     }
 
@@ -127,7 +129,7 @@ fun FriendsTabContent(
             val clean = friend.username.trim().lowercase().removePrefix("@")
             val pres = presenceMap[clean]
             val isOnline = pres?.isOnline ?: (friend.lastSeenTimestamp > 0L && (System.currentTimeMillis() - friend.lastSeenTimestamp) < 15_000L)
-            val isPlaying = isOnline && (pres?.status.equals("PLAYING", ignoreCase = true) || (pres?.currentRoomCode?.isNotBlank() == true))
+            val isPlaying = isOnline && pres?.status.equals("PLAYING", ignoreCase = true)
 
             val matchesChip = when (selectedFilterChip) {
                 1 -> isOnline
@@ -260,7 +262,7 @@ fun FriendsTabContent(
                                 modifier = Modifier
                                     .weight(1f)
                                     .clip(RoundedCornerShape(8.dp))
-                                    .clickable {
+                                    .noRippleClickable {
                                         val freshPlayer = player.copy(lastSeenTimestamp = effectiveLastSeen)
                                         onViewProfile(PlayerProfileData.fromRegistryEntry(freshPlayer))
                                     }
@@ -568,7 +570,7 @@ fun FriendCard(
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(8.dp))
-                    .clickable(onClick = onClickProfile)
+                    .noRippleClickable(onClick = onClickProfile)
                     .padding(vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -615,13 +617,15 @@ fun FriendCard(
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                val isInviteCooldown = ActionCooldownManager.isInviteOnCooldown(cleanFriend)
+                val availability = com.bingo.multiplayer.domain.network.FriendPlayAvailability.of(livePres)
+                val isRequest = availability == com.bingo.multiplayer.domain.network.FriendPlayAvailability.BUSY
+                val isInviteCooldown = if (isRequest) ActionCooldownManager.isPlayRequestOnCooldown(cleanFriend) else ActionCooldownManager.isInviteOnCooldown(cleanFriend)
                 Button(
                     onClick = {
-                        ActionCooldownManager.startInviteCooldown(cleanFriend)
+                        if (isRequest) ActionCooldownManager.startPlayRequestCooldown(cleanFriend) else ActionCooldownManager.startInviteCooldown(cleanFriend)
                         onInvite()
                     },
-                    enabled = !isInviteCooldown,
+                    enabled = !isInviteCooldown && availability.canContact,
                     shape = RoundedCornerShape(8.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = if (isInviteCooldown) (if (tokens.isDark) Color(0xFF222222) else Color(0xFFE2E8F0)) else tokens.primaryButtonBg,
@@ -639,7 +643,7 @@ fun FriendCard(
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        text = if (isInviteCooldown) "Invited" else "Invite",
+                        text = if (isRequest) { if (isInviteCooldown) "Requested" else "Request" } else { if (isInviteCooldown) "Invited" else "Invite" },
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = if (isInviteCooldown) tokens.textMuted else tokens.primaryButtonText
@@ -648,7 +652,7 @@ fun FriendCard(
 
                 IconButton(
                     onClick = onRemove,
-                    modifier = Modifier.size(28.dp)
+                    modifier = Modifier.size(36.dp)
                 ) {
                     Icon(imageVector = Icons.Default.Close, contentDescription = "Remove", tint = tokens.cellNeutralText.copy(alpha = 0.4f), modifier = Modifier.size(16.dp))
                 }

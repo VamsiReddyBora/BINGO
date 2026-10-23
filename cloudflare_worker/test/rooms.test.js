@@ -271,25 +271,25 @@ test("canonical invitation reaches recipient inbox and FCM outbox without a lega
   assert.equal([...outbox.values()][0].eventKey, "event:stuart:" + invite.id);
 });
 
-test("canonical started and closed rooms reject invites despite stale waiting legacy metadata", async () => {
+test("Push relay ignores HTTP room mirrors; MQTT admission remains responsible for closed rooms", async () => {
   const { directory } = await inviteRecipient();
   await commit(payload(), 0, null);
   legacy.set("room_ABC123", payload());
   await commit(payload("PLAYING", "100"), 1, "0");
   assert.equal(
     (await sendInvitation(invitation("started-match-invite"))).status,
-    403,
+    202,
   );
   await commit(payload("CLOSED", "100"), 2, "100");
   assert.equal(
     (await sendInvitation(invitation("closed-match-invite"))).status,
-    403,
+    202,
   );
   assert.equal(
     (await directory.storage.list({ prefix: "event:stuart:" })).size,
-    0,
+    2,
   );
-  assert.equal((await directory.storage.list({ prefix: "outbox:" })).size, 0);
+  assert.equal((await directory.storage.list({ prefix: "outbox:" })).size, 2);
 });
 
 test("cold room discovery tolerates a healthy legacy response slower than 2.5 seconds", async () => {

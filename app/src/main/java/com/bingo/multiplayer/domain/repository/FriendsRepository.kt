@@ -15,6 +15,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
@@ -26,6 +27,8 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+
+enum class FriendshipStatus { NONE, PENDING, FRIEND }
 
 /** Reconciles account-scoped friendships without treating a directory or a failed read as deletion. */
 class FriendsRepository internal constructor(
@@ -57,6 +60,8 @@ class FriendsRepository internal constructor(
     private var notifiedRequests = emptySet<String>()
     private var backupCache: FriendsBackup? = null
     private var backupReadAtNanos = 0L
+    private var synchronizedBackup = emptyMap<String, Friend>()
+    private var outgoingTargets = emptySet<String>()
 
     private val _friends = MutableStateFlow<List<Friend>>(emptyList())
     val friends: StateFlow<List<Friend>> = _friends.asStateFlow()
@@ -87,6 +92,8 @@ class FriendsRepository internal constructor(
         notifiedRequests = emptySet()
         backupCache = null
         backupReadAtNanos = 0L
+        synchronizedBackup = emptyMap()
+        outgoingTargets = emptySet()
         val active = account ?: return
 
         // Bind the legacy, device-wide cache to the account that owned it during upgrade, once.
@@ -107,6 +114,8 @@ class FriendsRepository internal constructor(
         }.getOrDefault(emptyMap())
         handledRequests = prefs.getStringSet(key(active, "handled"), emptySet())?.toSet().orEmpty()
         notifiedRequests = prefs.getStringSet(key(active, "notified"), emptySet())?.toSet().orEmpty()
+        outgoingTargets = prefs.getStringSet(key(active, "outgoing_targets"), emptySet())?.toSet().orEmpty()
+        _sentRequestUsernames.value = prefs.getStringSet(key(active, "sent_requests"), emptySet())?.toSet().orEmpty()
         _friends.value = mergeFriends(_friends.value).filterNot(::wasRemoved)
     }
 
@@ -163,7 +172,7 @@ class FriendsRepository internal constructor(
         val active = activeAccount() ?: return
         if (friendUsername(username) != active.username) return
         scope.launch {
-            // The UI polls every two seconds. Never build an unbounded queue of network jobs.
+            // MQTT and foreground recovery may overlap. Never queue redundant network jobs.
             if (!syncMutex.tryLock()) return@launch
             try { reconcile(active) }
             finally { syncMutex.unlock() }
@@ -174,12 +183,16 @@ class FriendsRepository internal constructor(
         if (!isCurrent(active)) return null
         val cachedBackup = synchronized(this) { backupCache }
         val refreshBackup = forceBackup || cachedBackup == null || System.nanoTime() - backupReadAtNanos >= 30_000_000_000L
-        val (cloud, backup, requests) = coroutineScope {
-            val friendsJob = async { withTimeoutOrNull(8_000L) { remote.fetchFriends(active.username) } }
+        val targets = synchronized(this) { outgoingTargets }
+        val (versionedCloud, backup, requests, outgoing) = coroutineScope {
+            val friendsJob = async { withTimeoutOrNull(8_000L) { remote.fetchFriendsWithVersion(active.username) } }
             val backupJob = async { if (refreshBackup) withTimeoutOrNull(8_000L) { remote.fetchBackup(active.uid) } else cachedBackup }
             val requestsJob = async { withTimeoutOrNull(8_000L) { remote.fetchRequests(active.username) } }
-            Triple(friendsJob.await(), backupJob.await(), requestsJob.await())
+            val outgoingJob = async { if (targets.isEmpty()) emptyMap() else
+                withTimeoutOrNull(8_000L) { remote.outgoingStatuses(active.username, targets) } }
+            ReconciledReads(friendsJob.await(), backupJob.await(), requestsJob.await(), outgoingJob.await())
         }
+        val cloud = versionedCloud?.items
         val merged = synchronized(this) {
             if (!isCurrent(active)) return null
             if (refreshBackup && backup != null) {
@@ -193,24 +206,74 @@ class FriendsRepository internal constructor(
             }.toSet()
             removalIds = removalIds.filterKeys { it !in restored }
             removedKeys = (removedKeys - restored) + backup?.removedKeys.orEmpty()
-            // KeyValue may contain a partial list. The existing per-friend backup and cache survive it.
+            // Partial/unavailable reads never erase existing friendships.
             _friends.value = mergeFriends(backup?.friends.orEmpty(), cloud.orEmpty(), _friends.value)
                 .filterNot(::wasRemoved)
             if (requests != null) {
                 _pendingRequests.value = requests.filter { validPending(it, active) }
                     .distinctBy { friendUsername(it.fromUsername) }
             } else _pendingRequests.value = _pendingRequests.value.filter { validPending(it, active) }
+            val confirmedFriends = _friends.value.map { friendUsername(it.username) }.toSet()
+            // Only apply statuses for the targets captured before the read. A newer send
+            // made while the read was in flight keeps its own pending state.
+            val stillPending = outgoing?.filterValues { it == FriendRequestStatus.PENDING }?.keys
+            if (stillPending != null) {
+                _sentRequestUsernames.value = (_sentRequestUsernames.value - targets) + stillPending
+                outgoingTargets = (outgoingTargets - targets) + stillPending
+            }
+            _sentRequestUsernames.value = _sentRequestUsernames.value - confirmedFriends
+            outgoingTargets = outgoingTargets - confirmedFriends
+            persistOutgoing(active)
             persistFriends(active)
             _friends.value
         }
         if (!isCurrent(active)) return null
-        remote.saveBackup(active.uid, merged)
+        saveBackupIfChanged(active, merged)
         // An unavailable/malformed read is never permission to replace the full cloud list.
-        if (cloud != null && mergeFriends(cloud).map(::friendKeys).toSet() != merged.map(::friendKeys).toSet()) {
-            remote.saveFriends(active.username, merged)
+        if (cloud != null) {
+            val union = (mergeFriends(cloud) + merged).distinctBy { if (it.uid.isNotBlank()) it.uid else friendUsername(it.username) }
+            if (union.map(::friendKeys).toSet() != mergeFriends(cloud).map(::friendKeys).toSet()) {
+                remote.saveFriends(active.username, union, expectedVersion = versionedCloud?.version)
+            }
         }
         if (isCurrent(active) && merged.isNotEmpty()) remote.refreshPresence(merged.map { it.username }.filter { it.isNotBlank() })
         return requests
+    }
+
+    private data class ReconciledReads(
+        val cloud: com.bingo.multiplayer.domain.network.FriendsCloudStore.VersionedSnapshot<Friend>?,
+        val backup: FriendsBackup?, val requests: List<FriendRequest>?,
+        val outgoing: Map<String, FriendRequestStatus?>?
+    )
+
+    private fun persistOutgoing(active: Account) {
+        prefs.edit().putStringSet(key(active, "outgoing_targets"), outgoingTargets)
+            .putStringSet(key(active, "sent_requests"), _sentRequestUsernames.value).commit()
+    }
+
+    private suspend fun saveBackupIfChanged(active: Account, friends: List<Friend>) {
+        val cards = friends.map { it.copy(isOnline = false, lastSeenTimestamp = 0L) }
+            .associateBy { it.uid.ifBlank { friendUsername(it.username) } }
+        val changed = synchronized(this) {
+            if (!isCurrent(active)) return
+            cards.filter { (id, value) -> synchronizedBackup[id] != value }
+        }
+        if (changed.isEmpty()) return
+        val saved = withTimeoutOrNull(8_000L) { remote.saveBackupConfirmed(active.uid, changed.values.toList()) } == true
+        if (!saved) return
+        synchronized(this) {
+            if (isCurrent(active)) synchronizedBackup = synchronizedBackup + changed
+        }
+    }
+
+    /** The profile and friend search observe the same account-scoped state. */
+    fun observeFriendship(uid: String, username: String) = combine(friends, sentRequestUsernames) { list, sent ->
+        val name = friendUsername(username)
+        when {
+            list.any { (uid.isNotBlank() && it.uid == uid) || friendUsername(it.username) == name } -> FriendshipStatus.FRIEND
+            name in sent -> FriendshipStatus.PENDING
+            else -> FriendshipStatus.NONE
+        }
     }
 
     private fun validPending(req: FriendRequest, active: Account): Boolean =
@@ -235,20 +298,39 @@ class FriendsRepository internal constructor(
         return friendUsername(username) in _sentRequestUsernames.value
     }
 
-    suspend fun sendFriendRequest(targetUsername: String, currentUser: UserProfile): Boolean {
-        val active = activeAccount() ?: return false
+    suspend fun sendFriendRequest(targetUsername: String, currentUser: UserProfile): Boolean = syncMutex.withLock send@ {
+        val active = activeAccount() ?: return@send false
         val target = friendUsername(targetUsername)
-        if (active.uid != currentUser.uid || target.isBlank() || target == active.username || isFriend(target)) return false
+        if (active.uid != currentUser.uid || target.isBlank() || target == active.username || isFriend(target)) return@send false
         val avatar = currentUser.avatarBase64?.takeIf { it.isNotBlank() }
             ?: currentUser.avatarUrl?.takeIf { !com.bingo.multiplayer.domain.network.isLocalFilePath(it) }
-        val request = FriendRequest(UUID.randomUUID().toString(), currentUser.uid, active.username,
-            currentUser.displayName, avatar, target)
+        val request = FriendRequest(
+            id = UUID.randomUUID().toString(),
+            fromUid = currentUser.uid,
+            fromUsername = active.username,
+            fromDisplayName = currentUser.displayName,
+            fromAvatarUrl = avatar,
+            toUsername = target,
+            status = FriendRequestStatus.PENDING,
+            timestamp = System.currentTimeMillis()
+        )
+        // Keep the recipient lookup across a process restart, including a commit whose
+        // acknowledgement is interrupted. Firebase confirms whether it is actually pending.
+        val previouslyTracked = synchronized(this) {
+            if (!isCurrent(active)) return@send false
+            val tracked = target in outgoingTargets
+            outgoingTargets = outgoingTargets + target
+            persistOutgoing(active)
+            tracked
+        }
         val success = remote.send(request)
         synchronized(this) {
-            if (!isCurrent(active)) return false
+            if (!isCurrent(active)) return@send false
             if (success) _sentRequestUsernames.value = _sentRequestUsernames.value + target
+            else if (!previouslyTracked) outgoingTargets = outgoingTargets - target
+            persistOutgoing(active)
         }
-        return success
+        return@send success
     }
 
     suspend fun acceptFriendRequest(request: FriendRequest, currentUser: UserProfile): Boolean = syncMutex.withLock {
@@ -268,8 +350,8 @@ class FriendsRepository internal constructor(
             _friends.value = mergeFriends(_friends.value, listOf(friend))
             _pendingRequests.value = _pendingRequests.value.filterNot { it.id == request.id || sameFriend(fromRequest(it), friend) }
             persistFriends(active)
-            remote.saveBackup(active.uid, _friends.value)
         }
+        saveBackupIfChanged(active, _friends.value)
         true
     }
 
@@ -311,12 +393,13 @@ class FriendsRepository internal constructor(
                             "FRIEND_REQUEST" -> {
                                 // MQTT is a notification, not evidence that a request is still pending.
                                 if (!validPending(req, active) || verifiedRequests?.none { it.id == req.id } != false) return@synchronized
-                                val event = "request:${req.id}"
+                                val matching = verifiedRequests?.firstOrNull { it.id == req.id } ?: return@synchronized
+                                val event = "request:${matching.id}"
                                 if (event in notifiedRequests) return@synchronized
                                 val notified = notifiedRequests + event
                                 if (!prefs.edit().putStringSet(key(active, "notified"), notified).commit()) return@synchronized
                                 notifiedRequests = notified
-                                onNewRequest(req)
+                                onNewRequest(matching)
                             }
                             "FRIEND_ACCEPT" -> {
                                 if (friendUsername(req.fromUsername) != active.username || req.status != FriendRequestStatus.ACCEPTED) return@synchronized
@@ -324,6 +407,8 @@ class FriendsRepository internal constructor(
                                 val friend = _friends.value.firstOrNull { friendUsername(it.username) == friendUsername(req.toUsername) }
                                     ?: return@synchronized
                                 _sentRequestUsernames.value = _sentRequestUsernames.value - friendUsername(req.toUsername)
+                                outgoingTargets = outgoingTargets - friendUsername(req.toUsername)
+                                persistOutgoing(active)
                                 val event = "accepted:${req.id}"
                                 if (event in notifiedRequests) return@synchronized
                                 val notified = notifiedRequests + event
@@ -354,7 +439,9 @@ class FriendsRepository internal constructor(
         }
         scope.launch {
             syncMutex.withLock {
-                if (isCurrent(active)) remote.saveFriends(active.username, _friends.value)
+                if (isCurrent(active)) {
+                    remote.removeFriend(active.username, uidOrUsername)
+                }
             }
         }
     }

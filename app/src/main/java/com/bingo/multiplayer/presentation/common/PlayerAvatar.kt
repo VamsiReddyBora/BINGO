@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -41,6 +42,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import com.bingo.multiplayer.domain.network.ProfileAvatars
+import com.bingo.multiplayer.domain.network.ProfileAvatarState
 import kotlinx.coroutines.launch
 
 object PlayerAvatarCache {
@@ -125,13 +129,13 @@ object PlayerAvatarCache {
             memoryCache.remove(pathOrUri)
             getCacheFile(pathOrUri)?.delete()
         }
-        _version.value = System.currentTimeMillis()
+        _version.update { it + 1L }
     }
 
     fun evictAll() {
         memoryCache.evictAll()
         diskCacheDir?.listFiles()?.forEach { it.delete() }
-        _version.value = System.currentTimeMillis()
+        _version.update { it + 1L }
     }
 
     fun notifyAvatarChanged(username: String? = null) {
@@ -142,7 +146,7 @@ object PlayerAvatarCache {
             getCacheFile("u:$clean")?.delete()
             getCacheFile(clean)?.delete()
         }
-        _version.value = System.currentTimeMillis()
+        _version.update { it + 1L }
     }
 }
 
@@ -244,85 +248,51 @@ fun PlayerAvatar(
     }
 
     val cacheVersion by PlayerAvatarCache.version.collectAsState()
-
-    var bitmap by remember(avatarPathOrUri, cleanUser, cacheVersion) {
-        mutableStateOf(
-            avatarPathOrUri?.takeIf { it.isNotBlank() }?.let { PlayerAvatarCache.get(it) }
-                ?: cleanUser?.let { PlayerAvatarCache.get("u:$it") }
-        )
+    val avatarRecords by ProfileAvatars.state.records.collectAsState()
+    DisposableEffect(cleanUser) {
+        val observation = cleanUser?.let { ProfileAvatars.state.observe(it) }
+        onDispose { observation?.close() }
     }
+    val authoritative = cleanUser != null && avatarRecords.containsKey(cleanUser)
+    val source = ProfileAvatarState.resolve(avatarRecords, cleanUser, avatarPathOrUri)
+    var bitmap by remember(cleanUser) { mutableStateOf<ImageBitmap?>(null) }
 
-    LaunchedEffect(avatarPathOrUri, cleanUser, cacheVersion) {
-        val cached = avatarPathOrUri?.takeIf { it.isNotBlank() }?.let { PlayerAvatarCache.get(it) }
-            ?: cleanUser?.let { PlayerAvatarCache.get("u:$it") }
-
-        if (cached != null) {
-            bitmap = cached
+    LaunchedEffect(source, cleanUser, authoritative, cacheVersion) {
+        // An explicit removal must not fall back to a stale screen argument or username bitmap.
+        if (authoritative && source == null) {
+            bitmap = null
             return@LaunchedEffect
         }
-
-        withContext(Dispatchers.IO) {
-            var resolvedBitmap: ImageBitmap? = null
-            var nativeBmp: Bitmap? = null
-            val source = avatarPathOrUri?.takeIf { it.isNotBlank() }
-
-            if (source != null) {
-                nativeBmp = decodeAvatarBitmap(source, context)
-                if (nativeBmp != null) {
-                    resolvedBitmap = nativeBmp.asImageBitmap()
-                    PlayerAvatarCache.put(source, resolvedBitmap, nativeBmp)
-                    if (cleanUser != null) {
-                        PlayerAvatarCache.put("u:$cleanUser", resolvedBitmap, nativeBmp)
-                    }
+        val resolved = withContext(Dispatchers.IO) {
+            var selected = source
+            var image = selected?.let { PlayerAvatarCache.get(it) }
+            if (image == null && selected != null) {
+                decodeAvatarBitmap(selected, context)?.let { native ->
+                    image = native.asImageBitmap()
+                    PlayerAvatarCache.put(selected!!, image!!, native)
                 }
             }
-
-            // If bitmap is still null and username is provided, check local caches before network
-            if (resolvedBitmap == null && cleanUser != null) {
-                // Check memory registry or friends list before touching the network
-                val localCached = com.bingo.multiplayer.domain.network.AccountSessionManager.getCachedPlayer(cleanUser)
+            if (image == null && !authoritative && cleanUser != null) {
+                // Legacy/local hints keep a photo visible while the shared Firebase watch starts.
+                selected = com.bingo.multiplayer.domain.network.AccountSessionManager.getCachedPlayer(cleanUser)?.avatarUrl
                     ?: com.bingo.multiplayer.domain.repository.FriendsRepository.activeInstance?.friends?.value
-                        ?.firstOrNull { it.username.equals(cleanUser, ignoreCase = true) }
-                        ?.let { com.bingo.multiplayer.domain.network.PlayerRegistryEntry(username = it.username, uid = it.uid, displayName = it.displayName, avatarUrl = it.avatarUrl) }
-
-                val localAvatarStr = localCached?.avatarUrl?.takeIf { it.isNotBlank() }
-                if (localAvatarStr != null) {
-                    nativeBmp = decodeAvatarBitmap(localAvatarStr, context)
-                    if (nativeBmp != null) {
-                        resolvedBitmap = nativeBmp.asImageBitmap()
-                        PlayerAvatarCache.put("u:$cleanUser", resolvedBitmap, nativeBmp)
-                        PlayerAvatarCache.put(localAvatarStr, resolvedBitmap, nativeBmp)
+                        ?.firstOrNull { it.username.equals(cleanUser, true) }?.avatarUrl
+                image = selected?.let { PlayerAvatarCache.get(it) } ?: PlayerAvatarCache.get("u:$cleanUser")
+                if (image == null) {
+                    val hint = selected ?: com.bingo.multiplayer.domain.network.AccountSessionManager
+                        .searchPlayerByUsername(cleanUser, timeoutMs = 2500L)?.avatarUrl
+                    decodeAvatarBitmap(hint, context)?.let { native ->
+                        image = native.asImageBitmap()
+                        if (hint != null) PlayerAvatarCache.put(hint, image!!, native)
                     }
                 }
-
-                // If still null, query network with low-latency timeout
-                if (resolvedBitmap == null) {
-                    try {
-                        val entry = com.bingo.multiplayer.domain.network.AccountSessionManager.searchPlayerByUsername(cleanUser, timeoutMs = 2500L)
-                        val remoteAvatar = entry?.avatarUrl?.takeIf { it.isNotBlank() }
-                        if (remoteAvatar != null) {
-                            nativeBmp = decodeAvatarBitmap(remoteAvatar, context)
-                            if (nativeBmp != null) {
-                                resolvedBitmap = nativeBmp.asImageBitmap()
-                                PlayerAvatarCache.put("u:$cleanUser", resolvedBitmap, nativeBmp)
-                                PlayerAvatarCache.put(remoteAvatar, resolvedBitmap, nativeBmp)
-                            }
-                        }
-                    } catch (_: Exception) {}
-                }
             }
-
-            if (resolvedBitmap != null) {
-                bitmap = resolvedBitmap
-            } else if (source.isNullOrBlank()) {
-                // Explicitly clear bitmap if no avatar source exists
-                bitmap = null
-            }
+            image
         }
+        bitmap = resolved
     }
 
     val finalBorderColor = borderColor ?: tokens.surfaceBorder
-
     Box(
         modifier = modifier
             .size(size)

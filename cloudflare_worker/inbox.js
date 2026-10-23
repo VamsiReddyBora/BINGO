@@ -9,6 +9,7 @@ import {
   validateEvent,
   fresh,
   legacyRead,
+  profileIdentity,
 } from "./protocol.js";
 import { sendFcm } from "./fcm.js";
 import { roomMetadata } from "./rooms.js";
@@ -78,6 +79,16 @@ export class NotificationInbox {
       if (path === "/internal/enroll") {
         await this.throttle("enroll:" + body.uid, 12);
         return response(await this.enroll(body));
+      }
+      if (path === "/internal/guest-binding-nonce") {
+        const nonceKey = "binding_nonce:" + body.uid + ":" + body.nonce;
+        requireThat(
+          !(await this.storage.get(nonceKey)),
+          409,
+          "Proof already used",
+        );
+        await this.storage.put(nonceKey, Date.now() + 120000);
+        return response({ ok: true });
       }
       if (path === "/v2/revoke") {
         const reg = await this.storage.get(
@@ -230,9 +241,11 @@ export class NotificationInbox {
     );
     if (!owner) {
       // Only used for migration from the existing app. Never read FCM tokens from the public directory.
-      const legacy = await legacyRead(this.env, "reg_" + identity.username);
+      const legacy = this.env.FIREBASE_PROJECT_ID
+        ? await profileIdentity(this.env, identity.uid)
+        : await legacyRead(this.env, "reg_" + identity.username);
       requireThat(
-        !legacy || legacy.uid === identity.uid,
+        !legacy || (legacy.uid === identity.uid && (!legacy.username || username(legacy.username) === identity.username)),
         403,
         "Username identity mismatch",
       );
@@ -248,9 +261,11 @@ export class NotificationInbox {
     }
     const existing = await this.storage.get("account:" + identity.uid);
     if (existing && existing.username !== identity.username) {
-      const legacy = await legacyRead(this.env, "reg_" + identity.username);
+      const legacy = this.env.FIREBASE_PROJECT_ID
+        ? await profileIdentity(this.env, identity.uid)
+        : await legacyRead(this.env, "reg_" + identity.username);
       requireThat(
-        legacy?.uid === identity.uid,
+        legacy?.uid === identity.uid && (!legacy.username || username(legacy.username) === identity.username),
         403,
         "Verified username rename required",
       );
@@ -394,6 +409,7 @@ export class NotificationInbox {
         existing.senderUid === session.uid &&
           existing.kind === input.kind &&
           existing.roomCode === (input.roomCode || "") &&
+          (existing.roomSessionId || "") === (input.roomSessionId || "") &&
           existing.requestId === (input.requestId || ""),
         409,
         "Event identity conflict",
@@ -411,38 +427,8 @@ export class NotificationInbox {
     const target = targetUid
       ? await this.storage.get("account:" + targetUid)
       : null;
-    if (input.kind === "GAME_INVITE") {
-      let room;
-      if (this.env.NOTIFICATIONS) {
-        const roomStore = this.env.NOTIFICATIONS.get(
-          this.env.NOTIFICATIONS.idFromName(
-            "room-metadata-v3:" + input.roomCode,
-          ),
-        );
-        const recordResponse = await roomStore.fetch(
-          new Request("https://internal/internal/room-record", {
-            method: "POST",
-            body: JSON.stringify({ action: "read", code: input.roomCode }),
-          }),
-        );
-        requireThat(
-          recordResponse.ok,
-          503,
-          "Room metadata is temporarily unavailable",
-        );
-        const record = await recordResponse.json();
-        room =
-          record.closed || !record.payload ? null : JSON.parse(record.payload);
-      } else room = await legacyRead(this.env, "room_" + input.roomCode);
-      requireThat(
-        room &&
-          room.hostId === session.uid &&
-          username(room.hostUsername) === session.username &&
-          room.status === "WAITING",
-        403,
-        "Only the active room host may send this invitation",
-      );
-    }
+    // A push is a notification, not room admission. The accepting app checks the
+    // original lobby/session through MQTT; the relay has no HTTP room mirror.
     if (input.kind === "FRIEND_ONLINE")
       requireThat(
         target?.friends?.includes(session.uid),
@@ -509,6 +495,7 @@ export class NotificationInbox {
       createdAt: input.createdAt,
       expiresAt: input.expiresAt,
       roomCode: input.roomCode || "",
+      roomSessionId: input.roomSessionId || "",
       requestId: input.requestId || "",
       requestTimestamp: input.requestTimestamp || 0,
       presenceSessionId: input.presenceSessionId || "",

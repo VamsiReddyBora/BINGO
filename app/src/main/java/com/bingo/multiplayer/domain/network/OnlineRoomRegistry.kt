@@ -68,7 +68,17 @@ data class OnlineRoomSession(
     @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
     val metadataProtocolVersion: Int = 0,
     @kotlinx.serialization.SerialName("r") val revision: Long = 0L,
-    @kotlinx.serialization.SerialName("tc") val isTerminalClosed: Boolean = false
+    @kotlinx.serialization.SerialName("tc") val isTerminalClosed: Boolean = false,
+    @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
+    val sessionId: String = "",
+    @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
+    val cancelledStartIds: List<String> = emptyList(),
+    @kotlinx.serialization.SerialName("sig")
+    @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
+    val publisherSignature: String? = null,
+    @kotlinx.serialization.SerialName("pk")
+    @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
+    val publisherKey: String? = null
 )
 
 sealed interface RoomJoinResult {
@@ -98,22 +108,26 @@ object OnlineRoomRegistry {
     @androidx.annotation.VisibleForTesting
     internal var client = NetworkConfig.httpClient
     private val json = Json { ignoreUnknownKeys = true; isLenient = true; encodeDefaults = true }
-    private val BASE_URL = NetworkConfig.KEYVALUE_API_URL
-    private val API_KEY = NetworkConfig.KEYVALUE_APP_KEY
     private const val TAG = "OnlineRoomRegistry"
 
     internal data class CachedRoom(val session: OnlineRoomSession, val timestamp: Long)
     internal val recentRoomCache = java.util.concurrent.ConcurrentHashMap<String, CachedRoom>()
     internal val terminallyClosedRooms = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     internal val roomStatusMap = java.util.concurrent.ConcurrentHashMap<String, String>()
+    internal val roomUpdates = kotlinx.coroutines.flow.MutableSharedFlow<OnlineRoomSession>(extraBufferCapacity = 64,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)
 
     internal fun rememberCanonicalRoom(session: OnlineRoomSession) {
         val code = session.roomCode
-        recentRoomCache.compute(code) { _, previous ->
-            if (previous != null && previous.session.metadataProtocolVersion == 3 &&
-                previous.session.revision > session.revision) previous
+        session.publisherKey?.let { AccountKeyStore.bindHostKey(session.hostId, it) }
+        val remembered = recentRoomCache.compute(code) { _, previous ->
+            if (previous != null && previous.session.metadataProtocolVersion >= 3 &&
+                ((previous.session.sessionId == session.sessionId && previous.session.revision > session.revision) ||
+                 (previous.session.sessionId != session.sessionId && previous.session.createdAt > session.createdAt))) previous
             else CachedRoom(session, System.currentTimeMillis())
         }
+        if (remembered?.session !== session) return
+        roomUpdates.tryEmit(session)
         roomStatusMap[code] = "${session.status}:${session.currentSeed}:${session.revision}"
         if (session.status == "CLOSED" || session.isTerminalClosed) terminallyClosedRooms.add(code)
         pendingClosures[code]?.let { pending ->
@@ -134,10 +148,8 @@ object OnlineRoomRegistry {
         if (result is MutationResult.Applied) {
             rememberCanonicalRoom(result.session)
             if (result.session.status == "CLOSED") {
-                clearRoomMetaMqtt(code)
-                pendingClosures.remove(code)
-                persistPendingClosures()
-            } else publishRoomMetaMqtt(result.session)
+                pendingClosures.remove(code); persistPendingClosures()
+            }
         }
         return result
     }
@@ -162,7 +174,7 @@ object OnlineRoomRegistry {
         try {
             val p = getPrefs() ?: return
             val jsonList = pendingClosures.values.map { entry ->
-                "${entry.roomCode},${entry.expectedSeed ?: 0L},${entry.timestamp},${entry.attempts}"
+                "${entry.roomCode},${entry.expectedSeed ?: 0L},${entry.timestamp},${entry.attempts},${entry.sessionId},${entry.ownerUid}"
             }.toSet()
             p.edit().putStringSet("pending_closures_set", jsonList).apply()
         } catch (_: Exception) {}
@@ -171,7 +183,13 @@ object OnlineRoomRegistry {
     internal fun reloadDurableClosures() {
         try {
             val p = getPrefs() ?: return
-            val saved = p.getStringSet("pending_closures_set", null) ?: return
+            p.getString("start_cancellations", null)?.let { raw ->
+                runCatching { json.decodeFromString<List<PendingStartCancellation>>(raw) }.getOrDefault(emptyList()).forEach { entry ->
+                    pendingStartCancellations[entry.code] = entry
+                    retryStartCancellation(entry)
+                }
+            }
+            val saved = p.getStringSet("pending_closures_set", null).orEmpty()
             saved.forEach { line ->
                 val parts = line.split(",")
                 if (parts.isNotEmpty()) {
@@ -180,7 +198,7 @@ object OnlineRoomRegistry {
                     val ts = parts.getOrNull(2)?.toLongOrNull() ?: System.currentTimeMillis()
                     val attempts = parts.getOrNull(3)?.toIntOrNull() ?: 0
                     if (code.isNotBlank() && !pendingClosures.containsKey(code)) {
-                        val entry = PendingClosure(code, seed, ts, attempts)
+                        val entry = PendingClosure(code, seed, ts, attempts, parts.getOrNull(4).orEmpty(), parts.getOrNull(5).orEmpty())
                         pendingClosures[code] = entry
                         queueDurableClosureRetry(code, seed)
                     }
@@ -193,7 +211,9 @@ object OnlineRoomRegistry {
         val roomCode: String,
         val expectedSeed: Long?,
         val timestamp: Long,
-        var attempts: Int = 0
+        var attempts: Int = 0,
+        val sessionId: String = "",
+        val ownerUid: String = ""
     )
     internal val pendingClosures = java.util.concurrent.ConcurrentHashMap<String, PendingClosure>()
     private val scope = CoroutineScope(Dispatchers.IO)
@@ -204,35 +224,61 @@ object OnlineRoomRegistry {
             pending.expectedSeed == session.currentSeed
     }
 
+    private val closureRetryJobs = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Job>()
+    private val closureRetryLock = Any()
+    internal fun activeClosureRetryCount(code: String) = if (closureRetryJobs[code]?.isActive == true) 1 else 0
+
     internal fun queueDurableClosureRetry(cleanCode: String, expectedSeed: Long?) {
         val currentSeed = recentRoomCache[cleanCode]?.session?.currentSeed
-        if (expectedSeed != null && currentSeed != null && currentSeed != 0L && currentSeed != expectedSeed) return
-        val entry = pendingClosures.computeIfAbsent(cleanCode) {
-            PendingClosure(cleanCode, expectedSeed, System.currentTimeMillis())
-        }
-        persistPendingClosures()
-        scope.launch {
-            var delayMs = 500L
-            while (isActive && pendingClosures[cleanCode] === entry) {
-                entry.attempts++
-                persistPendingClosures()
-                val success = executeClosurePersist(cleanCode, entry.expectedSeed)
-                if (success) {
-                    pendingClosures.remove(cleanCode, entry)
-                    persistPendingClosures()
-                    Log.i(TAG, "Durable closure succeeded for $cleanCode on attempt ${entry.attempts}")
-                    break
+        if (expectedSeed != null && currentSeed != null && currentSeed != expectedSeed) return
+        synchronized(closureRetryLock) {
+            val existing = pendingClosures[cleanCode]
+            val entry = if (existing != null && existing.expectedSeed == expectedSeed) existing else
+                PendingClosure(cleanCode, expectedSeed, System.currentTimeMillis(),
+                    sessionId = recentRoomCache[cleanCode]?.session?.sessionId.orEmpty(),
+                    ownerUid = com.bingo.multiplayer.domain.notifications.NotificationRuntime.context()?.let {
+                        com.bingo.multiplayer.domain.notifications.NotificationRuntime.account(it)?.uid
+                    }.orEmpty()).also { pendingClosures[cleanCode] = it }
+            if (closureRetryJobs[cleanCode]?.isActive == true && existing === entry) return
+            closureRetryJobs.remove(cleanCode)?.cancel()
+            persistPendingClosures()
+            val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+                var delayMs = 500L
+                try {
+                    while (isActive && pendingClosures[cleanCode] === entry) {
+                        entry.attempts++; persistPendingClosures()
+                        if (executeClosurePersist(cleanCode, entry.expectedSeed)) {
+                            pendingClosures.remove(cleanCode, entry); persistPendingClosures(); break
+                        }
+                        delay(delayMs)
+                        delayMs = minOf((delayMs * 1.5).toLong(), 30000L)
+                    }
+                } finally {
+                    val thisJob = kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]
+                    synchronized(closureRetryLock) {
+                        if (pendingClosures[cleanCode] === entry || pendingClosures[cleanCode] == null)
+                            closureRetryJobs.remove(cleanCode, thisJob)
+                    }
                 }
-                kotlinx.coroutines.delay(delayMs)
-                delayMs = minOf((delayMs * 1.5).toLong(), 30000L)
             }
+            closureRetryJobs[cleanCode] = job
+            job.start()
         }
     }
 
     internal suspend fun executeClosurePersist(cleanCode: String, expectedSeed: Long?): Boolean = withContext(Dispatchers.IO) {
-        if (RoomMetadataApi.enabled) {
-            val result = RoomMetadataApi.coordinator().mutate(cleanCode, expectedSeed = expectedSeed,
-                allowAlreadyClosed = true) { it.copy(status = "CLOSED", isTerminalClosed = true) }
+
+
+            val intent = pendingClosures[cleanCode]?.takeIf { it.expectedSeed == expectedSeed }
+            val owner = com.bingo.multiplayer.domain.notifications.NotificationRuntime.context()?.let {
+                com.bingo.multiplayer.domain.notifications.NotificationRuntime.account(it)?.uid
+            }.orEmpty()
+            val result = if (intent?.ownerUid?.isNotBlank() == true && intent.ownerUid != owner)
+                MutationResult.Rejected("Account changed") else RoomMetadataApi.coordinator().mutate(cleanCode, expectedSeed = expectedSeed,
+                allowAlreadyClosed = true) {
+                    if (intent?.sessionId?.isNotBlank() == true && intent.sessionId != it.sessionId) null
+                    else it.copy(status = "CLOSED", isTerminalClosed = true)
+                }
             publishCanonicalMutation(cleanCode, result)
             if (result is MutationResult.Rejected) {
                 pendingClosures[cleanCode]?.takeIf { it.expectedSeed == expectedSeed }?.let {
@@ -240,109 +286,7 @@ object OnlineRoomRegistry {
                 }
             }
             return@withContext result is MutationResult.Applied
-        }
-        try {
-            val fetchedRoom = fetchRoomDirectHttpDetailedCancellable(cleanCode, 1500L).getOrNull()
-            val mqttRoom = if (fetchedRoom == null) getRoomMqtt(cleanCode, 1500L) else null
-            val validatedRoom = fetchedRoom ?: mqttRoom ?: recentRoomCache[cleanCode]?.session
-            if (validatedRoom == null) {
-                if (expectedSeed != null) {
-                    Log.w(TAG, "Closure retry deferred for $cleanCode: no validated room context during outage")
-                    return@withContext false
-                }
-            } else {
-                val activeSeed = validatedRoom.currentSeed
-                if (expectedSeed != null && activeSeed != 0L && activeSeed != expectedSeed) {
-                    Log.w(TAG, "Closure retry aborted for $cleanCode: seed changed from $expectedSeed to $activeSeed")
-                    pendingClosures.remove(cleanCode)
-                    persistPendingClosures()
-                    return@withContext false
-                }
-            }
 
-            // R9-F03: Require fresh transport evidence (HTTP or MQTT) before performing destructive closure writes.
-            // If only stale cache is available during an outage, defer destructive closure work!
-            if (fetchedRoom == null && mqttRoom == null) {
-                Log.w(TAG, "Closure retry deferred for $cleanCode: no fresh transport context available during outage")
-                return@withContext false
-            }
-
-            val closedSession = (validatedRoom ?: OnlineRoomSession(
-                roomCode = cleanCode,
-                hostId = "",
-                hostUsername = "",
-                hostDisplayName = "Host",
-                status = "CLOSED",
-                isTerminalClosed = true,
-                createdAt = System.currentTimeMillis()
-            )).copy(
-                status = "CLOSED",
-                isTerminalClosed = true,
-                lastHeartbeat = System.currentTimeMillis()
-            )
-            val jsonStr = json.encodeToString(closedSession)
-            val b64 = encodeBase64Url(jsonStr)
-            val encVal = URLEncoder.encode(b64, "UTF-8")
-            val roomReq = Request.Builder()
-                .url("$BASE_URL/UpdateValue/$API_KEY/room_$cleanCode?value=$encVal")
-                .post("".toRequestBody(null))
-                .header("Content-Length", "0")
-                .build()
-            val roomOk = try {
-                val call = client.newCall(roomReq)
-                suspendCancellableCoroutine<Boolean> { cont ->
-                    cont.invokeOnCancellation { call.cancel() }
-                    call.enqueue(object : okhttp3.Callback {
-                        override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
-                            if (cont.isActive) cont.resume(false) {}
-                        }
-                        override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
-                            val ok = response.isSuccessful
-                            response.close()
-                            if (cont.isActive) cont.resume(ok) {}
-                        }
-                    })
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) { false }
-
-            val tombReq = Request.Builder()
-                .url("$BASE_URL/UpdateValue/$API_KEY/room_closed_$cleanCode?value=true")
-                .post("".toRequestBody(null))
-                .header("Content-Length", "0")
-                .build()
-            val tombOk = try {
-                val call = client.newCall(tombReq)
-                suspendCancellableCoroutine<Boolean> { cont ->
-                    cont.invokeOnCancellation { call.cancel() }
-                    call.enqueue(object : okhttp3.Callback {
-                        override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
-                            if (cont.isActive) cont.resume(false) {}
-                        }
-                        override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
-                            val ok = response.isSuccessful
-                            response.close()
-                            if (cont.isActive) cont.resume(ok) {}
-                        }
-                    })
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) { false }
-
-            if (roomOk && tombOk) {
-                terminallyClosedRooms.add(cleanCode)
-                setRoomStatusHttp(cleanCode, "CLOSED", expectedSeed ?: 0L, closedSession.revision + 1L)
-                clearRoomMetaMqtt(cleanCode)
-                recentRoomCache.remove(cleanCode)
-                true
-            } else {
-                false
-            }
-        } catch (_: Exception) {
-            false
-        }
     }
 
     private fun safeBase64Encode(bytes: ByteArray): String {
@@ -414,174 +358,16 @@ object OnlineRoomRegistry {
      * Publishes room metadata as a retained MQTT message for instant fallback discovery.
      */
     private suspend fun publishRoomMetaMqtt(session: OnlineRoomSession): Boolean {
-        currentCoroutineContext().ensureActive()
-        roomMetaPublisherOverride?.let { return it(session) }
-        val activeSync = OnlineRoomSyncManager.activeInstance
-        if (activeSync != null && activeSync.isConnected) {
-            val ok = activeSync.publishRetainedRoomMetaAwaited(session)
-            if (ok) return true
-        }
-        return withContext(Dispatchers.IO) {
-            ensureActive()
-            var client: MqttAsyncClient? = null
-            try {
-                client = MqttAsyncClient(NetworkConfig.BROKER_URL, "reg_meta_${UUID.randomUUID().toString().take(8)}", MemoryPersistence())
-                val options = MqttConnectOptions().apply {
-                    isCleanSession = true
-                    connectionTimeout = 3
-                    NetworkConfig.applyMqttOptions(this)
-                }
-                val connected = kotlinx.coroutines.withTimeoutOrNull(2000L) {
-                    kotlinx.coroutines.suspendCancellableCoroutine<Boolean> { cont ->
-                        cont.invokeOnCancellation {
-                            try { client.disconnectForcibly(0L, 50L) } catch (_: Exception) {}
-                        }
-                        try {
-                            val token = client.connect(options, null, object : IMqttActionListener {
-                                override fun onSuccess(asyncActionToken: IMqttToken?) {
-                                    if (cont.isActive) cont.resume(true) {}
-                                }
-                                override fun onFailure(asyncActionToken: IMqttToken?, exception: Throwable?) {
-                                    if (cont.isActive) cont.resume(false) {}
-                                }
-                            })
-                            if (token.isComplete && cont.isActive) {
-                                cont.resume(token.exception == null) {}
-                            }
-                        } catch (e: Exception) {
-                            if (cont.isActive) cont.resume(false) {}
-                        }
-                    }
-                } ?: false
-                if (!connected) return@withContext false
-                ensureActive()
-                val jsonStr = json.encodeToString(session)
-                val message = MqttMessage(jsonStr.toByteArray(StandardCharsets.UTF_8)).apply {
-                    qos = 1
-                    isRetained = true
-                }
-                val published = kotlinx.coroutines.withTimeoutOrNull(2000L) {
-                    kotlinx.coroutines.suspendCancellableCoroutine<Boolean> { cont ->
-                        cont.invokeOnCancellation {
-                            try { client.disconnectForcibly(0L, 50L) } catch (_: Exception) {}
-                        }
-                        try {
-                            val token = client.publish("bingo/v3/room_meta/${session.roomCode}", message, null, object : IMqttActionListener {
-                                override fun onSuccess(asyncActionToken: IMqttToken?) {
-                                    if (cont.isActive) cont.resume(true) {}
-                                }
-                                override fun onFailure(asyncActionToken: IMqttToken?, exception: Throwable?) {
-                                    if (cont.isActive) cont.resume(false) {}
-                                }
-                            })
-                            if (token.isComplete && cont.isActive) {
-                                cont.resume(token.exception == null) {}
-                            }
-                        } catch (e: Exception) {
-                            if (cont.isActive) cont.resume(false) {}
-                        }
-                    }
-                } ?: false
-                published
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                false
-            } finally {
-                try {
-                    client?.disconnectForcibly(0L, 50L)
-                } catch (_: Exception) {}
-                try {
-                    client?.close()
-                } catch (_: Exception) {}
-            }
-        }
+        // The sole retained record is published atomically by the host transport.
+        return roomMetaPublisherOverride?.invoke(session) ?: true
     }
 
     /**
      * Clears retained MQTT room metadata when room is closed.
      */
     private suspend fun clearRoomMetaMqtt(roomCode: String): Boolean {
-        currentCoroutineContext().ensureActive()
-        val activeSync = OnlineRoomSyncManager.activeInstance
-        if (activeSync != null && activeSync.isConnected) {
-            val ok = activeSync.clearRetainedRoomMetaAwaited(roomCode)
-            if (ok) return true
-        }
-        return withContext(Dispatchers.IO) {
-            ensureActive()
-            var client: MqttAsyncClient? = null
-            try {
-                client = MqttAsyncClient(NetworkConfig.BROKER_URL, "close_meta_${UUID.randomUUID().toString().take(8)}", MemoryPersistence())
-                val options = MqttConnectOptions().apply {
-                    isCleanSession = true
-                    connectionTimeout = 3
-                    NetworkConfig.applyMqttOptions(this)
-                }
-                val connected = kotlinx.coroutines.withTimeoutOrNull(2000L) {
-                    kotlinx.coroutines.suspendCancellableCoroutine<Boolean> { cont ->
-                        cont.invokeOnCancellation {
-                            try { client.disconnectForcibly(0L, 50L) } catch (_: Exception) {}
-                        }
-                        try {
-                            val token = client.connect(options, null, object : IMqttActionListener {
-                                override fun onSuccess(asyncActionToken: IMqttToken?) {
-                                    if (cont.isActive) cont.resume(true) {}
-                                }
-                                override fun onFailure(asyncActionToken: IMqttToken?, exception: Throwable?) {
-                                    if (cont.isActive) cont.resume(false) {}
-                                }
-                            })
-                            if (token.isComplete && cont.isActive) {
-                                cont.resume(token.exception == null) {}
-                            }
-                        } catch (e: Exception) {
-                            if (cont.isActive) cont.resume(false) {}
-                        }
-                    }
-                } ?: false
-                if (!connected) return@withContext false
-                ensureActive()
-                val message = MqttMessage(ByteArray(0)).apply {
-                    qos = 1
-                    isRetained = true
-                }
-                val published = kotlinx.coroutines.withTimeoutOrNull(2000L) {
-                    kotlinx.coroutines.suspendCancellableCoroutine<Boolean> { cont ->
-                        cont.invokeOnCancellation {
-                            try { client.disconnectForcibly(0L, 50L) } catch (_: Exception) {}
-                        }
-                        try {
-                            val token = client.publish("bingo/v3/room_meta/$roomCode", message, null, object : IMqttActionListener {
-                                override fun onSuccess(asyncActionToken: IMqttToken?) {
-                                    if (cont.isActive) cont.resume(true) {}
-                                }
-                                override fun onFailure(asyncActionToken: IMqttToken?, exception: Throwable?) {
-                                    if (cont.isActive) cont.resume(false) {}
-                                }
-                            })
-                            if (token.isComplete && cont.isActive) {
-                                cont.resume(token.exception == null) {}
-                            }
-                        } catch (e: Exception) {
-                            if (cont.isActive) cont.resume(false) {}
-                        }
-                    }
-                } ?: false
-                published
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                false
-            } finally {
-                try {
-                    client?.disconnectForcibly(0L, 50L)
-                } catch (_: Exception) {}
-                try {
-                    client?.close()
-                } catch (_: Exception) {}
-            }
-        }
+        // Retain the terminal tombstone. Clearing it would let stale START recreate a room.
+        return true
     }
 
     /**
@@ -589,89 +375,8 @@ object OnlineRoomRegistry {
      * Truly cancellable coroutine that forcibly disconnects and closes client on cancellation without quiesce delay.
      */
     internal suspend fun getRoomMqtt(cleanCode: String, timeoutMs: Long = 1500L): OnlineRoomSession? = withContext(Dispatchers.IO) {
-        val testSession = simulatedMqttSession
-        if (testSession != null && (testSession.roomCode.isBlank() || testSession.roomCode == cleanCode)) {
-            if (testSession.status == "CLOSED" || testSession.isTerminalClosed) {
-                terminallyClosedRooms.add(cleanCode)
-                recentRoomCache.remove(cleanCode)
-                return@withContext null
-            }
-            return@withContext testSession
-        }
-        withTimeoutOrNull(timeoutMs) {
-            var client: MqttAsyncClient? = null
-            try {
-                val clientId = "query_meta_${UUID.randomUUID().toString().take(8)}"
-                val mClient = MqttAsyncClient(NetworkConfig.BROKER_URL, clientId, MemoryPersistence())
-                client = mClient
-                val options = MqttConnectOptions().apply {
-                    isCleanSession = true
-                    connectionTimeout = (timeoutMs / 1000).toInt().coerceAtLeast(1)
-                    NetworkConfig.applyMqttOptions(this)
-                }
-                kotlinx.coroutines.suspendCancellableCoroutine<OnlineRoomSession?> { cont ->
-                    cont.invokeOnCancellation {
-                        try {
-                            mClient.disconnectForcibly(0L, 100L)
-                        } catch (_: Exception) {}
-                        try {
-                            mClient.close()
-                        } catch (_: Exception) {}
-                    }
-                    try {
-                        mClient.connect(options, null, object : IMqttActionListener {
-                            override fun onSuccess(asyncActionToken: IMqttToken?) {
-                                try {
-                                    mClient.subscribe("bingo/v3/room_meta/$cleanCode", 1, null, object : IMqttActionListener {
-                                        override fun onSuccess(asyncActionToken: IMqttToken?) {
-                                            // Subscribed. If topic is empty, withTimeoutOrNull will complete cleanly.
-                                        }
-                                        override fun onFailure(asyncActionToken: IMqttToken?, exception: Throwable?) {
-                                            if (cont.isActive) cont.resume(null, null)
-                                        }
-                                    }, IMqttMessageListener { _, msg ->
-                                        try {
-                                            val raw = String(msg.payload, StandardCharsets.UTF_8).trim()
-                                            if (raw.isNotBlank() && raw.startsWith("{")) {
-                                                val session = json.decodeFromString<OnlineRoomSession>(raw)
-                                                if (session.status != "CLOSED" && !session.isTerminalClosed) {
-                                                    if (cont.isActive) cont.resume(session, null)
-                                                    return@IMqttMessageListener
-                                                } else {
-                                                    terminallyClosedRooms.add(cleanCode)
-                                                    recentRoomCache.remove(cleanCode)
-                                                    if (cont.isActive) cont.resume(null, null)
-                                                    return@IMqttMessageListener
-                                                }
-                                            }
-                                        } catch (_: Exception) {}
-                                        if (cont.isActive) cont.resume(null, null)
-                                    })
-                                } catch (_: Exception) {
-                                    if (cont.isActive) cont.resume(null, null)
-                                }
-                            }
-                            override fun onFailure(asyncActionToken: IMqttToken?, exception: Throwable?) {
-                                if (cont.isActive) cont.resume(null, null)
-                            }
-                        })
-                    } catch (_: Exception) {
-                        if (cont.isActive) cont.resume(null, null)
-                    }
-                }
-            } catch (_: Exception) {
-                null
-            } finally {
-                try {
-                    if (client?.isConnected == true) {
-                        client?.disconnectForcibly(0L, 100L)
-                    }
-                } catch (_: Exception) {}
-                try {
-                    client?.close()
-                } catch (_: Exception) {}
-            }
-        }
+        val room = readCanonicalRoom(cleanCode).getOrNull()
+        return@withContext room?.takeIf { it.status != "CLOSED" && !it.isTerminalClosed }
     }
 
     /**
@@ -684,169 +389,32 @@ object OnlineRoomRegistry {
         hostPlayer: Player,
         allowCreation: Boolean = true
     ): InvitationReadinessResult = withContext(Dispatchers.IO) {
+
         val cleanCode = roomCode.trim().uppercase()
         if (cleanCode.isBlank()) return@withContext InvitationReadinessResult.Rejected("Blank room code")
-        if (RoomMetadataApi.enabled) {
-            val fetched = readCanonicalRoom(cleanCode)
-            if (fetched.isFailure) return@withContext InvitationReadinessResult.TransientUnavailable("Room metadata is unavailable")
-            var room = fetched.getOrNull()
-            if (room == null && allowCreation) {
-                if (!createRoom(cleanCode, hostPlayer)) return@withContext InvitationReadinessResult.TransientUnavailable("Room creation is unavailable")
-                room = readCanonicalRoom(cleanCode).getOrNull()
-            }
-            val ready = room ?: return@withContext InvitationReadinessResult.Rejected("Room does not exist")
-            if (ready.status != "WAITING" || ready.isTerminalClosed || ready.hostId != hostPlayer.id)
-                return@withContext InvitationReadinessResult.Rejected("Room is closed, already started or owned by another host")
-            // A verified canonical record is already discoverable by invitation recipients.
-            // Requiring a second MQTT metadata publication here can indefinitely block push
-            // and inbox delivery despite a healthy, committed room.
-            return@withContext InvitationReadinessResult.Ready
-        }
-        if (terminallyClosedRooms.contains(cleanCode) || hasPendingClosure(cleanCode) || isRoomClosedHttpCancellable(cleanCode, 350L)) {
+        if (terminallyClosedRooms.contains(cleanCode) || hasPendingClosure(cleanCode)) {
             return@withContext InvitationReadinessResult.Rejected("Room is terminally closed")
         }
 
-        val cached = recentRoomCache[cleanCode]?.session ?: getRoomCachedOnly(cleanCode)
-        if (cached != null) {
-            if (cached.status == "CLOSED" || cached.isTerminalClosed) {
-                terminallyClosedRooms.add(cleanCode)
-                recentRoomCache.remove(cleanCode)
-                return@withContext InvitationReadinessResult.Rejected("Room is terminally closed")
-            }
-            if (cached.status == "PLAYING") {
-                return@withContext InvitationReadinessResult.Rejected("Room is already in PLAYING status")
-            }
+        val fetched = readCanonicalRoom(cleanCode)
+        if (fetched.isFailure) return@withContext InvitationReadinessResult.TransientUnavailable("Room metadata is unavailable")
+        var room = fetched.getOrNull()
+        if (room == null && allowCreation) {
+            if (!createRoom(cleanCode, hostPlayer)) return@withContext InvitationReadinessResult.TransientUnavailable("Room creation is unavailable")
+            room = readCanonicalRoom(cleanCode).getOrNull()
         }
-
-        val httpFetchResult = fetchRoomDirectHttpDetailedCancellable(cleanCode, 1500L)
-        val httpSession = httpFetchResult.getOrNull()
-        val isHttpUnavailable = httpFetchResult.exceptionOrNull() != null
-
-        if (httpSession != null) {
-            if (httpSession.status == "CLOSED" || httpSession.isTerminalClosed) {
-                terminallyClosedRooms.add(cleanCode)
-                recentRoomCache.remove(cleanCode)
-                return@withContext InvitationReadinessResult.Rejected("Room is terminally closed on server")
-            }
-            if (httpSession.status == "PLAYING") {
-                recentRoomCache[cleanCode] = CachedRoom(httpSession, System.currentTimeMillis())
-                return@withContext InvitationReadinessResult.Rejected("Room is already in PLAYING status")
-            }
+        val ready = room ?: return@withContext InvitationReadinessResult.Rejected("Room does not exist")
+        if (ready.status == "CLOSED" || ready.isTerminalClosed) {
+            terminallyClosedRooms.add(cleanCode)
+            return@withContext InvitationReadinessResult.Rejected("Room is terminally closed")
         }
+        if (ready.status != "WAITING") return@withContext InvitationReadinessResult.Rejected("Room is in PLAYING status")
+        if (ready.hostId != hostPlayer.id) return@withContext InvitationReadinessResult.Rejected("Host authority mismatch")
+        // A verified canonical record is already discoverable by invitation recipients.
+        // Requiring a second MQTT metadata publication here can indefinitely block push
+        // and inbox delivery despite a healthy, committed room.
+        return@withContext InvitationReadinessResult.Ready
 
-        val mqttSession = if (cached == null && httpSession == null) getRoomMqtt(cleanCode, 1500L) else null
-        if (mqttSession != null) {
-            if (mqttSession.status == "CLOSED" || mqttSession.isTerminalClosed) {
-                terminallyClosedRooms.add(cleanCode)
-                recentRoomCache.remove(cleanCode)
-                return@withContext InvitationReadinessResult.Rejected("Room is terminally closed on MQTT")
-            }
-            if (mqttSession.status == "PLAYING") {
-                recentRoomCache[cleanCode] = CachedRoom(mqttSession, System.currentTimeMillis())
-                return@withContext InvitationReadinessResult.Rejected("Room is already in PLAYING status")
-            }
-        }
-
-        val session = if (httpSession != null && (cached == null || httpSession.revision >= cached.revision)) {
-            httpSession
-        } else {
-            cached ?: httpSession ?: mqttSession
-        }
-
-        if (session != null) {
-            if (session.status != "WAITING" || session.isTerminalClosed) {
-                return@withContext InvitationReadinessResult.Rejected("Room status is ${session.status}")
-            }
-            val isHost = session.hostId == hostPlayer.id ||
-                session.players.any { it.isHost && (it.id == hostPlayer.id || it.username.equals(hostPlayer.username, ignoreCase = true)) }
-            if (!isHost) {
-                return@withContext InvitationReadinessResult.Rejected("Host authority mismatch")
-            }
-
-            // Dual-channel verification: ensure both HTTP mirror exists and MQTT is published
-            var httpMirrorOk = httpSession != null
-            if (!httpMirrorOk && !isHttpUnavailable) {
-                val statusTag = getRoomStatusHttp(cleanCode)
-                if (statusTag != null) {
-                    val parts = statusTag.split(":")
-                    val st = parts.getOrNull(0) ?: ""
-                    val sRev = parts.getOrNull(2)?.toLongOrNull() ?: 0L
-                    if (st.startsWith("CLOSED") || st.startsWith("PLAYING") || sRev > session.revision) {
-                        return@withContext InvitationReadinessResult.Rejected("Room transitioned concurrently to $statusTag")
-                    }
-                }
-                putRoomRevisionHttp(cleanCode, session)
-                val jsonStr = json.encodeToString(session)
-                val b64 = encodeBase64Url(jsonStr)
-                val encVal = URLEncoder.encode(b64, "UTF-8")
-                val request = Request.Builder()
-                    .url("$BASE_URL/UpdateValue/$API_KEY/room_$cleanCode?value=$encVal")
-                    .post("".toRequestBody(null))
-                    .header("Content-Length", "0")
-                    .build()
-                val call = client.newCall(request)
-                httpMirrorOk = try {
-                    suspendCancellableCoroutine<Boolean> { cont ->
-                        cont.invokeOnCancellation { call.cancel() }
-                        call.enqueue(object : okhttp3.Callback {
-                            override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
-                                if (cont.isActive) cont.resume(false) {}
-                            }
-                            override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
-                                val ok = response.isSuccessful
-                                response.close()
-                                if (cont.isActive) cont.resume(ok) {}
-                            }
-                        })
-                    }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (_: Exception) { false }
-                if (httpMirrorOk) {
-                    setRoomStatusHttp(cleanCode, session.status, session.currentSeed, session.revision)
-                }
-            }
-
-            val mqttOk = publishRoomMetaMqtt(session)
-            recentRoomCache[cleanCode] = CachedRoom(session, System.currentTimeMillis())
-
-            if (mqttOk && httpMirrorOk) {
-                InvitationReadinessResult.Ready
-            } else if (mqttOk) {
-                queueMirrorReconciliationRetry(cleanCode, session)
-                InvitationReadinessResult.MirrorPending(session)
-            } else {
-                InvitationReadinessResult.TransientUnavailable("MQTT publication failed")
-            }
-        } else {
-            if (!allowCreation) {
-                if (isHttpUnavailable) {
-                    InvitationReadinessResult.TransientUnavailable("HTTP unavailable and no existing room found")
-                } else {
-                    InvitationReadinessResult.Rejected("Room does not exist or was closed")
-                }
-            } else {
-                val created = createRoom(cleanCode, hostPlayer)
-                if (created) {
-                    val fresh = getRoomCachedOnly(cleanCode)
-                    val httpExists = fetchRoomDirectHttpDetailedCancellable(cleanCode, 1000L).getOrNull() != null
-                    if (fresh != null && httpExists) {
-                        InvitationReadinessResult.Ready
-                    } else {
-                        val fallback = fresh ?: OnlineRoomSession(roomCode = cleanCode, hostId = hostPlayer.id, hostUsername = hostPlayer.username, hostDisplayName = hostPlayer.displayName)
-                        queueMirrorReconciliationRetry(cleanCode, fallback)
-                        InvitationReadinessResult.MirrorPending(fallback)
-                    }
-                } else {
-                    val isClosed = isRoomClosedHttpCancellable(cleanCode, 350L) || terminallyClosedRooms.contains(cleanCode)
-                    if (isClosed) {
-                        InvitationReadinessResult.Rejected("Room is closed")
-                    } else {
-                        InvitationReadinessResult.TransientUnavailable("Failed to create room: transport error")
-                    }
-                }
-            }
-        }
     }
 
     suspend fun ensureInvitationReadiness(
@@ -857,60 +425,7 @@ object OnlineRoomRegistry {
     }
 
     internal fun queueMirrorReconciliationRetry(cleanCode: String, session: OnlineRoomSession) {
-        if (RoomMetadataApi.enabled) return // Canonical records are committed atomically; legacy mirrors are not authoritative.
-        scope.launch {
-            var delayMs = 500L
-            for (attempt in 1..6) {
-                delay(delayMs)
-                currentCoroutineContext().ensureActive()
-                if (terminallyClosedRooms.contains(cleanCode) || hasPendingClosure(cleanCode) || isRoomClosedHttpCancellable(cleanCode, 350L)) break
-                val current = getRoomCachedOnly(cleanCode) ?: session
-                if (current.status != "WAITING" || current.isTerminalClosed) break
-                val currentTag = getRoomStatusHttp(cleanCode)
-                if (currentTag != null) {
-                    val parts = currentTag.split(":")
-                    val st = parts.getOrNull(0) ?: ""
-                    val sRev = parts.getOrNull(2)?.toLongOrNull() ?: 0L
-                    if (st.startsWith("CLOSED") || st.startsWith("PLAYING") || sRev > current.revision) break
-                }
-                try {
-                    putRoomRevisionHttp(cleanCode, current)
-                    val jsonStr = json.encodeToString(current)
-                    val b64 = encodeBase64Url(jsonStr)
-                    val encVal = URLEncoder.encode(b64, "UTF-8")
-                    val request = Request.Builder()
-                        .url("$BASE_URL/UpdateValue/$API_KEY/room_$cleanCode?value=$encVal")
-                        .post("".toRequestBody(null))
-                        .header("Content-Length", "0")
-                        .build()
-                    val call = client.newCall(request)
-                    val ok = try {
-                        suspendCancellableCoroutine<Boolean> { cont ->
-                            cont.invokeOnCancellation { call.cancel() }
-                            call.enqueue(object : okhttp3.Callback {
-                                override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
-                                    if (cont.isActive) cont.resume(false) {}
-                                }
-                                override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
-                                    val ok = response.isSuccessful
-                                    response.close()
-                                    if (cont.isActive) cont.resume(ok) {}
-                                }
-                            })
-                        }
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (_: Exception) { false }
-                    if (ok) {
-                        setRoomStatusHttp(cleanCode, current.status, current.currentSeed, current.revision)
-                        break
-                    }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (_: Exception) {}
-                delayMs = minOf(delayMs * 2, 5000L)
-            }
-        }
+        // No second transport or mirror exists in protocol 7.
     }
 
     /**
@@ -922,217 +437,78 @@ object OnlineRoomRegistry {
         hostPlayer: Player,
         boardSize: Int = 5
     ): Boolean = withContext(Dispatchers.IO) {
+
         val cleanCode = roomCode.trim().uppercase()
         if (cleanCode.isBlank()) return@withContext false
-        if (RoomMetadataApi.enabled) {
-            val host = sanitizePlayer(hostPlayer.copy(isHost = true))
-            val initial = OnlineRoomSession(cleanCode, host.id, host.username, host.displayName,
-                boardSize = boardSize, players = listOf(host))
-            val result = RoomMetadataApi.coordinator().mutate(cleanCode, initial = initial) { current ->
-                if (current.hostId != host.id || current.status != "WAITING") null
-                else current.copy(lastHeartbeat = System.currentTimeMillis(),
-                    players = if (current.players.any { it.id == host.id }) current.players else current.players + host)
-            }
-            if (result !is MutationResult.Applied) return@withContext false
-            rememberCanonicalRoom(result.session)
-            // The conditional commit establishes discovery. Keep the retained MQTT mirror
-            // as a compatibility aid without making it a second room-creation requirement.
-            publishRoomMetaMqtt(result.session)
-            return@withContext true
+
+        val host = sanitizePlayer(hostPlayer.copy(isHost = true))
+        val initial = OnlineRoomSession(cleanCode, host.id, host.username, host.displayName,
+            boardSize = boardSize, players = listOf(host))
+        val result = RoomMetadataApi.coordinator().mutate(cleanCode, initial = initial) { current ->
+            if (current.hostId != host.id || current.status != "WAITING") null
+            else current.copy(lastHeartbeat = System.currentTimeMillis(),
+                players = if (current.players.any { it.id == host.id }) current.players else current.players + host)
         }
-        if (terminallyClosedRooms.contains(cleanCode) || hasPendingClosure(cleanCode) || isRoomClosedHttpCancellable(cleanCode, 350L)) {
-            return@withContext false
-        }
-        val initialStatusTag = getRoomStatusHttp(cleanCode)
-        if (initialStatusTag != null) {
-            val parts = initialStatusTag.split(":")
-            val st = parts.getOrNull(0) ?: ""
-            if (st == "CLOSED" || st == "PLAYING") {
-                return@withContext false
-            }
-        }
+        if (result !is MutationResult.Applied) return@withContext false
+        rememberCanonicalRoom(result.session)
+        // The conditional commit establishes discovery. Keep the retained MQTT mirror
+        // as a compatibility aid without making it a second room-creation requirement.
+        publishRoomMetaMqtt(result.session)
+        return@withContext true
 
-        try {
-            val existing = getRoomCachedOnly(cleanCode) ?: fetchRoomDirectHttpDetailedCancellable(cleanCode, 1500L).getOrNull() ?: getRoomMqtt(cleanCode, 1500L)
-            if (existing != null) {
-                if (existing.status == "CLOSED" || existing.isTerminalClosed) return@withContext false
-                if (existing.status == "PLAYING") {
-                    recentRoomCache[cleanCode] = CachedRoom(existing, System.currentTimeMillis())
-                    return@withContext true
-                }
-                if (existing.status == "WAITING") {
-                    val preReconcileTag = getRoomStatusHttp(cleanCode)
-                    if (preReconcileTag != null) {
-                        val parts = preReconcileTag.split(":")
-                        val st = parts.getOrNull(0) ?: ""
-                        val sRev = parts.getOrNull(2)?.toLongOrNull() ?: 0L
-                        if (st.startsWith("CLOSED") || st.startsWith("PLAYING") || sRev > existing.revision) {
-                            return@withContext false
-                        }
-                    }
-                    // Reconcile existing room without replacing it with host-only WAITING snapshot
-                    val isHostAlready = existing.players.any { it.id == hostPlayer.id || (it.username.isNotBlank() && it.username.equals(hostPlayer.username, ignoreCase = true)) }
-                    val updatedSession = if (isHostAlready) {
-                        existing.copy(lastHeartbeat = System.currentTimeMillis())
-                    } else {
-                        existing.copy(players = existing.players + sanitizePlayer(hostPlayer.copy(isHost = true)), lastHeartbeat = System.currentTimeMillis())
-                    }
-                    recentRoomCache[cleanCode] = CachedRoom(updatedSession, System.currentTimeMillis())
-                    val mqttOk = publishRoomMetaMqtt(updatedSession)
-                    putRoomRevisionHttp(cleanCode, updatedSession)
-                    val jsonStr = json.encodeToString(updatedSession)
-                    val b64 = encodeBase64Url(jsonStr)
-                    val encVal = URLEncoder.encode(b64, "UTF-8")
-                    val request = Request.Builder()
-                        .url("$BASE_URL/UpdateValue/$API_KEY/room_$cleanCode?value=$encVal")
-                        .post("".toRequestBody(null))
-                        .header("Content-Length", "0")
-                        .build()
-                    val call = client.newCall(request)
-                    val httpOk = try {
-                        suspendCancellableCoroutine<Boolean> { cont ->
-                            cont.invokeOnCancellation { call.cancel() }
-                            call.enqueue(object : okhttp3.Callback {
-                                override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
-                                    if (cont.isActive) cont.resume(false) {}
-                                }
-                                override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
-                                    val ok = response.isSuccessful
-                                    response.close()
-                                    if (cont.isActive) cont.resume(ok) {}
-                                }
-                            })
-                        }
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (_: Exception) { false }
-                    if (httpOk) {
-                        setRoomStatusHttp(cleanCode, updatedSession.status, updatedSession.currentSeed, updatedSession.revision)
-                    } else {
-                        queueMirrorReconciliationRetry(cleanCode, updatedSession)
-                    }
-                    return@withContext mqttOk
-                }
-            }
-
-            val safeHost = sanitizePlayer(hostPlayer.copy(isHost = true))
-            val session = OnlineRoomSession(
-                roomCode = cleanCode,
-                hostId = safeHost.id,
-                hostUsername = safeHost.username,
-                hostDisplayName = safeHost.displayName,
-                hostAvatarUrl = null,
-                status = "WAITING",
-                boardSize = boardSize,
-                createdAt = System.currentTimeMillis(),
-                lastHeartbeat = System.currentTimeMillis(),
-                players = listOf(safeHost),
-                revision = 1L
-            )
-
-            terminallyClosedRooms.remove(cleanCode)
-            pendingClosures.remove(cleanCode)
-
-            // 1. Immediately publish retained MQTT and await completion so joiners can discover it
-            val mqttOk = publishRoomMetaMqtt(session)
-
-            // 2. Persist to KeyValue cloud storage with retry
-            val preCreateTag = getRoomStatusHttp(cleanCode)
-            if (preCreateTag != null) {
-                val parts = preCreateTag.split(":")
-                val st = parts.getOrNull(0) ?: ""
-                val sRev = parts.getOrNull(2)?.toLongOrNull() ?: 0L
-                if (st == "CLOSED" || st == "PLAYING" || sRev >= session.revision) {
-                    return@withContext false
-                }
-            }
-
-            putRoomRevisionHttp(cleanCode, session)
-            val jsonStr = json.encodeToString(session)
-            val b64 = encodeBase64Url(jsonStr)
-            val encVal = URLEncoder.encode(b64, "UTF-8")
-
-            val request = Request.Builder()
-                .url("$BASE_URL/UpdateValue/$API_KEY/room_$cleanCode?value=$encVal")
-                .post("".toRequestBody(null))
-                .header("Content-Length", "0")
-                .build()
-
-            var success = false
-            for (attempt in 1..2) {
-                ensureActive()
-                try {
-                    val call = client.newCall(request)
-                    success = suspendCancellableCoroutine<Boolean> { cont ->
-                        cont.invokeOnCancellation { call.cancel() }
-                        call.enqueue(object : okhttp3.Callback {
-                            override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
-                                if (cont.isActive) cont.resume(false) {}
-                            }
-                            override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
-                                val ok = response.isSuccessful
-                                response.close()
-                                if (cont.isActive) cont.resume(ok) {}
-                            }
-                        })
-                    }
-                    if (success) {
-                        setRoomStatusHttp(cleanCode, session.status, session.currentSeed, session.revision)
-                        break
-                    }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (_: Exception) {}
-            }
-            if (success) {
-                recentRoomCache[cleanCode] = CachedRoom(session, System.currentTimeMillis())
-            } else if (mqttOk) {
-                recentRoomCache[cleanCode] = CachedRoom(session, System.currentTimeMillis())
-                queueMirrorReconciliationRetry(cleanCode, session)
-            }
-            Log.i(TAG, "Created room $cleanCode in cloud registry: httpSuccess=$success, mqttOk=$mqttOk")
-            mqttOk
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to create room $cleanCode: ${e.message}", e)
-            false
-        }
     }
 
     /**
      * Validates a room code against active rooms and adds the joiner if valid.
-     * Dual-channel: verifies via KeyValue cloud storage with automatic MQTT retained fallback.
+     * Resolves an active host and admits the player through an acknowledged MQTT request.
      * Allows any player (new or rejoining) to join as long as room is open and not full.
      */
+    /** Shared invitation/code entry used by the app's acceptance callback. */
+    suspend fun joinRoom(roomCode: String, joiner: Player, invitation: GameInvite? = null): RoomJoinResult =
+        validateAndJoinRoom(roomCode, joiner,
+            // The sender may be any admitted friend, not necessarily the lobby host.
+            expectedSessionId = invitation?.roomSessionId?.takeIf { it.isNotBlank() })
+
     suspend fun validateAndJoinRoom(
         roomCode: String,
-        joiner: Player
+        joiner: Player,
+        expectedSessionId: String? = null,
+        expectedHostId: String? = null
     ): RoomJoinResult = withContext(Dispatchers.IO) {
+
         val cleanCode = roomCode.trim().uppercase()
         if (cleanCode.length != 6) {
             return@withContext RoomJoinResult.NotFound("Room code must be 6 characters.")
         }
 
+        val cleanExpectedSession = expectedSessionId?.takeIf { it.isNotBlank() }
+        val cleanExpectedHost = expectedHostId?.takeIf { it.isNotBlank() }
+
         try {
-            val canonicalLookup = RoomMetadataApi.enabled
-            var session = if (canonicalLookup) {
-                val fetched = readCanonicalRoom(cleanCode)
-                if (fetched.isFailure) return@withContext RoomJoinResult.Error(
-                    "The room service is temporarily unavailable. Please try again.")
-                fetched.getOrNull()?.takeIf { it.status != "CLOSED" && !it.isTerminalClosed }
-            } else getRoom(cleanCode)
-            if (session == null && !canonicalLookup) {
-                // Network jitter or host just created room: retry up to 3 times
-                for (retry in 1..3) {
-                    kotlinx.coroutines.delay(400L)
-                    session = getRoom(cleanCode)
-                    if (session != null) break
+            val fetched = readCanonicalRoom(cleanCode)
+            val failure = fetched.exceptionOrNull()
+            val isUnauthenticatedSig = failure?.message?.contains("Unauthenticated metadata signature") == true
+            var session = fetched.getOrNull()?.takeIf { it.status != "CLOSED" && !it.isTerminalClosed }
+            val isCanonicalVerified = (session != null)
+            if (session == null) {
+                val candidate = runCatching { RoomMetadataApi.readCandidate(cleanCode) }.getOrNull()?.takeIf { it.status != "CLOSED" && !it.isTerminalClosed }
+                    ?: getRoomCachedOnly(cleanCode)?.takeIf { it.status != "CLOSED" && !it.isTerminalClosed }
+                if (candidate != null && (cleanExpectedHost == null || candidate.hostId == cleanExpectedHost) &&
+                    (cleanExpectedSession == null || candidate.sessionId == cleanExpectedSession)) {
+                    session = candidate
                 }
+            }
+            if (session == null && fetched.isFailure && !isUnauthenticatedSig) {
+                return@withContext RoomJoinResult.Error("EMQX is temporarily unavailable. Please try again.")
             }
 
             if (session == null) {
                 return@withContext RoomJoinResult.NotFound("No active room found for code $cleanCode.")
             }
 
+            if ((cleanExpectedSession != null && cleanExpectedSession != session.sessionId) ||
+                (cleanExpectedHost != null && cleanExpectedHost != session.hostId))
+                return@withContext RoomJoinResult.NotFound("This invitation belongs to an older lobby.")
             if (session.status == "CLOSED" || session.isTerminalClosed || terminallyClosedRooms.contains(cleanCode) || hasPendingClosure(cleanCode)) {
                 return@withContext RoomJoinResult.NotFound("Room $cleanCode has been closed by the host.")
             }
@@ -1142,6 +518,9 @@ object OnlineRoomRegistry {
             }
 
             if (session.status == "PLAYING") {
+                if (!isCanonicalVerified) {
+                    return@withContext RoomJoinResult.Error("Cannot rejoin active match from unverified discovery candidate.")
+                }
                 if (existingInSession == null) {
                     return@withContext RoomJoinResult.AlreadyStarted("Match in room $cleanCode has already started.")
                 }
@@ -1166,20 +545,20 @@ object OnlineRoomRegistry {
 
             // Centralized atomic join mutation: verifies room is still WAITING and not CLOSED before admitting joiner
             val mutation = mutateCloudSession(cleanCode) { current ->
-                if (current.status != "WAITING" || current.isTerminalClosed) return@mutateCloudSession null
+                if (current.status != "WAITING" || current.isTerminalClosed ||
+                    (cleanExpectedSession != null && current.sessionId != cleanExpectedSession) ||
+                    (cleanExpectedHost != null && current.hostId != cleanExpectedHost)) return@mutateCloudSession null
                 val isAlready = current.players.any { it.id == safeJoiner.id || (it.username.isNotBlank() && it.username.equals(safeJoiner.username, ignoreCase = true)) }
                 val newPlayers = if (isAlready) {
                     current.players.map { p ->
                         if (p.id == safeJoiner.id || (p.username.isNotBlank() && p.username.equals(safeJoiner.username, ignoreCase = true))) {
                             safeJoiner
                         } else if (p.isHost) {
-                            p.copy(lastSeenTimestamp = now)
+                            p
                         } else p
                     }
                 } else {
-                    current.players.map { p ->
-                        if (p.isHost) p.copy(lastSeenTimestamp = now) else p
-                    } + safeJoiner
+                    current.players + safeJoiner
                 }
                 current.copy(players = newPlayers, lastHeartbeat = now)
             }
@@ -1189,24 +568,8 @@ object OnlineRoomRegistry {
                     return@withContext RoomJoinResult.Success(mutation.session)
                 }
                 is MutationResult.Unavailable -> {
-                    // MQTT-backed admission when HTTP mirror is unavailable
-                    val newPlayers = if (isAlreadyInRoom) {
-                        session.players.map { p ->
-                            if (p.id == safeJoiner.id || (p.username.isNotBlank() && p.username.equals(safeJoiner.username, ignoreCase = true))) {
-                                safeJoiner
-                            } else p
-                        }
-                    } else {
-                        session.players + safeJoiner
-                    }
-                    val fallbackAdmitted = session.copy(
-                        players = newPlayers,
-                        lastHeartbeat = now,
-                        revision = session.revision + 1L
-                    )
-                    recentRoomCache[cleanCode] = CachedRoom(fallbackAdmitted, now)
-                    publishRoomMetaMqtt(fallbackAdmitted)
-                    return@withContext RoomJoinResult.Success(fallbackAdmitted)
+                    Log.w(TAG, "Lobby join was not acknowledged: ${mutation.error.message}")
+                    return@withContext RoomJoinResult.Error("Could not reach the room host. Please try joining again.")
                 }
                 is MutationResult.Rejected -> {
                     val currentDirect = getRoomCachedOnly(cleanCode)
@@ -1223,79 +586,11 @@ object OnlineRoomRegistry {
             Log.e(TAG, "Error validating room $cleanCode: ${e.message}", e)
             return@withContext RoomJoinResult.Error("Network error while validating room $cleanCode. Please check your connection.")
         }
+
     }
 
     internal suspend fun fetchRoomDirectHttpDetailedCancellable(cleanCode: String, timeoutMs: Long = 1500L): Result<OnlineRoomSession?> = withContext(Dispatchers.IO) {
-        if (cleanCode.isBlank()) return@withContext Result.success(null)
-        if (RoomMetadataApi.enabled) return@withContext readCanonicalRoom(cleanCode)
-        val testEx = simulatedHttpException
-        if (testEx != null) {
-            return@withContext Result.failure(testEx)
-        }
-        try {
-            val timedResult = withTimeoutOrNull(timeoutMs) {
-                val request = Request.Builder()
-                    .url("$BASE_URL/GetValue/$API_KEY/room_$cleanCode")
-                    .get()
-                    .build()
-                val call = client.newCall(request)
-                try {
-                    kotlinx.coroutines.suspendCancellableCoroutine<Result<OnlineRoomSession?>> { cont ->
-                        cont.invokeOnCancellation { call.cancel() }
-                        call.enqueue(object : okhttp3.Callback {
-                            override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
-                                if (cont.isActive) cont.resume(Result.failure(e)) {}
-                            }
-                            override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
-                                response.use { resp ->
-                                    val code = resp.code
-                                    val raw = resp.body?.string()?.trim()?.removeSurrounding("\"")
-                                    if (code in 500..599) {
-                                        if (cont.isActive) cont.resume(Result.failure(java.io.IOException("HTTP $code server error"))) {}
-                                        return
-                                    }
-                                    if (code == 404 || raw.isNullOrBlank() || raw == "null" || raw.contains("error", ignoreCase = true)) {
-                                        if (cont.isActive) cont.resume(Result.success(null)) {}
-                                        return
-                                    }
-                                    val jsonStr = try { decodeBase64Url(raw) } catch (_: Exception) { raw }
-                                    if (jsonStr.startsWith("{")) {
-                                        try {
-                                            val session = json.decodeFromString<OnlineRoomSession>(jsonStr)
-                                            if (cont.isActive) cont.resume(Result.success(session)) {}
-                                        } catch (e: Exception) {
-                                            if (cont.isActive) cont.resume(Result.failure(e)) {}
-                                        }
-                                    } else {
-                                        if (cont.isActive) cont.resume(Result.success(null)) {}
-                                    }
-                                }
-                            }
-                        })
-                    }
-                } catch (e: CancellationException) {
-                    call.cancel()
-                    throw e
-                }
-            }
-            val baseRes = timedResult ?: Result.failure(java.io.IOException("HTTP read timed out after ${timeoutMs}ms"))
-            val session = baseRes.getOrNull()
-            val statusTag = getRoomStatusHttp(cleanCode)
-            if (statusTag != null) {
-                val sRev = statusTag.split(":").getOrNull(2)?.toLongOrNull() ?: 0L
-                if (sRev > (session?.revision ?: 0L)) {
-                    val newer = fetchRoomRevisionHttp(cleanCode, sRev, timeoutMs = minOf(timeoutMs, 1000L))
-                    if (newer != null) {
-                        return@withContext Result.success(newer)
-                    }
-                }
-            }
-            baseRes
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
+        return@withContext readCanonicalRoom(cleanCode)
     }
 
     internal fun fetchRoomDirectHttpDetailed(cleanCode: String): Result<OnlineRoomSession?> {
@@ -1311,183 +606,27 @@ object OnlineRoomRegistry {
     }
 
     internal suspend fun getRoomStatusHttp(cleanCode: String, timeoutMs: Long = 500L): String? = withContext(Dispatchers.IO) {
-        if (RoomMetadataApi.enabled) return@withContext readCanonicalRoom(cleanCode).getOrNull()?.let {
-            "${it.status}:${it.currentSeed}:${it.revision}"
-        }
-        try {
-            val remote = withTimeoutOrNull(timeoutMs) {
-                val request = Request.Builder()
-                    .url("$BASE_URL/GetValue/$API_KEY/room_status_$cleanCode")
-                    .get()
-                    .build()
-                val call = client.newCall(request)
-                try {
-                    kotlinx.coroutines.suspendCancellableCoroutine<String?> { cont ->
-                        cont.invokeOnCancellation { call.cancel() }
-                        call.enqueue(object : okhttp3.Callback {
-                            override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
-                                if (cont.isActive) cont.resume(null) {}
-                            }
-                            override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
-                                response.use { resp ->
-                                    val raw = resp.body?.string()?.trim()?.removeSurrounding("\"")
-                                    if (cont.isActive) cont.resume(raw?.takeIf { it.isNotBlank() && it != "null" }) {}
-                                }
-                            }
-                        })
-                    }
-                } catch (e: CancellationException) {
-                    call.cancel()
-                    throw e
-                }
-            }
-            if (remote != null) {
-                roomStatusMap[cleanCode] = remote
-                return@withContext remote
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {}
-        roomStatusMap[cleanCode]
+        return@withContext readCanonicalRoom(cleanCode).getOrNull()?.let { "${it.status}:${it.currentSeed}:${it.revision}" }
     }
 
     internal suspend fun setRoomStatusHttp(cleanCode: String, status: String, seed: Long, revision: Long) = withContext(Dispatchers.IO) {
-        if (RoomMetadataApi.enabled) return@withContext
-        ensureActive()
-        val statusVal = "$status:$seed:$revision"
-        roomStatusMap[cleanCode] = statusVal
-        try {
-            val encVal = URLEncoder.encode(statusVal, "UTF-8")
-            val request = Request.Builder()
-                .url("$BASE_URL/UpdateValue/$API_KEY/room_status_$cleanCode?value=$encVal")
-                .post("".toRequestBody(null))
-                .header("Content-Length", "0")
-                .build()
-            val call = client.newCall(request)
-            suspendCancellableCoroutine<Unit> { cont ->
-                cont.invokeOnCancellation { call.cancel() }
-                call.enqueue(object : okhttp3.Callback {
-                    override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
-                        if (cont.isActive) cont.resume(Unit) {}
-                    }
-                    override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
-                        response.close()
-                        if (cont.isActive) cont.resume(Unit) {}
-                    }
-                })
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {}
+        mutateCloudSession(cleanCode, expectedSeed = seed.takeIf { it != 0L }) { current ->
+            if (current.status == status) current else null
+        }
     }
 
     internal suspend fun putRoomRevisionHttp(cleanCode: String, session: OnlineRoomSession) = withContext(Dispatchers.IO) {
-        if (RoomMetadataApi.enabled) return@withContext
-        val rev = session.revision
-        if (rev <= 0L) return@withContext
-        try {
-            val jsonStr = json.encodeToString(session)
-            val b64 = encodeBase64Url(jsonStr)
-            val encVal = URLEncoder.encode(b64, "UTF-8")
-            val request = Request.Builder()
-                .url("$BASE_URL/UpdateValue/$API_KEY/room_rev_${cleanCode}_$rev?value=$encVal")
-                .post("".toRequestBody(null))
-                .header("Content-Length", "0")
-                .build()
-            val call = client.newCall(request)
-            suspendCancellableCoroutine<Unit> { cont ->
-                cont.invokeOnCancellation { call.cancel() }
-                call.enqueue(object : okhttp3.Callback {
-                    override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
-                        if (cont.isActive) cont.resume(Unit) {}
-                    }
-                    override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
-                        response.close()
-                        if (cont.isActive) cont.resume(Unit) {}
-                    }
-                })
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {}
+        mutateCloudSession(cleanCode, expectedSeed = session.currentSeed) { current ->
+            if (current.revision == session.revision) current else null
+        }
     }
 
     internal suspend fun fetchRoomRevisionHttp(cleanCode: String, rev: Long, timeoutMs: Long = 1000L): OnlineRoomSession? = withContext(Dispatchers.IO) {
-        if (cleanCode.isBlank() || rev <= 0L) return@withContext null
-        try {
-            withTimeoutOrNull(timeoutMs) {
-                val request = Request.Builder()
-                    .url("$BASE_URL/GetValue/$API_KEY/room_rev_${cleanCode}_$rev")
-                    .get()
-                    .build()
-                val call = client.newCall(request)
-                suspendCancellableCoroutine<OnlineRoomSession?> { cont ->
-                    cont.invokeOnCancellation { call.cancel() }
-                    call.enqueue(object : okhttp3.Callback {
-                        override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
-                            if (cont.isActive) cont.resume(null) {}
-                        }
-                        override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
-                            response.use { resp ->
-                                val raw = resp.body?.string()?.trim()?.removeSurrounding("\"")
-                                if (resp.isSuccessful && !raw.isNullOrBlank() && raw != "null") {
-                                    val jsonStr = try { decodeBase64Url(raw) } catch (_: Exception) { raw }
-                                    if (jsonStr.startsWith("{")) {
-                                        try {
-                                            val s = json.decodeFromString<OnlineRoomSession>(jsonStr)
-                                            if (cont.isActive) cont.resume(s) {}
-                                            return
-                                        } catch (_: Exception) {}
-                                    }
-                                }
-                                if (cont.isActive) cont.resume(null) {}
-                            }
-                        }
-                    })
-                }
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) { null }
+        return@withContext readCanonicalRoom(cleanCode).getOrNull()?.takeIf { it.revision == rev }
     }
 
     internal suspend fun isRoomClosedHttpCancellable(cleanCode: String, timeoutMs: Long = 350L): Boolean = withContext(Dispatchers.IO) {
-        if (RoomMetadataApi.enabled) return@withContext readCanonicalRoom(cleanCode).getOrNull()?.let {
-            it.status == "CLOSED" || it.isTerminalClosed
-        } ?: false
-        if (terminallyClosedRooms.contains(cleanCode) || hasPendingClosure(cleanCode)) return@withContext true
-        try {
-            withTimeoutOrNull(timeoutMs) {
-                val request = Request.Builder()
-                    .url("$BASE_URL/GetValue/$API_KEY/room_closed_$cleanCode")
-                    .get()
-                    .build()
-                val call = client.newCall(request)
-                try {
-                    kotlinx.coroutines.suspendCancellableCoroutine<Boolean> { cont ->
-                        cont.invokeOnCancellation { call.cancel() }
-                        call.enqueue(object : okhttp3.Callback {
-                            override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
-                                if (cont.isActive) cont.resume(false) {}
-                            }
-                            override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
-                                response.use { resp ->
-                                    val raw = resp.body?.string()?.trim()?.removeSurrounding("\"")
-                                    if (cont.isActive) cont.resume(raw == "true") {}
-                                }
-                            }
-                        })
-                    }
-                } catch (e: CancellationException) {
-                    call.cancel()
-                    throw e
-                }
-            } ?: false
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            false
-        }
+        return@withContext hasPendingClosure(cleanCode) || readCanonicalRoom(cleanCode).getOrNull()?.let { it.status == "CLOSED" || it.isTerminalClosed } == true
     }
 
     private val metadataMutation = Mutex()
@@ -1504,348 +643,19 @@ object OnlineRoomRegistry {
         expectedSeed: Long? = null,
         transform: (current: OnlineRoomSession) -> OnlineRoomSession?
     ): MutationResult = withContext(Dispatchers.IO) {
+
         if (cleanCode.isBlank()) return@withContext MutationResult.Rejected("Blank room code")
-        if (RoomMetadataApi.enabled) {
-            val result = RoomMetadataApi.coordinator().mutate(cleanCode, expectedSeed = expectedSeed,
-                allowReset = allowResetToWaiting, allowAlreadyClosed = allowClosing, transform = transform)
-            if (result is MutationResult.Unavailable && allowClosing) queueDurableClosureRetry(cleanCode, expectedSeed)
-            return@withContext publishCanonicalMutation(cleanCode, result)
-        }
-        if ((terminallyClosedRooms.contains(cleanCode) || hasPendingClosure(cleanCode)) && !allowClosing) {
-            recentRoomCache.remove(cleanCode)
+        if ((terminallyClosedRooms.contains(cleanCode) || hasPendingClosure(cleanCode)) && !allowClosing)
             return@withContext MutationResult.Rejected("Room is terminally closed")
-        }
-        metadataMutation.withLock {
-            try {
-                if (isRoomClosedHttpCancellable(cleanCode, 350L) && !allowClosing) {
-                    terminallyClosedRooms.add(cleanCode)
-                    recentRoomCache.remove(cleanCode)
-                    return@withContext MutationResult.Rejected("Room is closed on server")
-                }
-                val cached = recentRoomCache[cleanCode]?.session
-                val httpFetchResult = fetchRoomDirectHttpDetailedCancellable(cleanCode, 1500L)
-                val httpSession = httpFetchResult.getOrNull()
-                val transportError = httpFetchResult.exceptionOrNull()
+        val cachedSeed = recentRoomCache[cleanCode]?.session?.currentSeed
+        if (expectedSeed != null && cachedSeed != null && cachedSeed != expectedSeed)
+            return@withContext MutationResult.Rejected("Seed mismatch: current=$cachedSeed, expected=$expectedSeed")
 
-                if (transportError != null && cached == null) {
-                    return@withContext MutationResult.Unavailable(transportError)
-                }
+        val result = RoomMetadataApi.coordinator().mutate(cleanCode, expectedSeed = expectedSeed,
+            allowReset = allowResetToWaiting, allowAlreadyClosed = allowClosing, transform = transform)
+        if (result is MutationResult.Unavailable && allowClosing && cachedSeed != null) queueDurableClosureRetry(cleanCode, expectedSeed)
+        return@withContext publishCanonicalMutation(cleanCode, result)
 
-                if (httpSession == null && cached == null && transportError == null) {
-                    return@withContext MutationResult.Rejected("Room not found")
-                }
-
-                var current = if (cached != null && (httpSession == null || cached.revision > httpSession.revision)) {
-                    cached
-                } else {
-                    httpSession!!
-                }
-
-                // Reject an obsolete generation before queuing any outage fallback.
-                if (expectedSeed != null && current.currentSeed != 0L && current.currentSeed != expectedSeed) {
-                    return@withContext MutationResult.Rejected("Seed mismatch: current=${current.currentSeed}, expected=$expectedSeed")
-                }
-
-                if (allowClosing) {
-                    val hasFreshHttp = (httpSession != null)
-                    val mqttLive = if (!hasFreshHttp) getRoomMqtt(cleanCode, 1500L) else null
-                    if (mqttLive != null) {
-                        if (expectedSeed != null && mqttLive.currentSeed != 0L && mqttLive.currentSeed != expectedSeed) {
-                            return@withContext MutationResult.Rejected("Active MQTT seed ${mqttLive.currentSeed} != expected $expectedSeed")
-                        }
-                        if (mqttLive.revision > current.revision) {
-                            current = mqttLive
-                        }
-                    } else if (!hasFreshHttp) {
-                        queueDurableClosureRetry(cleanCode, expectedSeed)
-                        return@withContext MutationResult.Unavailable(java.io.IOException("Cannot close room $cleanCode: no fresh transport evidence available from HTTP or MQTT"))
-                    }
-                }
-
-                if ((current.status == "CLOSED" || current.isTerminalClosed || terminallyClosedRooms.contains(cleanCode)) && !allowClosing) {
-                    recentRoomCache.remove(cleanCode)
-                    return@withContext MutationResult.Rejected("Room is closed")
-                }
-
-                if (expectedSeed != null && current.currentSeed != expectedSeed) {
-                    return@withContext MutationResult.Rejected("Seed mismatch: current=${current.currentSeed}, expected=$expectedSeed")
-                }
-
-                val transformed = transform(current) ?: return@withContext MutationResult.Rejected("Transform returned null")
-
-                if ((current.status == "CLOSED" || current.isTerminalClosed) && transformed.status != "CLOSED" && !allowClosing) {
-                    Log.w(TAG, "Prevented stale write reopening closed room $cleanCode")
-                    return@withContext MutationResult.Rejected("Cannot reopen closed room")
-                }
-
-                if (current.status == "PLAYING" && transformed.status == "WAITING" && !allowResetToWaiting) {
-                    Log.w(TAG, "Prevented status regression from PLAYING to WAITING for $cleanCode")
-                    return@withContext MutationResult.Rejected("Cannot downgrade status from PLAYING to WAITING")
-                }
-
-                val baseStatus = current.status
-                val baseSeed = current.currentSeed
-                val baseRevision = current.revision
-                val isClosing = transformed.status == "CLOSED" || transformed.isTerminalClosed
-                val newRevision = maxOf(current.revision, 0L) + 1L
-                val effectiveNewRevision = if (transformed.revision in 1 until current.revision) {
-                    transformed.revision + 1L
-                } else {
-                    newRevision
-                }
-
-                if (transformed.revision in 1 until current.revision) {
-                    Log.w(TAG, "Stale revision write on $cleanCode: base ${transformed.revision} < current ${current.revision}")
-                    return@withContext MutationResult.Rejected("Concurrent newer revision committed")
-                }
-
-                val serverStatusPre = getRoomStatusHttp(cleanCode)
-                if (serverStatusPre != null) {
-                    val parts = serverStatusPre.split(":")
-                    val sStatus = parts.getOrNull(0) ?: ""
-                    val sSeed = parts.getOrNull(1)?.toLongOrNull() ?: 0L
-                    val sRev = parts.getOrNull(2)?.toLongOrNull() ?: 0L
-                    if (sStatus == "CLOSED" && !isClosing) {
-                        terminallyClosedRooms.add(cleanCode)
-                        recentRoomCache.remove(cleanCode)
-                        return@withContext MutationResult.Rejected("Room was terminally closed concurrently")
-                    }
-                    if (baseStatus == "WAITING" && transformed.status == "WAITING" && sStatus == "PLAYING" && !allowResetToWaiting) {
-                        val baseSession = (if (sRev > 0L) fetchRoomRevisionHttp(cleanCode, sRev) else null)
-                            ?: fetchRoomDirectHttpDetailedCancellable(cleanCode, 1000L).getOrNull() ?: current
-                        val repairPlaying = if (baseSession.status == "PLAYING") baseSession else baseSession.copy(
-                            status = "PLAYING",
-                            currentSeed = if (sSeed != 0L) sSeed else baseSession.currentSeed,
-                            revision = maxOf(sRev, baseSession.revision)
-                        )
-                        recentRoomCache[cleanCode] = CachedRoom(repairPlaying, System.currentTimeMillis())
-                        return@withContext MutationResult.Rejected("Room transitioned to PLAYING concurrently")
-                    }
-                    if (sRev >= effectiveNewRevision) {
-                        Log.w(TAG, "Concurrent write on $cleanCode committed revision $sRev >= $effectiveNewRevision")
-                        return@withContext MutationResult.Rejected("Concurrent newer revision committed")
-                    }
-                    if (expectedSeed != null && sSeed != 0L && sSeed != expectedSeed) {
-                        return@withContext MutationResult.Rejected("Seed mismatch: storage=$sSeed, expected=$expectedSeed")
-                    }
-                }
-
-                val freshPreWrite = fetchRoomDirectHttpDetailedCancellable(cleanCode, 1000L).getOrNull()
-                if (freshPreWrite != null) {
-                    if ((freshPreWrite.status == "CLOSED" || freshPreWrite.isTerminalClosed) && !isClosing) {
-                        terminallyClosedRooms.add(cleanCode)
-                        recentRoomCache.remove(cleanCode)
-                        return@withContext MutationResult.Rejected("Room was terminally closed concurrently")
-                    }
-                    if (baseStatus == "WAITING" && transformed.status == "WAITING" && freshPreWrite.status == "PLAYING" && !allowResetToWaiting) {
-                        recentRoomCache[cleanCode] = CachedRoom(freshPreWrite, System.currentTimeMillis())
-                        return@withContext MutationResult.Rejected("Room transitioned to PLAYING concurrently")
-                    }
-                    if (freshPreWrite.revision >= newRevision) {
-                        Log.w(TAG, "Concurrent write on $cleanCode committed revision ${freshPreWrite.revision} >= $newRevision")
-                        return@withContext MutationResult.Rejected("Concurrent newer revision committed")
-                    }
-                    if (expectedSeed != null && freshPreWrite.currentSeed != 0L && freshPreWrite.currentSeed != expectedSeed) {
-                        return@withContext MutationResult.Rejected("Seed mismatch: storage=${freshPreWrite.currentSeed}, expected=$expectedSeed")
-                    }
-                }
-
-                val finalSession = transformed.copy(
-                    revision = newRevision,
-                    isTerminalClosed = isClosing
-                )
-
-                putRoomRevisionHttp(cleanCode, finalSession)
-                val jsonStr = json.encodeToString(finalSession)
-                val b64 = encodeBase64Url(jsonStr)
-                val encVal = URLEncoder.encode(b64, "UTF-8")
-                val request = Request.Builder()
-                    .url("$BASE_URL/UpdateValue/$API_KEY/room_$cleanCode?value=$encVal")
-                    .post("".toRequestBody(null))
-                    .header("Content-Length", "0")
-                    .build()
-
-                var writeSuccess = false
-                try {
-                    val call = client.newCall(request)
-                    writeSuccess = kotlinx.coroutines.suspendCancellableCoroutine<Boolean> { cont ->
-                        cont.invokeOnCancellation { call.cancel() }
-                        call.enqueue(object : okhttp3.Callback {
-                            override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
-                                if (cont.isActive) cont.resume(false) {}
-                            }
-                            override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
-                                val ok = response.isSuccessful
-                                response.close()
-                                if (cont.isActive) cont.resume(ok) {}
-                            }
-                        })
-                    }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    if (isClosing) {
-                        queueDurableClosureRetry(cleanCode, expectedSeed)
-                    }
-                    return@withContext MutationResult.Unavailable(e)
-                }
-
-                if (!writeSuccess) {
-                    if (isClosing) {
-                        queueDurableClosureRetry(cleanCode, expectedSeed)
-                    }
-                    return@withContext MutationResult.Unavailable(java.io.IOException("HTTP write failed"))
-                }
-
-                if (isClosing) {
-                    terminallyClosedRooms.add(cleanCode)
-                    setRoomStatusHttp(cleanCode, "CLOSED", expectedSeed ?: 0L, newRevision)
-                    var tombstoneSuccess = false
-                    try {
-                        ensureActive()
-                        val tombstoneReq = Request.Builder()
-                            .url("$BASE_URL/UpdateValue/$API_KEY/room_closed_$cleanCode?value=true")
-                            .post("".toRequestBody(null))
-                            .header("Content-Length", "0")
-                            .build()
-                        val call = client.newCall(tombstoneReq)
-                        tombstoneSuccess = suspendCancellableCoroutine<Boolean> { cont ->
-                            cont.invokeOnCancellation { call.cancel() }
-                            call.enqueue(object : okhttp3.Callback {
-                                override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
-                                    if (cont.isActive) cont.resume(false) {}
-                                }
-                                override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
-                                    val ok = response.isSuccessful
-                                    response.close()
-                                    if (cont.isActive) cont.resume(ok) {}
-                                }
-                            })
-                        }
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (_: Exception) {}
-                    if (!tombstoneSuccess) {
-                        queueDurableClosureRetry(cleanCode, expectedSeed)
-                    } else {
-                        pendingClosures.remove(cleanCode)
-                        persistPendingClosures()
-                    }
-                    clearRoomMetaMqtt(cleanCode)
-                    recentRoomCache.remove(cleanCode)
-                } else {
-                    val isClosedConcurrently = terminallyClosedRooms.contains(cleanCode) ||
-                        hasPendingClosure(cleanCode) ||
-                        isRoomClosedHttpCancellable(cleanCode, 350L)
-                    if (isClosedConcurrently) {
-                        terminallyClosedRooms.add(cleanCode)
-                        recentRoomCache.remove(cleanCode)
-                        setRoomStatusHttp(cleanCode, "CLOSED", expectedSeed ?: 0L, newRevision + 1L)
-                        val repairClosed = current.copy(status = "CLOSED", isTerminalClosed = true, revision = newRevision + 1L)
-                        val closedJson = json.encodeToString(repairClosed)
-                        val b64 = encodeBase64Url(closedJson)
-                        val repairReq = Request.Builder()
-                            .url("$BASE_URL/UpdateValue/$API_KEY/room_$cleanCode?value=${URLEncoder.encode(b64, "UTF-8")}")
-                            .post("".toRequestBody(null)).header("Content-Length", "0").build()
-                        val call = client.newCall(repairReq)
-                        try {
-                            suspendCancellableCoroutine<Unit> { cont ->
-                                cont.invokeOnCancellation { call.cancel() }
-                                call.enqueue(object : okhttp3.Callback {
-                                    override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
-                                        if (cont.isActive) cont.resume(Unit) {}
-                                    }
-                                    override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
-                                        response.close()
-                                        if (cont.isActive) cont.resume(Unit) {}
-                                    }
-                                })
-                            }
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (_: Exception) {}
-                        return@withContext MutationResult.Rejected("Room was terminally closed concurrently")
-                    }
-
-                    val serverStatusTag = getRoomStatusHttp(cleanCode)
-                    if (serverStatusTag != null) {
-                        val parts = serverStatusTag.split(":")
-                        val sStatus = parts.getOrNull(0) ?: ""
-                        val sSeed = parts.getOrNull(1)?.toLongOrNull() ?: 0L
-                        val sRev = parts.getOrNull(2)?.toLongOrNull() ?: 0L
-
-                        if (sStatus == "CLOSED") {
-                            terminallyClosedRooms.add(cleanCode)
-                            recentRoomCache.remove(cleanCode)
-                            return@withContext MutationResult.Rejected("Room was terminally closed concurrently")
-                        }
-                        if ((baseStatus == "WAITING" && transformed.status == "WAITING" &&
-                            sStatus == "PLAYING" && !allowResetToWaiting) ||
-                            sRev > newRevision) {
-                            Log.w(TAG, "Prevented stale write on $cleanCode (sStatus=$sStatus, sRev=$sRev vs newRev=$newRevision); restoring authoritative session")
-                            val authSession = (if (sRev > 0L) fetchRoomRevisionHttp(cleanCode, sRev) else null)
-                                ?: getRoomMqtt(cleanCode, 1500L)
-                                ?: recentRoomCache[cleanCode]?.session?.takeIf { it.revision >= sRev || it.status == "PLAYING" }
-                                ?: fetchRoomDirectHttpDetailedCancellable(cleanCode, 1000L).getOrNull()
-
-                            val resolvedAuth = authSession ?: current.copy(
-                                status = if (sStatus == "PLAYING") "PLAYING" else current.status,
-                                currentSeed = if (sSeed != 0L) sSeed else current.currentSeed,
-                                revision = maxOf(sRev, newRevision) + 1L
-                            )
-                            val repairRev = maxOf(sRev, resolvedAuth.revision, newRevision + 1L)
-                            val completeRepaired = resolvedAuth.copy(revision = repairRev)
-
-                            val playingJson = json.encodeToString(completeRepaired)
-                            val b64 = encodeBase64Url(playingJson)
-                            val repairReq = Request.Builder()
-                                .url("$BASE_URL/UpdateValue/$API_KEY/room_$cleanCode?value=${URLEncoder.encode(b64, "UTF-8")}")
-                                .post("".toRequestBody(null)).header("Content-Length", "0").build()
-                            val call = client.newCall(repairReq)
-                            try {
-                                suspendCancellableCoroutine<Unit> { cont ->
-                                    cont.invokeOnCancellation { call.cancel() }
-                                    call.enqueue(object : okhttp3.Callback {
-                                        override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
-                                            if (cont.isActive) cont.resume(Unit) {}
-                                        }
-                                        override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
-                                            response.close()
-                                            if (cont.isActive) cont.resume(Unit) {}
-                                        }
-                                    })
-                                }
-                            } catch (e: CancellationException) {
-                                throw e
-                            } catch (_: Exception) {}
-                            putRoomRevisionHttp(cleanCode, completeRepaired)
-                            setRoomStatusHttp(cleanCode, completeRepaired.status, completeRepaired.currentSeed, completeRepaired.revision)
-                            recentRoomCache[cleanCode] = CachedRoom(completeRepaired, System.currentTimeMillis())
-                            publishRoomMetaMqtt(completeRepaired)
-                            return@withContext MutationResult.Rejected(if (sStatus == "PLAYING") "Room transitioned to PLAYING concurrently" else "Concurrent newer revision committed")
-                        }
-                        if (sRev >= newRevision) {
-                            Log.w(TAG, "Concurrent write on $cleanCode committed revision $sRev >= $newRevision")
-                            return@withContext MutationResult.Rejected("Concurrent newer revision committed")
-                        }
-                        if (expectedSeed != null && sSeed != 0L && sSeed != expectedSeed) {
-                            return@withContext MutationResult.Rejected("Seed mismatch: storage=$sSeed, expected=$expectedSeed")
-                        }
-                    }
-
-                    ensureActive()
-                    putRoomRevisionHttp(cleanCode, finalSession)
-                    setRoomStatusHttp(cleanCode, finalSession.status, finalSession.currentSeed, finalSession.revision)
-                    ensureActive()
-                    recentRoomCache[cleanCode] = CachedRoom(finalSession, System.currentTimeMillis())
-                    publishRoomMetaMqtt(finalSession)
-                }
-                return@withContext MutationResult.Applied(finalSession)
-            } catch (e: Exception) {
-                Log.w(TAG, "mutateCloudSession error for $cleanCode: ${e.message}")
-                return@withContext MutationResult.Unavailable(e)
-            }
-        }
     }
 
     /**
@@ -1891,72 +701,11 @@ object OnlineRoomRegistry {
 
     suspend fun getRoom(roomCode: String): OnlineRoomSession? = withContext(Dispatchers.IO) {
         val cleanCode = roomCode.trim().uppercase()
-        if (cleanCode.isBlank()) return@withContext null
-        if (RoomMetadataApi.enabled) return@withContext readCanonicalRoom(cleanCode).getOrNull()?.takeIf {
-            it.status != "CLOSED" && !it.isTerminalClosed
+        if (cleanCode.isBlank() || terminallyClosedRooms.contains(cleanCode)) return@withContext null
+        return@withContext readCanonicalRoom(cleanCode).getOrNull()?.takeIf {
+            it.status != "CLOSED" && !it.isTerminalClosed && !hasPendingClosure(cleanCode, it) &&
+                (it.status == "PLAYING" || System.currentTimeMillis() - it.lastHeartbeat < 600_000L)
         }
-        if (terminallyClosedRooms.contains(cleanCode) || hasPendingClosure(cleanCode)) return@withContext null
-
-        val cached = recentRoomCache[cleanCode]
-        if (cached != null && (System.currentTimeMillis() - cached.timestamp) < 3000L && cached.session.status != "CLOSED" && !cached.session.isTerminalClosed) {
-            return@withContext cached.session
-        }
-
-        if (isRoomClosedHttpCancellable(cleanCode, 350L)) {
-            terminallyClosedRooms.add(cleanCode)
-            recentRoomCache.remove(cleanCode)
-            return@withContext null
-        }
-
-        // 1. Fast MQTT Retained Query with measured budget (up to 2000ms)
-        try {
-            val mqttSession = withTimeoutOrNull(2000L) {
-                getRoomMqtt(cleanCode, 1500L)
-            }
-            if (mqttSession != null && mqttSession.status != "CLOSED" && !mqttSession.isTerminalClosed) {
-                val newest = if (cached != null && cached.session.revision > mqttSession.revision) cached.session else mqttSession
-                recentRoomCache[cleanCode] = CachedRoom(newest, System.currentTimeMillis())
-                return@withContext newest
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {}
-
-        kotlinx.coroutines.currentCoroutineContext().ensureActive()
-
-        // 2. Fallback to KeyValue HTTP Cloud Storage
-        try {
-            if (isRoomClosedHttpCancellable(cleanCode, 350L)) {
-                terminallyClosedRooms.add(cleanCode)
-                recentRoomCache.remove(cleanCode)
-                return@withContext null
-            }
-            val httpSession = fetchRoomDirectHttpDetailedCancellable(cleanCode, 1200L).getOrNull()
-            if (httpSession != null && httpSession.status != "CLOSED" && !httpSession.isTerminalClosed) {
-                val curCached = recentRoomCache[cleanCode]?.session
-                val newest = if (curCached != null && curCached.revision > httpSession.revision) curCached else httpSession
-                recentRoomCache[cleanCode] = CachedRoom(newest, System.currentTimeMillis())
-                return@withContext newest
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {}
-
-        kotlinx.coroutines.currentCoroutineContext().ensureActive()
-
-        // 3. Final fallback: retry MQTT retained topic with bounded 1500ms timeout
-        try {
-            val fallback = getRoomMqtt(cleanCode, 1500L)
-            if (fallback != null && fallback.status != "CLOSED" && !fallback.isTerminalClosed) {
-                val curCached = recentRoomCache[cleanCode]?.session
-                val newest = if (curCached != null && curCached.revision > fallback.revision) curCached else fallback
-                recentRoomCache[cleanCode] = CachedRoom(newest, System.currentTimeMillis())
-                return@withContext newest
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {}
-        return@withContext null
     }
 
     /**
@@ -2022,7 +771,7 @@ object OnlineRoomRegistry {
                     if (existing.id == safeLocal.id || (existing.username.isNotBlank() && existing.username.equals(safeLocal.username, ignoreCase = true))) {
                         safeLocal
                     } else if (existing.id == session.hostId || (session.hostUsername.isNotBlank() && existing.username.equals(session.hostUsername, ignoreCase = true))) {
-                        existing.copy(isHost = true, lastSeenTimestamp = if (isHostAlive) now else existing.lastSeenTimestamp)
+                        existing.copy(isHost = true)
                     } else if (isLocalActuallyHost) {
                         val known = knownPlayers.find {
                             it.id == existing.id || (it.username.isNotBlank() && it.username.equals(existing.username, ignoreCase = true))
@@ -2051,7 +800,7 @@ object OnlineRoomRegistry {
             } else {
                 session.players.map { existing ->
                     if (existing.id == session.hostId || (session.hostUsername.isNotBlank() && existing.username.equals(session.hostUsername, ignoreCase = true))) {
-                        existing.copy(isHost = true, lastSeenTimestamp = if (isHostAlive) now else existing.lastSeenTimestamp)
+                        existing.copy(isHost = true)
                     } else if (existing.isHost && isHostAlive) {
                         existing.copy(lastSeenTimestamp = now)
                     } else {
@@ -2197,10 +946,10 @@ object OnlineRoomRegistry {
         startCommitDeadline: Long = 0L,
         canonicalStartPacketJson: String? = null,
         manualPreparationComplete: Boolean? = null
-    ) = withContext(Dispatchers.IO) {
+    ): MutationResult = withContext(Dispatchers.IO) {
+
         val cleanCode = roomCode.trim().uppercase()
-        if (cleanCode.isBlank()) return@withContext
-        val cachedBefore = recentRoomCache[cleanCode]?.session
+        if (cleanCode.isBlank()) return@withContext MutationResult.Rejected("Blank room code")
         try {
             val isClosing = (status == "CLOSED")
             val allowReset = (status == "WAITING")
@@ -2208,8 +957,10 @@ object OnlineRoomRegistry {
             val mutationResult = mutateCloudSession(cleanCode, allowResetToWaiting = allowReset, allowClosing = isClosing, expectedSeed = effectiveExpectedSeed) { current ->
                 if (effectiveExpectedSeed != null && current.currentSeed != effectiveExpectedSeed) return@mutateCloudSession null
                 if (current.status == "CLOSED" && status != "CLOSED") return@mutateCloudSession null
-                if (status == "PLAYING" && seed != 0L && seed != current.currentSeed && !canonicalStartPacketJson.isNullOrBlank()) {
-                    val acceptedRoster = FastPacketCodec.decode(canonicalStartPacketJson).players.map { it.id }.toSet()
+                if (status in setOf("STARTING", "PLAYING") && seed != 0L && !canonicalStartPacketJson.isNullOrBlank()) {
+                    val start = FastPacketCodec.decode(canonicalStartPacketJson)
+                    if (start.requestId.isNotBlank() && start.requestId in current.cancelledStartIds) return@mutateCloudSession null
+                    val acceptedRoster = start.players.map { it.id }.toSet()
                     val liveRoster = current.players.filter { it.id !in departedIds }.map { it.id }.toSet()
                     if (acceptedRoster.isNotEmpty() && acceptedRoster != liveRoster) return@mutateCloudSession null
                 }
@@ -2218,7 +969,7 @@ object OnlineRoomRegistry {
                 val eligiblePlayers = current.players.filter { it.id !in departedIds }.map { p ->
                     if (administrativeHost != null) p.copy(isHost = p.id == administrativeHost.id) else p
                 }
-                val updatedPlayers = if (status == "PLAYING") {
+                val updatedPlayers = if (status in setOf("STARTING", "PLAYING")) {
                     eligiblePlayers.map { p ->
                         if (p.isHost || p.id == current.hostId) {
                             p.copy(lobbyReadyStatus = "IN_GAME", lastSeenTimestamp = now)
@@ -2233,113 +984,28 @@ object OnlineRoomRegistry {
                     hostDisplayName = host?.displayName ?: current.hostDisplayName,
                     hostAvatarUrl = host?.avatarUrl ?: current.hostAvatarUrl,
                     currentSeed = if (seed != 0L) seed else if (status == "WAITING") 0L else current.currentSeed,
-                    isManualBoard = if (status == "PLAYING") isManualBoard else (if (status == "WAITING") false else current.isManualBoard),
+                    isManualBoard = if (status in setOf("STARTING", "PLAYING")) isManualBoard else (if (status == "WAITING") false else current.isManualBoard),
                     boardSize = if (boardSize > 0) boardSize else current.boardSize,
-                    isDynamicBoard = if (status == "PLAYING") isDynamicBoard else (if (status == "WAITING") false else current.isDynamicBoard),
-                    currentTurnPlayerId = if (status == "PLAYING" && currentTurnPlayerId.isNotBlank()) currentTurnPlayerId else current.currentTurnPlayerId,
-                    turnClock = if (status == "PLAYING" && turnClock != null) turnClock else current.turnClock,
-                    simplifiedRulesVersion = if (status == "PLAYING") simplifiedRulesVersion else current.simplifiedRulesVersion,
-                    protocolVersion = if (status == "PLAYING") protocolVersion else current.protocolVersion,
-                    startCommitDeadline = if (status == "PLAYING" && startCommitDeadline > 0L) startCommitDeadline else current.startCommitDeadline,
-                    canonicalStartPacketJson = if (status == "PLAYING" && !canonicalStartPacketJson.isNullOrBlank()) canonicalStartPacketJson else current.canonicalStartPacketJson,
+                    isDynamicBoard = if (status in setOf("STARTING", "PLAYING")) isDynamicBoard else (if (status == "WAITING") false else current.isDynamicBoard),
+                    currentTurnPlayerId = if (status in setOf("STARTING", "PLAYING") && currentTurnPlayerId.isNotBlank()) currentTurnPlayerId else current.currentTurnPlayerId,
+                    turnClock = if (status in setOf("STARTING", "PLAYING") && turnClock != null) turnClock else current.turnClock,
+                    simplifiedRulesVersion = if (status in setOf("STARTING", "PLAYING")) simplifiedRulesVersion else current.simplifiedRulesVersion,
+                    protocolVersion = if (status in setOf("STARTING", "PLAYING")) protocolVersion else current.protocolVersion,
+                    startCommitDeadline = if (status in setOf("STARTING", "PLAYING") && startCommitDeadline > 0L) startCommitDeadline else current.startCommitDeadline,
+                    canonicalStartPacketJson = if (status in setOf("STARTING", "PLAYING") && !canonicalStartPacketJson.isNullOrBlank()) canonicalStartPacketJson else current.canonicalStartPacketJson,
                     manualPreparationComplete = if (status == "WAITING") null else manualPreparationComplete ?: current.manualPreparationComplete,
                     lastHeartbeat = now,
                     players = updatedPlayers,
                     isTerminalClosed = isClosing
                 )
             }
-            when (mutationResult) {
-                is MutationResult.Applied -> {
-                    // Applied successfully to cloud and MQTT
-                }
-                is MutationResult.Rejected -> {
-                    // Semantic rejection: NEVER fall back to MQTT or modify cache!
-                    Log.w(TAG, "updateRoomStatus rejected for $cleanCode: ${mutationResult.reason}")
-                    return@withContext
-                }
-                is MutationResult.Unavailable -> {
-                    if (RoomMetadataApi.enabled) {
-                        // Never republish an uncommitted candidate after an unavailable CAS.
-                        // A match start is retried by the lobby; closure intent remains durable.
-                        if (isClosing) queueDurableClosureRetry(cleanCode, effectiveExpectedSeed)
-                        return@withContext
-                    }
-                    // Query fresh MQTT evidence FIRST before checking stale cache
-                    val mqttLive = getRoomMqtt(cleanCode, 1500L)
-                    if (isClosing) {
-                        if (mqttLive != null) {
-                            if (effectiveExpectedSeed != null && mqttLive.currentSeed != 0L && mqttLive.currentSeed != effectiveExpectedSeed) {
-                                Log.w(TAG, "Closure fallback aborted for $cleanCode: active MQTT seed ${mqttLive.currentSeed} != expected $effectiveExpectedSeed")
-                                return@withContext
-                            }
-                            if (mqttLive.status == "PLAYING" && (effectiveExpectedSeed == null || mqttLive.currentSeed != effectiveExpectedSeed)) {
-                                Log.w(TAG, "Closure fallback aborted for $cleanCode: active MQTT rematch in progress")
-                                return@withContext
-                            }
-                            terminallyClosedRooms.add(cleanCode)
-                            clearRoomMetaMqtt(cleanCode)
-                            recentRoomCache.remove(cleanCode)
-                            queueDurableClosureRetry(cleanCode, effectiveExpectedSeed)
-                        } else {
-                            // Fresh transport evidence is unavailable. Defer closure to durable retry without clearing MQTT or destroying discovery!
-                            Log.w(TAG, "Closure fallback deferred for $cleanCode: fresh transport evidence unavailable during outage")
-                            queueDurableClosureRetry(cleanCode, effectiveExpectedSeed)
-                            return@withContext
-                        }
-                    } else {
-                        val validatedSession = mqttLive ?: cachedBefore
-                        if (validatedSession == null) {
-                            Log.w(TAG, "Status commit fallback deferred for $cleanCode: no validated room context during outage")
-                            return@withContext
-                        }
-                        if (expectedSeed != null && validatedSession.currentSeed != 0L && validatedSession.currentSeed != expectedSeed) {
-                            Log.w(TAG, "MQTT fallback aborted: validated seed ${validatedSession.currentSeed} != expected $expectedSeed")
-                            return@withContext
-                        }
-                        if (validatedSession.status == "CLOSED" || validatedSession.isTerminalClosed) {
-                            Log.w(TAG, "MQTT fallback aborted: room is already closed")
-                            return@withContext
-                        }
-                        val now = System.currentTimeMillis()
-                        val host = administrativeHost ?: validatedSession.players.firstOrNull { it.id == validatedSession.hostId }
-                        val eligiblePlayers = validatedSession.players.filter { it.id !in departedIds }.map { p ->
-                            if (administrativeHost != null) p.copy(isHost = p.id == administrativeHost.id) else p
-                        }
-                        val updatedPlayers = if (status == "PLAYING") {
-                            eligiblePlayers.map { p ->
-                                if (p.isHost || p.id == validatedSession.hostId) {
-                                    p.copy(lobbyReadyStatus = "IN_GAME", lastSeenTimestamp = now)
-                                } else p
-                            }
-                        } else eligiblePlayers
+            if (mutationResult is MutationResult.Unavailable && isClosing)
+                queueDurableClosureRetry(cleanCode, effectiveExpectedSeed)
+            mutationResult
+        } catch (e: CancellationException) { throw e }
+        catch (e: Exception) { MutationResult.Unavailable(e) }
 
-                        val fallbackSession = validatedSession.copy(
-                            status = status,
-                            hostId = administrativeHost?.id ?: validatedSession.hostId,
-                            hostUsername = host?.username ?: validatedSession.hostUsername,
-                            hostDisplayName = host?.displayName ?: validatedSession.hostDisplayName,
-                            hostAvatarUrl = host?.avatarUrl ?: validatedSession.hostAvatarUrl,
-                            currentSeed = if (seed != 0L) seed else validatedSession.currentSeed,
-                            isManualBoard = if (status == "PLAYING") isManualBoard else validatedSession.isManualBoard,
-                            boardSize = if (boardSize > 0) boardSize else validatedSession.boardSize,
-                            isDynamicBoard = if (status == "PLAYING") isDynamicBoard else validatedSession.isDynamicBoard,
-                            currentTurnPlayerId = if (status == "PLAYING" && currentTurnPlayerId.isNotBlank()) currentTurnPlayerId else validatedSession.currentTurnPlayerId,
-                            turnClock = if (status == "PLAYING" && turnClock != null) turnClock else validatedSession.turnClock,
-                            simplifiedRulesVersion = if (status == "PLAYING") simplifiedRulesVersion else validatedSession.simplifiedRulesVersion,
-                            protocolVersion = if (status == "PLAYING") protocolVersion else validatedSession.protocolVersion,
-                            startCommitDeadline = if (status == "PLAYING" && startCommitDeadline > 0L) startCommitDeadline else validatedSession.startCommitDeadline,
-                            canonicalStartPacketJson = if (status == "PLAYING" && !canonicalStartPacketJson.isNullOrBlank()) canonicalStartPacketJson else validatedSession.canonicalStartPacketJson,
-                            manualPreparationComplete = if (status == "WAITING") null else manualPreparationComplete ?: validatedSession.manualPreparationComplete,
-                            lastHeartbeat = now,
-                            players = updatedPlayers,
-                            revision = validatedSession.revision + 1L
-                        )
-                        recentRoomCache[cleanCode] = CachedRoom(fallbackSession, now)
-                        publishRoomMetaMqtt(fallbackSession)
-                    }
-                }
-            }
-        } catch (_: Exception) {}
+
     }
 
     /**
@@ -2366,6 +1032,82 @@ object OnlineRoomRegistry {
     /**
      * Closes the room completely. Clears cloud registry and MQTT metadata.
      */
+    @Serializable internal data class PendingStartCancellation(val code: String, val seed: Long, val epoch: String,
+        val owner: String, val session: String)
+    private val pendingStartCancellations = java.util.concurrent.ConcurrentHashMap<String, PendingStartCancellation>()
+    internal fun hasPendingStartCancellation(code: String, seed: Long, epoch: String): Boolean =
+        pendingStartCancellations[code]?.let { it.seed == seed && it.epoch == epoch } == true
+    private val cancellationJobs = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Job>()
+    private val cancellationLock = Any()
+    private val cancellationEntries = java.util.concurrent.ConcurrentHashMap<String, PendingStartCancellation>()
+    private fun persistStartCancellations() {
+        getPrefs()?.edit()?.putString("start_cancellations", json.encodeToString(pendingStartCancellations.values.toList()))?.apply()
+    }
+    private fun finishStartCancellation(entry: PendingStartCancellation, clearCheckpoint: Boolean = false) {
+        pendingStartCancellations.remove(entry.code, entry)
+        persistStartCancellations()
+        if (clearCheckpoint) com.bingo.multiplayer.domain.notifications.NotificationRuntime.context()?.let { context ->
+            runCatching { OngoingMatchStore.clearScheduledStart(context, entry.owner, entry.seed, entry.epoch) }
+        }
+    }
+    private suspend fun applyStartCancellation(entry: PendingStartCancellation): MutationResult {
+        val owner = com.bingo.multiplayer.domain.notifications.NotificationRuntime.context()?.let {
+            com.bingo.multiplayer.domain.notifications.NotificationRuntime.account(it)?.uid
+        }.orEmpty()
+        if (entry.owner.isNotBlank() && owner != entry.owner) return MutationResult.Rejected("Account changed")
+        return mutateCloudSession(entry.code, allowResetToWaiting = true, expectedSeed = entry.seed) { room ->
+            val activeStart = room.canonicalStartPacketJson?.let { runCatching { FastPacketCodec.decode(it) }.getOrNull() }
+            // Released PLAYING is an existing match. A transport interruption must recover it,
+            // never turn a late preparation cancellation into a lobby reset.
+            if ((room.status == "PLAYING" && activeStart?.startReleased == true) ||
+                room.currentSeed != entry.seed || entry.epoch.isBlank() || activeStart?.requestId != entry.epoch ||
+                (entry.session.isNotBlank() && room.sessionId != entry.session)) null else room.copy(status = "WAITING", currentSeed = 0L,
+                canonicalStartPacketJson = null, startCommitDeadline = 0L, turnClock = null,
+                cancelledStartIds = (room.cancelledStartIds + entry.epoch).distinct().takeLast(16),
+                players = room.players.map { if (it.lobbyReadyStatus == "IN_GAME") it.copy(lobbyReadyStatus = "READY") else it })
+        }
+    }
+    private fun retryStartCancellation(entry: PendingStartCancellation) {
+        synchronized(cancellationLock) {
+            if (cancellationJobs[entry.code]?.isActive == true && cancellationEntries[entry.code] == entry) return
+            cancellationJobs.remove(entry.code)?.cancel()
+            cancellationEntries[entry.code] = entry
+            val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+                try {
+                    var retryDelay = 1000L
+                    while (isActive && pendingStartCancellations[entry.code] == entry) {
+                        delay(retryDelay)
+                        retryDelay = minOf(30_000L, retryDelay * 2L)
+                        when (applyStartCancellation(entry)) {
+                            is MutationResult.Unavailable -> Unit
+                            is MutationResult.Applied -> { finishStartCancellation(entry, clearCheckpoint = true); break }
+                            is MutationResult.Rejected -> { finishStartCancellation(entry); break }
+                        }
+                    }
+                } finally {
+                    val thisJob = kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]
+                    cancellationJobs.remove(entry.code, thisJob)
+                    cancellationEntries.remove(entry.code, entry)
+                }
+            }
+            cancellationJobs[entry.code] = job; job.start()
+        }
+    }
+    suspend fun cancelScheduledStart(roomCode: String, seed: Long, epoch: String): Boolean {
+        val cached = recentRoomCache[roomCode]?.session
+        if (epoch.isBlank() || (cached != null && cached.currentSeed != seed)) return false
+        val owner = com.bingo.multiplayer.domain.notifications.NotificationRuntime.context()?.let {
+            com.bingo.multiplayer.domain.notifications.NotificationRuntime.account(it)?.uid
+        }.orEmpty()
+        val entry = PendingStartCancellation(roomCode, seed, epoch, owner, cached?.sessionId.orEmpty())
+        pendingStartCancellations[roomCode] = entry; persistStartCancellations()
+        return when (applyStartCancellation(entry)) {
+            is MutationResult.Applied -> { finishStartCancellation(entry, clearCheckpoint = true); true }
+            is MutationResult.Rejected -> { finishStartCancellation(entry); false }
+            is MutationResult.Unavailable -> { retryStartCancellation(entry); false }
+        }
+    }
+
     suspend fun closeRoom(roomCode: String, expectedSeed: Long? = null) = withContext(Dispatchers.IO) {
         val cleanCode = roomCode.trim().uppercase()
         if (cleanCode.isBlank()) return@withContext

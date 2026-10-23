@@ -1,22 +1,16 @@
 package com.bingo.multiplayer.domain.network
 
-import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import org.eclipse.paho.client.mqttv3.MqttAsyncClient
-import org.eclipse.paho.client.mqttv3.MqttConnectOptions
-import org.eclipse.paho.client.mqttv3.MqttMessage
-import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
-import java.nio.charset.StandardCharsets
 import java.util.UUID
 
 import com.bingo.multiplayer.domain.notifications.*
 import kotlinx.coroutines.CancellationException
-import org.json.JSONObject
 
 @Serializable
 data class GameInvite(
@@ -29,71 +23,96 @@ data class GameInvite(
     val recipientUid: String = "",
     val recipientUsername: String = "",
     val senderUid: String = "",
-    val expiresAt: Long = timestamp + 120_000L
+    val expiresAt: Long = timestamp + 120_000L,
+    val isPlayRequest: Boolean = false,
+    val roomSessionId: String = "",
+    val senderPublicKey: String? = null
 )
 
 fun NotificationEvent.toInvite() = GameInvite(senderUsername, senderDisplayName, roomCode = roomCode,
     timestamp = createdAt, eventId = id, recipientUid = recipientUid, recipientUsername = recipientUsername,
-    senderUid = senderUid, expiresAt = expiresAt)
+    senderUid = senderUid, expiresAt = expiresAt, roomSessionId = roomSessionId,
+    senderPublicKey = installationId.takeIf { it.isNotBlank() })
 fun GameInvite.toEvent() = NotificationEvent(eventId, NotificationKind.GAME_INVITE,
-    senderUid, fromUsername, fromDisplayName, recipientUid, recipientUsername, timestamp, expiresAt, roomCode = roomCode)
+    senderUid, fromUsername, fromDisplayName, recipientUid, recipientUsername, timestamp, expiresAt,
+    roomCode = roomCode, roomSessionId = roomSessionId, installationId = senderPublicKey.orEmpty())
 
 enum class InviteSendResult(val message: String) {
     QUEUED("Invitation queued. It will be sent when connected."),
-    SENT("Invitation sent."), FAILED("Could not queue invitation. Please try again.")
+    SENT("Invitation sent."), REQUESTED("Request sent."), FAILED("EMQX unavailable or recipient unavailable. Please try again.")
 }
 
 internal enum class InviteDeliveryAttempt { REGISTERED, RETRY, REJECTED }
 
 object GameInviteManager {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true; encodeDefaults = true }
-    private val BROKER_URL = NetworkConfig.BROKER_URL
+    private val transportScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+    private val inbox = PendingInviteStore(transportScope)
+    val pendingInvites = inbox.invites
     @Volatile var stagedInvite: GameInvite? = null
     val foregroundInviteFlow = kotlinx.coroutines.flow.MutableSharedFlow<GameInvite>(replay = 1, extraBufferCapacity = 5,
         onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)
-    internal fun stageInvite(invite: GameInvite) { stagedInvite = invite; foregroundInviteFlow.tryEmit(invite) }
+    internal val playRequestReceipts = kotlinx.coroutines.flow.MutableSharedFlow<GameInvite>(replay = 0, extraBufferCapacity = 8)
+    internal fun stageInvite(invite: GameInvite) {
+        inbox.put(invite)
+        InvitationTrace.mark(invite.eventId, "ui_staged")
+        stagedInvite = invite
+        foregroundInviteFlow.tryEmit(invite)
+    }
     fun consumeStagedInvite(): GameInvite? = stagedInvite.also { stagedInvite = null }
     fun clearForegroundInvite() { stagedInvite = null; foregroundInviteFlow.resetReplayCache() }
+
+    /** Message selection shared by both lobby invitation buttons. */
+    internal fun forLobbyRecipient(invite: GameInvite, presence: PlayerPresence?,
+        now: Long = System.currentTimeMillis()): GameInvite =
+        if (FriendPlayAvailability.of(presence, now) == FriendPlayAvailability.BUSY) {
+            invite.copy(roomCode = "", roomSessionId = "", isPlayRequest = true,
+                eventId = UUID.randomUUID().toString(), timestamp = now, expiresAt = now + 15_000L)
+        } else invite
 
     suspend fun sendInvite(targetUsername: String, invite: GameInvite): InviteSendResult = withContext(Dispatchers.IO) {
         val context = NotificationRuntime.context() ?: return@withContext InviteSendResult.FAILED
         val account = NotificationRuntime.account(context) ?: return@withContext InviteSendResult.FAILED
         val clean = notificationUsername(targetUsername)
-        if (clean.isBlank() || clean == account.username) return@withContext InviteSendResult.FAILED
-
-        // 0. Ensure cloud room is registered before sending invite
+        if (clean.isBlank() || clean == account.username || invite.expiresAt <= System.currentTimeMillis()) return@withContext InviteSendResult.FAILED
+        val recipient = NotificationRuntime.friends(context, account).firstOrNull { notificationUsername(it.username) == clean }
+        val recipientUid = invite.recipientUid.ifBlank { recipient?.uid.orEmpty() }
         val cleanRoom = invite.roomCode.trim().uppercase()
-        if (cleanRoom.isBlank() || invite.expiresAt <= System.currentTimeMillis()) return@withContext InviteSendResult.FAILED
-        val host = com.bingo.multiplayer.domain.model.Player(id = account.uid,
-            displayName = invite.fromDisplayName.ifBlank { account.username }, username = account.username, isHost = true)
-        val payload = JSONObject().put("id", invite.eventId).put("kind", "GAME_INVITE").put("toUsername", clean)
-            .put("createdAt", invite.timestamp).put("expiresAt", invite.expiresAt).put("roomCode", cleanRoom)
-        try {
-            when (dispatchInviteAttempt(
-                readiness = { OnlineRoomRegistry.ensureInvitationReadinessDetailed(cleanRoom, host) },
-                isCurrent = { NotificationRuntime.account(context) == account && invite.expiresAt > System.currentTimeMillis() },
-                publishPeer = { publishMqttInvite(clean, invite.copy(roomCode = cleanRoom, fromAvatarUrl = null,
-                    recipientUsername = clean, senderUid = account.uid, fromUsername = account.username)) },
-                registerEvent = { NotificationApi.call(context, account, "/v2/events", payload) }
-            )) {
-                InviteDeliveryAttempt.REGISTERED -> InviteSendResult.SENT
-                InviteDeliveryAttempt.REJECTED -> InviteSendResult.FAILED
-                InviteDeliveryAttempt.RETRY -> if (NotificationWork.send(context, account, payload)) InviteSendResult.QUEUED else InviteSendResult.FAILED
-            }
-        } catch (cancelled: CancellationException) { throw cancelled }
-        catch (e: NotificationApiException) {
-            if ((e.retryable || e.status == 401 || e.status == 403) && NotificationWork.send(context, account, payload)) InviteSendResult.QUEUED else InviteSendResult.FAILED
-        } catch (_: Exception) {
-            if (NotificationWork.send(context, account, payload)) InviteSendResult.QUEUED else InviteSendResult.FAILED
+        val room = if (invite.isPlayRequest) null else {
+            OnlineRoomRegistry.getRoomCachedOnly(cleanRoom) ?: OnlineRoomRegistry.getRoom(cleanRoom)
         }
+        if (!invite.isPlayRequest && (room == null || room.status == "CLOSED")) return@withContext InviteSendResult.FAILED
+        val payload = invite.copy(fromUsername = account.username, senderUid = account.uid,
+            recipientUid = recipientUid, recipientUsername = clean, fromAvatarUrl = null,
+            roomCode = cleanRoom,
+            roomSessionId = room?.sessionId.orEmpty(), senderPublicKey = null)
+        try {
+            val sent = dispatchInviteAttempt(
+                readiness = { InvitationReadinessResult.Ready },
+                isCurrent = { NotificationRuntime.account(context) == account && payload.expiresAt > System.currentTimeMillis() },
+                publishPeer = { publishMqttInviteAwaited(clean, payload) },
+                registerEvent = {
+                    // The MQTT PUBACK completes the live send. Push wakes a closed/background app
+                    // asynchronously, using the same identity and expiry rather than delaying joining.
+                    if (!payload.isPlayRequest) BingoFcmManager.sendInvitePush(payload)
+                    InvitationTrace.mark(payload.eventId, "send_complete")
+                })
+            if (sent != InviteDeliveryAttempt.REGISTERED) InviteSendResult.FAILED
+            else if (invite.isPlayRequest) InviteSendResult.REQUESTED else InviteSendResult.SENT
+        } catch (e: CancellationException) { throw e }
+        catch (_: Exception) { InviteSendResult.FAILED }
     }
 
-    /** Used by both the initial button action and durable retries. A failed MQTT hint
-     * must not suppress a registered inbox/push event for a discoverable room. */
+    suspend fun sendPlayRequest(targetUsername: String, targetUid: String, displayName: String): InviteSendResult =
+        sendInvite(targetUsername, GameInvite("", displayName, roomCode = "", recipientUid = targetUid,
+            isPlayRequest = true, eventId = UUID.randomUUID().toString(), expiresAt = System.currentTimeMillis() + 15_000L))
+
+    /** Shared production dispatch for invitations and transient requests. After PUBACK,
+     * registerEvent queues the optional push without waiting for an HTTP notification request. */
     internal suspend fun dispatchInviteAttempt(
         readiness: suspend () -> InvitationReadinessResult,
         isCurrent: () -> Boolean,
-        publishPeer: () -> Unit,
+        publishPeer: suspend () -> Unit,
         registerEvent: suspend () -> Unit
     ): InviteDeliveryAttempt {
         if (!isCurrent()) return InviteDeliveryAttempt.REJECTED
@@ -102,7 +121,8 @@ object GameInviteManager {
         if (ready is InvitationReadinessResult.TransientUnavailable) return InviteDeliveryAttempt.RETRY
         try { publishPeer() }
         catch (cancelled: CancellationException) { throw cancelled }
-        catch (_: Exception) { /* The authenticated event remains an independent delivery channel. */ }
+        catch (_: Exception) { return InviteDeliveryAttempt.RETRY }
+        if (!isCurrent()) return InviteDeliveryAttempt.REJECTED
         if (ready is InvitationReadinessResult.MirrorPending) return InviteDeliveryAttempt.RETRY
         registerEvent()
         return InviteDeliveryAttempt.REGISTERED
@@ -110,109 +130,92 @@ object GameInviteManager {
     suspend fun fetchInvitesForUser(username: String): List<GameInvite> {
         val context = NotificationRuntime.context() ?: return emptyList()
         val account = NotificationRuntime.account(context) ?: return emptyList()
-        if (notificationUsername(username) != account.username) return emptyList()
-        return NotificationApi.inbox(context, account).filter { it.kind == NotificationKind.GAME_INVITE &&
-            NotificationPolicy.eligible(it, account, System.currentTimeMillis()) && !NotificationRuntime.ledger(context).handled(account.uid, it.id) }.map { it.toInvite() }
+        return inbox.invites.value.filter { it.recipientUid == account.uid && it.recipientUsername == notificationUsername(username) &&
+            it.expiresAt > System.currentTimeMillis() && !NotificationRuntime.ledger(context).handled(account.uid, it.eventId) }
     }
     fun removeInvite(targetUsername: String, invite: GameInvite) {
         val context = NotificationRuntime.context() ?: return
-        val account = NotificationRuntime.account(context) ?: return
-        if (notificationUsername(targetUsername) == account.username) NotificationRuntime.finishInvite(context, invite)
+        if (notificationUsername(targetUsername) == NotificationRuntime.account(context)?.username) NotificationRuntime.finishInvite(context, invite)
     }
-
-    /**
-     * Dispatches real-time MQTT message with retention to subscriber.
-     */
+    private fun topic(username: String, invite: GameInvite) = "bingo/emqx7/social/${if (invite.isPlayRequest) "request" else "invite"}/$username/${invite.eventId}"
+    internal suspend fun publishMqttInviteAwaited(targetUsername: String, invite: GameInvite,
+        connection: EmqxWire = EmqxTransport.connection) {
+        InvitationTrace.mark(invite.eventId, "publish_begin")
+        val payload = json.encodeToString(invite).toByteArray()
+        connection.publish(topic(targetUsername, invite), payload, retained = !invite.isPlayRequest)
+        if (!invite.isPlayRequest) {
+            runCatching { connection.publish("bingo/v3/invites/$targetUsername", payload, retained = true) }
+        }
+        InvitationTrace.mark(invite.eventId, "broker_puback")
+        if (!invite.isPlayRequest) transportScope.launch {
+            kotlinx.coroutines.delay((invite.expiresAt - System.currentTimeMillis()).coerceAtLeast(0L))
+            runCatching { connection.publish(topic(targetUsername, invite), ByteArray(0), retained = true) }
+            runCatching { connection.publish("bingo/v3/invites/$targetUsername", ByteArray(0), retained = true) }
+        }
+    }
     internal fun publishMqttInvite(targetUsername: String, invite: GameInvite) {
-        kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
-            var mqttClient: MqttAsyncClient? = null
-            try {
-                val clientId = "inv_pub_${UUID.randomUUID().toString().take(8)}"
-                mqttClient = MqttAsyncClient(BROKER_URL, clientId, MemoryPersistence())
-                val options = MqttConnectOptions().apply {
-                    isCleanSession = true
-                    connectionTimeout = 3
-                    NetworkConfig.applyMqttOptions(this)
-                }
-                mqttClient.connect(options).waitForCompletion(2500L)
-                val topic = "bingo/v3/invites/$targetUsername"
-                val payload = json.encodeToString(invite)
-                val msg = MqttMessage(payload.toByteArray(StandardCharsets.UTF_8)).apply {
-                    qos = 1
-                    isRetained = true
-                }
-                mqttClient.publish(topic, msg).waitForCompletion(2500L)
-                Log.d("GameInviteManager", "Real-time invite dispatched to MQTT: $topic")
-            } catch (e: Exception) {
-                Log.w("GameInviteManager", "MQTT invite publish warning: ${e.message}")
-            } finally {
-                try { mqttClient?.disconnectForcibly(0L, 50L) } catch (_: Exception) {}
-                try { mqttClient?.close() } catch (_: Exception) {}
-            }
+        transportScope.launch { runCatching { publishMqttInviteAwaited(targetUsername, invite) } }
+    }
+    fun clearRetained(invite: GameInvite) {
+        inbox.remove(invite.eventId)
+        if (!invite.isPlayRequest) transportScope.launch {
+            runCatching { EmqxTransport.connection.publish(topic(invite.recipientUsername, invite), ByteArray(0), retained = true) }
+            runCatching { EmqxTransport.connection.publish("bingo/v3/invites/${invite.recipientUsername}", ByteArray(0), retained = true) }
         }
     }
+    fun onAccountChanged() { inbox.clear(); clearForegroundInvite() }
 
-    /**
-     * Subscribes to real-time incoming game invites via MQTT.
-     */
-    fun startInviteListener(myUsername: String, onInviteReceived: (GameInvite) -> Unit): AutoCloseable {
-        val clean = myUsername.trim().lowercase().removePrefix("@")
-        var client: MqttAsyncClient? = null
-        try {
-            val clientId = "inv_sub_${clean}_${UUID.randomUUID().toString().take(6)}"
-            client = MqttAsyncClient(BROKER_URL, clientId, MemoryPersistence())
-            val options = MqttConnectOptions().apply {
-                isCleanSession = true
-                connectionTimeout = 5
-                isAutomaticReconnect = true
-                NetworkConfig.applyMqttOptions(this)
+    /** All screens share the persistent socket. A listener closes only its own collectors. */
+    fun startInviteListener(myUsername: String, onInviteReceived: (GameInvite) -> Unit): AutoCloseable =
+        listen(myUsername, EmqxTransport.connection, onInviteReceived)
+
+    internal fun listen(myUsername: String, connection: EmqxWire, onInviteReceived: (GameInvite) -> Unit): AutoCloseable {
+        val clean = notificationUsername(myUsername)
+        val job = kotlinx.coroutines.SupervisorJob()
+        val handles = java.util.concurrent.CopyOnWriteArrayList<AutoCloseable>()
+        val scope = kotlinx.coroutines.CoroutineScope(job + Dispatchers.IO)
+        val seen = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+        fun receive(bytes: ByteArray, retained: Boolean) {
+            val invite = runCatching { json.decodeFromString<GameInvite>(bytes.toString(Charsets.UTF_8)) }.getOrNull() ?: return
+            val now = System.currentTimeMillis()
+            if (invite.expiresAt <= now && invite.recipientUsername == clean && !invite.isPlayRequest) {
+                val own = NotificationRuntime.context()?.let { NotificationRuntime.account(it) }
+                if (own?.uid == invite.recipientUid) clearRetained(invite)
+                return
             }
-            val topic = "bingo/v3/invites/$clean"
-            client.setCallback(object : org.eclipse.paho.client.mqttv3.MqttCallbackExtended {
-                override fun connectComplete(reconnect: Boolean, serverURI: String?) {
-                    try {
-                        client?.subscribe(topic, 1) { _, message ->
-                            try {
-                                if (message.payload.isEmpty()) return@subscribe
-                                val payload = String(message.payload, StandardCharsets.UTF_8)
-                                val invite = json.decodeFromString<GameInvite>(payload)
-                                val now = System.currentTimeMillis()
-                                if (invite.timestamp > 0 && invite.timestamp <= now + 30_000L && now - invite.timestamp < 120_000L) {
-                                    stageInvite(invite)
-                                    try {
-                                        android.os.Handler(android.os.Looper.getMainLooper()).post {
-                                            onInviteReceived(invite)
-                                        }
-                                    } catch (_: Exception) {
-                                        onInviteReceived(invite)
-                                    }
-                                }
-                            } catch (e: Exception) {
-                                Log.w("GameInviteManager", "Error parsing incoming invite: ${e.message}")
-                            }
-                        }
-                        Log.d("GameInviteManager", "Listening for game invites on $topic")
-                    } catch (e: Exception) {
-                        Log.w("GameInviteManager", "Subscribe to invites failed: ${e.message}")
-                    }
-                }
-
-                override fun connectionLost(cause: Throwable?) {}
-                override fun messageArrived(topic: String?, message: MqttMessage?) {}
-                override fun deliveryComplete(token: org.eclipse.paho.client.mqttv3.IMqttDeliveryToken?) {}
-            })
-            client.connect(options)
-        } catch (e: Exception) {
-            Log.w("GameInviteManager", "Could not start MQTT invite listener: ${e.message}")
+            if (invite.recipientUsername != clean || invite.fromUsername.isBlank() ||
+                invite.timestamp !in (now - 120_000L)..(now + 30_000L) || invite.expiresAt <= now ||
+                invite.expiresAt > invite.timestamp + 120_000L || (invite.isPlayRequest && retained) || !seen.add(invite.eventId)) return
+            InvitationTrace.mark(invite.eventId, "recipient_received")
+            val context = NotificationRuntime.context()
+            if (context != null) {
+                val account = NotificationRuntime.account(context) ?: return
+                if (account.username != clean) return
+                if (invite.recipientUid.isNotBlank() && account.uid != invite.recipientUid) return
+                val friend = NotificationRuntime.friends(context, account).firstOrNull { it.uid == invite.senderUid && notificationUsername(it.username) == invite.fromUsername }
+                if (invite.isPlayRequest && friend == null) return
+                NotificationRuntime.receiveMqttInvite(context, account, invite)
+                if (!invite.isPlayRequest && NotificationRuntime.ledger(context).handled(account.uid, invite.eventId)) return
+                if (!invite.isPlayRequest && NotificationRuntime.isBusy(context)) return
+            } else if (!invite.isPlayRequest) stageInvite(invite) // headless broker integration seam
+            if (invite.isPlayRequest) playRequestReceipts.tryEmit(invite)
+            if (!invite.isPlayRequest) {
+                stageInvite(invite)
+                runCatching { android.os.Handler(android.os.Looper.getMainLooper()).post { onInviteReceived(invite) } }
+                    .onFailure { onInviteReceived(invite) }
+            }
         }
-
-        return AutoCloseable {
-            try {
-                if (client?.isConnected == true) {
-                    client.disconnect()
-                }
-                client?.close()
-            } catch (_: Exception) {}
+        scope.launch {
+            while (kotlinx.coroutines.currentCoroutineContext().isActive) {
+                try {
+                    handles.add(connection.subscribe("bingo/emqx7/social/invite/$clean/+", ::receive))
+                    handles.add(connection.subscribe("bingo/emqx7/social/request/$clean/+", ::receive))
+                    handles.add(connection.subscribe("bingo/v3/invites/$clean", ::receive))
+                    break
+                } catch (e: CancellationException) { throw e }
+                catch (_: Exception) { handles.forEach { it.close() }; handles.clear(); kotlinx.coroutines.delay(1000L) }
+            }
         }
+        return AutoCloseable { job.cancel(); handles.forEach { it.close() } }
     }
 }
