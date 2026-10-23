@@ -74,10 +74,8 @@ export async function sendFcm(env, token, event, transport = fetch) {
           token,
           data: { version: "2", event: JSON.stringify(event) },
           android: {
-            priority: event.kind === "FRIEND_ONLINE" ? "NORMAL" : "HIGH",
+            priority: "HIGH",
             ttl: `${ttl}s`,
-            collapse_key:
-              event.kind === "FRIEND_ONLINE" ? "bingo_presence" : undefined,
           },
         },
       }),

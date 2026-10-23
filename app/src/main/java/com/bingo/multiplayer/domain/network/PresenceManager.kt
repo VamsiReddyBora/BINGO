@@ -89,6 +89,10 @@ object PresenceManager {
     private var appContext: Context? = null
     private var presenceClient: MqttAsyncClient? = null
     private var heartbeatJob: Job? = null
+    private var onlineAnnouncements: com.bingo.multiplayer.domain.notifications.FriendOnlineAnnouncements? = null
+    private var onlineAnnouncementJob: Job? = null
+    private var lastRosterNoticeId = ""
+    private var nextOnlineRosterAttempt = 0L
     private var watcherStartTime: Long = 0L
     private var onlineSessionId = UUID.randomUUID().toString()
     private var onlineSessionStartedAt = System.currentTimeMillis()
@@ -163,6 +167,7 @@ object PresenceManager {
         appContext = context.applicationContext
         val p = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs = p
+        onlineAnnouncements = com.bingo.multiplayer.domain.notifications.FriendOnlineAnnouncements(p)
 
         // Restore presence from persistent disk cache immediately on app launch
         try {
@@ -273,7 +278,6 @@ object PresenceManager {
             appContext?.let { ctx ->
                 BingoFcmManager.syncCurrentUserToken(ctx, clean)
             }
-            notifyFriendsOnlineViaFcm(clean)
         }
 
         scope.launch {
@@ -307,6 +311,7 @@ object PresenceManager {
 
                 client.setCallback(object : MqttCallbackExtended {
                     override fun connectComplete(reconnect: Boolean, serverURI: String?) {
+                        if (presenceClient !== client) return
                         Log.d(TAG, "Presence connected for @$clean (reconnect=$reconnect, serverURI=$serverURI). Publishing ${currentActivityState.name}.")
                         publishStatus(clean, currentActivityState.name)
                         currentConnectedServerUri = serverURI
@@ -320,6 +325,8 @@ object PresenceManager {
                     }
 
                     override fun connectionLost(cause: Throwable?) {
+                        if (presenceClient !== client) return
+                        recordOfflineAvailability(clean)
                         Log.w(TAG, "Presence connection lost for @$clean: ${cause?.message}")
                         currentConnectedServerUri = null
                         if (!EmqxTransport.connection.isHealthy) {
@@ -354,31 +361,40 @@ object PresenceManager {
 
     private fun notifyFriendsOnlineViaFcm(cleanUsername: String) {
         val ctx = appContext ?: return
-        scope.launch {
+        val account = com.bingo.multiplayer.domain.notifications.NotificationRuntime.account(ctx)
+            ?.takeIf { it.username == cleanUsername } ?: return
+        val store = onlineAnnouncements ?: return
+        val notice = store.active(account.uid, System.currentTimeMillis()) ?: return
+        if (onlineAnnouncementJob?.isActive == true) return
+        val now = System.currentTimeMillis()
+        if (lastRosterNoticeId == notice.id && now < nextOnlineRosterAttempt) return
+        lastRosterNoticeId = notice.id
+        nextOnlineRosterAttempt = now + 10_000
+        onlineAnnouncementJob = scope.launch {
             try {
-                val friends = com.bingo.multiplayer.domain.repository.FriendsRepository.activeInstance?.friends?.value
-                    ?: FriendRequestManager.fetchCloudFriends(cleanUsername)
-                    ?: emptyList()
-
-                if (friends.isEmpty()) return@launch
-
-                val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                val now = System.currentTimeMillis()
-
+                val cached = com.bingo.multiplayer.domain.notifications.NotificationRuntime.friends(ctx, account)
+                val friends = cached.ifEmpty { FriendRequestManager.fetchCloudFriends(cleanUsername).orEmpty() }
+                if (com.bingo.multiplayer.domain.notifications.NotificationRuntime.account(ctx) != account ||
+                    currentActiveUsername != cleanUsername || !AppLifecycleObserver.isAppInForeground.value ||
+                    !isMqttConnected) return@launch
                 friends.forEach { friend ->
                     val fClean = friend.username.trim().lowercase().removePrefix("@")
-                    if (fClean.isNotBlank() && fClean != cleanUsername) {
-                        val lastNotified = prefs.getLong("fcm_notified_online_$fClean", 0L)
-                        if ((now - lastNotified) >= 120_000L) {
-                            prefs.edit().putLong("fcm_notified_online_$fClean", now).apply()
-                            BingoFcmManager.sendFriendOnlinePush(fClean, cleanUsername, onlineSessionId, onlineSessionStartedAt)
-                        }
+                    if (fClean.isNotBlank() && fClean != cleanUsername && fClean !in notice.queued &&
+                        BingoFcmManager.sendFriendOnlinePush(fClean, cleanUsername, notice.id, notice.createdAt)) {
+                        store.queued(account.uid, notice.id, fClean)
                     }
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to dispatch online FCM to friends: ${e.message}")
             }
         }
+    }
+
+    private fun recordOfflineAvailability(clean: String) {
+        val ctx = appContext ?: return
+        val account = com.bingo.multiplayer.domain.notifications.NotificationRuntime.account(ctx)
+            ?.takeIf { it.username == clean } ?: return
+        onlineAnnouncements?.offline(account.uid, System.currentTimeMillis())
     }
 
     private fun startHeartbeat(cleanUsername: String) {
@@ -416,6 +432,8 @@ object PresenceManager {
                 isRetained = true
             }
             client.publish(topic, message)
+            if (status == "OFFLINE") recordOfflineAvailability(cleanUsername)
+            else if (AppLifecycleObserver.isAppInForeground.value) notifyFriendsOnlineViaFcm(cleanUsername)
 
             // Update local map as well
             presenceMap[cleanUsername] = PlayerPresence(cleanUsername, status, now, activityDetail = detail, currentRoomCode = roomCode)
@@ -435,6 +453,7 @@ object PresenceManager {
      */
     fun onAppBackground() {
         val clean = currentActiveUsername ?: return
+        recordOfflineAvailability(clean)
         Log.d(TAG, "App backgrounded — publishing OFFLINE for @$clean")
         heartbeatJob?.cancel()
         heartbeatJob = null
@@ -454,7 +473,6 @@ object PresenceManager {
         onlineSessionId = UUID.randomUUID().toString()
         onlineSessionStartedAt = System.currentTimeMillis()
         val currentStatus = currentActivityState.name
-        notifyFriendsOnlineViaFcm(clean)
         Log.d(TAG, "App foregrounded — publishing $currentStatus for @$clean")
         val now = System.currentTimeMillis()
         presenceMap[clean] = PlayerPresence(clean, currentStatus, now, activityDetail = currentActivityDetail, currentRoomCode = currentRoomCode)
@@ -475,6 +493,7 @@ object PresenceManager {
      */
     fun stopPresence() {
         val clean = currentActiveUsername
+        if (clean != null) recordOfflineAvailability(clean)
         heartbeatJob?.cancel()
         heartbeatJob = null
         disconnectPresenceClient()
@@ -518,6 +537,11 @@ object PresenceManager {
         networkEnabled = false
         heartbeatJob?.cancelAndJoin()
         heartbeatJob = null
+        onlineAnnouncementJob?.cancelAndJoin()
+        onlineAnnouncementJob = null
+        lastRosterNoticeId = ""
+        nextOnlineRosterAttempt = 0L
+        onlineAnnouncements = null
         persistJob?.cancelAndJoin()
         persistJob = null
         val jobs = scope.coroutineContext[Job]?.children?.toList() ?: emptyList()

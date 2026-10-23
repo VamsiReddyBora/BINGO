@@ -9,7 +9,8 @@ app/google-services.json
 *.p12
 *.pfx
 .env
-.env.local
+.env.*
+!**/.env.example
 **/.dev.vars
 **/.dev.vars.*
 !**/.dev.vars.example

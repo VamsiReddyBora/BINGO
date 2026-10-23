@@ -51,5 +51,9 @@ object AppExitDiagnostics {
                 }
             }
         } catch (_: Exception) { append("Some exit diagnostics are unavailable.\n") }
+        try {
+            append("\nNotification delivery:\n")
+            append(com.bingo.multiplayer.domain.notifications.NotificationDiagnostics.read(context))
+        } catch (_: Exception) { append("Notification diagnostics unavailable.\n") }
     }
 }

@@ -58,12 +58,12 @@ object BingoFcmManager {
         if (invite.senderUid != account.uid || invite.fromUsername != account.username) return false
         return NotificationWork.send(context, account, invitePayload(invite))
     }
-    private fun queue(kind: NotificationKind, target: String, id: String, createdAt: Long, extra: JSONObject = JSONObject()) {
-        val context = NotificationRuntime.context() ?: return
-        val account = NotificationRuntime.account(context) ?: return
+    private fun queue(kind: NotificationKind, target: String, id: String, createdAt: Long, extra: JSONObject = JSONObject()): Boolean {
+        val context = NotificationRuntime.context() ?: return false
+        val account = NotificationRuntime.account(context) ?: return false
         val payload = extra.put("id", id).put("kind", kind.name).put("toUsername", notificationUsername(target))
             .put("createdAt", createdAt).put("expiresAt", createdAt + kind.lifetimeMillis)
-        NotificationWork.send(context, account, payload)
+        return NotificationWork.send(context, account, payload)
     }
     fun sendFriendRequestPush(targetUsername: String, request: FriendRequest) {
         queue(NotificationKind.FRIEND_REQUEST, targetUsername, NotificationPolicy.eventId("friend_request", request.id), request.timestamp,
@@ -73,8 +73,8 @@ object BingoFcmManager {
         queue(NotificationKind.FRIEND_ACCEPTED, targetUsername, NotificationPolicy.eventId("friend_accepted", request.id), System.currentTimeMillis(),
             JSONObject().put("requestId", request.id).put("requestTimestamp", request.timestamp))
     }
-    fun sendFriendOnlinePush(targetUsername: String, myUsername: String, sessionId: String, timestamp: Long) {
-        queue(NotificationKind.FRIEND_ONLINE, targetUsername, NotificationPolicy.eventId("friend_online", myUsername, sessionId), timestamp,
+    fun sendFriendOnlinePush(targetUsername: String, myUsername: String, sessionId: String, timestamp: Long): Boolean {
+        return queue(NotificationKind.FRIEND_ONLINE, targetUsername, NotificationPolicy.eventId("friend_online", myUsername, sessionId), timestamp,
             JSONObject().put("presenceSessionId", sessionId))
     }
 }

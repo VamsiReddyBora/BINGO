@@ -108,6 +108,75 @@ const identity = (
 });
 const targetIdentity = () =>
   identity("stuart", "google_222222", 1, "target-gen", "target-install");
+
+test("Online alerts allow two minutes for background delivery and use high priority", async () => {
+  const { instance: i } = setup(), s = await enroll(i), t = await enroll(i, targetIdentity());
+  await call(i, t, "/v2/register", { token: t.token, revision: 1, onlineLifetimeMillis: 120000 });
+  await call(i, t, "/v2/friends", { uids: [s.uid], revision: 1 });
+  const e = input("FRIEND_ONLINE", "return-with-delivery-budget");
+  e.expiresAt = e.createdAt + 120000;
+  assert.equal((await call(i, s, "/v2/events", e)).status, 202);
+  await i.alarm();
+  assert.equal(pushes.length, 1);
+  assert.equal(pushes[0].message.android.priority, "HIGH");
+  assert.ok(parseInt(pushes[0].message.android.ttl) > 100);
+});
+
+test("Older APKs retain their 15-second online payload in both FCM and inbox", async () => {
+  const { instance: i } = setup(), s = await enroll(i), t = await enroll(i, targetIdentity());
+  await call(i, t, "/v2/friends", { uids: [s.uid], revision: 1 });
+  const e = input("FRIEND_ONLINE", "legacy-online");
+  await call(i, s, "/v2/events", e);
+  assert.equal((await inbox(i, t))[0].expiresAt, e.createdAt + 15000);
+  await i.alarm();
+  assert.equal(JSON.parse(pushes[0].message.data.event).expiresAt, e.createdAt + 15000);
+});
+
+test("Different friends' online alerts do not share a collapse key", async () => {
+  const { instance: i } = setup(), s = await enroll(i), t = await enroll(i, targetIdentity());
+  const other = await enroll(i, identity("kevin", "google_333333", 1, "other-generation", "other-installation"));
+  await call(i, t, "/v2/friends", { uids: [s.uid, other.uid], revision: 1 });
+  await call(i, s, "/v2/events", input("FRIEND_ONLINE", "bob-return"));
+  await call(i, other, "/v2/events", input("FRIEND_ONLINE", "kevin-return"));
+  await i.alarm();
+  assert.equal(pushes.length, 2);
+  for (const push of pushes) assert.equal(push.message.android.collapse_key, undefined);
+});
+
+test("New recipients retain the longer online lifetime after an object restart", async () => {
+  const { instance: i, storage } = setup(), s = await enroll(i), t = await enroll(i, targetIdentity());
+  await call(i, t, "/v2/register", { token: t.token, revision: 1, onlineLifetimeMillis: 120000 });
+  await call(i, t, "/v2/friends", { uids: [s.uid], revision: 1 });
+  const e = input("FRIEND_ONLINE", "modern-online");
+  await call(i, s, "/v2/events", e);
+  assert.equal((await inbox(new NotificationInbox({ storage }, env), t))[0].expiresAt, e.expiresAt);
+});
+
+test("The online guard survives restart, deduplicates retries and releases after an hour", async () => {
+  const { instance: i, storage } = setup(), s = await enroll(i), t = await enroll(i, targetIdentity());
+  await call(i, t, "/v2/friends", { uids: [s.uid], revision: 1 });
+  const e = input("FRIEND_ONLINE", "durable-first");
+  await call(i, s, "/v2/events", e);
+  const restarted = new NotificationInbox({ storage }, env);
+  assert.equal((await (await call(restarted, s, "/v2/events", e)).json()).status, "queued");
+  assert.equal((await (await call(restarted, s, "/v2/events", input("FRIEND_ONLINE", "durable-second"))).json()).status, "suppressed");
+  const clock = Date.now;
+  try {
+    Date.now = () => e.createdAt + 3600000;
+    assert.equal((await (await call(restarted, s, "/v2/events", input("FRIEND_ONLINE", "hour-return"))).json()).status, "queued");
+  } finally { Date.now = clock; }
+});
+
+test("A new online session inside an hour is suppressed without suppressing invitations", async () => {
+  const { instance: i } = setup(), s = await enroll(i), t = await enroll(i, targetIdentity());
+  await call(i, t, "/v2/friends", { uids: [s.uid], revision: 1 });
+  const first = input("FRIEND_ONLINE", "return-first");
+  assert.equal((await call(i, s, "/v2/events", first)).status, 202);
+  const duplicate = await call(i, s, "/v2/events", input("FRIEND_ONLINE", "return-again"));
+  assert.equal((await duplicate.json()).status, "suppressed");
+  assert.equal((await call(i, s, "/v2/events", input("GAME_INVITE", "invite-independent"))).status, 202);
+  assert.equal((await inbox(i, t)).filter(e => e.kind === "FRIEND_ONLINE").length, 1);
+});
 function setup() {
   const storage = new Storage(),
     instance = new NotificationInbox({ storage }, env);
@@ -147,7 +216,7 @@ function input(kind = "GAME_INVITE", id = "event-one", toUsername = "stuart") {
       GAME_INVITE: 120000,
       FRIEND_REQUEST: 86400000,
       FRIEND_ACCEPTED: 86400000,
-      FRIEND_ONLINE: 15000,
+      FRIEND_ONLINE: 120000,
     }[kind];
   return {
     id,

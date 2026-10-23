@@ -114,7 +114,8 @@ class NotificationPolicyTest {
         val prefs = FakeSharedPreferences()
         assertTrue(NotificationLedger(prefs) { now }.present(event(NotificationKind.FRIEND_ONLINE), true).show)
         assertFalse(NotificationLedger(prefs) { now + 20000 }.present(event(NotificationKind.FRIEND_ONLINE).copy(id = "another-session", createdAt = now+20000, expiresAt = now+35000), false).show)
-        assertTrue(NotificationLedger(prefs) { now + 120000 }.present(event(NotificationKind.FRIEND_ONLINE).copy(id = "later-session", createdAt = now+120000, expiresAt = now+135000), false).show)
+        assertFalse(NotificationLedger(prefs) { now + 120000 }.present(event(NotificationKind.FRIEND_ONLINE).copy(id = "later-session", createdAt = now+120000, expiresAt = now+135000), false).show)
+        assertTrue(NotificationLedger(prefs) { now + 3600000 }.present(event(NotificationKind.FRIEND_ONLINE).copy(id = "hour-later-session", createdAt = now+3600000, expiresAt = now+3615000), false).show)
     }
     @Test fun corruptLedgerFailsClosedWithoutResurrectingHandledEvents() {
         val prefs = FakeSharedPreferences()

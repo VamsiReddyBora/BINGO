@@ -151,8 +151,11 @@ object BingoNotificationManager {
     fun showEvent(context: Context, event: NotificationEvent) {
         init(context)
         val account = NotificationRuntime.account(context) ?: return
-        if (!NotificationPolicy.eligible(event, account, System.currentTimeMillis()) || AppLifecycleObserver.isAppInForeground.value) return
-        if (event.kind == NotificationKind.GAME_INVITE && NotificationRuntime.isBusy(context)) return
+        if (!NotificationPolicy.eligible(event, account, System.currentTimeMillis(),
+                push = event.installationId.isNotBlank() || event.generation.isNotBlank()) || AppLifecycleObserver.isAppInForeground.value) return
+        if (event.kind == NotificationKind.GAME_INVITE && NotificationRuntime.isBusy(context)) {
+            NotificationDiagnostics.record(context, event, "MATCH_BUSY"); return
+        }
         if (event.kind == NotificationKind.FRIEND_ONLINE && !isFriend(context, event.senderUsername)) return
         val enabled = when(event.kind) {
             NotificationKind.GAME_INVITE -> NotificationPreferences.canShowSystemInviteNotification(context)
@@ -160,10 +163,11 @@ object BingoNotificationManager {
             else -> { NotificationPreferences.init(context); NotificationPreferences.systemNotificationsEnabled.value }
         }
         val channel = if (event.kind == NotificationKind.GAME_INVITE) CHANNEL_INVITES else CHANNEL_SOCIAL
-        if (!enabled || !canPost(context, channel)) return
+        if (!enabled) { NotificationDiagnostics.record(context, event, "APP_SETTINGS_BLOCKED"); return }
+        if (!canPost(context, channel)) { NotificationDiagnostics.record(context, event, "ANDROID_BLOCKED"); return }
         val ledger = NotificationRuntime.ledger(context)
         val claim = ledger.present(event, system = true)
-        if (!claim.show) return
+        if (!claim.show) { NotificationDiagnostics.record(context, event, "ALREADY_SHOWN"); return }
         val action = when(event.kind) {
             NotificationKind.GAME_INVITE -> ACTION_VIEW_INVITE
             NotificationKind.FRIEND_ONLINE -> ACTION_INVITE_FRIEND
@@ -191,8 +195,12 @@ object BingoNotificationManager {
             }
             if (!NotificationRuntime.withAccount(context, account) {
                 (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(tag(event), id(event.kind), builder.build())
+                NotificationDiagnostics.record(context, event, "SYSTEM_POSTED")
             }) ledger.presentationFailed(event, true, !claim.alert)
-        } catch (_: RuntimeException) { ledger.presentationFailed(event, true, !claim.alert) }
+        } catch (_: RuntimeException) {
+            ledger.presentationFailed(event, true, !claim.alert)
+            NotificationDiagnostics.record(context, event, "DISPLAY_FAILED")
+        }
     }
     fun cancelEvent(context: Context, event: NotificationEvent) {
         (context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager)?.cancel(tag(event), id(event.kind))

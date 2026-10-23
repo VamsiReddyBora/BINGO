@@ -15,9 +15,9 @@ class NotificationLedger(private val prefs: SharedPreferences, private val now: 
     private fun entries(): List<Entry>? = runCatching {
         json.decodeFromString<List<Entry>>(prefs.getString("events", "[]") ?: "[]").filter { it.expiresAt > now() }
     }.getOrNull()
-    private fun save(items: List<Entry>, onlineKey: String? = null): Boolean {
+    private fun save(items: List<Entry>, onlineKey: String? = null, onlineAt: Long = now()): Boolean {
         val editor = prefs.edit().putString("events", json.encodeToString(items))
-        if (onlineKey != null) editor.putLong(onlineKey, now())
+        if (onlineKey != null) editor.putLong(onlineKey, onlineAt)
         return editor.commit()
     }
 
@@ -29,15 +29,15 @@ class NotificationLedger(private val prefs: SharedPreferences, private val now: 
 
     fun present(event: NotificationEvent, system: Boolean): Presentation = synchronized(guard) {
         val list = entries()?.toMutableList() ?: return@synchronized Presentation(false, false)
-        val old = list.firstOrNull { it.uid == event.recipientUid && it.id == event.id }
-            ?: Entry(event.recipientUid, event.id, event.expiresAt)
+        val existing = list.firstOrNull { it.uid == event.recipientUid && it.id == event.id }
+        val old = existing ?: Entry(event.recipientUid, event.id, event.expiresAt)
         if (old.handled || (event.kind != NotificationKind.GAME_INVITE && old.alerted) || (if (system) old.system else old.inApp)) return@synchronized Presentation(false, false)
         if (list.size >= 1024 && list.none { it.uid == old.uid && it.id == old.id }) return@synchronized Presentation(false, false)
-        val onlineKey = if (event.kind == NotificationKind.FRIEND_ONLINE) "online:${event.recipientUid}:${event.senderUid}" else null
-        if (onlineKey != null && prefs.contains(onlineKey) && now() - prefs.getLong(onlineKey, 0) < 120_000L) return@synchronized Presentation(false, false)
+        val onlineKey = if (event.kind == NotificationKind.FRIEND_ONLINE) "online-v3:${event.recipientUid}:${event.senderUid}" else null
+        if (existing == null && onlineKey != null && prefs.contains(onlineKey) && event.createdAt - prefs.getLong(onlineKey, 0) < FriendOnlineAnnouncements.OFFLINE_INTERVAL) return@synchronized Presentation(false, false)
         val next = old.copy(system = old.system || system, inApp = old.inApp || !system, alerted = true)
         list.removeAll { it.uid == old.uid && it.id == old.id }; list.add(next)
-        return@synchronized if (save(list, onlineKey)) Presentation(true, !old.alerted) else Presentation(false, false)
+        return@synchronized if (save(list, onlineKey, event.createdAt)) Presentation(true, !old.alerted) else Presentation(false, false)
     }
 
     fun markHandled(event: NotificationEvent): Boolean = synchronized(guard) {

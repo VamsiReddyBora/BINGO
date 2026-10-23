@@ -7,7 +7,7 @@ fun notificationUsername(value: String) = value.trim().removePrefix("@").lowerca
 
 @Serializable
 enum class NotificationKind(val lifetimeMillis: Long) {
-    GAME_INVITE(120_000L), FRIEND_REQUEST(86_400_000L), FRIEND_ACCEPTED(86_400_000L), FRIEND_ONLINE(15_000L)
+    GAME_INVITE(120_000L), FRIEND_REQUEST(86_400_000L), FRIEND_ACCEPTED(86_400_000L), FRIEND_ONLINE(120_000L)
 }
 
 @Serializable
@@ -35,6 +35,8 @@ data class NotificationEvent(
 
 object NotificationPolicy {
     const val FUTURE_TOLERANCE = 5_000L
+    fun friendOnlineStillRelevant(event: NotificationEvent, knownTimestamp: Long, knownStatus: String): Boolean =
+        knownTimestamp <= event.createdAt || !knownStatus.equals("OFFLINE", ignoreCase = true)
     fun fresh(event: NotificationEvent, now: Long): Boolean =
         event.createdAt > 0 && event.createdAt <= now + FUTURE_TOLERANCE &&
             event.expiresAt > now && event.expiresAt > event.createdAt &&

@@ -35,4 +35,31 @@ class OfflineInvitationPushTest {
         assertEquals(event.roomCode, converted.roomCode)
         assertEquals(event.expiresAt, converted.expiresAt)
     }
+    @Test fun theRealPushDispatcherPresentsAnInviteBeforeSchedulingAnInboxFetch() {
+        val stages = mutableListOf<String>()
+        assertTrue(NotificationPushIngress.dispatch(data(invite()), account, now, { _, _ -> false },
+            { stages += "present:${it.roomCode}" }, { stages += "sync:${it.id}" }))
+        assertEquals(listOf("present:ABC123", "sync:game_invite:test"), stages)
+    }
+    @Test fun inboxNetworkFailureCannotPreventTheInitialInvitationPresentation() {
+        var shown = false
+        try {
+            NotificationPushIngress.dispatch(data(invite()), account, now, { _, _ -> false },
+                { shown = true }, { throw java.io.IOException("synthetic offline inbox") })
+            fail("Expected the synthetic sync failure")
+        } catch (_: java.io.IOException) { assertTrue(shown) }
+    }
+    @Test fun expiredOrWrongAccountPushCannotEnterTheImmediatePresentationPath() {
+        for (event in listOf(invite().copy(generation = "old"), invite().copy(expiresAt = now))) {
+            assertFalse(NotificationPushIngress.dispatch(data(event), account, now, { _, _ -> false },
+                { fail("Rejected push was presented") }, { fail("Rejected push was synchronized") }))
+        }
+    }
+    @Test fun friendRequestsContinueToUseCanonicalInboxValidation() {
+        val request = invite().copy(kind = NotificationKind.FRIEND_REQUEST, requestId = "request")
+        var synchronized = false
+        NotificationPushIngress.dispatch(data(request), account, now, { _, _ -> false },
+            { fail("Friend request skipped its inbox validation") }, { synchronized = true })
+        assertTrue(synchronized)
+    }
 }

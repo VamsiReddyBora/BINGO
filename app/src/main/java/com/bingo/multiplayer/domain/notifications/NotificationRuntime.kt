@@ -15,7 +15,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.encodeToString
 
-/** All presentation enters here. Transports are hints; inbox data comes from an authenticated server. */
+/** Presentation accepts account-bound FCM from the relay and authenticated inbox events. */
 object NotificationRuntime {
     private val json = Json { ignoreUnknownKeys = true }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -166,16 +166,33 @@ object NotificationRuntime {
         if (event.kind != NotificationKind.GAME_INVITE) return
         scope.launch { receive(context, event, { null }, { null }) }
     }
+    fun receivePush(context: Context, event: NotificationEvent) {
+        val current = account(context) ?: return
+        if (!NotificationPolicy.eligible(event, current, System.currentTimeMillis(), push = true)) return
+        NotificationDiagnostics.record(context, event, "PUSH_VALIDATED")
+        if (event.kind == NotificationKind.FRIEND_ONLINE && !onlineEventRelevant(event)) {
+            NotificationDiagnostics.record(context, event, "STALE_PRESENCE")
+            return
+        }
+        if (AppLifecycleObserver.isAppInForeground.value) {
+            scope.launch { if (account(context) == current) receive(context, event, { null }, { null }) }
+        } else BingoNotificationManager.showEvent(context, event)
+    }
+    private fun onlineEventRelevant(event: NotificationEvent): Boolean {
+        val known = PresenceManager.presenceFlow.value[notificationUsername(event.senderUsername)]
+        return known == null || NotificationPolicy.friendOnlineStillRelevant(event, known.timestamp, known.status)
+    }
     private suspend fun receive(context: Context, event: NotificationEvent,
         pendingRequests: suspend () -> List<com.bingo.multiplayer.domain.model.FriendRequest>?,
         remoteRoster: suspend () -> List<Friend>?) {
         val current = account(context) ?: return
-        if (!NotificationPolicy.eligible(event, current, System.currentTimeMillis()) || ledger(context).handled(current.uid, event.id)) return
+        if (!NotificationPolicy.eligible(event, current, System.currentTimeMillis(),
+                push = event.installationId.isNotBlank() || event.generation.isNotBlank()) ||
+            ledger(context).handled(current.uid, event.id)) return
         when (event.kind) {
             NotificationKind.FRIEND_ONLINE -> {
                 if (!isFriend(context, event.senderUsername)) return
-                val known = PresenceManager.presenceFlow.value[notificationUsername(event.senderUsername)]
-                if (known != null && known.timestamp > event.createdAt && !known.isOnline) return
+                if (!onlineEventRelevant(event)) return
             }
             NotificationKind.FRIEND_REQUEST -> {
                 if (isFriend(context, event.senderUsername)) return
@@ -217,6 +234,7 @@ object NotificationRuntime {
                         if (claim.show) {
                             activeToast?.cancel()
                             activeToast = Toast.makeText(context.applicationContext, eventText(event), Toast.LENGTH_LONG).also { it.show() }
+                            NotificationDiagnostics.record(context, event, "IN_APP_SHOWN")
                         }
                     }
                 }
@@ -237,6 +255,7 @@ object NotificationRuntime {
             BingoNotificationManager.cancelEvent(context, event)
             if (claim.alert) com.bingo.multiplayer.core.designsystem.BingoSoundEffects.playVibration(context, durationMs = 200L)
             GameInviteManager.stageInvite(event.toInvite())
+            NotificationDiagnostics.record(context, event, "IN_APP_INVITE")
         }
     }
     /** Direct MQTT ingress. Requests are ephemeral notices even during gameplay, never invites. */

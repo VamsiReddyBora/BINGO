@@ -123,6 +123,7 @@ export class NotificationInbox {
           reg.token = body.token;
           reg.tokenRevision = body.revision;
           reg.updatedAt = Date.now();
+          reg.onlineLifetimeMillis = body.onlineLifetimeMillis === 120000 ? 120000 : 15000;
           await this.storage.put("registration:" + reg.id, reg);
           await this.queuePending(reg);
         }
@@ -162,6 +163,7 @@ export class NotificationInbox {
       if (path === "/v2/inbox" && request.method === "GET") {
         const account = await this.storage.get("account:" + session.uid),
           events = [];
+        const registration = await this.storage.get("registration:" + session.registrationId);
         for (const name of account.aliases || [session.username]) {
           const records = await this.storage.list({ prefix: `event:${name}:` });
           for (const e of records.values())
@@ -173,7 +175,7 @@ export class NotificationInbox {
                 account.friends.includes(e.senderUid))
             )
               events.push({
-                ...this.publicEvent(e, session.uid),
+                ...this.publicEvent(e, session.uid, registration),
                 recipientUsername: account.username,
               });
         }
@@ -396,8 +398,11 @@ export class NotificationInbox {
     record.count++;
     await this.storage.put("rate:" + key, record);
   }
-  publicEvent(e, recipientUid) {
+  publicEvent(e, recipientUid, registration) {
     const { handled, toUsername, purgeAt, ...safe } = e;
+    // Older APKs accept only 15-second online events. Keep their existing contract.
+    if (e.kind === "FRIEND_ONLINE" && registration?.onlineLifetimeMillis !== 120000)
+      safe.expiresAt = Math.min(e.expiresAt, e.createdAt + 15000);
     return { ...safe, recipientUid, recipientUsername: toUsername };
   }
   async submit(session, body) {
@@ -435,6 +440,13 @@ export class NotificationInbox {
         403,
         "Recipient has not authorized friend alerts",
       );
+    const onlineKey = input.kind === "FRIEND_ONLINE"
+      ? `online-notice:${session.uid}:${targetUid || input.toUsername}` : null;
+    if (onlineKey) {
+      const previous = await this.storage.get(onlineKey);
+      if (previous && input.createdAt - previous.createdAt < 3600000)
+        return { status: "suppressed", id: input.id };
+    }
     if (input.kind === "FRIEND_ACCEPTED") {
       const request = await this.storage.get("request:" + input.requestId);
       requireThat(
@@ -504,6 +516,7 @@ export class NotificationInbox {
     };
     // Per-event keys and serialized mutations prevent lost updates across different senders and devices.
     const writes = { [key]: event };
+    if (onlineKey) writes[onlineKey] = { createdAt: event.createdAt, purgeAt: event.createdAt + 2 * DAY };
     if (input.kind === "FRIEND_REQUEST") {
       const old = await this.storage.get("request:" + input.requestId);
       requireThat(
@@ -615,7 +628,7 @@ export class NotificationInbox {
         token: reg.token,
         tokenRevision: reg.tokenRevision || 0,
         payload: {
-          ...this.publicEvent(event, reg.uid),
+          ...this.publicEvent(event, reg.uid, reg),
           recipientUsername: target.username,
           installationId: reg.installationId,
           generation: reg.generation,
@@ -707,7 +720,7 @@ export class NotificationInbox {
       if (
         (key.startsWith("event:") ||
           key.startsWith("request:") ||
-          key.startsWith("delivery:")) &&
+          key.startsWith("delivery:") || key.startsWith("online-notice:")) &&
         value.purgeAt <= now
       )
         await this.storage.delete(key);

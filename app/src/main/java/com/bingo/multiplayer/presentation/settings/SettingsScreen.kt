@@ -2235,10 +2235,21 @@ private fun NotificationSettingsContent(
     val invitesInAppEnabled = NotificationPreferences.inAppPlayerInvitesEnabled.value
 
     var areOsNotificationsEnabled by remember { mutableStateOf(NotificationManagerCompat.from(context).areNotificationsEnabled()) }
+    fun blockedCategories(): String = if (android.os.Build.VERSION.SDK_INT >= 26) {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+        listOf("Game invitations" to com.bingo.multiplayer.domain.network.BingoNotificationManager.CHANNEL_INVITES,
+            "Friends & Social" to com.bingo.multiplayer.domain.network.BingoNotificationManager.CHANNEL_SOCIAL)
+            .filter { manager?.getNotificationChannel(it.second)?.importance == android.app.NotificationManager.IMPORTANCE_NONE }
+            .joinToString { it.first }
+    } else ""
+    var blockedNotificationCategories by remember { mutableStateOf(blockedCategories()) }
     val notificationLifecycle = androidx.compose.ui.platform.LocalLifecycleOwner.current
     androidx.compose.runtime.DisposableEffect(notificationLifecycle, context) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) areOsNotificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                areOsNotificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
+                blockedNotificationCategories = blockedCategories()
+            }
         }
         notificationLifecycle.lifecycle.addObserver(observer)
         onDispose { notificationLifecycle.lifecycle.removeObserver(observer) }
@@ -2258,7 +2269,7 @@ private fun NotificationSettingsContent(
                 }
             }) { Text("Retry notifications") }
         }
-        if (!areOsNotificationsEnabled) {
+        if (!areOsNotificationsEnabled || blockedNotificationCategories.isNotBlank()) {
             Surface(
                 shape = RoundedCornerShape(8.dp),
                 color = Color(0xFFEF4444).copy(alpha = 0.12f),
@@ -2277,7 +2288,8 @@ private fun NotificationSettingsContent(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "⚠️ Notifications disabled in Android Settings. Tap to enable.",
+                        text = if (!areOsNotificationsEnabled) "⚠️ Notifications disabled in Android Settings. Tap to enable."
+                            else "⚠️ Android has blocked: $blockedNotificationCategories. Tap to enable.",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium,
                         color = Color(0xFFEF4444)

@@ -2,7 +2,7 @@ export const LIFETIMES = Object.freeze({
   GAME_INVITE: 120000,
   FRIEND_REQUEST: 86400000,
   FRIEND_ACCEPTED: 86400000,
-  FRIEND_ONLINE: 15000,
+  FRIEND_ONLINE: 120000,
 });
 export class HttpError extends Error {
   constructor(status, message) {

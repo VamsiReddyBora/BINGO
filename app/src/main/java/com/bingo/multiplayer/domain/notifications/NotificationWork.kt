@@ -22,11 +22,17 @@ object NotificationWork {
     } catch (_: RuntimeException) { false }
     fun register(context: Context, account: NotificationAccount, revision: String = "token") = enqueue(context, "register:${account.generation}:$revision", "register", account)
     fun sync(context: Context, account: NotificationAccount, eventId: String = "poll") =
-        enqueue(context, "sync:${account.generation}:$eventId", "sync", account, urgent = eventId != "poll")
-    fun send(context: Context, account: NotificationAccount, payload: JSONObject): Boolean = enqueue(context,
+        enqueue(context, "sync:${account.generation}:$eventId", "sync", account,
+            urgent = eventId != "poll" && android.os.Build.VERSION.SDK_INT >= 31)
+    fun send(context: Context, account: NotificationAccount, payload: JSONObject): Boolean {
+        val queued = enqueue(context,
         "send:${account.generation}:${payload.getString("toUsername")}:${payload.getString("id")}", "send", account,
         workDataOf("payload" to payload.toString(), "expiresAt" to payload.getLong("expiresAt")),
-        urgent = payload.optString("kind") == "GAME_INVITE" && android.os.Build.VERSION.SDK_INT >= 31)
+        urgent = payload.optString("kind") in setOf("GAME_INVITE", "FRIEND_ONLINE") && android.os.Build.VERSION.SDK_INT >= 31)
+        NotificationDiagnostics.recordReference(context, payload.optString("id"), payload.optString("kind"),
+            if (queued) "SEND_QUEUED" else "QUEUE_FAILED")
+        return queued
+    }
     fun acknowledge(context: Context, account: NotificationAccount, event: NotificationEvent) = enqueue(context,
         "ack:${account.generation}:${event.id}", "ack", account, workDataOf("eventId" to event.id))
     fun revoke(context: Context, registration: String, secret: String) = enqueue(context, "revoke:$registration", "revoke", null,
@@ -50,6 +56,7 @@ class NotificationWorker(context: Context, params: WorkerParameters) : Coroutine
                     val token = BingoFcmManager.ensureCurrentToken(applicationContext)
                     NotificationApi.session(applicationContext, account!!)
                     val body = JSONObject().put("token", token.first).put("revision", token.second)
+                        .put("onlineLifetimeMillis", NotificationKind.FRIEND_ONLINE.lifetimeMillis)
                     val registered = NotificationApi.call(applicationContext, account, "/v2/register", body)
                     if (registered.optBoolean("refreshToken") || token.first.isBlank()) {
                         if (NotificationRuntime.account(applicationContext) != account) return Result.success()
@@ -61,10 +68,13 @@ class NotificationWorker(context: Context, params: WorkerParameters) : Coroutine
                     NotificationApi.call(applicationContext, account, "/v2/friends", JSONObject().put("uids", JSONArray(friends.first)).put("revision", friends.second))
                     NotificationRuntime.refresh(applicationContext, account)
                     if (NotificationRuntime.account(applicationContext) == account) NotificationDeliveryStatus.clear()
+                    NotificationDiagnostics.record(applicationContext, null, "REGISTERED")
                 }
                 "send" -> {
                     val payloadObj = JSONObject(inputData.getString("payload")!!)
-                    NotificationApi.call(applicationContext, account!!, "/v2/events", payloadObj)
+                    val result = NotificationApi.call(applicationContext, account!!, "/v2/events", payloadObj)
+                    NotificationDiagnostics.recordReference(applicationContext, payloadObj.optString("id"), payloadObj.optString("kind"),
+                        if (result.optString("status") == "suppressed") "SEND_SUPPRESSED" else "RELAY_QUEUED")
                 }
                 "ack" -> {
                     val id = inputData.getString("eventId").orEmpty()
@@ -76,6 +86,7 @@ class NotificationWorker(context: Context, params: WorkerParameters) : Coroutine
             return Result.success()
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (e: NotificationApiException) {
+            NotificationDiagnostics.record(applicationContext, null, "${op.uppercase()}_FAILED", e.status)
             if (op == "register" && NotificationRuntime.account(applicationContext) == account) NotificationDeliveryStatus.failed(e)
             if ((e.retryable || e.status == 401 || e.status == 403) && runAttemptCount < 8 && expiry > System.currentTimeMillis()) return Result.retry()
             return Result.failure(workDataOf("reason" to e.message.orEmpty().take(180)))
