@@ -1,9 +1,9 @@
 {
-  "versionCode": 65,
-  "versionName": "1.0",
-  "tag_name": "v1.0.0",
-  "downloadUrl": "https://github.com/VamsiReddyBora/BINGO/releases/download/v1.0.0/Bingo-1.0.apk",
-  "apkSize": 8068820,
-  "sha256": "30323902a199dd23ff8135cb065cb1cf920e312e6df2dd160c844dc192fcd7f5",
-  "releaseNotes": "Nearby host hold/resume and connection recovery; lobby ordering and multiplayer chat improvements; MQTT shutdown crash fix; earlier UI, avatar and invitation improvements."
+  "versionName": "1.0.1",
+  "versionCode": 66,
+  "tagName": "v1.0.1",
+  "downloadUrl": "https://github.com/VamsiReddyBora/BINGO/releases/download/v1.0.1/Bingo-1.0.1.apk",
+  "apkSize": 8072922,
+  "sha256": "5eee171938ff73c66aa1ca6b995fbd9f2d7ce0c6b08f25ef436c2c2ec95db8b5",
+  "releaseNotes": "Friend-online alerts stay silent during short app switches and notify again after an hour offline.\nFaster background invitation display and improved notification reliability.\nClearer Android notification settings and private delivery diagnostics."
 }
