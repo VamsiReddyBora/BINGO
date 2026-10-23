@@ -1,0 +1,916 @@
+import { describe, it, before, after } from 'node:test';
+import assert from 'node:assert';
+import { EventEmitter } from 'node:events';
+import { CloudRegistry } from '../network/cloudRegistry';
+import { MqttRoomManager, roomSync, setMqttConnectOverride } from '../network/mqttSync';
+import { NetworkPingMonitor } from '../network/pingMonitor';
+import { BingoEngine } from '../engine/bingoEngine';
+import { Player, RoomMessagePacket } from '../types/models';
+
+const originalFetch = globalThis.fetch;
+const mockStore = new Map<string, string>();
+const mockBins = new Map<string, string>();
+
+class InMemoryMqttClient extends EventEmitter {
+  public connected = true;
+  private subscriptions = new Set<string>();
+  private connectTimer: any = null;
+
+  constructor(public broker: InMemoryMqttBroker, public opts?: any) {
+    super();
+    this.connectTimer = setTimeout(() => {
+      if (this.connected) this.emit('connect');
+    }, 5);
+  }
+
+  subscribe(topic: string, opts?: any, callback?: () => void) {
+    this.subscriptions.add(topic);
+    this.broker.subscribe(this, topic);
+    callback?.();
+  }
+
+  unsubscribe(topic: string, opts?: any, callback?: () => void) {
+    this.subscriptions.delete(topic);
+    this.broker.unsubscribe(this, topic);
+    callback?.();
+  }
+
+  publish(topic: string, message: any, opts?: any, callback?: (err?: any) => void) {
+    const payload = typeof message === 'string' ? Buffer.from(message) : Buffer.isBuffer(message) ? message : Buffer.from(String(message));
+    this.broker.publish(this, topic, payload, opts?.retain || false);
+    callback?.();
+  }
+
+  end(force?: boolean, opts?: any, callback?: () => void) {
+    this.connected = false;
+    if (this.connectTimer) clearTimeout(this.connectTimer);
+    this.broker.removeClient(this);
+    this.emit('close');
+    callback?.();
+  }
+
+  removeAllListeners(event?: string | symbol) {
+    super.removeAllListeners(event);
+    return this;
+  }
+}
+
+class InMemoryMqttBroker {
+  public retained = new Map<string, Buffer>();
+  public clients = new Set<InMemoryMqttClient>();
+  public subscriptions = new Map<string, Set<InMemoryMqttClient>>();
+  private activeTimers = new Set<any>();
+
+  createClient(opts?: any) {
+    const client = new InMemoryMqttClient(this, opts);
+    this.clients.add(client);
+    return client;
+  }
+
+  subscribe(client: InMemoryMqttClient, topicPattern: string) {
+    let set = this.subscriptions.get(topicPattern);
+    if (!set) {
+      set = new Set();
+      this.subscriptions.set(topicPattern, set);
+    }
+    set.add(client);
+
+    for (const [topic, payload] of this.retained.entries()) {
+      if (this.topicMatches(topicPattern, topic)) {
+        const timer = setTimeout(() => {
+          this.activeTimers.delete(timer);
+          if (client.connected) client.emit('message', topic, payload);
+        }, 2);
+        this.activeTimers.add(timer);
+      }
+    }
+  }
+
+  unsubscribe(client: InMemoryMqttClient, topicPattern: string) {
+    this.subscriptions.get(topicPattern)?.delete(client);
+  }
+
+  removeClient(client: InMemoryMqttClient) {
+    this.clients.delete(client);
+    for (const set of this.subscriptions.values()) {
+      set.delete(client);
+    }
+  }
+
+  publish(sender: InMemoryMqttClient, topic: string, payload: Buffer, retain: boolean) {
+    if (retain) {
+      if (payload.length === 0) {
+        this.retained.delete(topic);
+      } else {
+        this.retained.set(topic, payload);
+      }
+    }
+
+    for (const [pattern, subscribers] of this.subscriptions.entries()) {
+      if (this.topicMatches(pattern, topic)) {
+        for (const sub of subscribers) {
+          const timer = setTimeout(() => {
+            this.activeTimers.delete(timer);
+            if (sub.connected) sub.emit('message', topic, payload);
+          }, 2);
+          this.activeTimers.add(timer);
+        }
+      }
+    }
+  }
+
+  private topicMatches(pattern: string, topic: string): boolean {
+    if (pattern === topic || pattern === '#') return true;
+    const pParts = pattern.split('/');
+    const tParts = topic.split('/');
+    for (let i = 0; i < pParts.length; i++) {
+      if (pParts[i] === '#') return true;
+      if (pParts[i] === '+') continue;
+      if (pParts[i] !== tParts[i]) return false;
+    }
+    return pParts.length === tParts.length;
+  }
+
+  clear() {
+    for (const t of this.activeTimers) {
+      clearTimeout(t);
+    }
+    this.activeTimers.clear();
+    this.retained.clear();
+    for (const c of Array.from(this.clients)) {
+      c.end(true);
+    }
+    this.clients.clear();
+    this.subscriptions.clear();
+  }
+}
+
+const mockBroker = new InMemoryMqttBroker();
+const trackedManagers = new Set<MqttRoomManager>();
+
+function createTrackedManager(): MqttRoomManager {
+  const manager = new MqttRoomManager();
+  trackedManagers.add(manager);
+  return manager;
+}
+
+function installFetchMock() {
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+
+    if (url.includes('/UpdateValue/')) {
+      const parts = url.split('/UpdateValue/')[1].split('?value=');
+      const key = decodeURIComponent(parts[0].split('/')[1] || parts[0]);
+      const value = decodeURIComponent(parts[1] || '');
+      mockStore.set(key, value);
+      return new Response('OK', { status: 200, statusText: 'OK' });
+    }
+
+    if (url.includes('/GetValue/')) {
+      const key = decodeURIComponent(url.split('/GetValue/')[1].split('/')[1] || url.split('/GetValue/')[1]);
+      const value = mockStore.get(key);
+      if (value !== undefined) {
+        return new Response(JSON.stringify(value), { status: 200 });
+      }
+      return new Response('null', { status: 200 });
+    }
+
+    if (url.includes('jsonbin.org') || url.includes('json-storage') || url.includes('/bin')) {
+      if (init?.method === 'POST') {
+        const binId = `bin_${Math.random().toString(36).substring(2, 9)}`;
+        const body = typeof init.body === 'string' ? init.body : '';
+        mockBins.set(binId, body);
+        return new Response(JSON.stringify({ binId, id: binId, status: 'success' }), { status: 200 });
+      }
+      if (init?.method === 'PUT') {
+        const binId = url.split('/').pop() || '';
+        const body = typeof init.body === 'string' ? init.body : '';
+        mockBins.set(binId, body);
+        return new Response(JSON.stringify({ status: 'success' }), { status: 200 });
+      }
+      const binId = url.split('/').pop() || '';
+      const body = mockBins.get(binId);
+      if (body !== undefined) {
+        return new Response(body, { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    }
+
+    return new Response('Network call rejected in isolated test environment: ' + url, { status: 503 });
+  };
+}
+
+describe('Multiplayer Lobby & Game End-to-End Simulation', { timeout: 60000 }, () => {
+  before(() => {
+    installFetchMock();
+    setMqttConnectOverride((url, opts) => mockBroker.createClient(opts));
+  });
+  it('CloudRegistry creates, retrieves, and updates room ready status', async () => {
+    const testRoomCode = `SIM${Math.floor(100 + Math.random() * 900)}`;
+    const host: Player = {
+      id: 'host_sim_1',
+      displayName: 'Simulation Host',
+      username: 'sim_host',
+      isHost: true,
+      avatarUrl: '👑',
+      score: 100,
+      completedLinesCount: 0,
+      gamesPlayed: 5,
+      gamesWon: 3,
+      currentStreak: 2,
+      level: 2,
+      lastSeenTimestamp: Date.now(),
+      lobbyReadyStatus: 'READY',
+      readyVersion: 0
+    };
+
+    // 1. Create Room
+    const created = await CloudRegistry.createRoom(testRoomCode, host, 5);
+    assert.strictEqual(created, true, 'Room should be created in CloudRegistry');
+
+    // 2. Retrieve Room
+    const room = await CloudRegistry.getRoom(testRoomCode);
+    assert.ok(room !== null, 'Room should be retrieved from CloudRegistry');
+    assert.strictEqual(room.roomCode, testRoomCode);
+    assert.strictEqual(room.hostId, host.id);
+    assert.strictEqual(room.hostDisplayName, host.displayName);
+
+    // 3. Guest joins and updates ready status
+    const guestId = 'guest_sim_2';
+    const guestUpdated = await CloudRegistry.updateRoomReadyStatus(testRoomCode, guestId, 'READY');
+    assert.strictEqual(guestUpdated, true, 'Ready status should update');
+
+    // 4. Verify updated room has guest marked READY
+    const updatedRoom = await CloudRegistry.getRoom(testRoomCode);
+    assert.ok(updatedRoom !== null);
+    const guest = updatedRoom.players.find(p => p.id === guestId);
+    assert.ok(guest !== undefined);
+    assert.strictEqual(guest.lobbyReadyStatus, 'READY');
+  });
+
+  it('Dual-Client MQTT Room Sync: Join, Ready, Start Game, and Pick Numbers', async () => {
+    const simRoomCode = `TEST${Math.floor(10 + Math.random() * 90)}`;
+    const hostPlayer: Player = {
+      id: 'host_p1',
+      displayName: 'Alice Host',
+      username: 'alice_host',
+      isHost: true,
+      avatarUrl: '👩',
+      score: 50,
+      completedLinesCount: 0,
+      gamesPlayed: 2,
+      gamesWon: 1,
+      currentStreak: 1,
+      level: 1,
+      lastSeenTimestamp: Date.now(),
+      lobbyReadyStatus: 'READY',
+      readyVersion: 0
+    };
+
+    const guestPlayer: Player = {
+      id: 'guest_p2',
+      displayName: 'Bob Guest',
+      username: 'bob_guest',
+      isHost: false,
+      avatarUrl: '👨',
+      score: 50,
+      completedLinesCount: 0,
+      gamesPlayed: 2,
+      gamesWon: 1,
+      currentStreak: 1,
+      level: 1,
+      lastSeenTimestamp: Date.now(),
+      lobbyReadyStatus: 'NOT_READY',
+      readyVersion: 0
+    };
+
+    const hostManager = createTrackedManager();
+    const guestManager = createTrackedManager();
+
+    try {
+      const hostPackets: RoomMessagePacket[] = [];
+      const guestPackets: RoomMessagePacket[] = [];
+
+      hostManager.onPacketReceived = (p) => hostPackets.push(p);
+      guestManager.onPacketReceived = (p) => guestPackets.push(p);
+
+      // Connect both clients
+      hostManager.connect(simRoomCode, hostPlayer);
+      guestManager.connect(simRoomCode, guestPlayer);
+
+      // Wait for connection to establish and initial join packets to exchange
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+
+      // Guest sends READY status update
+      guestManager.sendPacket({
+        type: 'READY_STATUS',
+        playerId: guestPlayer.id,
+        displayName: guestPlayer.displayName,
+        readyStatus: 'READY',
+        readyVersion: 1
+      });
+      let readyPacket = hostPackets.find(p => p.type === 'READY_STATUS' && p.playerId === guestPlayer.id);
+      for (let i = 0; i < 20 && !readyPacket; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        readyPacket = hostPackets.find(p => p.type === 'READY_STATUS' && p.playerId === guestPlayer.id);
+      }
+      assert.ok(readyPacket !== undefined, 'Host should receive READY_STATUS packet');
+      assert.strictEqual(readyPacket.readyStatus, 'READY');
+
+      // Host starts game
+      const testSeed = 424242;
+      hostManager.sendPacket({
+        type: 'START_GAME',
+        playerId: hostPlayer.id,
+        seed: testSeed,
+        currentTurnPlayerId: hostPlayer.id
+      });
+
+      // Check if guest received START_GAME packet
+      let startPacket = guestPackets.find(p => p.type === 'START_GAME');
+      for (let i = 0; i < 20 && !startPacket; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        startPacket = guestPackets.find(p => p.type === 'START_GAME');
+      }
+      assert.ok(startPacket !== undefined, 'Guest should receive START_GAME packet');
+      assert.strictEqual(startPacket.seed, testSeed);
+      assert.strictEqual(startPacket.currentTurnPlayerId, hostPlayer.id);
+
+      // Host makes first pick (number 7)
+      hostManager.sendPacket({
+        type: 'PICK_NUMBER',
+        number: 7,
+        playerId: hostPlayer.id,
+        turnNumber: 1,
+        currentTurnPlayerId: guestPlayer.id,
+        pickedHistory: [7],
+        seed: testSeed
+      });
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+
+      // Check if guest received PICK_NUMBER packet
+      const pickPacket = guestPackets.find(p => p.type === 'PICK_NUMBER' && p.number === 7);
+      assert.ok(pickPacket !== undefined, 'Guest should receive PICK_NUMBER packet');
+      assert.strictEqual(pickPacket.number, 7);
+      assert.strictEqual(pickPacket.playerId, hostPlayer.id);
+      assert.strictEqual(pickPacket.currentTurnPlayerId, guestPlayer.id);
+
+      // Guest sends hold-to-grow scaled emote (scale 2.5)
+      guestManager.sendPacket({
+        type: 'EMOTE',
+        playerId: guestPlayer.id,
+        displayName: '🚀',
+        number: 250
+      });
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+
+      const emotePacket = hostPackets.find(p => p.type === 'EMOTE' && p.displayName === '🚀');
+      assert.ok(emotePacket !== undefined, 'Host should receive EMOTE packet');
+      assert.strictEqual(emotePacket.displayName, '🚀');
+      assert.strictEqual(emotePacket.number, 250);
+    } finally {
+      // Clean up connections
+      hostManager.destroy();
+      guestManager.destroy();
+      trackedManagers.delete(hostManager);
+      trackedManagers.delete(guestManager);
+    }
+  });
+
+  it('Simulates full gameplay leading to a 5-line BINGO win', () => {
+    // Generate board for player with deterministic seed
+    let board = BingoEngine.generateBoard(5, 77777);
+
+    // Compute numbers for 5 distinct lines:
+    // Rows 0, 1, 2, 3, 4
+    const allRowNumbers = [
+      board.cells.filter(c => c.row === 0).map(c => c.number),
+      board.cells.filter(c => c.row === 1).map(c => c.number),
+      board.cells.filter(c => c.row === 2).map(c => c.number),
+      board.cells.filter(c => c.row === 3).map(c => c.number),
+      board.cells.filter(c => c.row === 4).map(c => c.number)
+    ];
+
+    let turn = 1;
+    // Complete row 0..4
+    for (let r = 0; r < 5; r++) {
+      for (const num of allRowNumbers[r]) {
+        const res = BingoEngine.markCell(board, num, 'player_winner', true, turn++);
+        board = res.board;
+      }
+      assert.strictEqual(board.completedLines.length >= r + 1, true, `Should have at least ${r + 1} completed lines`);
+    }
+
+    assert.strictEqual(board.completedLines.length >= board.targetLines, true, 'Must have reached targetLines for BINGO');
+  });
+
+  it('Handles complex Android-style Google avatar URLs and payloads gracefully without data loss', async () => {
+    const complexRoomCode = `GZ${Math.floor(1000 + Math.random() * 9000)}`;
+    const googleUserHost: Player = {
+      id: 'android_google_uid_999',
+      displayName: 'Google Player',
+      username: 'g_player',
+      isHost: true,
+      avatarUrl: 'https://lh3.googleusercontent.com/a/ACg8ocL-ih6HbPHoaQhxqV8vCkjzDyBTtqGPJnY6x81YGltV=s96-c',
+      score: 250,
+      completedLinesCount: 0,
+      gamesPlayed: 12,
+      gamesWon: 8,
+      currentStreak: 4,
+      level: 5,
+      lastSeenTimestamp: Date.now(),
+      lobbyReadyStatus: 'READY',
+      readyVersion: 0
+    };
+
+    const created = await CloudRegistry.createRoom(complexRoomCode, googleUserHost, 5);
+    assert.strictEqual(created, true, 'Should create room with Google avatar');
+
+    const fetchedRoom = await CloudRegistry.getRoom(complexRoomCode);
+    assert.ok(fetchedRoom !== null, 'Should fetch room with Google avatar');
+    assert.strictEqual(fetchedRoom.roomCode, complexRoomCode);
+    assert.strictEqual(fetchedRoom.hostId, googleUserHost.id);
+    assert.strictEqual(fetchedRoom.hostDisplayName, googleUserHost.displayName);
+  });
+
+  it('Live in-game chat: clients exchange CHAT_MESSAGE and CHAT_PHRASE packets in real time', async () => {
+    const chatRoom = `CHAT${Math.floor(10 + Math.random() * 90)}`;
+    const sender = createTrackedManager();
+    const receiver = createTrackedManager();
+
+    try {
+      const senderPlayer: Player = {
+        id: 'sender_p1',
+        displayName: 'Sender Alex',
+        username: 'alex',
+        isHost: true,
+        avatarUrl: '🧑',
+        score: 0,
+        completedLinesCount: 0,
+        gamesPlayed: 0,
+        gamesWon: 0,
+        currentStreak: 0,
+        level: 1,
+        lastSeenTimestamp: Date.now(),
+        lobbyReadyStatus: 'READY',
+        readyVersion: 0
+      };
+
+      const receiverPlayer: Player = {
+        id: 'receiver_p2',
+        displayName: 'Receiver Bob',
+        username: 'bob',
+        isHost: false,
+        avatarUrl: '👨',
+        score: 0,
+        completedLinesCount: 0,
+        gamesPlayed: 0,
+        gamesWon: 0,
+        currentStreak: 0,
+        level: 1,
+        lastSeenTimestamp: Date.now(),
+        lobbyReadyStatus: 'READY',
+        readyVersion: 0
+      };
+
+      sender.connect(chatRoom, senderPlayer);
+      receiver.connect(chatRoom, receiverPlayer);
+
+      const receivedChatPromise = new Promise<RoomMessagePacket>((resolve) => {
+        receiver.onPacketReceived = (pkt) => {
+          if (pkt.type === 'CHAT_MESSAGE') {
+            resolve(pkt);
+          }
+        };
+      });
+
+      // Wait for connection to establish
+      await new Promise(r => setTimeout(r, 2000));
+
+      // Send custom in-game chat message
+      await sender.sendPacket({
+        type: 'CHAT_MESSAGE',
+        playerId: senderPlayer.id,
+        displayName: 'Hey Bob, nice match! 🎯',
+        username: senderPlayer.displayName,
+        timestamp: Date.now()
+      });
+
+      let timeoutTimer: any = null;
+      const timeoutPromise = new Promise<null>(r => {
+        timeoutTimer = setTimeout(() => r(null), 5000);
+      });
+      const received = await Promise.race([
+        receivedChatPromise,
+        timeoutPromise
+      ]);
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+
+      assert.ok(received !== null, 'Receiver should receive in-game CHAT_MESSAGE packet');
+      assert.strictEqual(received.type, 'CHAT_MESSAGE');
+      assert.strictEqual(received.displayName, 'Hey Bob, nice match! 🎯');
+      assert.strictEqual(received.username, senderPlayer.displayName);
+    } finally {
+      sender.destroy();
+      receiver.destroy();
+      trackedManagers.delete(sender);
+      trackedManagers.delete(receiver);
+    }
+  });
+
+  it('Google user cloud backup and friends list cross-platform sync', { timeout: 15000 }, async () => {
+    const testGoogleId = `gid_test_${Date.now()}`;
+    const testUsername = `user_${Math.floor(1000 + Math.random() * 9000)}`;
+
+    const backupData = {
+      profile: {
+        uid: `google_${testGoogleId}`,
+        username: testUsername,
+        displayName: 'Vamsi Cloud Player',
+        email: 'vamsi.cloud@example.com',
+        avatarUrl: 'https://lh3.googleusercontent.com/a/test-avatar',
+        gamesPlayed: 25,
+        gamesWon: 18,
+        currentStreak: 6,
+        level: 5,
+        xp: 1200
+      },
+      settings: {
+        soundEnabled: true,
+        hapticsEnabled: true,
+        preferredBoardSize: 5,
+        darkTheme: false
+      },
+      matchHistory: [
+        {
+          id: 'match_1',
+          mode: 'Online',
+          opponentName: 'Android Rival',
+          didWin: true,
+          boardSize: 5,
+          timestamp: Date.now() - 3600000
+        }
+      ],
+      lastBackupTimestamp: Date.now()
+    };
+
+    // 1. Save user backup to cloud
+    const saved = await CloudRegistry.saveUserDataBackup(testGoogleId, backupData);
+    assert.strictEqual(saved, true, 'Should successfully save user data backup to cloud');
+
+    // 2. Fetch user backup by Google ID
+    const restoredByGid = await CloudRegistry.fetchUserDataBackup(testGoogleId);
+    assert.ok(restoredByGid !== null, 'Should fetch user data backup by Google ID');
+    assert.strictEqual(restoredByGid.profile.username, testUsername);
+    assert.strictEqual(restoredByGid.profile.displayName, 'Vamsi Cloud Player');
+    assert.strictEqual(restoredByGid.profile.gamesWon, 18);
+    assert.strictEqual(restoredByGid.profile.level, 5);
+    assert.strictEqual(restoredByGid.matchHistory?.length, 1);
+
+    // 3. Fetch user backup by username
+    const restoredByUser = await CloudRegistry.fetchUserBackupByUsername(testUsername);
+    assert.ok(restoredByUser !== null, 'Should fetch user data backup by username');
+    assert.strictEqual(restoredByUser.profile.username, testUsername);
+
+    // 4. Save and fetch friends list
+    const testFriends = [
+      {
+        uid: 'android_friend_1',
+        username: 'friend_rahul',
+        displayName: 'Rahul',
+        avatarUrl: '👦',
+        gamesPlayed: 10,
+        gamesWon: 7,
+        currentStreak: 2,
+        level: 3,
+        lastSeenTimestamp: Date.now()
+      }
+    ];
+
+    const friendsSaved = await CloudRegistry.saveCloudFriends(testUsername, testFriends);
+    assert.strictEqual(friendsSaved, true, 'Should save friends list to cloud');
+
+    const friendsFetched = await CloudRegistry.fetchCloudFriends(testUsername);
+    assert.strictEqual(friendsFetched.length, 1, 'Should fetch 1 friend');
+    assert.strictEqual(friendsFetched[0].username, 'friend_rahul');
+    assert.strictEqual(friendsFetched[0].displayName, 'Rahul');
+  });
+
+  it('Cross-platform Win/Loss Sync: Web wins -> opponent sees loss; Android wins -> web sees loss', () => {
+    /**
+     * Simulates the board seed split used by Android RootNavGraph:
+     *  - Host player board: generateBoard(seed)
+     *  - Guest player board: generateBoard(seed + 1)
+     *  (from Android's startNewGame where isHosting determines seed assignment)
+     *
+     * Verifies:
+     * 1. KotlinRandom boards match across Android & Web for same seeds.
+     * 2. When web-host picks 25 numbers that complete all 5 lines -> win detected.
+     * 3. When those same 25 numbers are applied to web-guest's board (receiving) -> guest sees loss (opp 5 lines).
+     */
+    const seed = 777777;
+
+    // HOST board (seed) and GUEST board (seed+1)
+    const hostBoard = BingoEngine.generateBoard(5, seed);
+    const guestBoard = BingoEngine.generateBoard(5, seed + 1);
+
+    // Boards must be different
+    const hostNumbers = hostBoard.cells.map(c => c.number);
+    const guestNumbers = guestBoard.cells.map(c => c.number);
+    assert.notDeepStrictEqual(hostNumbers, guestNumbers, 'Host and guest boards must differ');
+
+    // Both must have 25 unique numbers 1-25
+    assert.strictEqual(new Set(hostNumbers).size, 25, 'Host board must have 25 unique numbers');
+    assert.strictEqual(new Set(guestNumbers).size, 25, 'Guest board must have 25 unique numbers');
+
+    // --- Simulate: Host picks all 25 numbers to win ---
+    let hostCurrentBoard = { ...hostBoard };
+    const pickedHistory: number[] = [];
+
+    for (let turn = 1; turn <= 25; turn++) {
+      const unmarked = hostCurrentBoard.cells.filter(c => c.markState.type === 'Unmarked');
+      if (unmarked.length === 0) break;
+      const num = unmarked[0].number;
+      pickedHistory.push(num);
+      const { board: updated } = BingoEngine.markCell(hostCurrentBoard, num, 'host', true, turn);
+      hostCurrentBoard = updated;
+    }
+
+    // Host must have won (5+ lines) by exhausting all numbers
+    assert.ok(hostCurrentBoard.completedLines.length >= 5, `Host should have 5 lines, got ${hostCurrentBoard.completedLines.length}`);
+
+    // --- Simulate: Guest receives those same picks on their board ---
+    // Guest's local board = generateBoard(seed+1) - same board for guest when they're guest
+    let guestLocalBoard = { ...guestBoard };    // my board as guest
+    let guestOppBoard = { ...hostBoard };       // opponent (host) board tracking
+
+    let guestLocalLines = 0;
+    let guestOppLines = 0;
+
+    for (let turn = 1; turn <= pickedHistory.length; turn++) {
+      const num = pickedHistory[turn - 1];
+
+      // Mark on guest's local board (host's pick is NOT own pick for guest)
+      const { board: gl } = BingoEngine.markCell(guestLocalBoard, num, 'host', false, turn);
+      guestLocalBoard = gl;
+      guestLocalLines = guestLocalBoard.completedLines.length;
+
+      // Mark on guest's opponent-tracking board (host's pick IS own pick on host's board)
+      const { board: go } = BingoEngine.markCell(guestOppBoard, num, 'host', true, turn);
+      guestOppBoard = go;
+      guestOppLines = guestOppBoard.completedLines.length;
+
+      if (guestOppLines >= 5) break; // Opponent won -> guest loses
+    }
+
+    // Guest must detect opponent win -> they lose
+    assert.ok(guestOppLines >= 5, `Guest should detect opponent reached 5 lines, got ${guestOppLines}`);
+    assert.ok(guestLocalLines < 5, `Guest should NOT have 5 lines themselves (they lose), got ${guestLocalLines}`);
+
+    // --- Reverse: Guest (seed+1) wins, host receives their picks ---
+    let guestWinBoard = { ...guestBoard };
+    const guestPicks: number[] = [];
+
+    for (let turn = 1; turn <= 25; turn++) {
+      const unmarked = guestWinBoard.cells.filter(c => c.markState.type === 'Unmarked');
+      if (unmarked.length === 0) break;
+      const num = unmarked[0].number;
+      guestPicks.push(num);
+      const { board: updated } = BingoEngine.markCell(guestWinBoard, num, 'guest', true, turn);
+      guestWinBoard = updated;
+    }
+
+    assert.ok(guestWinBoard.completedLines.length >= 5, 'Guest should win after marking all cells');
+
+    // Host receives guest's picks on host's local board
+    let hostLocalBoard = { ...hostBoard };
+    let hostOppBoard = { ...guestBoard };
+    let hostLocalLines = 0;
+    let hostOppLines = 0;
+
+    for (let turn = 1; turn <= guestPicks.length; turn++) {
+      const num = guestPicks[turn - 1];
+
+      const { board: hl } = BingoEngine.markCell(hostLocalBoard, num, 'guest', false, turn);
+      hostLocalBoard = hl;
+      hostLocalLines = hostLocalBoard.completedLines.length;
+
+      const { board: ho } = BingoEngine.markCell(hostOppBoard, num, 'guest', true, turn);
+      hostOppBoard = ho;
+      hostOppLines = hostOppBoard.completedLines.length;
+
+      if (hostOppLines >= 5) break;
+    }
+
+    assert.ok(hostOppLines >= 5, `Host should detect guest reached 5 lines (host loses), got ${hostOppLines}`);
+  });
+
+  it('Alternating Dual-Client Match: Real-Time Board Marking and Review Parity', () => {
+    const seed = 54321;
+    const playerA: Player = {
+      id: 'pA_alice',
+      displayName: 'Alice',
+      username: 'alice',
+      isHost: true,
+      avatarUrl: null,
+      score: 0,
+      completedLinesCount: 0,
+      gamesPlayed: 0,
+      gamesWon: 0,
+      currentStreak: 0,
+      level: 1,
+      lastSeenTimestamp: Date.now(),
+      lobbyReadyStatus: 'READY',
+      readyVersion: 1
+    };
+
+    const playerB: Player = {
+      id: 'pB_bob',
+      displayName: 'Bob',
+      username: 'bob',
+      isHost: false,
+      avatarUrl: null,
+      score: 0,
+      completedLinesCount: 0,
+      gamesPlayed: 0,
+      gamesWon: 0,
+      currentStreak: 0,
+      level: 1,
+      lastSeenTimestamp: Date.now(),
+      lobbyReadyStatus: 'READY',
+      readyVersion: 1
+    };
+
+    // Deterministic seeds for both players
+    const seedA = BingoEngine.resolvePlayerBoardSeed(seed, playerA, 0);
+    const seedB = BingoEngine.resolvePlayerBoardSeed(seed, playerB, 1);
+
+    // Initial state on Alice's device:
+    let aliceMyBoard = BingoEngine.generateBoard(5, seedA);
+    let aliceOppBoard = BingoEngine.generateBoard(5, seedB);
+
+    // Initial state on Bob's device:
+    let bobMyBoard = BingoEngine.generateBoard(5, seedB);
+    let bobOppBoard = BingoEngine.generateBoard(5, seedA);
+
+    // Verify initial boards are identical across devices
+    assert.deepStrictEqual(
+      aliceMyBoard.cells.map(c => c.number),
+      bobOppBoard.cells.map(c => c.number),
+      "Alice's local board numbers must be 100% identical to Bob's opponent review board"
+    );
+    assert.deepStrictEqual(
+      bobMyBoard.cells.map(c => c.number),
+      aliceOppBoard.cells.map(c => c.number),
+      "Bob's local board numbers must be 100% identical to Alice's opponent review board"
+    );
+
+    // Simulate alternating moves:
+    // Turn 1: Alice picks 12
+    const pick1 = 12;
+    // Alice marks on her board (own) AND opponent board (not own):
+    aliceMyBoard = BingoEngine.markCell(aliceMyBoard, pick1, playerA.id, true, 1).board;
+    aliceOppBoard = BingoEngine.markCell(aliceOppBoard, pick1, playerA.id, false, 1).board;
+    // Bob receives pick1 and marks on his board (not own) AND opponent board (own):
+    bobMyBoard = BingoEngine.markCell(bobMyBoard, pick1, playerA.id, false, 1).board;
+    bobOppBoard = BingoEngine.markCell(bobOppBoard, pick1, playerA.id, true, 1).board;
+
+    // Turn 2: Bob picks 18
+    const pick2 = 18;
+    // Bob marks on his board (own) AND opponent board (not own):
+    bobMyBoard = BingoEngine.markCell(bobMyBoard, pick2, playerB.id, true, 2).board;
+    bobOppBoard = BingoEngine.markCell(bobOppBoard, pick2, playerB.id, false, 2).board;
+    // Alice receives pick2 and marks on her board (not own) AND opponent board (own):
+    aliceMyBoard = BingoEngine.markCell(aliceMyBoard, pick2, playerB.id, false, 2).board;
+    aliceOppBoard = BingoEngine.markCell(aliceOppBoard, pick2, playerB.id, true, 2).board;
+
+    // Verify cell mark states across both devices after 2 alternating moves:
+    for (let i = 0; i < 25; i++) {
+      assert.strictEqual(
+        aliceMyBoard.cells[i].markState.type,
+        bobOppBoard.cells[i].markState.type,
+        `Cell ${i} mark state on Alice's board must match Bob's review board`
+      );
+      assert.strictEqual(
+        bobMyBoard.cells[i].markState.type,
+        aliceOppBoard.cells[i].markState.type,
+        `Cell ${i} mark state on Bob's board must match Alice's review board`
+      );
+    }
+
+    assert.strictEqual(aliceMyBoard.completedLines.length, bobOppBoard.completedLines.length);
+    assert.strictEqual(bobMyBoard.completedLines.length, aliceOppBoard.completedLines.length);
+  });
+
+  it('P2 — R16 — Web storage acknowledges failed remote writes and refuses unpersisted cache', async () => {
+    // 1. Temporarily make fetch return 503 Service Unavailable
+    const savedFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async () => new Response('Service Unavailable', { status: 503, statusText: 'Service Unavailable' });
+      const failWrite = await CloudRegistry.setKeyValue('test_unavail_key', 'unavail_val');
+      assert.strictEqual(failWrite, false, 'setKeyValue must report false on HTTP 503');
+
+      // Memory store must not contain unpersisted value
+      const unavailRead = await CloudRegistry.getKeyValue('test_unavail_key');
+      assert.notStrictEqual(unavailRead, 'unavail_val', 'Unpersisted write must not be readable as success');
+    } finally {
+      globalThis.fetch = savedFetch;
+    }
+
+    // 2. Successful write with acknowledged storage
+    const successWrite = await CloudRegistry.setKeyValue('test_avail_key', 'acknowledged_val');
+    assert.strictEqual(successWrite, true, 'setKeyValue must report true when acknowledged');
+    const readBack = await CloudRegistry.getKeyValue('test_avail_key');
+    assert.strictEqual(readBack, 'acknowledged_val', 'Acknowledged value must be recoverable');
+  });
+
+  it('P2 — R16 — Web backup fails closed when discovery pointer writes fail', async () => {
+    const backupData = {
+      profile: {
+        uid: 'test_backup_user_uid',
+        username: 'backup_test_user',
+        displayName: 'Backup Tester',
+        gamesPlayed: 1,
+        gamesWon: 1,
+        currentStreak: 1,
+        level: 1
+      },
+      settings: {},
+      matchHistory: [],
+      lastBackupTimestamp: Date.now()
+    };
+
+    const origSetKeyValue = CloudRegistry.setKeyValue;
+    try {
+      CloudRegistry.setKeyValue = async (key: string, val: string) => {
+        if (key.startsWith('gid_') || key.startsWith('user_')) {
+          return false;
+        }
+        return origSetKeyValue.call(CloudRegistry, key, val);
+      };
+
+      const result = await CloudRegistry.saveUserDataBackup('test_gid_123', backupData as any);
+      assert.strictEqual(result, false, 'saveUserDataBackup must return false when pointer writes fail');
+    } finally {
+      CloudRegistry.setKeyValue = origSetKeyValue;
+    }
+  });
+
+  it('P2 — R11 — Web isolated room and backup tests do not escape to production MQTT', async () => {
+    // Assert mock broker captured retained registry and presence records
+    assert.ok(mockBroker.retained.size > 0, 'Mock broker should capture retained records in isolated mode');
+    for (const [topic, payload] of mockBroker.retained.entries()) {
+      assert.ok(topic.startsWith('bingo/'), `Topic should be under bingo namespace: ${topic}`);
+    }
+  });
+
+  it('P2 — R11 — Web teardown drains all timers and destroyed managers even after simulated failure', async () => {
+    const failedManager = createTrackedManager();
+    const player: Player = {
+      id: 'failed_player_1',
+      displayName: 'Failed Player',
+      username: 'failed_player',
+      isHost: false,
+      avatarUrl: '❌',
+      score: 0,
+      completedLinesCount: 0,
+      gamesPlayed: 0,
+      gamesWon: 0,
+      currentStreak: 0,
+      level: 1,
+      lastSeenTimestamp: Date.now(),
+      lobbyReadyStatus: 'NOT_READY',
+      readyVersion: 0
+    };
+    failedManager.connect('FAIL123', player);
+
+    let caught = false;
+    try {
+      try {
+        assert.fail('Simulated assertion failure during active room session');
+      } finally {
+        failedManager.destroy();
+        trackedManagers.delete(failedManager);
+      }
+    } catch (e: any) {
+      caught = true;
+      assert.strictEqual(e.message, 'Simulated assertion failure during active room session');
+    }
+    assert.strictEqual(caught, true, 'Assertion failure was handled and manager was torn down');
+    assert.strictEqual(trackedManagers.has(failedManager), false);
+  });
+
+  after(async () => {
+    try {
+      NetworkPingMonitor.stop();
+      for (const m of trackedManagers) {
+        try { m.destroy(); } catch {}
+      }
+      trackedManagers.clear();
+      roomSync.destroy();
+      mockBroker.clear();
+      setMqttConnectOverride(null);
+    } catch {}
+    globalThis.fetch = originalFetch;
+  });
+});

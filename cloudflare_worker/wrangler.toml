@@ -1,0 +1,17 @@
+name = "bingo-notifications-v2"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+[vars]
+# Set to the Web OAuth client ID linked to Android sign-in before deployment.
+GOOGLE_CLIENT_ID = "957593338442-ol5p4icr1a8e15m8lb1ln5mab5n1r5lp.apps.googleusercontent.com"
+FIREBASE_PROJECT_ID = "bingo-6bb09"
+LEGACY_API_URL = "https://keyvalue.immanuel.co/api/KeyVal"
+
+[[durable_objects.bindings]]
+name = "NOTIFICATIONS"
+class_name = "NotificationInbox"
+
+[[migrations]]
+tag = "notifications-v2"
+new_sqlite_classes = ["NotificationInbox"]

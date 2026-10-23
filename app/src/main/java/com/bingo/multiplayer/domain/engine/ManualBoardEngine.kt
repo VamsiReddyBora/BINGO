@@ -1,0 +1,174 @@
+package com.bingo.multiplayer.domain.engine
+
+import com.bingo.multiplayer.domain.model.Board
+import com.bingo.multiplayer.domain.model.Cell
+import com.bingo.multiplayer.domain.model.CellMarkState
+import kotlin.random.Random
+
+/**
+ * ManualBoardEngine:
+ * Fully isolated domain engine responsible for manual board design,
+ * sequential cell filling (1 to N^2), undo, clear, auto-fill, and board construction.
+ *
+ * Invariants:
+ * 1. Monotonic sequential numbering: numbers are placed strictly from 1 up to N^2.
+ * 2. Uniqueness: each number from 1 to N^2 appears exactly once.
+ * 3. Deterministic first-turn selection: random first-turn assignment is seeded for identical choice on both devices.
+ */
+object ManualBoardEngine {
+
+    /**
+     * Creates an empty grid with [size] * [size] null cells.
+     */
+    fun createEmptyGrid(size: Int): List<Int?> {
+        val totalCells = size * size
+        return List(totalCells) { null }
+    }
+
+    /**
+     * Places [nextNumber] at [index] if that cell is currently empty.
+     * Returns the updated grid and the incremented next number, or null if cell is already occupied or invalid.
+     */
+    fun placeNextNumber(grid: List<Int?>, index: Int, nextNumber: Int, size: Int): Pair<List<Int?>, Int>? {
+        val maxNumber = size * size
+        if (index !in grid.indices || nextNumber > maxNumber) return null
+        if (grid[index] != null) return null
+
+        val updated = grid.toMutableList()
+        updated[index] = nextNumber
+        return Pair(updated, nextNumber + 1)
+    }
+
+    /**
+     * Undoes the most recently placed number ([currentNextNumber] - 1).
+     * Returns the updated grid and decremented next number, or null if no numbers have been placed.
+     */
+    fun undoLastNumber(grid: List<Int?>, currentNextNumber: Int): Pair<List<Int?>, Int>? {
+        if (currentNextNumber <= 1) return null
+        val targetNumber = currentNextNumber - 1
+        val index = grid.indexOfFirst { it == targetNumber }
+        if (index == -1) return null
+
+        val updated = grid.toMutableList()
+        updated[index] = null
+        return Pair(updated, targetNumber)
+    }
+
+    /**
+     * Swaps the contents of two cells at [indexA] and [indexB].
+     * Supports moving a placed number to an empty cell or swapping two placed numbers.
+     */
+    fun swapCells(grid: List<Int?>, indexA: Int, indexB: Int): List<Int?>? {
+        if (indexA !in grid.indices || indexB !in grid.indices) return null
+        if (indexA == indexB) return grid
+        val updated = grid.toMutableList()
+        val temp = updated[indexA]
+        updated[indexA] = updated[indexB]
+        updated[indexB] = temp
+        return updated
+    }
+
+    /**
+     * Removes the placed number at [index] and shifts down all numbers greater than it,
+     * maintaining contiguous 1..N-1 numbering and decrementing [currentNextNumber] by 1.
+     */
+    fun removeNumberAt(grid: List<Int?>, index: Int, currentNextNumber: Int): Pair<List<Int?>, Int>? {
+        if (index !in grid.indices || currentNextNumber <= 1) return null
+        val target = grid[index] ?: return null
+        val updated = grid.toMutableList()
+        updated[index] = null
+        for (i in updated.indices) {
+            val n = updated[i]
+            if (n != null && n > target) {
+                updated[i] = n - 1
+            }
+        }
+        return Pair(updated, currentNextNumber - 1)
+    }
+
+    /**
+     * Clears all placed numbers, returning an empty grid and resetting next number to 1.
+     */
+    fun clearAll(size: Int): Pair<List<Int?>, Int> {
+        return Pair(createEmptyGrid(size), 1)
+    }
+
+    /**
+     * Automatically fills all remaining empty cells with random unused numbers from [nextNumber] to N^2.
+     */
+    fun autoFillRemaining(grid: List<Int?>, size: Int): Pair<List<Int?>, Int> {
+        val maxNumber = size * size
+        val usedNumbers = grid.filterNotNull().toSet()
+        val remainingNumbers = (1..maxNumber).filter { it !in usedNumbers }.shuffled().toMutableList()
+
+        val updated = grid.toMutableList()
+        for (i in updated.indices) {
+            if (updated[i] == null && remainingNumbers.isNotEmpty()) {
+                updated[i] = remainingNumbers.removeAt(0)
+            }
+        }
+        return Pair(updated, maxNumber + 1)
+    }
+
+    /**
+     * Verifies if every cell is filled and contains all numbers from 1 to N^2.
+     */
+    fun isBoardComplete(grid: List<Int?>, size: Int): Boolean {
+        val totalCells = size * size
+        if (grid.size != totalCells) return false
+        val filled = grid.filterNotNull()
+        if (filled.size != totalCells) return false
+        val set = filled.toSet()
+        return set.size == totalCells && (1..totalCells).all { it in set }
+    }
+
+    /**
+     * Constructs a valid [Board] from a completed manual grid.
+     */
+    fun buildBoard(grid: List<Int?>, size: Int): Board {
+        val total = size * size
+        val paddedGrid = if (grid.size < total) {
+            grid + List(total - grid.size) { null }
+        } else {
+            grid.take(total)
+        }
+        val numbers = if (isBoardComplete(paddedGrid, size)) {
+            paddedGrid.map { it!! }
+        } else {
+            // Fallback safety: fill missing sequentially
+            val used = paddedGrid.filterNotNull().toSet()
+            val remaining = (1..total).filter { it !in used }.toMutableList()
+            paddedGrid.map { it ?: if (remaining.isNotEmpty()) remaining.removeAt(0) else 1 }
+        }
+
+        val cells = mutableListOf<Cell>()
+        for (r in 0 until size) {
+            for (c in 0 until size) {
+                val num = numbers[r * size + c]
+                cells.add(
+                    Cell(
+                        row = r,
+                        col = c,
+                        number = num,
+                        markState = CellMarkState.Unmarked,
+                        isPartOfCompletedLine = false,
+                        isRecentPick = false
+                    )
+                )
+            }
+        }
+        return Board(size = size, cells = cells, targetLines = size)
+    }
+
+    /**
+     * Deterministically selects the first player to pick using the shared match [seed].
+     * Guarantees both clients select the exact same starting player with 50/50 probability.
+     */
+    fun determineRandomFirstTurn(seed: Long, playerIds: List<String>): String {
+        if (playerIds.isEmpty()) return ""
+        val candidates = playerIds.filter { it.isNotBlank() }.distinct().sorted()
+        if (candidates.size <= 1 || seed == 0L) return candidates.firstOrNull() ?: ""
+        val index = kotlin.random.Random(seed).nextInt(candidates.size)
+        return candidates[index]
+    }
+}

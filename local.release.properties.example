@@ -1,0 +1,9 @@
+# Copy to local.release.properties and fill these locally. Never commit the filled file.
+BINGO_MQTT_USERNAME=
+BINGO_MQTT_PASSWORD=
+BINGO_KEYVALUE_APP_KEY=
+# Optional for signing your own release; debug builds do not need these values.
+BINGO_KEYSTORE_PATH=
+BINGO_KEYSTORE_PASSWORD=
+BINGO_KEY_ALIAS=
+BINGO_KEY_PASSWORD=

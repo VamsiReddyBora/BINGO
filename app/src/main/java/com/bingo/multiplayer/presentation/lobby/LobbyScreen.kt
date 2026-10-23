@@ -1,0 +1,1733 @@
+package com.bingo.multiplayer.presentation.lobby
+
+import com.bingo.multiplayer.presentation.common.noRippleClickable
+import com.bingo.multiplayer.presentation.common.noRippleCombinedClickable
+
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.widget.Toast
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.ui.semantics.Role
+import com.bingo.multiplayer.core.designsystem.ThemePreferences
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import com.bingo.multiplayer.domain.network.HotspotAndWifiManager
+import com.bingo.multiplayer.domain.network.NearbyHostQrPayload
+import com.bingo.multiplayer.presentation.nearby.NearbyHostQrDisplayDialog
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.bingo.multiplayer.core.designsystem.BingoTheme
+import com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine
+import com.bingo.multiplayer.domain.model.Player
+
+import com.bingo.multiplayer.domain.network.AccountSessionManager
+import com.bingo.multiplayer.domain.network.ActionCooldownManager
+import com.bingo.multiplayer.domain.network.PlayerRegistryEntry
+import com.bingo.multiplayer.presentation.common.PlayerAvatar
+import com.bingo.multiplayer.presentation.common.PlayerProfileData
+import com.bingo.multiplayer.presentation.common.PlayerProfileDialog
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+
+@Composable
+fun LobbyScreen(
+    roomCode: String,
+    players: List<Player>,
+    isHost: Boolean,
+    currentUser: com.bingo.multiplayer.domain.model.UserProfile? = null,
+    currentUserId: String = "",
+    friendsRepository: com.bingo.multiplayer.domain.repository.FriendsRepository? = null,
+    isRefreshing: Boolean = false,
+    pingMs: Long? = null,
+    onRefresh: () -> Unit = {},
+    onSearchPlayer: (suspend (String) -> PlayerRegistryEntry?)? = null,
+    onToggleReady: ((Boolean) -> Unit)? = null,
+    onRemovePlayer: ((String) -> Unit)? = null,
+    inactivityResetToken: Int = 0,
+    onExtendLobby: () -> Unit = {},
+    onExpireLobby: () -> Unit = {},
+    isManualBoard: Boolean = false,
+    onManualBoardChange: ((Boolean) -> Unit)? = null,
+    isDynamicBoard: Boolean = false,
+    onDynamicBoardChange: ((Boolean) -> Unit)? = null,
+    selectedDynamicGridSize: Int = 5,
+    onDynamicGridSizeChange: ((Int) -> Unit)? = null,
+    isNearbyNetwork: Boolean = false,
+    hasActiveMatch: Boolean = false,
+    isCheckingCompatibility: Boolean = false,
+    lobbyCountdownSeconds: Int = -1,
+    onRejoinMatch: () -> Unit = {},
+    onStartGame: () -> Unit,
+    onBack: () -> Unit
+) {
+    BackHandler(enabled = lobbyCountdownSeconds < 0) {
+        onBack()
+    }
+
+    val context = LocalContext.current
+    val tokens = BingoTheme.colors
+    val haptic = LocalHapticFeedback.current
+    val coroutineScope = rememberCoroutineScope()
+
+    val localUid = currentUserId.ifBlank { currentUser?.uid ?: "" }
+
+    val myPlayer = players.find {
+        LobbyLifecycleEngine.isPlayerMe(
+            p = it,
+            myUid = localUid,
+            myUsername = currentUser?.username ?: "",
+            myDisplayName = currentUser?.displayName ?: "",
+            isHost = isHost
+        )
+    } ?: if (!isHost) players.firstOrNull { !it.isHost } else players.firstOrNull { it.isHost }
+
+    var isMyReadyState by remember { mutableStateOf(myPlayer?.lobbyReadyStatus == LobbyLifecycleEngine.STATUS_READY) }
+    var hasInitializedReady by remember { mutableStateOf(false) }
+
+    LaunchedEffect(myPlayer?.id) {
+        if (!hasInitializedReady && myPlayer != null) {
+            isMyReadyState = myPlayer.lobbyReadyStatus == LobbyLifecycleEngine.STATUS_READY
+            hasInitializedReady = true
+        }
+    }
+
+    LaunchedEffect(players) {
+        players.forEach { p ->
+            if (p.username.isNotBlank() && !p.isAi) {
+                AccountSessionManager.prefetchPlayer(p.username, this)
+            }
+        }
+    }
+
+    var searchQuery by remember { mutableStateOf("") }
+    var isSearching by remember { mutableStateOf(false) }
+    var searchResult by remember { mutableStateOf<PlayerRegistryEntry?>(null) }
+    var searchPerformed by remember { mutableStateOf(false) }
+    var selectedProfilePlayer by remember { mutableStateOf<PlayerProfileData?>(null) }
+    var playerToKick by remember { mutableStateOf<Player?>(null) }
+    var inactivitySecondsLeft by remember { mutableStateOf(300) }
+    var showInactivityDialog by remember { mutableStateOf(false) }
+    var countdownSecondsLeft by remember { mutableStateOf(30) }
+    var showNearbyQrDialog by remember { mutableStateOf(false) }
+    var showOnlineQrDialog by remember { mutableStateOf(false) }
+    val networkPing by com.bingo.multiplayer.domain.network.NetworkPingMonitor.pingMs.collectAsState()
+    val latestPing by rememberUpdatedState(pingMs?.takeIf { it > 0L } ?: networkPing)
+    var displayedPing by remember { mutableLongStateOf(latestPing) }
+    LaunchedEffect(Unit) {
+        while (isActive) {
+            displayedPing = latestPing
+            delay(1000L)
+        }
+    }
+
+    if (showOnlineQrDialog) {
+        com.bingo.multiplayer.presentation.online.OnlineRoomQrDisplayDialog(
+            roomCode = roomCode,
+            hostName = players.firstOrNull { it.isHost }?.displayName ?: "Host",
+            boardSize = LobbyLifecycleEngine.resolveBoardSize(isDynamicBoard, selectedDynamicGridSize, players.size),
+            onDismiss = { showOnlineQrDialog = false }
+        )
+    }
+
+    if (showNearbyQrDialog) {
+        val hostPayload = NearbyHostQrPayload(
+            ssid = HotspotAndWifiManager.getHotspotName(context),
+            password = "",
+            roomCode = roomCode,
+            hostIp = HotspotAndWifiManager.getLocalIpAddress(),
+            hostName = players.firstOrNull { it.isHost }?.displayName ?: "Nearby Host"
+        )
+        NearbyHostQrDisplayDialog(
+            payload = hostPayload,
+            onDismiss = { showNearbyQrDialog = false }
+        )
+    }
+
+    LaunchedEffect(inactivityResetToken, isHost) {
+        if (!isHost) return@LaunchedEffect
+        inactivitySecondsLeft = 300
+        showInactivityDialog = false
+        countdownSecondsLeft = 30
+        while (isActive) {
+            delay(1000L)
+            if (!showInactivityDialog) {
+                if (inactivitySecondsLeft > 0) {
+                    inactivitySecondsLeft--
+                } else {
+                    showInactivityDialog = true
+                    countdownSecondsLeft = 30
+                }
+            } else {
+                if (countdownSecondsLeft > 0) {
+                    countdownSecondsLeft--
+                } else {
+                    showInactivityDialog = false
+                    onExpireLobby()
+                    break
+                }
+            }
+        }
+    }
+
+    val presenceMap by com.bingo.multiplayer.domain.network.PresenceManager.presenceFlow.collectAsState()
+    var ticker by remember { mutableStateOf(0L) }
+    LaunchedEffect(Unit) {
+        while (isActive) {
+            delay(3000L)
+            ticker = System.currentTimeMillis()
+        }
+    }
+
+    val allFriends by (friendsRepository?.friends?.collectAsState() ?: remember { mutableStateOf(emptyList()) })
+
+    LaunchedEffect(players, searchResult, allFriends) {
+        while (isActive) {
+            val users = mutableListOf<String>()
+            players.forEach {
+                val uname = it.username.ifBlank { it.displayName.filter { c -> c.isLetterOrDigit() }.lowercase() }
+                if (uname.isNotBlank()) users.add(uname)
+            }
+            allFriends.forEach { f ->
+                val uname = f.username.trim().lowercase().removePrefix("@")
+                if (uname.isNotBlank()) users.add(uname)
+            }
+            searchResult?.let { if (it.username.isNotBlank()) users.add(it.username) }
+            val cleanList = users.distinct()
+            if (cleanList.isNotEmpty()) {
+                com.bingo.multiplayer.domain.network.PresenceManager.fetchCloudPresenceForUsers(cleanList)
+            }
+            delay(3000L)
+        }
+    }
+
+    // Sizing Formula: Dynamic board (if checked) scales 5x5 (2p), 6x6 (3p), 7x7 (4p), 8x8 (5+p) or selected size. If unchecked, static 5x5.
+    val boardSize = LobbyLifecycleEngine.resolveBoardSize(isDynamicBoard, selectedDynamicGridSize, players.size)
+
+    val infiniteTransition = rememberInfiniteTransition(label = "refreshAnim")
+    val rotationAngle by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(800, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "spin"
+    )
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(tokens.background)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 20.dp)
+        ) {
+            // ── Top Bar ──
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(enabled = lobbyCountdownSeconds < 0, onClick = onBack),
+                    contentAlignment = Alignment.CenterStart
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back",
+                        tint = tokens.cellNeutralText,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                Text(
+                    text = if (isHost) "Host Lobby" else "Match Lobby",
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = tokens.cellNeutralText
+                )
+
+                Spacer(modifier = Modifier.weight(1f))
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Wifi, contentDescription = "Ping", modifier = Modifier.size(16.dp), tint = tokens.cellNeutralText)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = when {
+                            displayedPing <= 0L -> "—"
+                            displayedPing > 999L -> "999+ms"
+                            else -> "${displayedPing}ms"
+                        },
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = when {
+                            displayedPing <= 0L -> tokens.textMuted
+                            displayedPing <= 250L -> Color(0xFF16A34A)
+                            displayedPing <= 500L -> Color(0xFFEAB308)
+                            else -> Color(0xFFDC2626)
+                        }
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Surface(shape = RoundedCornerShape(6.dp), color = tokens.badgeSurface,
+                    border = BorderStroke(1.dp, tokens.badgeOutline)) {
+                    Text(if (isHost) "HOST" else "PLAYER", fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold, color = tokens.badgeContent,
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp))
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // ── Room Code Card (Redesigned Compact & Clean) ──
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                color = tokens.surface,
+                border = BorderStroke(1.dp, tokens.surfaceBorder),
+                shadowElevation = 1.dp
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f, fill = false)) {
+                        Text(
+                            text = if (isNearbyNetwork) "NEARBY LAN MATCH" else "ROOM CODE",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp,
+                            color = tokens.accentBrand
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = roomCode,
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Black,
+                            fontFamily = FontFamily.Monospace,
+                            letterSpacing = 3.sp,
+                            color = tokens.cellNeutralText
+                        )
+                    }
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                clipboard.setPrimaryClip(ClipData.newPlainText("Bingo Room Code", roomCode))
+                                Toast.makeText(context, "Code copied to clipboard!", Toast.LENGTH_SHORT).show()
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, tokens.surfaceBorder),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = tokens.textPrimary),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                            modifier = Modifier.height(34.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ContentCopy,
+                                contentDescription = "Copy Code",
+                                modifier = Modifier.size(14.dp),
+                                tint = tokens.textPrimary
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Copy",
+                                fontSize = 11.5.sp,
+                                color = tokens.textPrimary,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+
+                        if (isNearbyNetwork) {
+                            Button(
+                                onClick = { showNearbyQrDialog = true },
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = tokens.primaryButtonBg,
+                                    contentColor = tokens.primaryButtonText
+                                ),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                modifier = Modifier.height(34.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.QrCode,
+                                    contentDescription = "Show QR Code",
+                                    modifier = Modifier.size(15.dp),
+                                    tint = tokens.primaryButtonText
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "QR",
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = tokens.primaryButtonText
+                                )
+                            }
+                        } else {
+                            OutlinedButton(
+                                onClick = { showOnlineQrDialog = true },
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = tokens.textPrimary),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                                modifier = Modifier.height(34.dp)
+                            ) {
+                                Icon(Icons.Default.QrCode, contentDescription = "Show QR Code", modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text("QR", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                            Button(
+                                onClick = {
+                                    val sendIntent = Intent().apply {
+                                        action = Intent.ACTION_SEND
+                                        putExtra(Intent.EXTRA_TEXT, "Join my Bingo room! Room code: $roomCode")
+                                        type = "text/plain"
+                                    }
+                                    context.startActivity(Intent.createChooser(sendIntent, "Share Room Code"))
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = tokens.primaryButtonBg,
+                                    contentColor = tokens.primaryButtonText
+                                ),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                modifier = Modifier.height(34.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Share,
+                                    contentDescription = "Share Code",
+                                    modifier = Modifier.size(14.dp),
+                                    tint = tokens.primaryButtonText
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Share",
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = tokens.primaryButtonText
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // ── Connected Players Card with Live Status ──
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                color = tokens.surface,
+                border = BorderStroke(1.dp, tokens.surfaceBorder),
+                shadowElevation = 1.dp
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "PLAYERS IN LOBBY",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.sp,
+                                color = tokens.cellNeutralText.copy(alpha = 0.5f)
+                            )
+
+
+                        }
+
+                        TextButton(
+                            onClick = onRefresh,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = null,
+                                modifier = Modifier.size(13.dp),
+                                tint = if (tokens.isDark) Color.White else tokens.accentBrand
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Sync",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (tokens.isDark) Color.White else tokens.accentBrand
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    players.forEachIndexed { index, player ->
+                        if (index > 0) {
+                            HorizontalDivider(
+                                color = tokens.surfaceBorder.copy(alpha = 0.5f),
+                                modifier = Modifier.padding(vertical = 6.dp)
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            val isMe = LobbyLifecycleEngine.isPlayerMe(
+                                p = player,
+                                myUid = localUid,
+                                myUsername = currentUser?.username ?: "",
+                                myDisplayName = currentUser?.displayName ?: "",
+                                isHost = isHost
+                            )
+
+                            @OptIn(ExperimentalFoundationApi::class)
+                            Row(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .noRippleCombinedClickable(
+                                        onClick = {
+                                            val cleanUser = player.username.ifBlank {
+                                                player.displayName.filter { it.isLetterOrDigit() }.lowercase()
+                                            }.trim().lowercase().removePrefix("@")
+                                            val livePres = presenceMap[cleanUser]
+                                            val effectiveTs = livePres?.timestamp?.takeIf { it > 0L } ?: player.lastSeenTimestamp
+                                            val freshPlayer = player.copy(lastSeenTimestamp = effectiveTs)
+                                            selectedProfilePlayer = PlayerProfileData.fromPlayer(freshPlayer, currentUser)
+                                        },
+                                        onLongClick = {
+                                            if (isHost && !player.isHost) {
+                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                playerToKick = player
+                                            }
+                                        }
+                                    )
+                                    .padding(vertical = 4.dp, horizontal = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                var remoteAvatar by remember(player.id, player.username, player.avatarUrl) {
+                                    mutableStateOf(player.avatarUrl?.takeIf { !com.bingo.multiplayer.domain.network.isLocalFilePath(it) })
+                                }
+                                LaunchedEffect(player.username, remoteAvatar) {
+                                    if (!isMe && remoteAvatar.isNullOrBlank() && player.username.isNotBlank() && onSearchPlayer != null) {
+                                        val entry = onSearchPlayer(player.username)
+                                        if (!entry?.avatarUrl.isNullOrBlank()) {
+                                            remoteAvatar = entry?.avatarUrl
+                                        }
+                                    }
+                                }
+                                val effectiveAvatar = if (isMe) {
+                                    currentUser?.avatarBase64?.takeIf { it.isNotBlank() } ?: currentUser?.avatarUrl ?: player.avatarUrl
+                                } else {
+                                    remoteAvatar ?: player.avatarUrl
+                                }
+
+                                val isPlayerHost = player.isHost || (isMe && isHost)
+                                Box {
+                                    PlayerAvatar(
+                                        avatarPathOrUri = effectiveAvatar,
+                                        displayName = player.displayName,
+                                        size = 40.dp,
+                                        borderWidth = 1.5.dp,
+                                        borderColor = if (isPlayerHost) tokens.accentBrand else tokens.surfaceBorder,
+                                        username = player.username.ifBlank { player.displayName }
+                                    )
+                                    if (isPlayerHost) {
+                                        Text(
+                                            text = "👑",
+                                            fontSize = 20.sp,
+                                            modifier = Modifier.align(Alignment.TopStart).offset(x = (-6).dp, y = (-7).dp)
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.width(10.dp))
+
+                                Text(
+                                    text = player.displayName,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = tokens.cellNeutralText,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false)
+                                )
+
+                                Spacer(modifier = Modifier.width(8.dp))
+
+                                val cleanUser = player.username.ifBlank {
+                                    player.displayName.filter { it.isLetterOrDigit() }.lowercase()
+                                }.trim().lowercase().removePrefix("@")
+
+                                val livePres = presenceMap[cleanUser]
+                                val effectiveTs = livePres?.timestamp?.takeIf { it > 0L } ?: player.lastSeenTimestamp
+                                if (ticker >= 0L) Unit
+                                val rawStatus = if (isMe) {
+                                    when (com.bingo.multiplayer.domain.network.PresenceManager.currentActivityState) {
+                                        com.bingo.multiplayer.domain.network.AppActivityState.IN_LOBBY -> "in-lobby"
+                                        com.bingo.multiplayer.domain.network.AppActivityState.PLAYING -> "playing"
+                                        com.bingo.multiplayer.domain.network.AppActivityState.ONLINE -> "online"
+                                    }
+                                } else {
+                                    com.bingo.multiplayer.domain.network.PresenceManager.getRichDisplayStatus(cleanUser, effectiveTs)
+                                }
+                                val statusColor = com.bingo.multiplayer.domain.network.PresenceManager.getStatusColor(rawStatus)
+
+                                Text(
+                                    text = rawStatus,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = statusColor,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
+
+                            if (!isMe && friendsRepository != null) {
+                                val isAlreadyFriend = friendsRepository.isFriend(player.id) || friendsRepository.isFriend(player.displayName)
+                                val hasSent = friendsRepository.hasSentRequest(player.displayName) || friendsRepository.hasSentRequest(player.id)
+
+                                if (!isAlreadyFriend) {
+                                    if (hasSent) {
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = tokens.accentBrand.copy(alpha = 0.15f)
+                                        ) {
+                                            Text(
+                                                text = "Requested",
+                                                color = tokens.accentBrand,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                            )
+                                        }
+                                    } else {
+                                        IconButton(
+                                            onClick = {
+                                                coroutineScope.launch {
+                                                    currentUser?.let { me ->
+                                                        val success = friendsRepository.sendFriendRequest(
+                                                            targetUsername = player.displayName,
+                                                            currentUser = me
+                                                        )
+                                                        if (success) {
+                                                            Toast.makeText(context, "Friend request sent to ${player.displayName}!", Toast.LENGTH_SHORT).show()
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            modifier = Modifier
+                                                .size(36.dp)
+                                                .clip(CircleShape)
+                                                .background(tokens.accentBrand.copy(alpha = 0.12f))
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.PersonAdd,
+                                                contentDescription = "Add Friend",
+                                                tint = tokens.accentBrand,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.width(8.dp))
+
+                            // Trailing Minimalist Ready Status Indicator
+                            val cleanUser = player.username.ifBlank {
+                                player.displayName.filter { it.isLetterOrDigit() }.lowercase()
+                            }.trim().lowercase().removePrefix("@")
+                            val livePres = presenceMap[cleanUser]
+                            val effectiveTs = livePres?.timestamp?.takeIf { it > 0L } ?: player.lastSeenTimestamp
+                            val rawStatus = if (isMe) {
+                                when (com.bingo.multiplayer.domain.network.PresenceManager.currentActivityState) {
+                                    com.bingo.multiplayer.domain.network.AppActivityState.IN_LOBBY -> "in-lobby"
+                                    com.bingo.multiplayer.domain.network.AppActivityState.PLAYING -> "playing"
+                                    com.bingo.multiplayer.domain.network.AppActivityState.ONLINE -> "online"
+                                }
+                            } else {
+                                com.bingo.multiplayer.domain.network.PresenceManager.getRichDisplayStatus(cleanUser, effectiveTs)
+                            }
+
+                            val effectivePlayer = if (isMe) {
+                                player.copy(lobbyReadyStatus = if (isMyReadyState) LobbyLifecycleEngine.STATUS_READY else LobbyLifecycleEngine.STATUS_NOT_READY)
+                            } else {
+                                player
+                            }
+
+                            val lobbyStatus = LobbyLifecycleEngine.getPlayerLobbyStatus(effectivePlayer, isMe, rawStatus)
+
+                            val (readyIcon, readyTint, readyDesc) = when (lobbyStatus) {
+                                LobbyLifecycleEngine.PlayerLobbyStatus.IN_GAME -> Triple(Icons.Default.HourglassBottom, Color(0xFFF59E0B), "Reviewing Board")
+                                LobbyLifecycleEngine.PlayerLobbyStatus.LEFT_LOBBY -> Triple(Icons.Default.Cancel, Color(0xFFEF4444), "Left Lobby")
+                                LobbyLifecycleEngine.PlayerLobbyStatus.READY -> Triple(Icons.Default.CheckCircle, Color(0xFF16A34A), if (player.isHost || (isMe && isHost)) "Host Ready" else "Ready")
+                                LobbyLifecycleEngine.PlayerLobbyStatus.NOT_READY -> Triple(Icons.Default.PauseCircle, Color(0xFFEAB308), "Not Ready")
+                            }
+
+                            val isPlayerLeft = (lobbyStatus == LobbyLifecycleEngine.PlayerLobbyStatus.LEFT_LOBBY)
+
+                            if (isHost && !player.isHost && isPlayerLeft) {
+                                IconButton(
+                                    onClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        playerToKick = player
+                                    },
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = readyIcon,
+                                        contentDescription = "Remove Left Player",
+                                        tint = readyTint,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            } else {
+                                Icon(
+                                    imageVector = readyIcon,
+                                    contentDescription = readyDesc,
+                                    tint = readyTint,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    if (players.size < 2) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = tokens.cellNeutralBg,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = if (isNearbyNetwork) "Waiting for friends on your Wi-Fi or Hotspot to join…" else "Waiting for other players to enter room code $roomCode…",
+                                fontSize = 12.sp,
+                                color = tokens.cellNeutralText.copy(alpha = 0.6f),
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(10.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // ── Friends available for a live or background invitation ──
+            if (friendsRepository != null) {
+                val inviteableFriends = remember(allFriends, presenceMap, players, ticker) {
+                    val eligible = allFriends.filter { f ->
+                        val notInRoom = players.none { p ->
+                            p.id == f.uid ||
+                            (f.username.isNotBlank() && p.username.equals(f.username, ignoreCase = true)) ||
+                            p.displayName.equals(f.displayName, ignoreCase = true)
+                        }
+                        notInRoom
+                    }
+                    com.bingo.multiplayer.domain.network.LobbyFriendOrdering.onlineFirst(
+                        eligible, presenceMap, System.currentTimeMillis())
+                }
+
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    color = tokens.surface,
+                    border = BorderStroke(1.dp, tokens.surfaceBorder),
+                    shadowElevation = 1.dp
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "INVITE FRIENDS",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.sp,
+                                color = tokens.cellNeutralText.copy(alpha = 0.5f)
+                            )
+                            if (inviteableFriends.isNotEmpty()) {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = Color(0xFF16A34A).copy(alpha = 0.15f)
+                                ) {
+                                    Text(
+                                        text = "${inviteableFriends.size} friends",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF16A34A),
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        if (inviteableFriends.isEmpty()) {
+                            Text(
+                                text = "No friends available to invite",
+                                fontSize = 12.sp,
+                                color = tokens.cellNeutralText.copy(alpha = 0.5f),
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 6.dp)
+                            )
+                        } else {
+                            LobbyFriendsList(inviteableFriends) { friend ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .noRippleClickable {
+                                                val cleanF = friend.username.trim().lowercase().removePrefix("@")
+                                                val livePres = presenceMap[cleanF]
+                                                val effectiveTs = livePres?.timestamp?.takeIf { it > 0L } ?: friend.lastSeenTimestamp
+                                                val p = Player(
+                                                    id = friend.uid,
+                                                    displayName = friend.displayName,
+                                                    username = friend.username,
+                                                    avatarUrl = friend.avatarUrl,
+                                                    lastSeenTimestamp = effectiveTs
+                                                )
+                                                selectedProfilePlayer = PlayerProfileData.fromPlayer(p, currentUser)
+                                            }
+                                            .padding(vertical = 2.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        PlayerAvatar(
+                                            avatarPathOrUri = friend.avatarUrl,
+                                            displayName = friend.displayName,
+                                            size = 36.dp,
+                                            borderWidth = 1.dp,
+                                            borderColor = tokens.accentBrand,
+                                            username = friend.username
+                                        )
+
+                                        Spacer(modifier = Modifier.width(8.dp))
+
+                                        Text(
+                                            text = friend.displayName,
+                                            fontSize = 13.5.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = tokens.cellNeutralText,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f, fill = false)
+                                        )
+
+                                        Spacer(modifier = Modifier.width(6.dp))
+
+                                        val cleanF = friend.username.trim().lowercase().removePrefix("@")
+                                        val livePres = presenceMap[cleanF]
+                                        val effectiveTs = livePres?.timestamp?.takeIf { it > 0L } ?: friend.lastSeenTimestamp.takeIf { it > 0L }
+                                        if (ticker >= 0L) Unit
+                                        val now = System.currentTimeMillis()
+                                        val statusText = if (livePres != null) {
+                                            com.bingo.multiplayer.domain.network.PresenceManager.getRichDisplayStatus(cleanF, effectiveTs)
+                                        } else if (friend.lastSeenTimestamp > 0L && (now - friend.lastSeenTimestamp) >= 60_000L) {
+                                            com.bingo.multiplayer.domain.network.PresenceManager.getRichDisplayStatus(cleanF, friend.lastSeenTimestamp)
+                                        } else {
+                                            "offline"
+                                        }
+                                        val statusColor = com.bingo.multiplayer.domain.network.PresenceManager.getStatusColor(statusText)
+
+                                        Text(
+                                            text = statusText,
+                                            fontSize = 10.5.sp,
+                                            color = statusColor,
+                                            fontWeight = FontWeight.Medium,
+                                            maxLines = 1,
+                                            softWrap = false
+                                        )
+                                    }
+
+                                    Spacer(modifier = Modifier.width(8.dp))
+
+                                    val isRequest = com.bingo.multiplayer.domain.network.FriendPlayAvailability.of(
+                                        presenceMap[friend.username.trim().lowercase().removePrefix("@")]) == com.bingo.multiplayer.domain.network.FriendPlayAvailability.BUSY
+                                    val isInviteCooldown = if (isRequest) ActionCooldownManager.isPlayRequestOnCooldown(friend.username)
+                                        else ActionCooldownManager.isInviteOnCooldown(friend.username)
+                                    Button(
+                                        onClick = {
+                                            if (isRequest) ActionCooldownManager.startPlayRequestCooldown(friend.username)
+                                            else ActionCooldownManager.startInviteCooldown(friend.username)
+                                            val fromUser = currentUser?.username?.ifBlank { null }
+                                                ?: players.firstOrNull { it.isHost }?.username?.ifBlank { null }
+                                                ?: players.firstOrNull { it.isHost }?.id
+                                                ?: "Host"
+                                            val fromName = currentUser?.displayName?.ifBlank { null }
+                                                ?: players.firstOrNull { it.isHost }?.displayName?.ifBlank { null }
+                                                ?: "Host"
+                                            val fromAvatar = currentUser?.avatarBase64 ?: currentUser?.avatarUrl ?: players.firstOrNull { it.isHost }?.avatarUrl
+
+                                            if (roomCode.isNotBlank()) {
+                                                coroutineScope.launch {
+                                                    val sessionGuid = com.bingo.multiplayer.domain.network.OnlineRoomRegistry.getRoomCachedOnly(roomCode)?.sessionId.orEmpty()
+                                                    val sendResult = com.bingo.multiplayer.domain.network.GameInviteManager.sendInvite(
+                                                        targetUsername = friend.username,
+                                                        invite = com.bingo.multiplayer.domain.network.GameInviteManager.forLobbyRecipient(
+                                                            com.bingo.multiplayer.domain.network.GameInvite(
+                                                                fromUsername = fromUser,
+                                                                fromDisplayName = fromName,
+                                                                fromAvatarUrl = fromAvatar,
+                                                                roomCode = roomCode,
+                                                                roomSessionId = sessionGuid,
+                                                                recipientUid = friend.uid,
+                                                                recipientUsername = friend.username
+                                                            ), presenceMap[friend.username.trim().lowercase().removePrefix("@")])
+                                                    )
+                                                    Toast.makeText(context, sendResult.message, Toast.LENGTH_SHORT).show()
+                                                }
+                                            }
+                                        },
+                                        enabled = !isInviteCooldown,
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (isInviteCooldown) (if (tokens.isDark) Color(0xFF222222) else Color(0xFFE2E8F0)) else tokens.primaryButtonBg,
+                                            contentColor = if (isInviteCooldown) tokens.textMuted else tokens.primaryButtonText,
+                                            disabledContainerColor = if (tokens.isDark) Color(0xFF222222) else Color(0xFFE2E8F0),
+                                            disabledContentColor = tokens.textMuted
+                                        ),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                        modifier = Modifier.height(30.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Share,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(12.dp),
+                                            tint = if (isInviteCooldown) tokens.textMuted else tokens.primaryButtonText
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = if (isRequest) { if (isInviteCooldown) "Requested" else "Request" } else { if (isInviteCooldown) "Invited" else "Invite" },
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isInviteCooldown) tokens.textMuted else tokens.primaryButtonText
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
+            // ── Search Player by Username Card ──
+            if (onSearchPlayer != null) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    color = tokens.surface,
+                    border = BorderStroke(1.dp, tokens.surfaceBorder),
+                    shadowElevation = 1.dp
+                ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text(
+                        text = "FIND PLAYER BY USERNAME",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp,
+                        color = tokens.cellNeutralText.copy(alpha = 0.5f)
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            placeholder = {
+                                Text("Enter @username", fontSize = 13.sp, color = tokens.cellNeutralText.copy(alpha = 0.4f))
+                            },
+                            singleLine = true,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.weight(1f),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = tokens.accentBrand,
+                                unfocusedBorderColor = tokens.surfaceBorder
+                            )
+                        )
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        val keyboardController = LocalSoftwareKeyboardController.current
+                        Button(
+                            onClick = {
+                                keyboardController?.hide()
+                                if (searchQuery.isNotBlank() && onSearchPlayer != null) {
+                                    isSearching = true
+                                    searchResult = null
+                                    searchPerformed = true
+                                    coroutineScope.launch {
+                                        searchResult = onSearchPlayer(searchQuery)
+                                        isSearching = false
+                                    }
+                                }
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = tokens.primaryButtonBg,
+                                contentColor = tokens.primaryButtonText
+                            ),
+                            enabled = !isSearching && searchQuery.isNotBlank()
+                        ) {
+                            if (isSearching) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                    color = tokens.primaryButtonText
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.Search,
+                                    contentDescription = "Search",
+                                    modifier = Modifier.size(16.dp),
+                                    tint = tokens.primaryButtonText
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Search", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = tokens.primaryButtonText)
+                            }
+                        }
+                    }
+
+                    val currentSearchResult = searchResult
+                    if (currentSearchResult != null) {
+                        val result = currentSearchResult
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = tokens.backgroundSecondary,
+                            border = BorderStroke(1.dp, tokens.surfaceBorder),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .noRippleClickable {
+                                            val cleanFound = result.username.trim().lowercase().removePrefix("@")
+                                            val livePres = presenceMap[cleanFound]
+                                            val effectiveTs = livePres?.timestamp?.takeIf { it > 0L } ?: result.lastSeenTimestamp
+                                            selectedProfilePlayer = PlayerProfileData.fromRegistryEntry(result.copy(lastSeenTimestamp = effectiveTs))
+                                        }
+                                        .padding(vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    PlayerAvatar(
+                                        avatarPathOrUri = result.avatarUrl,
+                                        displayName = result.displayName,
+                                        size = 36.dp,
+                                        borderWidth = 1.dp,
+                                        borderColor = tokens.accentBrand,
+                                        username = result.username
+                                    )
+
+                                    Spacer(modifier = Modifier.width(8.dp))
+
+                                    Text(
+                                        text = result.displayName,
+                                        fontSize = 13.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = tokens.cellNeutralText,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+
+                                    Spacer(modifier = Modifier.width(6.dp))
+
+                                    val cleanFound = result.username.trim().lowercase().removePrefix("@")
+                                    val livePres = presenceMap[cleanFound]
+                                    val effectiveTs = livePres?.timestamp?.takeIf { it > 0L } ?: result.lastSeenTimestamp
+                                    if (ticker >= 0L) Unit
+                                    val statusText = com.bingo.multiplayer.domain.network.PresenceManager.getRichDisplayStatus(cleanFound, effectiveTs)
+                                    val statusColor = com.bingo.multiplayer.domain.network.PresenceManager.getStatusColor(statusText)
+                                    Text(
+                                        text = statusText,
+                                        fontSize = 10.5.sp,
+                                        color = statusColor,
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.width(6.dp))
+
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    if (friendsRepository != null) {
+                                        val isAlready = friendsRepository.isFriend(result.username) || friendsRepository.isFriend(result.uid)
+                                        if (!isAlready) {
+                                            val isFriendCooldown = ActionCooldownManager.isFriendRequestOnCooldown(result.username)
+                                            IconButton(
+                                                onClick = {
+                                                    ActionCooldownManager.startFriendRequestCooldown(result.username)
+                                                    coroutineScope.launch {
+                                                        currentUser?.let { me ->
+                                                            val success = friendsRepository.sendFriendRequest(
+                                                                targetUsername = result.username,
+                                                                currentUser = me
+                                                            )
+                                                            if (success) {
+                                                                Toast.makeText(context, "Friend request sent to ${result.displayName}!", Toast.LENGTH_SHORT).show()
+                                                            }
+                                                        }
+                                                    }
+                                                },
+                                                enabled = !isFriendCooldown,
+                                                modifier = Modifier.size(32.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.PersonAdd,
+                                                    contentDescription = "Add Friend",
+                                                    tint = if (isFriendCooldown) tokens.textMuted else (if (tokens.isDark) Color.White else tokens.accentBrand),
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    val isRequest = com.bingo.multiplayer.domain.network.FriendPlayAvailability.of(
+                                        presenceMap[result.username.trim().lowercase().removePrefix("@")]) == com.bingo.multiplayer.domain.network.FriendPlayAvailability.BUSY
+                                    val isInviteCooldown = if (isRequest) ActionCooldownManager.isPlayRequestOnCooldown(result.username)
+                                        else ActionCooldownManager.isInviteOnCooldown(result.username)
+                                    Button(
+                                        onClick = {
+                                            if (isRequest) ActionCooldownManager.startPlayRequestCooldown(result.username)
+                                            else ActionCooldownManager.startInviteCooldown(result.username)
+                                            val fromUser = currentUser?.username?.ifBlank { null }
+                                                ?: players.firstOrNull { it.isHost }?.username?.ifBlank { null }
+                                                ?: players.firstOrNull { it.isHost }?.id
+                                                ?: "Host"
+                                            val fromName = currentUser?.displayName?.ifBlank { null }
+                                                ?: players.firstOrNull { it.isHost }?.displayName?.ifBlank { null }
+                                                ?: "Host"
+                                            val fromAvatar = currentUser?.avatarBase64 ?: currentUser?.avatarUrl ?: players.firstOrNull { it.isHost }?.avatarUrl
+
+                                            if (roomCode.isNotBlank()) {
+                                                coroutineScope.launch {
+                                                    val sessionGuid = com.bingo.multiplayer.domain.network.OnlineRoomRegistry.getRoomCachedOnly(roomCode)?.sessionId.orEmpty()
+                                                    val sendResult = com.bingo.multiplayer.domain.network.GameInviteManager.sendInvite(
+                                                        targetUsername = result.username,
+                                                        invite = com.bingo.multiplayer.domain.network.GameInviteManager.forLobbyRecipient(
+                                                            com.bingo.multiplayer.domain.network.GameInvite(
+                                                                fromUsername = fromUser,
+                                                                fromDisplayName = fromName,
+                                                                fromAvatarUrl = fromAvatar,
+                                                                roomCode = roomCode,
+                                                                roomSessionId = sessionGuid,
+                                                                recipientUid = result.uid,
+                                                                recipientUsername = result.username
+                                                            ), presenceMap[result.username.trim().lowercase().removePrefix("@")])
+                                                    )
+                                                    Toast.makeText(context, sendResult.message, Toast.LENGTH_SHORT).show()
+                                                }
+                                            }
+                                        },
+                                        enabled = !isInviteCooldown,
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (isInviteCooldown) (if (tokens.isDark) Color(0xFF222222) else Color(0xFFE2E8F0)) else tokens.primaryButtonBg,
+                                            contentColor = if (isInviteCooldown) tokens.textMuted else tokens.primaryButtonText,
+                                            disabledContainerColor = if (tokens.isDark) Color(0xFF222222) else Color(0xFFE2E8F0),
+                                            disabledContentColor = tokens.textMuted
+                                        ),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                        modifier = Modifier.height(30.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Share,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(12.dp),
+                                            tint = if (isInviteCooldown) tokens.textMuted else tokens.primaryButtonText
+                                        )
+                                        Spacer(modifier = Modifier.width(3.dp))
+                                        Text(
+                                            text = if (isRequest) { if (isInviteCooldown) "Requested" else "Request" } else { if (isInviteCooldown) "Invited" else "Invite" },
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isInviteCooldown) tokens.textMuted else tokens.primaryButtonText
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    } else if (searchPerformed && !isSearching) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            text = "No player found with username \"$searchQuery\"",
+                            fontSize = 12.sp,
+                            color = tokens.cellNeutralText.copy(alpha = 0.6f),
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // ── Action Buttons ──
+            val effectivePlayers = players.map { p ->
+                val isThisLocal = LobbyLifecycleEngine.isPlayerMe(
+                    p = p,
+                    myUid = localUid,
+                    myUsername = currentUser?.username ?: "",
+                    myDisplayName = currentUser?.displayName ?: "",
+                    isHost = isHost
+                )
+                if (isThisLocal) {
+                    p.copy(
+                        isHost = if (isHost) true else p.isHost,
+                        lobbyReadyStatus = if (isHost || isMyReadyState) LobbyLifecycleEngine.STATUS_READY else LobbyLifecycleEngine.STATUS_NOT_READY
+                    )
+                } else {
+                    p
+                }
+            }
+            val allReady = LobbyLifecycleEngine.canStartMatch(effectivePlayers)
+            val readyCount = LobbyLifecycleEngine.countReadyPlayers(effectivePlayers)
+
+            if (isHost) {
+                val toggleAccent = if (tokens.isDark && tokens.accentBrand == Color.White) {
+                    ThemePreferences.getPalette(ThemePreferences.accentColorId.value).primaryDark
+                } else tokens.accentBrand
+                val boardSwitchColors = SwitchDefaults.colors(
+                    checkedThumbColor = Color.White,
+                    checkedTrackColor = toggleAccent,
+                    checkedBorderColor = Color.Transparent,
+                    uncheckedThumbColor = tokens.textMuted,
+                    uncheckedTrackColor = tokens.cellNeutralBorder.copy(alpha = 0.25f),
+                    uncheckedBorderColor = tokens.cellNeutralBorder.copy(alpha = 0.35f)
+                )
+                // Dynamic board option
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(tokens.surface)
+                        .padding(horizontal = 14.dp, vertical = 8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .toggleable(
+                                value = isDynamicBoard,
+                                role = Role.Switch,
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onValueChange = { onDynamicBoardChange?.invoke(it) }
+                            ),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "Dynamic board",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = tokens.cellNeutralText
+                        )
+                        Switch(
+                            checked = isDynamicBoard,
+                            onCheckedChange = null,
+                            colors = boardSwitchColors
+                        )
+                    }
+
+                    if (isDynamicBoard) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Select Grid Size (${selectedDynamicGridSize}×${selectedDynamicGridSize})",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = tokens.textMuted
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            (5..10).forEach { size ->
+                                val isSelected = (size == selectedDynamicGridSize)
+                                Surface(
+                                    onClick = { onDynamicGridSizeChange?.invoke(size) },
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (isSelected) tokens.accentBrand else tokens.backgroundSecondary,
+                                    border = if (isSelected) null else BorderStroke(0.5.dp, tokens.surfaceBorder)
+                                ) {
+                                    Text(
+                                        text = "${size}×${size}",
+                                        fontSize = 12.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isSelected) (if (tokens.isDark) Color.Black else Color.White) else tokens.cellNeutralText,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Manual designed board option
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 12.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(tokens.surface)
+                        .toggleable(
+                            value = isManualBoard,
+                            role = Role.Switch,
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onValueChange = { onManualBoardChange?.invoke(it) }
+                        )
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Manual designed board",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = tokens.cellNeutralText
+                    )
+                    Switch(
+                        checked = isManualBoard,
+                        onCheckedChange = null,
+                        colors = boardSwitchColors
+                    )
+                }
+
+                Button(
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onStartGame()
+                    },
+                    enabled = allReady && !isCheckingCompatibility && lobbyCountdownSeconds < 0,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = tokens.primaryButtonBg,
+                        contentColor = tokens.primaryButtonText,
+                        disabledContainerColor = tokens.surfaceBorder
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = if (allReady && lobbyCountdownSeconds < 0) tokens.primaryButtonText else tokens.textMuted
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    val activePlayerCount = effectivePlayers.count { it.lobbyReadyStatus != LobbyLifecycleEngine.STATUS_LEFT_LOBBY }
+                    Text(
+                        text = when {
+                            lobbyCountdownSeconds in 0..3 -> "Starting Match…"
+                            isCheckingCompatibility -> "Checking connection…"
+                            activePlayerCount < 2 -> "Need at least 2 Players"
+                            !allReady -> "Waiting for Players to be Ready ($readyCount/$activePlayerCount)"
+                            else -> "Start Match (${boardSize}×${boardSize})"
+                        },
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        color = if (allReady && lobbyCountdownSeconds < 0) tokens.primaryButtonText else tokens.textMuted
+                    )
+                }
+            } else {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    if (isDynamicBoard) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = tokens.accentBrand.copy(alpha = 0.12f),
+                            border = BorderStroke(1.dp, tokens.accentBrand.copy(alpha = 0.3f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AutoAwesome,
+                                    contentDescription = null,
+                                    tint = tokens.accentBrand,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Dynamic Board enabled by Host (${boardSize}×${boardSize})",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = tokens.accentBrand
+                                )
+                            }
+                        }
+                    }
+
+                    if (isManualBoard) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = tokens.accentBrand.copy(alpha = 0.12f),
+                            border = BorderStroke(1.dp, tokens.accentBrand.copy(alpha = 0.3f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.DesignServices,
+                                    contentDescription = null,
+                                    tint = tokens.accentBrand,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Manual Designed Board enabled by Host",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = tokens.accentBrand
+                                )
+                            }
+                        }
+                    }
+
+                    if (isMyReadyState) {
+                        OutlinedButton(
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                isMyReadyState = false
+                                onToggleReady?.invoke(false)
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(50.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.5.dp, if (tokens.isDark) Color.White else tokens.accentBrand),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                containerColor = Color.Transparent,
+                                contentColor = if (tokens.isDark) Color.White else tokens.accentBrand
+                            )
+                        ) {
+                            Text(
+                                text = "I'm Not Ready",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp,
+                                color = if (tokens.isDark) Color.White else tokens.accentBrand
+                            )
+                        }
+                    } else {
+                        Button(
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                isMyReadyState = true
+                                onToggleReady?.invoke(true)
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(50.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = tokens.primaryButtonBg,
+                                contentColor = tokens.primaryButtonText
+                            )
+                        ) {
+                            Text(
+                                text = "I'm Ready",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp,
+                                color = tokens.primaryButtonText
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Text(
+                        text = if (allReady) {
+                            "All players ready! Waiting for host to start…"
+                        } else {
+                            "Waiting for host to start once everyone is ready ($readyCount/${players.size})"
+                        },
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = tokens.cellNeutralText.copy(alpha = 0.6f),
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+        }
+
+        val targetKick = playerToKick
+        if (targetKick != null) {
+            AlertDialog(
+                onDismissRequest = { playerToKick = null },
+                title = {
+                    Text("Remove Player", fontWeight = FontWeight.Bold, color = tokens.cellNeutralText)
+                },
+                text = {
+                    Text("Remove ${targetKick.displayName} from the lobby?", color = tokens.cellNeutralText.copy(alpha = 0.85f))
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            val t = targetKick
+                            playerToKick = null
+                            if (t != null && onRemovePlayer != null) {
+                                onRemovePlayer(t.id)
+                                Toast.makeText(context, "${t.displayName} removed from lobby", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Remove", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    OutlinedButton(
+                        onClick = { playerToKick = null },
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, tokens.surfaceBorder),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = tokens.cellNeutralText)
+                    ) {
+                        Text("Cancel", color = tokens.cellNeutralText, fontWeight = FontWeight.SemiBold)
+                    }
+                },
+                containerColor = tokens.surface,
+                shape = RoundedCornerShape(16.dp)
+            )
+        }
+
+        val profileToDisplay = selectedProfilePlayer
+        if (profileToDisplay != null) {
+            PlayerProfileDialog(
+                playerData = profileToDisplay,
+                currentUser = currentUser,
+                friendsRepository = friendsRepository,
+                onDismiss = { selectedProfilePlayer = null }
+            )
+        }
+
+        if (isHost && showInactivityDialog) {
+            AlertDialog(
+                onDismissRequest = { /* Modal: require user selection or countdown */ },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Timer,
+                            contentDescription = null,
+                            tint = Color(0xFFF59E0B),
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Inactivity Detected",
+                            fontWeight = FontWeight.Bold,
+                            color = tokens.cellNeutralText,
+                            fontSize = 18.sp
+                        )
+                    }
+                },
+                text = {
+                    Column {
+                        Text(
+                            text = "The lobby will expire in ${countdownSecondsLeft}s",
+                            fontWeight = FontWeight.SemiBold,
+                            color = tokens.cellNeutralText,
+                            fontSize = 15.sp
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "No match was started. Do you want to continue waiting or exit the lobby?",
+                            fontSize = 13.sp,
+                            color = tokens.cellNeutralText.copy(alpha = 0.7f)
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showInactivityDialog = false
+                            onExtendLobby()
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = tokens.primaryButtonBg,
+                            contentColor = tokens.primaryButtonText
+                        ),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text(
+                            text = "Wait +5mins",
+                            fontWeight = FontWeight.Bold,
+                            color = tokens.primaryButtonText
+                        )
+                    }
+                },
+                dismissButton = {
+                    OutlinedButton(
+                        onClick = {
+                            showInactivityDialog = false
+                            onExpireLobby()
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, Color(0xFFEF4444)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFEF4444))
+                    ) {
+                        Text(
+                            text = "Exit the lobby",
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFFEF4444)
+                        )
+                    }
+                },
+                containerColor = tokens.surface,
+                shape = RoundedCornerShape(16.dp)
+            )
+        }
+    }
+
+    // ── Synchronized 3-Second Countdown Dialog (Lobby Match Starting) ──
+    if (lobbyCountdownSeconds in 0..3) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.55f))
+        ) {
+            AlertDialog(
+                onDismissRequest = { /* Modal: keep user in countdown */ },
+                shape = RoundedCornerShape(24.dp),
+                containerColor = tokens.surface,
+                icon = {
+                    Box(
+                        modifier = Modifier
+                            .size(64.dp)
+                            .background(tokens.accentBrand.copy(alpha = 0.15f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (lobbyCountdownSeconds > 0) "$lobbyCountdownSeconds" else "🚀",
+                            fontSize = 32.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = tokens.accentBrand
+                        )
+                    }
+                },
+                title = {
+                    Text(
+                        text = if (lobbyCountdownSeconds > 0) "Game begins in $lobbyCountdownSeconds" else "Game begins!",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 20.sp,
+                        color = tokens.cellNeutralText,
+                        textAlign = TextAlign.Center
+                    )
+                },
+                text = {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "Get ready! Synchronizing game boards…",
+                            fontSize = 14.sp,
+                            color = tokens.cellNeutralText.copy(alpha = 0.8f),
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                },
+                confirmButton = {}
+            )
+        }
+    }
+}
+

@@ -1,0 +1,2280 @@
+package com.bingo.multiplayer.domain.network
+
+import android.util.Log
+import com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine
+import com.bingo.multiplayer.domain.model.Player
+import com.bingo.multiplayer.domain.model.InGameChatMessage
+import androidx.compose.ui.graphics.asImageBitmap
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import org.eclipse.paho.client.mqttv3.*
+import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
+import java.nio.charset.StandardCharsets
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+
+import androidx.annotation.Keep
+
+private const val TAG = "OnlineRoomSync"
+
+@Keep
+@Serializable
+@OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+data class RoomMessagePacket(
+    val type: String, // "JOIN", "HEARTBEAT", "START_GAME", "PICK_NUMBER", "GAME_SYNC", "SYNC_REQUEST", "LEAVE", "PLAY_AGAIN", "PLAY_AGAIN_REQUEST", "SURRENDER", "PING", "PONG", "GAME_PAUSED", "GAME_RESUMED"
+    val playerId: String = "",
+    val displayName: String = "",
+    val username: String = "",
+    val isHost: Boolean = false,
+    val avatarUrl: String? = null,
+    val gamesPlayed: Int = 0,
+    val gamesWon: Int = 0,
+    val currentStreak: Int = 0,
+    val level: Int = 1,
+    val boardSize: Int = 5,
+    val number: Int = 0,
+    val turnNumber: Int = 0,
+    val seed: Long = 0L,
+    val pickedHistory: List<Int> = emptyList(),
+    val pickedByHistory: List<String> = emptyList(),
+    val turnIds: List<Int> = emptyList(),
+    val boardHash: Long = 0L,
+    val currentTurnPlayerId: String = "",
+    val pingTimestamp: Long = 0L,
+    val players: List<Player> = emptyList(),
+    val timestamp: Long = System.currentTimeMillis(),
+    val readyStatus: String = "",
+    val targetPlayerId: String = "",
+    val readyVersion: Long = 0L,
+    val isManualBoard: Boolean = false,
+    val manualPreparationComplete: Boolean? = null,
+    val isDynamicBoard: Boolean = false,
+    val senderInstanceId: String = "",
+    // Originating device account; playerId can instead identify a skipped player.
+    val senderPlayerId: String = "",
+    val closedTurnNumber: Int = 0,
+    val winnerPlayerId: String = "",
+    val winReason: String = "",
+    val runnerPlayerIds: List<String> = emptyList(),
+    val protocolVersion: Int = 0,
+    val reliablePolicyVersion: Int = 0,
+    val hostWaitVersion: Int = 0,
+    val matchId: String = "",
+    val peerUid: String = "",
+    val connectionGeneration: String = "",
+    val sequence: Long = 0L,
+    val challengeId: String = "",
+    val heartbeatAction: String = "",
+    val turnId: String = "",
+    val remainingTurnMillis: Long = 0L,
+    val controllerEpoch: Long = 0L,
+    val matchRevision: Long = 0L,
+    val isPaused: Boolean = false,
+    val pauseReason: String = "",
+    val pauseOwnerId: String = "",
+    val claimEpisodeId: String = "",
+    val claimEpisodeCount: Int = 0,
+    val roomCode: String = "",
+    val requestId: String = "",
+    val ownerId: String = "",
+    val reliableSnapshot: com.bingo.multiplayer.domain.engine.ReliableMatchSnapshot? = null,
+    val hostWaitSnapshot: com.bingo.multiplayer.domain.engine.ReliableMatchSnapshot? = null,
+    val matchIntent: com.bingo.multiplayer.domain.engine.MatchIntent? = null,
+    val pauseRemainingSeconds: Int = 0,
+    val pauseEpisode: Int = 0,
+    val eliminatedPlayerIds: List<String> = emptyList(),
+    val surrenderedPlayerIds: List<String> = emptyList(),
+    // Transport disconnect hints never represent an explicit match exit.
+    val transportOnly: Boolean = false,
+    val lifecycleSequence: Long = 0L,
+    val isMatchFinished: Boolean = false,
+    val chatMessages: List<InGameChatMessage> = emptyList(),
+    val turnClock: MultiplayerTurnClock? = null,
+    val lastPlayerActivityAt: Long = 0L,
+    val boardNumbers: Map<String, List<Int>> = emptyMap(),
+    val simplifiedRulesVersion: Int = 0,
+    val recoveryReplay: Boolean = false,
+    val playerPresences: Map<String, MultiplayerPresenceRecord> = emptyMap(),
+    val presenceStatus: String = "",
+    val closedTurnClock: MultiplayerTurnClock? = null,
+    val isRetainedDelivery: Boolean = false,
+    val startCommitDeadline: Long = 0L,
+    val startAcknowledgedIds: List<String> = emptyList(),
+    val startClockOffsets: Map<String, Long> = emptyMap(),
+    val startCommitted: Boolean = false,
+    val startReleased: Boolean = false,
+    val lobbySessionId: String = "",
+    val nearbyControl: NearbyMatchControl? = null,
+    @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
+    val clockOffsetMillis: Long = 0L
+)
+
+open class OnlineRoomSyncManager(
+    private val scope: CoroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob()),
+    private val roomRegistry: RoomRegistryGateway = CloudRoomRegistryGateway
+) {
+
+    init {
+        activeInstance = this
+    }
+
+    val instanceId: String = UUID.randomUUID().toString()
+    private data class VerifiedLobbyPeer(val version: Int, val probeAt: Long)
+    private val verifiedLobbyPeers = ConcurrentHashMap<String, VerifiedLobbyPeer>()
+    fun canStartReliableMatch(participants: List<String>, localUid: String): Boolean =
+        isConnected && isSubscribed && reliableCompatibilityStatus(participants, localUid) ==
+            com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.Status.COMPATIBLE
+
+    fun reliableCompatibilityStatus(participants: List<String>, localUid: String): com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.Status {
+        if (participants.size != 2 || participants.any { it.isBlank() } ||
+            participants.distinct().size != 2 || localUid !in participants) return com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.Status.INVALID_PARTICIPANTS
+        val proof = verifiedLobbyPeers[participants.single { it != localUid }] ?: return com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.Status.WAITING
+        if (System.nanoTime() - proof.probeAt > 15_000_000_000L) return com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.Status.WAITING
+        return when (proof.version) {
+            com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.VERSION -> com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.Status.COMPATIBLE
+            0 -> com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.Status.WAITING
+            else -> com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.Status.INCOMPATIBLE
+        }
+    }
+
+    private data class LobbyChallenge(val room: String, val generation: String, val uid: String, val createdAt: Long)
+    private val lobbyChallenges = ConcurrentHashMap<String, LobbyChallenge>()
+    val roomSessionId: String get() = "$roomConnectionId/$activeMatchConnectionGeneration"
+    @Volatile var roomConnectionId = UUID.randomUUID().toString()
+
+    /** Small avatar-free MQTT exchange; no HTTP or guessed app-version comparison. */
+    fun requestLobbyCompatibility() {
+        val code = currentRoomCode ?: return
+        val player = localPlayer ?: return
+        if (!isConnected || !isSubscribed || is1v1MatchActive) return
+        val now = System.nanoTime()
+        lobbyChallenges.entries.removeIf { now - it.value.createdAt > 5_000_000_000L }
+        val id = UUID.randomUUID().toString()
+        lobbyChallenges[id] = LobbyChallenge(code, roomConnectionId, player.id, now)
+        broadcastPacket(RoomMessagePacket(type = "LOBBY_CAPS_REQUEST", playerId = player.id,
+            roomCode = code, requestId = id, connectionGeneration = roomConnectionId, protocolVersion = 2))
+    }
+
+    suspend fun awaitReliableCompatibility(participants: List<String>, localUid: String, timeoutMillis: Long = 3_000L): Boolean {
+        val code = currentRoomCode ?: return false
+        val generation = roomConnectionId
+        return withTimeoutOrNull(timeoutMillis) {
+            while (currentRoomCode == code && roomConnectionId == generation && localPlayer?.id == localUid) {
+                if (canStartReliableMatch(participants, localUid)) return@withTimeoutOrNull true
+                if (reliableCompatibilityStatus(participants, localUid) == com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.Status.INVALID_PARTICIPANTS) return@withTimeoutOrNull false
+                requestLobbyCompatibility()
+                delay(300L)
+            }
+            false
+        } ?: false
+    }
+
+    private val json = Json {
+        ignoreUnknownKeys = true
+        isLenient = true
+        encodeDefaults = true
+    }
+
+    private val brokerUrl = NetworkConfig.BROKER_URL
+    private var mqttClient: MqttAsyncClient? = null
+
+    fun isBoundToRoom(code: String, uid: String): Boolean = currentRoomCode == code.trim().uppercase() && localPlayer?.id == uid
+
+    val isRoomReady: Boolean get() = isConnected && isSubscribed && isPingFresh
+
+    val isConnected: Boolean
+        get() = mqttClient?.isConnected == true
+
+    // Metadata is published exclusively by MqttRoomMetadataTransport's host writer.
+    suspend fun publishRetainedRoomMetaAwaited(session: OnlineRoomSession): Boolean =
+        RoomMetadataApi.read(session.roomCode).getOrNull() == session
+    fun publishRetainedRoomMeta(session: OnlineRoomSession) { }
+    fun clearRetainedRoomMeta(roomCode: String) { }
+    suspend fun clearRetainedRoomMetaAwaited(roomCode: String): Boolean = true // retain CLOSED tombstone
+
+    internal var currentRoomCode: String? = null
+    internal var currentLobbySessionId: String = ""
+    internal var boundPublisherKey: String? = null
+    internal var latestMetadataRevision = -1L
+    internal var lobbyMetadataClosed = false
+    private var lastLeasePublication = 0L
+    private var metadataWatchJob: Job? = null
+    var localPlayer: Player? = null
+        internal set
+    @Volatile var currentHostId: String? = null
+        internal set
+    @Volatile var predecessorHostId: String? = null
+        internal set
+
+    private val playerRegistry = ConcurrentHashMap<String, Player>()
+    private val kickedPlayerIds = ConcurrentHashMap.newKeySet<String>()
+
+    private val _players = MutableStateFlow<List<Player>>(emptyList())
+    val players: StateFlow<List<Player>> = _players.asStateFlow()
+
+    private val _incomingPackets = MutableSharedFlow<RoomMessagePacket>(extraBufferCapacity = 128)
+    val incomingPackets: SharedFlow<RoomMessagePacket> = _incomingPackets.asSharedFlow()
+
+    private val _isRefreshing = MutableStateFlow(false)
+    val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
+
+    private val _pingMs = MutableStateFlow<Long>(0L)
+    val pingMs: StateFlow<Long> = _pingMs.asStateFlow()
+    @Volatile var lastPingTimestamp: Long = 0L
+    val isPingFresh: Boolean
+        get() = (System.currentTimeMillis() - lastPingTimestamp) < 15000L && isConnected && isSubscribed && _pingMs.value > 0L
+
+    private var heartbeatJob: Job? = null
+    private var livenessJob: Job? = null
+    private var pingJob: Job? = null
+    private var connectionJob: Job? = null
+    private var disconnectJob: Job? = null
+    private var retryJob: Job? = null
+    private val _connectionReady = MutableStateFlow(false)
+    val connectionReady: StateFlow<Boolean> = _connectionReady.asStateFlow()
+    var activePeerSeed: Long = 0L
+        private set
+    @Volatile private var peerSyncMarker: String? = null
+    private var peerSyncReply: CompletableDeferred<Unit>? = null
+    private var peerBindJob: Job? = null
+    private val peerSubscriptionMutex = Mutex()
+    private var peerSubscriptionTopic: String? = null
+
+    fun bindPeerMatch(seed: Long) {
+        if (seed == 0L) return
+        activePeerSeed = seed
+        val client = mqttClient ?: return
+        val code = currentRoomCode ?: return
+        val generation = roomConnectionId
+        fun sameConnection() = mqttClient === client && roomConnectionId == generation && currentRoomCode == code
+        fun currentBinding() = sameConnection() && activePeerSeed == seed
+        synchronized(this) {
+            if (peerSyncMarker?.startsWith("${PeerMatchRecovery.topic(code, seed)}/") == true && peerBindJob?.isActive == true) return
+            peerBindJob?.cancel()
+            peerSyncReply?.cancel()
+            val marker = "${PeerMatchRecovery.topic(code, seed)}/probe/${UUID.randomUUID()}"
+            val reply = CompletableDeferred<Unit>()
+            peerSyncMarker = marker
+            peerSyncReply = reply
+            peerBindJob = scope.launch(Dispatchers.IO) {
+                try {
+                    repeat(3) { attempt ->
+                        try {
+                            peerSubscriptionMutex.withLock {
+                                if (!currentBinding()) return@launch
+                                if (!client.isConnected) throw java.io.IOException("Room connection unavailable")
+                                val topic = "${PeerMatchRecovery.topic(code, seed)}/#"
+                                peerSubscriptionTopic?.takeIf { it != topic }?.let { previous ->
+                                    client.unsubscribe(previous).waitForCompletion(3000L)
+                                    if (sameConnection() && peerSubscriptionTopic == previous) peerSubscriptionTopic = null
+                                }
+                                if (!currentBinding()) return@launch
+                                val token = client.subscribe(topic, 1)
+                                token.waitForCompletion(3000L)
+                                if (token.grantedQos?.any { it == 128 } == true) throw java.io.IOException("Match subscription rejected")
+                                // Remember an accepted subscription even if a newer seed arrived during SUBACK.
+                                // The next binding will then release it before subscribing to the new match.
+                                if (sameConnection()) peerSubscriptionTopic = topic
+                                if (!currentBinding()) return@launch
+                                client.publish(marker, MqttMessage(byteArrayOf(1)).apply { qos = 1 }).waitForCompletion(3000L)
+                            }
+                            withTimeout(3000L) { reply.await() }
+                            return@launch
+                        } catch (cancelled: CancellationException) {
+                            // A marker deadline retries; cancellation of the binding itself must stop it.
+                            currentCoroutineContext().ensureActive()
+                            if (cancelled !is TimeoutCancellationException) throw cancelled
+                        } catch (_: Exception) {
+                            if (reply.isCompleted && !reply.isCancelled) return@launch
+                        }
+                        if (!currentBinding()) return@launch
+                        if (attempt < 2) delay(1000L)
+                    }
+                    if (currentBinding()) {
+                        isSubscribed = false
+                        _connectionReady.value = false
+                        retryConnection(code, generation)
+                    }
+                } finally {
+                    synchronized(this@OnlineRoomSyncManager) {
+                        if (peerSyncReply === reply) {
+                            peerSyncReply = null
+                            if (peerSyncMarker == marker) peerSyncMarker = null
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** Offset from the current match's initial host clock; set only after validated bootstrap. */
+    var matchClockOffsetMillis: Long = 0L
+
+    private fun tagClock(packet: RoomMessagePacket): RoomMessagePacket =
+        if (packet.type in setOf("START_GAME", "PLAY_AGAIN", "PREPARE_START", "START_GAME_ACK", "CANCEL_START")) packet
+        else packet.copy(clockOffsetMillis = matchClockOffsetMillis)
+
+    fun publishPeerSnapshot(packet: RoomMessagePacket) {
+        if (packet.seed == 0L || packet.seed != activePeerSeed) return
+        val code = currentRoomCode ?: return
+        val generation = roomConnectionId
+        val client = mqttClient ?: return
+        val outgoing = tagClock(packet).copy(roomCode = code, senderPlayerId = localPlayer?.id.orEmpty(),
+            senderInstanceId = instanceId, connectionGeneration = generation)
+        scope.launch(Dispatchers.IO) {
+            if (!client.isConnected || mqttClient !== client || roomConnectionId != generation) return@launch
+            runCatching {
+                client.publish("${PeerMatchRecovery.topic(code, packet.seed)}/state/${outgoing.playerId}",
+                    MqttMessage(FastPacketCodec.encode(outgoing).toByteArray(StandardCharsets.UTF_8)).apply {
+                        qos = 1; isRetained = true
+                    }).waitForCompletion(3000L)
+            }
+        }
+    }
+
+    fun publishAcceptedTurnOutcome(packet: RoomMessagePacket) {
+        if (packet.seed == 0L || packet.seed != activePeerSeed || packet.type !in setOf("PICK_NUMBER", "TURN_TIMEOUT")) return
+        val code = currentRoomCode ?: return
+        val generation = roomConnectionId
+        val client = mqttClient ?: return
+        val turn = if (packet.closedTurnNumber > 0) packet.closedTurnNumber else packet.turnNumber
+        val outgoing = tagClock(packet).copy(roomCode = code, senderPlayerId = packet.senderPlayerId.ifBlank { packet.playerId },
+            senderInstanceId = instanceId, connectionGeneration = generation, recoveryReplay = true)
+        scope.launch(Dispatchers.IO) {
+            if (!client.isConnected || mqttClient !== client || roomConnectionId != generation) return@launch
+            runCatching {
+                val outcomeTopic = "${PeerMatchRecovery.topic(code, packet.seed)}/outcome/$turn"
+                client.publish(outcomeTopic,
+                    MqttMessage(FastPacketCodec.encode(outgoing).toByteArray(StandardCharsets.UTF_8)).apply {
+                        qos = 1; isRetained = true
+                    })
+            }
+        }
+    }
+
+    fun publishAcceptedDeparture(packet: RoomMessagePacket) {
+        if (packet.seed == 0L || packet.seed != activePeerSeed || packet.type !in setOf("SURRENDER", "LEAVE", "HOST_LEFT")) return
+        val code = currentRoomCode ?: return
+        val generation = roomConnectionId
+        val client = mqttClient ?: return
+        val outgoing = tagClock(packet).copy(roomCode = code, senderPlayerId = packet.senderPlayerId.ifBlank { packet.playerId },
+            senderInstanceId = instanceId, connectionGeneration = generation, recoveryReplay = true, isRetainedDelivery = true)
+        scope.launch(Dispatchers.IO) {
+            if (!client.isConnected || mqttClient !== client || roomConnectionId != generation) return@launch
+            runCatching {
+                val exitTopic = "${PeerMatchRecovery.topic(code, packet.seed)}/accepted_exit/${packet.playerId}"
+                client.publish(exitTopic,
+                    MqttMessage(FastPacketCodec.encode(outgoing).toByteArray(StandardCharsets.UTF_8)).apply {
+                        qos = 1; isRetained = true
+                    })
+            }
+        }
+    }
+
+    /** Administrative lobby role only; it never controls peer clocks or result eligibility. */
+    fun updateMatchRoster(players: List<Player>) {
+        if (activePeerSeed == 0L) return
+        val newHostId = players.firstOrNull { it.isHost }?.id
+        if (newHostId != null && currentHostId != null && newHostId != currentHostId) {
+            predecessorHostId = currentHostId
+        }
+        currentHostId = newHostId
+        localPlayer = players.firstOrNull { it.id == localPlayer?.id } ?: localPlayer
+        playerRegistry.clear()
+        players.forEach { playerRegistry[it.id] = it }
+        _players.value = players
+    }
+
+    /** Follows only the roster already accepted by the gameplay controller. updateMatchRoster
+     * is called after permanent surrender/recovery, never for absence or transport disconnect. */
+    internal fun metadataWriterFor(session: OnlineRoomSession): String? {
+        if (currentRoomCode != session.roomCode || currentLobbySessionId != session.sessionId ||
+            activePeerSeed == 0L || activePeerSeed != session.currentSeed || session.status != "PLAYING") return null
+        val writer = currentHostId ?: return null
+        if (writer == session.hostId || playerRegistry.containsKey(session.hostId) ||
+            playerRegistry[writer]?.isHost != true || session.players.none { it.id == writer }) return null
+        return writer
+    }
+
+    /** Validates that candidate host is legitimate promoted successor following departure of former host. */
+    open fun isPromotedSuccessor(candidate: OnlineRoomSession, formerHostId: String): Boolean {
+        if (currentRoomCode != candidate.roomCode || currentLobbySessionId != candidate.sessionId ||
+            activePeerSeed == 0L || activePeerSeed != candidate.currentSeed || candidate.status != "PLAYING") return false
+        val current = currentHostId ?: return false
+        if (current != candidate.hostId) return false
+        if (playerRegistry[current]?.isHost != true) return false
+        if (candidate.players.none { it.id == current }) return false
+        if (candidate.players.any { it.id == formerHostId }) return false
+        return true
+    }
+
+    fun disconnectSession(expectedSession: String) {
+        if (roomSessionId == expectedSession) disconnect()
+    }
+
+    private fun retryConnection(code: String, generation: String, immediate: Boolean = false) {
+        retryJob = scope.launch(Dispatchers.IO) {
+            if (!immediate) {
+                delay(1500L)
+            }
+            if (currentRoomCode != code || roomConnectionId != generation || (mqttClient?.isConnected == true && isSubscribed)) return@launch
+            val player = localPlayer ?: return@launch
+            connectToRoom(code, player, playerRegistry.values.toList(), activePeerSeed)
+        }
+    }
+
+    // Dedicated 1v1 Match Heartbeat & Availability State
+    var activeMatchConnectionGeneration: String = UUID.randomUUID().toString()
+        private set
+    var is1v1MatchActive: Boolean = false
+        private set
+    var currentMatchId: String = ""
+        private set
+    var currentPeerUid: String = ""
+        private set
+    var matchHeartbeatPolicy: com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicy? = null
+        private set
+    var lastBrokerReceiveEchoAt: Long = 0L
+        private set
+
+    private var matchHeartbeatJob: Job? = null
+    private var matchWatchdogJob: Job? = null
+    private val outstandingChallenges = ConcurrentHashMap<String, Long>()
+    private var heartbeatSequence: Long = 0L
+
+    private val _matchHeartbeatDecisions = MutableSharedFlow<com.bingo.multiplayer.domain.engine.HeartbeatDecision>(extraBufferCapacity = 64)
+    val matchHeartbeatDecisions: SharedFlow<com.bingo.multiplayer.domain.engine.HeartbeatDecision> = _matchHeartbeatDecisions.asSharedFlow()
+
+    fun isLocalObservationHealthy(nowMonotonic: Long = android.os.SystemClock.elapsedRealtime()): Boolean {
+        val inForeground = AppLifecycleObserver.isAppInForeground.value
+        val connected = isConnected
+        val subscribed = isSubscribed
+        val brokerEchoFresh = (nowMonotonic - lastBrokerReceiveEchoAt) <= 5000L
+        return inForeground && connected && subscribed && (lastBrokerReceiveEchoAt > 0L && brokerEchoFresh)
+    }
+
+    fun startMatchHeartbeat(
+        matchId: String,
+        peerUid: String,
+        policy: com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicy? = null
+    ) {
+        if (policy == null && is1v1MatchActive && currentMatchId == matchId && currentPeerUid == peerUid && matchHeartbeatPolicy != null) {
+            // Already active for this match and peer; idempotent
+            return
+        }
+        stopMatchHeartbeat()
+        is1v1MatchActive = true
+        currentMatchId = matchId
+        currentPeerUid = peerUid
+        matchHeartbeatPolicy = policy ?: com.bingo.multiplayer.domain.engine.OnlineMatchHeartbeatPolicy(
+            matchId = matchId,
+            peerUid = peerUid,
+            connectionGeneration = activeMatchConnectionGeneration
+        )
+        lastBrokerReceiveEchoAt = android.os.SystemClock.elapsedRealtime()
+        outstandingChallenges.clear()
+
+        // If a restored policy was already UNREACHABLE, emit decision immediately so UI is updated on frame 1
+        val activePolicy = matchHeartbeatPolicy
+        if (activePolicy != null && activePolicy.state == com.bingo.multiplayer.domain.engine.PeerAvailabilityState.UNREACHABLE) {
+            val snap = activePolicy.toSnapshot()
+            _matchHeartbeatDecisions.tryEmit(
+                com.bingo.multiplayer.domain.engine.HeartbeatDecision.BecameUnreachable(
+                    episodeId = snap.currentEpisodeId ?: "ep_${matchId}_${snap.committedEpisodeCount}_${android.os.SystemClock.elapsedRealtime()}",
+                    episodeCount = snap.committedEpisodeCount,
+                    isClaimEligible = snap.isClaimVictoryEligible
+                )
+            )
+        }
+
+        // Dedicated 2.5s probe loop decoupled from cloud reconciliation
+        matchHeartbeatJob = scope.launch(Dispatchers.IO) {
+            while (isActive) {
+                if (AppLifecycleObserver.isAppInForeground.value) {
+                    val client = mqttClient
+                    if (client != null && client.isConnected && isSubscribed) {
+                        val p = localPlayer
+                        if (p != null) {
+                            val challenge = UUID.randomUUID().toString().take(8)
+                            val nowMonotonic = android.os.SystemClock.elapsedRealtime()
+                            outstandingChallenges[challenge] = nowMonotonic
+                            outstandingChallenges.entries.removeIf { (nowMonotonic - it.value) > 5000L }
+
+                            heartbeatSequence++
+                            val probePacket = RoomMessagePacket(
+                                type = "MATCH_HEARTBEAT",
+                                protocolVersion = 1,
+                                matchId = matchId,
+                                playerId = p.id,
+                                peerUid = peerUid,
+                                connectionGeneration = activeMatchConnectionGeneration,
+                                sequence = heartbeatSequence,
+                                challengeId = challenge,
+                                heartbeatAction = "PROBE",
+                                timestamp = System.currentTimeMillis()
+                            )
+                            broadcastPacket(probePacket)
+                        }
+                    }
+                }
+                delay(2500L)
+            }
+        }
+
+        // Dedicated watchdog loop checking at most every 250ms
+        matchWatchdogJob = scope.launch(Dispatchers.IO) {
+            while (isActive) {
+                delay(250L)
+                checkMatchWatchdog()
+            }
+        }
+    }
+
+    fun stopMatchHeartbeat() {
+        matchHeartbeatJob?.cancel()
+        matchHeartbeatJob = null
+        matchWatchdogJob?.cancel()
+        matchWatchdogJob = null
+        is1v1MatchActive = false
+        matchHeartbeatPolicy = null
+        outstandingChallenges.clear()
+    }
+
+    fun notifyStateSynchronized() {
+        val decision = matchHeartbeatPolicy?.onStateSynchronized() ?: com.bingo.multiplayer.domain.engine.HeartbeatDecision.NoOp
+        if (decision !is com.bingo.multiplayer.domain.engine.HeartbeatDecision.NoOp) {
+            _matchHeartbeatDecisions.tryEmit(decision)
+        }
+    }
+
+    fun claimMatchVictory(localUid: String = localPlayer?.id ?: "local_player"): com.bingo.multiplayer.domain.engine.ClaimResult? {
+        val policy = matchHeartbeatPolicy ?: return null
+        return policy.claimVictory(actorUid = localUid)
+    }
+
+    private fun checkMatchWatchdog() {
+        val policy = matchHeartbeatPolicy ?: return
+        val now = android.os.SystemClock.elapsedRealtime()
+        val healthy = isLocalObservationHealthy(now)
+        if (!healthy) {
+            if (policy.isLocalHealthy) {
+                val decision = policy.onLocalHealthLost()
+                _matchHeartbeatDecisions.tryEmit(decision)
+            }
+        } else {
+            if (!policy.isLocalHealthy) {
+                val decision = policy.onLocalHealthRestored(now)
+                _matchHeartbeatDecisions.tryEmit(decision)
+            }
+            val decision = policy.onTick(now)
+            if (decision !is com.bingo.multiplayer.domain.engine.HeartbeatDecision.NoOp) {
+                _matchHeartbeatDecisions.tryEmit(decision)
+            }
+        }
+    }
+
+
+    @Volatile var isSubscribed: Boolean = false
+    @Volatile private var lastStartedMatchSeed: Long = 0L
+    @Volatile private var lastEmittedMetaSeed: Long = 0L
+    private val completedMatchSeeds = ConcurrentHashMap.newKeySet<Long>()
+
+    fun recordStartedSeed(seed: Long) {
+        if (seed != 0L) {
+            lastStartedMatchSeed = seed
+        }
+    }
+
+    fun recordCompletedSeed(seed: Long) {
+        if (seed != 0L) {
+            completedMatchSeeds.add(seed)
+            lastStartedMatchSeed = seed
+        }
+    }
+
+    fun isSeedCompleted(seed: Long): Boolean {
+        return seed != 0L && completedMatchSeeds.contains(seed)
+    }
+
+    private val lastDirectHeartbeatTimestamps = ConcurrentHashMap<String, Long>()
+
+    fun recordDirectHeartbeat(playerId: String, username: String = "") {
+        if (playerId.isBlank()) return
+        val now = System.currentTimeMillis()
+        val cleanId = playerId.trim().lowercase().removePrefix("u_")
+        lastDirectHeartbeatTimestamps[playerId] = now
+        lastDirectHeartbeatTimestamps[cleanId] = now
+        if (username.isNotBlank()) {
+            val cleanUser = username.trim().lowercase().removePrefix("@")
+            lastDirectHeartbeatTimestamps[cleanUser] = now
+        }
+    }
+
+    fun getLastDirectHeartbeat(playerId: String): Long {
+        if (playerId.isBlank()) return 0L
+        val clean = playerId.trim().lowercase().removePrefix("u_")
+        val ts = lastDirectHeartbeatTimestamps[playerId]
+            ?: lastDirectHeartbeatTimestamps[clean]
+        if (ts != null && ts > 0L) return ts
+        playerRegistry.values.firstOrNull { p ->
+            val pClean = p.id.trim().lowercase().removePrefix("u_")
+            val pUser = p.username.trim().lowercase().removePrefix("@")
+            p.id == playerId || pClean == clean || (pUser.isNotBlank() && pUser == clean)
+        }?.let { matched ->
+            return lastDirectHeartbeatTimestamps[matched.id]
+                ?: lastDirectHeartbeatTimestamps[matched.username.trim().lowercase().removePrefix("@")]
+                ?: 0L
+        }
+        return 0L
+    }
+
+    fun resetInGameHeartbeats(participantIds: Collection<String>) {
+        participantIds.forEach { id ->
+            recordDirectHeartbeat(id)
+        }
+    }
+
+    init {
+        activeInstance = this
+    }
+
+    fun resetMatchSession() {
+        lastStartedMatchSeed = 0L
+    }
+
+    fun updateLocalAvatar(newAvatarUrl: String?) {
+        val p = localPlayer ?: return
+        val updated = p.copy(avatarUrl = newAvatarUrl)
+        localPlayer = updated
+        playerRegistry[p.id] = updated
+        _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+        broadcastPacket(
+            RoomMessagePacket(
+                type = "HEARTBEAT",
+                playerId = updated.id,
+                displayName = updated.displayName,
+                username = updated.username,
+                isHost = updated.isHost,
+                avatarUrl = updated.avatarUrl,
+                gamesPlayed = updated.gamesPlayed,
+                gamesWon = updated.gamesWon,
+                currentStreak = updated.currentStreak,
+                level = updated.level,
+                timestamp = System.currentTimeMillis(),
+                readyStatus = updated.lobbyReadyStatus,
+                readyVersion = updated.readyVersion
+            )
+        )
+    }
+
+    fun onRemoteAvatarUpdated(username: String, avatarUrl: String?) {
+        val clean = username.trim().lowercase().removePrefix("@")
+        val found = playerRegistry.values.find { it.username.trim().lowercase().removePrefix("@") == clean }
+        if (found != null && found.avatarUrl != avatarUrl) {
+            com.bingo.multiplayer.presentation.common.PlayerAvatarCache.evict(clean)
+            if (!avatarUrl.isNullOrBlank()) {
+                val bmp = com.bingo.multiplayer.presentation.common.decodeAvatarBitmap(avatarUrl, null)
+                if (bmp != null) {
+                    com.bingo.multiplayer.presentation.common.PlayerAvatarCache.put("u:$clean", bmp.asImageBitmap())
+                }
+            }
+            com.bingo.multiplayer.presentation.common.PlayerAvatarCache.notifyAvatarChanged(clean)
+            playerRegistry[found.id] = found.copy(avatarUrl = avatarUrl)
+            _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+        }
+    }
+
+    private fun getTopic(code: String): String =
+        "bingo/emqx7/room/${code.trim().uppercase()}"
+
+    internal fun validateAndBuildStartPacket(session: OnlineRoomSession): RoomMessagePacket {
+        val participants = session.players.distinctBy { it.id }
+        val isTwoPlayer = participants.size == 2
+        val decodedPacket = if (!session.canonicalStartPacketJson.isNullOrBlank()) {
+            try {
+                FastPacketCodec.decode(session.canonicalStartPacketJson)
+            } catch (_: Exception) { null }
+        } else null
+
+        val validDecoded = if (decodedPacket != null && decodedPacket.type == "START_GAME" &&
+            decodedPacket.seed == session.currentSeed &&
+            decodedPacket.roomCode.equals(session.roomCode, ignoreCase = true) &&
+            decodedPacket.playerId == session.hostId &&
+            MultiplayerGameplayReducer.sender(decodedPacket) == session.hostId) {
+            decodedPacket
+        } else null
+
+        return (validDecoded ?: RoomMessagePacket(
+            type = "START_GAME",
+            roomCode = session.roomCode,
+            seed = session.currentSeed,
+            matchId = session.currentSeed.toString(),
+            boardSize = session.boardSize,
+            isManualBoard = session.isManualBoard,
+            manualPreparationComplete = session.manualPreparationComplete,
+            isDynamicBoard = session.isDynamicBoard,
+            playerId = session.hostId,
+            senderPlayerId = session.hostId,
+            players = participants,
+            currentTurnPlayerId = session.currentTurnPlayerId,
+            turnClock = session.turnClock ?: MultiplayerTurnClock.start(
+                1, session.currentTurnPlayerId.ifBlank { session.hostId },
+                session.createdAt + 3300L, false
+            ),
+            simplifiedRulesVersion = session.simplifiedRulesVersion,
+            protocolVersion = if (isTwoPlayer) 2 else session.protocolVersion,
+            reliablePolicyVersion = if (isTwoPlayer) com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.VERSION else 0,
+            hostWaitVersion = if (isTwoPlayer) 1 else 0,
+            startCommitDeadline = session.startCommitDeadline, lobbySessionId = session.sessionId
+        )).copy(isRetainedDelivery = true, lobbySessionId = session.sessionId,
+            manualPreparationComplete = session.manualPreparationComplete ?: validDecoded?.manualPreparationComplete)
+    }
+
+    /**
+     * Connects to high-speed MQTT room topic and begins presence heartbeat and ping measurement.
+     * Optionally pre-loads existing players discovered via cloud room registry.
+     */
+    fun connectToRoom(roomCode: String, player: Player, initialPlayers: List<Player> = emptyList(), resumeMatchSeed: Long = 0L) {
+        disconnect()
+
+        val cleanCode = roomCode.trim().uppercase()
+        currentRoomCode = cleanCode
+        currentLobbySessionId = OnlineRoomRegistry.getRoomCachedOnly(cleanCode)?.sessionId.orEmpty()
+        latestMetadataRevision = -1L; lobbyMetadataClosed = false
+        activePeerSeed = resumeMatchSeed
+        val connectionId = roomConnectionId
+        metadataWatchJob = scope.launch {
+            OnlineRoomRegistry.roomUpdates.collect { session ->
+                if (roomConnectionId == connectionId && currentRoomCode == cleanCode && session.roomCode == cleanCode)
+                    applyRoomMetadata(session, cleanCode)
+            }
+        }
+        val hostFromInitial = initialPlayers.firstOrNull { it.isHost }?.id
+        val initialHostId = if (player.isHost) player.id else hostFromInitial
+        if (initialHostId != null) {
+            currentHostId = initialHostId
+        }
+        val isPlayerHost = player.isHost || (currentHostId != null && player.id == currentHostId)
+        val safePlayer = player.copy(isHost = isPlayerHost)
+        localPlayer = safePlayer
+
+        playerRegistry.clear()
+        kickedPlayerIds.clear()
+        initialPlayers.forEach { p ->
+            if (p.id.isNotBlank()) {
+                val isPActuallyHost = p.isHost || (currentHostId != null && p.id == currentHostId)
+                val isSameAsLocal = (p.id == safePlayer.id) ||
+                    (safePlayer.username.isNotBlank() && p.username.equals(safePlayer.username, ignoreCase = true))
+                if (!isSameAsLocal) {
+                    playerRegistry[p.id] = p.copy(
+                        isHost = isPActuallyHost,
+                        lastSeenTimestamp = System.currentTimeMillis()
+                    )
+                }
+            }
+        }
+        playerRegistry[safePlayer.id] = safePlayer.copy(lastSeenTimestamp = System.currentTimeMillis())
+        _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+
+        val clientId = "bingo_${player.id}_${UUID.randomUUID().toString().take(6)}"
+
+        // The retained metadata subscription supplies the complete admitted lobby roster.
+
+        connectionJob = scope.launch(Dispatchers.IO) {
+            try {
+                val client = clientProvider?.invoke(brokerUrl, clientId)
+                    ?: if (EmqxTransport.wireOverride != null) {
+                        WireCapturingMqttClient(brokerUrl, clientId)
+                    } else {
+                        MqttAsyncClient(brokerUrl, clientId, MemoryPersistence())
+                    }
+                if (roomConnectionId != connectionId || currentRoomCode != cleanCode) { client.close(); return@launch }
+                mqttClient = client
+
+                val options = MqttConnectOptions().apply {
+                    isAutomaticReconnect = false
+                    isCleanSession = true
+                    connectionTimeout = 10
+                    keepAliveInterval = 10
+                    NetworkConfig.applyMqttOptions(this)
+                    try {
+                        val willPacket = RoomMessagePacket(
+                            type = "PLAYER_DISCONNECTED",
+                            transportOnly = true, roomCode = cleanCode,
+                            connectionGeneration = connectionId, senderInstanceId = instanceId,
+                            playerId = player.id,
+                            displayName = player.displayName,
+                            username = player.username,
+                            isHost = player.isHost,
+                            timestamp = System.currentTimeMillis(), senderPlayerId = player.id
+                        )
+                        val willTopic = "bingo/emqx7/room/$cleanCode/availability/${player.id}"
+                        val willPayload = FastPacketCodec.encode(willPacket).toByteArray(java.nio.charset.StandardCharsets.UTF_8)
+                        setWill(willTopic, willPayload, 1, true)
+                    } catch (_: Exception) {}
+                }
+
+                client.setCallback(object : MqttCallbackExtended {
+                    override fun connectComplete(reconnect: Boolean, serverURI: String?) {
+                        if (mqttClient !== client || roomConnectionId != connectionId) return
+                        if (serverURI?.contains("broker.emqx.io") == true) {
+                            EmqxBrokerMonitor.recordPrimaryBrokerDown()
+                        } else {
+                            EmqxBrokerMonitor.recordPrimaryBrokerUp()
+                        }
+                        activeMatchConnectionGeneration = UUID.randomUUID().toString()
+                        val policy = matchHeartbeatPolicy
+                        if (policy != null && !policy.isLocalHealthy) {
+                            val decision = policy.onLocalHealthRestored()
+                            _matchHeartbeatDecisions.tryEmit(decision)
+                        }
+                        scope.launch(Dispatchers.IO) {
+                            if (mqttClient !== client || roomConnectionId != connectionId) return@launch
+                            subscribeToRoom(cleanCode)
+                            if (!isSubscribed) {
+                                _connectionReady.value = false
+                                retryConnection(cleanCode, connectionId)
+                                return@launch
+                            }
+                            requestLobbyCompatibility()
+                            sendJoinPacket()
+                            _connectionReady.value = true
+                            _incomingPackets.emit(RoomMessagePacket(type = "ROOM_CONNECTION_READY", playerId = player.id,
+                                connectionGeneration = connectionId, roomCode = cleanCode))
+                            if (activePeerSeed != 0L) bindPeerMatch(activePeerSeed)
+                            // If local player was already toggled to READY before/during connection, immediately broadcast READY_STATUS!
+                            localPlayer?.let { lp ->
+                                if (lp.lobbyReadyStatus == LobbyLifecycleEngine.STATUS_READY) {
+                                    val readyPacket = RoomMessagePacket(
+                                        type = "READY_STATUS",
+                                        playerId = lp.id,
+                                        displayName = lp.displayName,
+                                        username = lp.username,
+                                        isHost = lp.isHost,
+                                        avatarUrl = lp.avatarUrl,
+                                        readyStatus = lp.lobbyReadyStatus,
+                                        readyVersion = lp.readyVersion,
+                                        timestamp = lp.lastSeenTimestamp
+                                    )
+                                    broadcastPacket(readyPacket)
+                                }
+                            }
+                            if (!player.isHost) {
+                                delay(500L)
+                                if (playerRegistry.values.none { it.isHost }) {
+                                    sendJoinPacket()
+                                }
+                                delay(1000L)
+                                if (playerRegistry.values.none { it.isHost }) {
+                                    sendJoinPacket()
+                                }
+                            }
+                        }
+                    }
+
+                    override fun messageArrived(topic: String?, message: MqttMessage?) {
+                        if (mqttClient !== client || roomConnectionId != connectionId) return
+                        val markerReply = synchronized(this@OnlineRoomSyncManager) {
+                            if (topic == peerSyncMarker && topic?.startsWith("${PeerMatchRecovery.topic(cleanCode, activePeerSeed)}/") == true) {
+                                peerSyncMarker = null
+                                peerSyncReply
+                            } else null
+                        }
+                        if (markerReply != null) {
+                            if (markerReply.complete(Unit)) _incomingPackets.tryEmit(RoomMessagePacket(type = "PEER_SYNC_READY", seed = activePeerSeed,
+                                targetPlayerId = localPlayer?.id.orEmpty(), connectionGeneration = connectionId, roomCode = cleanCode))
+                            return
+                        }
+                        val payloadBytes = message?.payload?.takeIf { it.isNotEmpty() } ?: return
+                        if (topic?.contains("/probe/") == true) return
+                        try {
+                            val payloadStr = String(payloadBytes, StandardCharsets.UTF_8)
+                            if (topic?.startsWith("bingo/emqx7/metadata/") == true) {
+                                try {
+                                    if (message?.isRetained != true) return
+                                    val session = json.decodeFromString<OnlineRoomSession>(payloadStr)
+                                    scope.launch {
+                                        handleMetadataSession(session, cleanCode, message?.isRetained == true, connectionId)
+                                    }
+                                } catch (_: Exception) {}
+                                return
+                            }
+                            val decoded = FastPacketCodec.decode(payloadStr)
+                            val isOutcome = topic?.contains("/outcome/") == true
+                            val isAcceptedDeparture = topic?.contains("/accepted_exit/") == true
+                            val isExitReceipt = (decoded.closedTurnNumber > 0 || decoded.recoveryReplay) && decoded.type in setOf("SURRENDER", "LEAVE", "HOST_LEFT")
+                            val packet = decoded.copy(
+                                recoveryReplay = decoded.recoveryReplay || isOutcome || isAcceptedDeparture || (isExitReceipt && topic?.contains("/exit/") == true),
+                                isRetainedDelivery = message?.isRetained == true)
+                            if (topic?.startsWith("bingo/emqx7/match/") == true) {
+                                _incomingPackets.tryEmit(packet)
+                                return
+                            }
+                            if (message.isRetained && topic != null) {
+                                reliableRetainedChecks[topic]?.let { (expected, received) ->
+                                    if (packet.type == "MATCH_V2_STATE" && packet.reliableSnapshot == expected) received.complete(true)
+                                }
+                            }
+                            if (!message.isRetained || packet.type !in setOf("LOBBY_CAPS_REQUEST", "LOBBY_CAPS_RESPONSE")) {
+                                handleIncomingPacket(packet)
+                            }
+                        } catch (_: Exception) { }
+                    }
+
+                    override fun connectionLost(cause: Throwable?) {
+                        if (mqttClient !== client || roomConnectionId != connectionId) return
+                        EmqxBrokerMonitor.recordBrokerFailure()
+                        isSubscribed = false
+                        _connectionReady.value = false
+                        verifiedReliableTopics.clear()
+                        matchHeartbeatPolicy?.let { policy ->
+                            if (policy.isLocalHealthy) {
+                                val decision = policy.onLocalHealthLost()
+                                _matchHeartbeatDecisions.tryEmit(decision)
+                            }
+                        }
+                        retryConnection(cleanCode, connectionId)
+                    }
+
+                    override fun deliveryComplete(token: IMqttDeliveryToken?) { }
+                })
+
+                client.connect(options, null, object : IMqttActionListener {
+                    override fun onSuccess(token: IMqttToken?) {
+                        // Handled with exact serverURI in connectComplete callback
+                    }
+                    override fun onFailure(token: IMqttToken?, error: Throwable?) {
+                        EmqxBrokerMonitor.recordPrimaryBrokerDown()
+                        retryConnection(cleanCode, connectionId)
+                    }
+                })
+            } catch (_: Exception) {
+                EmqxBrokerMonitor.recordPrimaryBrokerDown()
+                retryConnection(cleanCode, connectionId)
+            }
+        }
+
+        // Periodic Presence Heartbeat & Cloud Room Reconciliation (Every 2.5s)
+        heartbeatJob = scope.launch(Dispatchers.IO) {
+            while (isActive) {
+                delay(2500L)
+                if (!AppLifecycleObserver.isAppInForeground.value || activePeerSeed != 0L) {
+                    continue
+                }
+                val p = localPlayer ?: continue
+                val code = currentRoomCode ?: continue
+
+                // Check MQTT connection & subscription health
+                val client = mqttClient
+                if (client != null) {
+                    if (!client.isConnected) {
+                        retryConnection(code, roomConnectionId)
+                    } else if (!isSubscribed) {
+                        subscribeToRoom(code)
+                    }
+                }
+
+                // 1. MQTT Fast Heartbeat
+                if (!is1v1MatchActive) requestLobbyCompatibility()
+                broadcastPacket(
+                    RoomMessagePacket(
+                        type = "HEARTBEAT",
+                        playerId = p.id,
+                        displayName = p.displayName,
+                        username = p.username,
+                        isHost = p.isHost,
+                        avatarUrl = p.avatarUrl,
+                        gamesPlayed = p.gamesPlayed,
+                        gamesWon = p.gamesWon,
+                        currentStreak = p.currentStreak,
+                        level = p.level,
+                        timestamp = System.currentTimeMillis(),
+                        readyStatus = p.lobbyReadyStatus,
+                        readyVersion = p.readyVersion
+                    )
+                )
+                playerRegistry[p.id] = p.copy(lastSeenTimestamp = System.currentTimeMillis())
+
+                // A host-owned lease keeps an open waiting lobby fresh. Discovery and roster
+                // updates are subscription driven; no periodic read/rejoin polling occurs.
+                if (p.isHost && System.currentTimeMillis() - lastLeasePublication > 60_000L) {
+                    lastLeasePublication = System.currentTimeMillis()
+                    scope.launch { OnlineRoomRegistry.heartbeatRoom(code) }
+                }
+            }
+        }
+
+        // Periodic Ping loop (Every 1.0s to measure real-time latency)
+        pingJob = scope.launch(Dispatchers.IO) {
+            while (isActive) {
+                if (AppLifecycleObserver.isAppInForeground.value) {
+                    localPlayer?.let { p ->
+                        broadcastPacket(
+                            RoomMessagePacket(
+                                type = "PING",
+                                playerId = p.id,
+                                pingTimestamp = System.currentTimeMillis()
+                            )
+                        )
+                    }
+                }
+                delay(1000L)
+            }
+        }
+
+        // Liveness Checker (Updates Online vs Last seen display every 1.5s)
+        livenessJob = scope.launch(Dispatchers.IO) {
+            while (isActive) {
+                delay(1500L)
+                _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+            }
+        }
+    }
+
+    private fun subscribeToRoom(roomCode: String) {
+        val client = mqttClient ?: return
+        try {
+            if (client.isConnected) {
+                val clean = roomCode.trim().uppercase()
+                client.subscribe(arrayOf(getTopic(clean), "bingo/emqx7/room/$clean/availability/#", "bingo/emqx7/metadata/$clean/state"),
+                    intArrayOf(1, 1, 1)).also { token ->
+                        token.waitForCompletion(2000L)
+                        if (token.grantedQos?.any { it == 128 } == true) throw java.io.IOException("Room subscription rejected")
+                    }
+                isSubscribed = true
+                lastBrokerReceiveEchoAt = android.os.SystemClock.elapsedRealtime()
+            }
+        } catch (_: Exception) {
+            isSubscribed = false
+        }
+    }
+
+    private fun sendJoinPacket() {
+        val p = localPlayer ?: return
+        broadcastPacket(
+            RoomMessagePacket(
+                type = "JOIN", connectionGeneration = roomConnectionId,
+                presenceStatus = if (AppLifecycleObserver.isAppInForeground.value) "ONLINE" else "AWAY",
+                playerId = p.id,
+                displayName = p.displayName,
+                username = p.username,
+                isHost = p.isHost,
+                avatarUrl = p.avatarUrl,
+                gamesPlayed = p.gamesPlayed,
+                gamesWon = p.gamesWon,
+                currentStreak = p.currentStreak,
+                level = p.level,
+                timestamp = System.currentTimeMillis(),
+                readyStatus = p.lobbyReadyStatus,
+                readyVersion = p.readyVersion
+            )
+        )
+        broadcastPacket(RoomMessagePacket(type = "PLAYER_PRESENCE", playerId = p.id, senderPlayerId = p.id,
+            displayName = p.displayName, presenceStatus = if (AppLifecycleObserver.isAppInForeground.value) "ONLINE" else "AWAY",
+            readyStatus = if (AppLifecycleObserver.isAppInForeground.value) "ONLINE" else "AWAY",
+            connectionGeneration = roomConnectionId, roomCode = currentRoomCode.orEmpty()))
+    }
+
+    private var reliableStateTopic: String? = null
+    private val verifiedReliableTopics = ConcurrentHashMap.newKeySet<String>()
+    private val reliableRetainedChecks = ConcurrentHashMap<String, Pair<com.bingo.multiplayer.domain.engine.ReliableMatchSnapshot, CompletableDeferred<Boolean>>>()
+
+    /** Confirmed retained transport used only by the version-2 controller. No HTTP per move. */
+    suspend fun reliableSubscribe(seed: Long): Boolean = withContext(Dispatchers.IO) {
+        val code = currentRoomCode ?: return@withContext false
+        val client = mqttClient ?: return@withContext false
+        try {
+            if (!client.isConnected || !isSubscribed) return@withContext false
+            val topic = "bingo/emqx7/reliable/$code/$seed/state"
+            reliableStateTopic?.takeIf { it != topic }?.let { client.unsubscribe(it).waitForCompletion(3000) }
+            client.subscribe(topic, 1).waitForCompletion(3000)
+            reliableStateTopic = topic
+            true
+        } catch (_: Exception) { false }
+    }
+
+    suspend fun reliablePublish(packet: RoomMessagePacket, retained: Boolean = false, stateTopic: Boolean = false): Boolean = withContext(Dispatchers.IO) {
+        val code = currentRoomCode ?: return@withContext false
+        val client = mqttClient ?: return@withContext false
+        try {
+            if (!client.isConnected || !isSubscribed) return@withContext false
+            val message = MqttMessage(json.encodeToString(tagClock(packet).copy(senderInstanceId = instanceId)).toByteArray(StandardCharsets.UTF_8)).apply {
+                qos = 1
+                isRetained = retained
+            }
+            val topic = if (stateTopic) "bingo/emqx7/reliable/$code/${packet.seed}/state" else getTopic(code)
+            client.publish(topic, message).waitForCompletion(3000)
+            if (retained && stateTopic && (topic !in verifiedReliableTopics || packet.reliableSnapshot?.final != null)) {
+                val expected = packet.reliableSnapshot ?: return@withContext false
+                val received = CompletableDeferred<Boolean>()
+                reliableRetainedChecks[topic] = expected to received
+                try {
+                    // A live self echo/PUBACK alone does not prove the broker retained the record.
+                    // Resubscription must return the exact snapshot with the MQTT RETAIN flag.
+                    client.subscribe(topic, 1).waitForCompletion(3000)
+                    withTimeout(3000) { received.await() }
+                    verifiedReliableTopics.add(topic)
+                } finally { reliableRetainedChecks.remove(topic) }
+            }
+            true
+        } catch (_: Exception) { false }
+    }
+
+    /**
+     * Publishes a message packet with optimized QoS routing:
+     * High-speed moves (PICK_NUMBER, PING, PONG) use QoS 0 for instant, zero-ACK delivery.
+     * Room control packets (START_GAME, PLAY_AGAIN, ROOM_STATE, SURRENDER, LEAVE) use QoS 1 for guaranteed delivery.
+     */
+    fun broadcastPacket(packet: RoomMessagePacket) {
+        val code = currentRoomCode ?: return
+        val generation = roomConnectionId
+        val scopedPacket = tagClock(packet).copy(roomCode = packet.roomCode.ifBlank { code },
+            lobbySessionId = packet.lobbySessionId.ifBlank { currentLobbySessionId })
+
+        scope.launch(Dispatchers.IO) {
+            try {
+                if (roomConnectionId != generation || currentRoomCode != code) return@launch
+                var retryCount = 0
+                var client = mqttClient
+                val maxRetries = if (packet.type in setOf("MATCH_HEARTBEAT", "MULTIPLAYER_PRESENCE_REQUEST", "MULTIPLAYER_PRESENCE_RESPONSE")) 0 else if (packet.type == "PICK_NUMBER" || packet.type == "PING" || packet.type == "PONG") 5 else 30
+                while ((client == null || !client.isConnected) && retryCount < maxRetries) {
+                    delay(100L)
+                    retryCount++
+                    client = mqttClient
+                }
+                if (client != null && client.isConnected && roomConnectionId == generation && currentRoomCode == code) {
+                    val outgoing = scopedPacket.copy(senderInstanceId = packet.senderInstanceId.ifBlank { instanceId },
+                        connectionGeneration = packet.connectionGeneration.ifBlank { generation },
+                        reliablePolicyVersion = com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.VERSION,
+                        hostWaitVersion = 1,
+                        protocolVersion = if (packet.type in setOf("START_GAME", "PLAY_AGAIN") && packet.players.size == 2) 2 else packet.protocolVersion)
+                    val payload = FastPacketCodec.encode(outgoing)
+                    val qosLevel = when (packet.type) {
+                        "PING", "PONG", "MATCH_HEARTBEAT", "MULTIPLAYER_PRESENCE_REQUEST", "MULTIPLAYER_PRESENCE_RESPONSE" -> 0 // Instant line-rate flight, zero ACK wait, non-retained, disposable
+                        "PICK_NUMBER", "TURN_TIMEOUT", "GAME_SYNC", "START_GAME", "PLAY_AGAIN", "ROOM_STATE", "SURRENDER", "LEAVE" -> 1 // Guaranteed delivery
+                        else -> 1 // Guaranteed delivery for room control & state (START_GAME, PLAY_AGAIN, BOARD_READY, ROOM_STATE, etc.)
+                    }
+                    val message = MqttMessage(payload.toByteArray(StandardCharsets.UTF_8)).apply {
+                        qos = qosLevel
+                    }
+                    if (activePeerSeed == packet.seed && packet.simplifiedRulesVersion > 0 &&
+                        packet.type in setOf("PICK_NUMBER", "TURN_TIMEOUT")) {
+                        // Each command has its own durable receipt. Live peers, including the
+                        // publisher, consume the same broker stream; recovery can replay a pick
+                        // even if every process dies before the next complete snapshot.
+                        val origin = outgoing.senderPlayerId.ifBlank { outgoing.playerId }
+                        val commandTopic = "${PeerMatchRecovery.topic(code, packet.seed)}/command/${outgoing.closedTurnNumber}/$origin/${outgoing.type}"
+                        message.isRetained = true
+                        println("DEBUG: publishing retained to commandTopic=$commandTopic")
+                        client.publish(commandTopic, message).waitForCompletion(3000L)
+                    } else {
+                        println("DEBUG: publishing non-retained to getTopic(code)=${getTopic(code)} (activePeerSeed=$activePeerSeed, packet.seed=${packet.seed}, simplifiedRulesVersion=${packet.simplifiedRulesVersion})")
+                        client.publish(getTopic(code), message)
+                    }
+                    if (packet.type == "PLAYER_PRESENCE") {
+                        client.publish("bingo/emqx7/room/$code/availability/${packet.playerId}",
+                            MqttMessage(payload.toByteArray(StandardCharsets.UTF_8)).apply { qos = 1; isRetained = true })
+                    }
+                }
+            } catch (_: Exception) { }
+        }
+    }
+
+    /**
+     * Publishes a message immediately and awaits confirmation/acknowledgment.
+     * Guaranteed delivery for permanent departures (SURRENDER, HOST_LEFT).
+     */
+    suspend fun sendImmediateAndAcknowledge(packet: RoomMessagePacket, timeoutMs: Long = 800L): Boolean = withContext(Dispatchers.IO) {
+        val code = currentRoomCode ?: return@withContext false
+        val generation = roomConnectionId
+        val scopedPacket = tagClock(packet).copy(roomCode = packet.roomCode.ifBlank { code },
+            lobbySessionId = packet.lobbySessionId.ifBlank { currentLobbySessionId })
+        try {
+            val client = mqttClient ?: return@withContext false
+            if (!client.isConnected || roomConnectionId != generation || currentRoomCode != code) return@withContext false
+            val outgoing = scopedPacket.copy(
+                senderInstanceId = packet.senderInstanceId.ifBlank { instanceId },
+                reliablePolicyVersion = com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.VERSION,
+                hostWaitVersion = 1,
+                protocolVersion = if (packet.type in setOf("START_GAME", "PLAY_AGAIN") && packet.players.size == 2) 2 else packet.protocolVersion
+            )
+            val payload = FastPacketCodec.encode(outgoing)
+            val message = MqttMessage(payload.toByteArray(StandardCharsets.UTF_8)).apply {
+                qos = 1
+                if (packet.isMatchFinished || packet.winnerPlayerId.isNotBlank()) {
+                    isRetained = true
+                }
+            }
+            val token = client.publish(getTopic(code), message)
+            token?.waitForCompletion(timeoutMs)
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Periodic and on-demand cloud state reconciliation:
+     * Guarantees 100% reliable discovery of joined players and host presence
+     * even if MQTT packets are delayed or dropped on cellular networks.
+     */
+    private suspend fun reconcileWithCloud(code: String, localP: Player) {
+        val generation = roomConnectionId
+        try {
+            val cloudSession = roomRegistry.sync(code, localP, playerRegistry.values.toList(), kickedPlayerIds) ?: return
+            if (currentRoomCode != code || roomConnectionId != generation || activePeerSeed != 0L) return
+            if (cloudSession.hostId.isNotBlank()) {
+                currentHostId = cloudSession.hostId
+            }
+            val now = System.currentTimeMillis()
+            var hasNewPlayer = false
+
+            cloudSession.players.forEach { p ->
+                val pCleanUser = p.username.trim().lowercase().removePrefix("@")
+                val pCleanDisplay = p.displayName.trim().lowercase()
+                if (p.id.isNotBlank() && p.id !in kickedPlayerIds && pCleanUser !in kickedPlayerIds && pCleanDisplay !in kickedPlayerIds) {
+                    val isLocal = (p.id == localP.id) ||
+                        (localP.username.isNotBlank() && p.username.equals(localP.username, ignoreCase = true))
+
+                    val existingAliasKey = if (!isLocal && !p.id.startsWith("u_")) {
+                        playerRegistry.entries.firstOrNull { (k, v) ->
+                            k.startsWith("u_") && (
+                                (pCleanUser.isNotBlank() && v.username.trim().lowercase().removePrefix("@") == pCleanUser) ||
+                                k.trim().lowercase().removePrefix("u_") == p.id.trim().lowercase().removePrefix("u_")
+                            )
+                        }?.key
+                    } else null
+                    if (existingAliasKey != null) {
+                        playerRegistry.remove(existingAliasKey)
+                    }
+
+                    val existing = if (isLocal) (playerRegistry[localP.id] ?: playerRegistry[p.id]) else (playerRegistry[p.id] ?: existingAliasKey?.let { playerRegistry[it] })
+
+                    if (existing == null && !isLocal) {
+                        hasNewPlayer = true
+                    }
+
+                    val isPlayerActuallyHost = when {
+                        cloudSession.hostId.isNotBlank() -> p.id == cloudSession.hostId
+                        cloudSession.hostUsername.isNotBlank() -> p.username.equals(cloudSession.hostUsername, ignoreCase = true)
+                        currentHostId != null -> p.id == currentHostId
+                        else -> p.isHost
+                    }
+
+                    if (isLocal && isPlayerActuallyHost && localPlayer?.isHost != true) {
+                        localPlayer = localP.copy(isHost = true)
+                    }
+
+                    val effAvatar = when {
+                        isLocal -> localP.avatarUrl?.takeIf { it.isNotBlank() } ?: p.avatarUrl ?: existing?.avatarUrl
+                        !p.avatarUrl.isNullOrBlank() -> p.avatarUrl
+                        else -> existing?.avatarUrl
+                    }
+                    val effUsername = when {
+                        isLocal -> localP.username.takeIf { it.isNotBlank() } ?: p.username.ifBlank { existing?.username ?: "" }
+                        p.username.isNotBlank() -> p.username
+                        else -> existing?.username ?: ""
+                    }
+                    val effDisplay = when {
+                        isLocal -> localP.displayName.takeIf { it.isNotBlank() } ?: p.displayName.ifBlank { existing?.displayName ?: "Player" }
+                        p.displayName.isNotBlank() -> p.displayName
+                        else -> existing?.displayName ?: "Player"
+                    }
+
+                    // If player is host and room heartbeat is alive (< 5 mins), record host liveness
+                    val isHostAlive = (isPlayerActuallyHost && (now - cloudSession.lastHeartbeat) < 300_000L)
+                    val effectiveLastSeen = when {
+                        isLocal -> now
+                        isHostAlive -> maxOf(existing?.lastSeenTimestamp ?: 0L, cloudSession.lastHeartbeat)
+                        existing != null -> maxOf(existing.lastSeenTimestamp, p.lastSeenTimestamp)
+                        else -> p.lastSeenTimestamp
+                    }
+
+                    // Prevent status toggling / clobbering via isolated LobbyLifecycleEngine:
+                    val isLiveMqttPeer = existing != null && (now - existing.lastSeenTimestamp) < 15_000L && existing.readyVersion >= p.readyVersion
+                    val (effReady, effVer) = when {
+                        isLocal -> Pair(localP.lobbyReadyStatus, localP.readyVersion)
+                        isLiveMqttPeer -> Pair(existing!!.lobbyReadyStatus, existing.readyVersion)
+                        else -> LobbyLifecycleEngine.reconcileReadyStatus(
+                            currentStatus = existing?.lobbyReadyStatus ?: LobbyLifecycleEngine.STATUS_NOT_READY,
+                            currentVersion = existing?.readyVersion ?: 0L,
+                            incomingStatus = p.lobbyReadyStatus,
+                            incomingVersion = p.readyVersion
+                        )
+                    }
+
+                    val targetId = if (isLocal) localP.id else p.id
+                    if (isLocal && p.id != localP.id) {
+                        playerRegistry.remove(p.id)
+                    }
+
+                    playerRegistry[targetId] = p.copy(
+                        id = targetId,
+                        isHost = isPlayerActuallyHost,
+                        displayName = effDisplay,
+                        username = effUsername,
+                        avatarUrl = effAvatar,
+                        lastSeenTimestamp = effectiveLastSeen,
+                        lobbyReadyStatus = effReady,
+                        readyVersion = effVer
+                    )
+                }
+            }
+
+            _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+
+            // If host discovers a new player via cloud, broadcast ROOM_STATE over MQTT so joiner is also immediately updated
+            if (localP.isHost && hasNewPlayer) {
+                broadcastPacket(
+                    RoomMessagePacket(
+                        type = "ROOM_STATE",
+                        playerId = localP.id,
+                        displayName = localP.displayName,
+                        username = localP.username,
+                        isHost = true,
+                        avatarUrl = localP.avatarUrl,
+                        gamesPlayed = localP.gamesPlayed,
+                        gamesWon = localP.gamesWon,
+                        currentStreak = localP.currentStreak,
+                        level = localP.level,
+                        players = playerRegistry.values.toList(),
+                        timestamp = System.currentTimeMillis()
+                    )
+                )
+            }
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * Called when app transitions from background to foreground during an active room/match.
+     * Immediately reconnects MQTT if dropped, resubscribes, sends fresh heartbeat and refreshes state.
+     */
+    fun onForegroundResume() {
+        val code = currentRoomCode ?: return
+        val p = localPlayer ?: return
+        if (activePeerSeed != 0L) {
+            if (mqttClient?.isConnected == true) bindPeerMatch(activePeerSeed)
+            else retryConnection(code, roomConnectionId, immediate = true)
+            return
+        }
+        scope.launch(Dispatchers.IO) {
+            val client = mqttClient
+            if (client != null) {
+                if (!client.isConnected) {
+                    retryConnection(code, roomConnectionId, immediate = true)
+                }
+                if (!isSubscribed) {
+                    subscribeToRoom(code)
+                }
+            }
+            // Send fast presence heartbeat immediately
+            broadcastPacket(
+                RoomMessagePacket(
+                    type = "HEARTBEAT",
+                    playerId = p.id,
+                    displayName = p.displayName,
+                    username = p.username,
+                    isHost = p.isHost,
+                    avatarUrl = p.avatarUrl,
+                    timestamp = System.currentTimeMillis()
+                )
+            )
+            refreshNow()
+        }
+    }
+
+    /**
+     * Manual refresh button action: rebroadcasts presence and updates UI state.
+     */
+    suspend fun refreshNow() {
+        val code = currentRoomCode ?: return
+        val localP = localPlayer ?: return
+        _isRefreshing.value = true
+
+        withContext(Dispatchers.IO) {
+            val client = mqttClient
+            if (client != null) {
+                if (!client.isConnected) {
+                    retryConnection(code, roomConnectionId, immediate = true)
+                }
+                if (!isSubscribed) {
+                    subscribeToRoom(code)
+                }
+            }
+            reconcileWithCloud(code, localP)
+
+            if (localP.isHost) {
+                broadcastPacket(
+                    RoomMessagePacket(
+                        type = "ROOM_STATE",
+                        playerId = localP.id,
+                        displayName = localP.displayName,
+                        username = localP.username,
+                        isHost = true,
+                        avatarUrl = localP.avatarUrl,
+                        gamesPlayed = localP.gamesPlayed,
+                        gamesWon = localP.gamesWon,
+                        currentStreak = localP.currentStreak,
+                        level = localP.level,
+                        players = playerRegistry.values.toList(),
+                        timestamp = System.currentTimeMillis()
+                    )
+                )
+            } else {
+                sendJoinPacket()
+            }
+            delay(200L)
+            _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+            _isRefreshing.value = false
+        }
+    }
+
+    /** Shared retained metadata ingress used by the actual MQTT callback and cold-recovery tests. */
+    internal suspend fun handleMetadataSession(session: OnlineRoomSession, code: String, retained: Boolean,
+        expectedGeneration: String = roomConnectionId) {
+        if (currentRoomCode != code || roomConnectionId != expectedGeneration) return
+        if (session.status == "CLOSED" || session.isTerminalClosed) {
+            val isLocalHost = localPlayer?.isHost == true || localPlayer?.id == session.hostId || localPlayer?.id == currentHostId
+            if (isLocalHost) return
+            val canonical = RoomMetadataApi.read(code).getOrNull() ?: return
+            if (currentRoomCode != code || roomConnectionId != expectedGeneration ||
+                (currentLobbySessionId.isNotBlank() && session.sessionId != currentLobbySessionId)) return
+            if (canonical.sessionId == session.sessionId && (canonical.status == "CLOSED" || canonical.isTerminalClosed)) {
+                lobbyMetadataClosed = true
+                if (activePeerSeed == 0L) _incomingPackets.tryEmit(RoomMessagePacket("LOBBY_EXPIRED", roomCode = code,
+                    playerId = session.hostId, senderPlayerId = session.hostId))
+            }
+            return
+        }
+        val canonical = RoomMetadataApi.read(code).getOrNull() ?: return
+        if (currentRoomCode != code || roomConnectionId != expectedGeneration ||
+            (currentLobbySessionId.isNotBlank() && session.sessionId != currentLobbySessionId)) return
+        if (canonical.sessionId != session.sessionId || canonical.revision < session.revision) return
+        if (!applyRoomMetadata(canonical, code)) return
+        if (!retained || canonical.status != "PLAYING" || canonical.currentSeed == 0L || localPlayer?.isHost == true ||
+            activePeerSeed == canonical.currentSeed || lastEmittedMetaSeed == canonical.currentSeed || isSeedCompleted(canonical.currentSeed)) return
+        lastEmittedMetaSeed = canonical.currentSeed
+        handleIncomingPacket(validateAndBuildStartPacket(canonical))
+    }
+
+    internal fun applyRoomMetadata(session: OnlineRoomSession, code: String): Boolean {
+        if (session.roomCode != code || session.metadataProtocolVersion != 7 || session.sessionId.isBlank() ||
+            (session.sessionId == currentLobbySessionId && session.revision < latestMetadataRevision) || lobbyMetadataClosed) return false
+        val isDirectSuccession = currentHostId.orEmpty().isNotBlank() &&
+            session.hostId != currentHostId &&
+            session.players.any { it.id == session.hostId } &&
+            !session.players.any { it.id == currentHostId } &&
+            playerRegistry[session.hostId]?.isHost == true
+        val isPromotedTransition = predecessorHostId != null &&
+            session.hostId == currentHostId &&
+            isPromotedSuccessor(session, predecessorHostId!!)
+        val isAuthorizedSuccession = isDirectSuccession || isPromotedTransition
+        val isHostChanging = currentHostId.orEmpty().isNotBlank() && session.hostId != currentHostId
+        if (isHostChanging) {
+            if (!isAuthorizedSuccession) return false
+            currentHostId = session.hostId
+            if (isPromotedTransition) predecessorHostId = null
+        } else if (currentHostId.isNullOrBlank()) {
+            currentHostId = session.hostId
+        }
+        if (currentLobbySessionId.isNotBlank() && session.sessionId != currentLobbySessionId) {
+            // A six-character code collision cannot merge two independently created lobbies.
+            // Close this local waiting view; never overwrite or close the foreign record.
+            if (activePeerSeed == 0L) {
+                lobbyMetadataClosed = true
+                _incomingPackets.tryEmit(RoomMessagePacket("LOBBY_EXPIRED", roomCode = code,
+                    playerId = currentHostId.orEmpty(), senderPlayerId = currentHostId.orEmpty(), lobbySessionId = currentLobbySessionId))
+            }
+            return false
+        }
+        currentLobbySessionId = session.sessionId
+        if (session.publisherKey != null) {
+            boundPublisherKey = session.publisherKey
+        }
+        latestMetadataRevision = session.revision
+        OnlineRoomRegistry.rememberCanonicalRoom(session)
+        if (session.status == "CLOSED" || session.isTerminalClosed) {
+            return false
+        }
+        if (activePeerSeed == 0L) {
+            currentHostId = session.hostId
+            val ids = session.players.map { it.id }.toSet()
+            playerRegistry.keys.retainAll(ids)
+            session.players.forEach { p ->
+                val old = playerRegistry[p.id]
+                val ready = LobbyLifecycleEngine.reconcileReadyStatus(old?.lobbyReadyStatus.orEmpty(), old?.readyVersion ?: 0L,
+                    p.lobbyReadyStatus, p.readyVersion)
+                playerRegistry[p.id] = p.copy(avatarUrl = old?.avatarUrl ?: p.avatarUrl,
+                    isHost = p.id == session.hostId, lobbyReadyStatus = ready.first, readyVersion = ready.second,
+                    lastSeenTimestamp = maxOf(old?.lastSeenTimestamp ?: 0L, p.lastSeenTimestamp))
+            }
+            _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+        }
+        return true
+    }
+
+    internal fun handleIncomingPacket(packet: RoomMessagePacket) {
+        if (packet.roomCode.isNotBlank() && packet.roomCode != currentRoomCode) return
+        if (activePeerSeed == 0L && currentLobbySessionId.isNotBlank() && packet.lobbySessionId.isNotBlank() &&
+            packet.type !in setOf("PING", "PONG") && packet.lobbySessionId != currentLobbySessionId) return
+        if (roomRegistry === CloudRoomRegistryGateway && packet.type in setOf("HEARTBEAT", "READY_STATUS") &&
+            activePeerSeed == 0L) {
+            val session = currentRoomCode?.let { OnlineRoomRegistry.getRoomCachedOnly(it) }
+            val inSession = session?.players?.any { it.id == packet.playerId } == true
+            val inRegistry = playerRegistry.containsKey(packet.playerId)
+            if ((!inSession && !inRegistry) || MultiplayerGameplayReducer.sender(packet) != packet.playerId) return
+        }
+        if (packet.type in setOf("LOBBY_CAPS_REQUEST", "LOBBY_CAPS_RESPONSE")) {
+            val code = currentRoomCode ?: return
+            val me = localPlayer ?: return
+            if (packet.roomCode != code || packet.playerId.isBlank() || packet.playerId == me.id ||
+                packet.senderInstanceId.isBlank() || packet.senderInstanceId == instanceId ||
+                (packet.targetPlayerId.isNotBlank() && packet.targetPlayerId != me.id)) return
+            if (packet.type == "LOBBY_CAPS_REQUEST") {
+                if (packet.requestId.isBlank() || packet.connectionGeneration.isBlank()) return
+                broadcastPacket(RoomMessagePacket(type = "LOBBY_CAPS_RESPONSE", playerId = me.id,
+                    targetPlayerId = packet.playerId, roomCode = code, requestId = packet.requestId,
+                    connectionGeneration = packet.connectionGeneration, protocolVersion = 2,
+                    reliablePolicyVersion = com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.VERSION,
+                    hostWaitVersion = 1))
+            } else {
+                val expected = lobbyChallenges[packet.requestId] ?: return
+                if (expected.room != code || expected.generation != roomConnectionId || expected.uid != me.id ||
+                    packet.targetPlayerId != me.id || packet.connectionGeneration != expected.generation ||
+                    System.nanoTime() - expected.createdAt > 5_000_000_000L) return
+                if (packet.reliablePolicyVersion == com.bingo.multiplayer.domain.engine.ReliablePolicyAgreement.VERSION &&
+                    (packet.protocolVersion != 2 || packet.hostWaitVersion != 1)) return
+                verifiedLobbyPeers.compute(packet.playerId) { _, previous ->
+                    if (previous != null && previous.probeAt > expected.createdAt) previous
+                    else VerifiedLobbyPeer(packet.reliablePolicyVersion, expected.createdAt)
+                }
+                // One broadcast probe can receive a response from each lobby participant.
+            }
+            return
+        }
+        // Advertisements can be delayed across reconnects. Only a response to our
+        // current room/connection nonce is proof of the peer's current capabilities.
+        if (packet.type.startsWith("MATCH_V2_")) {
+            _incomingPackets.tryEmit(packet)
+            return
+        }
+        if (packet.senderInstanceId.isNotBlank() && packet.senderInstanceId == instanceId &&
+            packet.type !in setOf("PING", "PICK_NUMBER", "TURN_TIMEOUT", "GAME_PAUSED", "GAME_RESUMED", "PAUSE_EXTEND")) {
+            return
+        }
+
+        val pCleanUser = packet.username.trim().lowercase().removePrefix("@")
+        val isSenderKicked = packet.playerId in kickedPlayerIds ||
+                (pCleanUser.isNotBlank() && pCleanUser in kickedPlayerIds)
+
+        if (isSenderKicked) {
+            if (localPlayer?.isHost == true) {
+                broadcastPacket(
+                    RoomMessagePacket(
+                        type = "KICK_PLAYER",
+                        targetPlayerId = packet.playerId,
+                        playerId = localPlayer?.id ?: ""
+                    )
+                )
+            }
+            return
+        }
+
+        // Live Heartbeat/Packet Touch: Any incoming packet confirms player is actively communicating and broker connection is healthy
+        lastBrokerReceiveEchoAt = android.os.SystemClock.elapsedRealtime()
+        val isDepartOrTimeout = packet.type in listOf("TURN_TIMEOUT", "LEAVE", "HOST_LEFT", "SURRENDER", "KICK_PLAYER")
+        if (!isDepartOrTimeout && packet.playerId.isNotBlank() && packet.playerId != localPlayer?.id) {
+            val now = System.currentTimeMillis()
+            recordDirectHeartbeat(packet.playerId, packet.username)
+            val clean = packet.playerId.trim().lowercase().removePrefix("u_")
+            val pCleanU = packet.username.trim().lowercase().removePrefix("@")
+            playerRegistry.entries.forEach { (k, v) ->
+                val cleanK = k.trim().lowercase().removePrefix("u_")
+                val cleanUser = v.username.trim().lowercase().removePrefix("@")
+                if (k == packet.playerId || cleanK == clean || (pCleanU.isNotBlank() && (cleanUser == pCleanU || cleanK == pCleanU))) {
+                    playerRegistry[k] = v.copy(lastSeenTimestamp = now)
+                }
+            }
+        }
+
+        when (packet.type) {
+            "START_GAME", "PLAY_AGAIN" -> {
+                if (packet.seed != 0L) {
+                    recordStartedSeed(packet.seed)
+                }
+                if (isSeedCompleted(packet.seed)) {
+                    return
+                }
+            }
+
+            "ROOM_STATE" -> {
+                val actor = packet.playerId
+                val sender = packet.senderPlayerId.ifBlank { packet.playerId }
+                // NR-08: Only verified host can broadcast ROOM_STATE.
+                // Reject unauthorized ROOM_STATE if known host is set and sender or actor is not host.
+                if (currentHostId != null) {
+                    if (actor != currentHostId || (packet.senderPlayerId.isNotBlank() && packet.senderPlayerId != currentHostId)) {
+                        Log.w(TAG, "Ignoring ROOM_STATE from unauthorized actor/sender: actor=$actor, sender=$sender, expected host: $currentHostId")
+                        return
+                    }
+                }
+
+                packet.players.forEach { p ->
+                    val pcUser = p.username.trim().lowercase().removePrefix("@")
+                    val pcDisplay = p.displayName.trim().lowercase()
+                    if (p.id.isNotBlank() && p.id !in kickedPlayerIds && pcUser !in kickedPlayerIds && pcDisplay !in kickedPlayerIds) {
+                        val existing = playerRegistry[p.id]
+                        val isLocal = p.id == localPlayer?.id
+                        val effAvatar = when {
+                            isLocal -> localPlayer?.avatarUrl?.takeIf { it.isNotBlank() } ?: p.avatarUrl ?: existing?.avatarUrl
+                            !p.avatarUrl.isNullOrBlank() -> p.avatarUrl
+                            else -> existing?.avatarUrl
+                        }
+                        val effUsername = when {
+                            isLocal -> localPlayer?.username?.takeIf { it.isNotBlank() } ?: p.username.ifBlank { existing?.username ?: "" }
+                            p.username.isNotBlank() -> p.username
+                            else -> existing?.username ?: ""
+                        }
+                        val effDisplay = when {
+                            isLocal -> localPlayer?.displayName?.takeIf { it.isNotBlank() } ?: p.displayName.ifBlank { existing?.displayName ?: "Player" }
+                            p.displayName.isNotBlank() -> p.displayName
+                            else -> existing?.displayName ?: "Player"
+                        }
+                        val effReady = when {
+                            isLocal -> localPlayer?.lobbyReadyStatus ?: p.lobbyReadyStatus
+                            p.lobbyReadyStatus.isNotBlank() && p.readyVersion >= (existing?.readyVersion ?: 0L) -> p.lobbyReadyStatus
+                            existing?.lobbyReadyStatus != null -> existing.lobbyReadyStatus
+                            p.lobbyReadyStatus.isNotBlank() -> p.lobbyReadyStatus
+                            p.isHost -> "READY"
+                            else -> "NOT_READY"
+                        }
+                        val effVersion = if (isLocal) (localPlayer?.readyVersion ?: 0L) else maxOf(p.readyVersion, existing?.readyVersion ?: 0L)
+                        val effIsHost = if (currentHostId != null) (p.id == currentHostId) else p.isHost
+                        if (!effAvatar.isNullOrBlank() && effAvatar != existing?.avatarUrl && !isLocal) {
+                            com.bingo.multiplayer.presentation.common.PlayerAvatarCache.evict(p.username)
+                            val bmp = com.bingo.multiplayer.presentation.common.decodeAvatarBitmap(effAvatar, null)
+                            if (bmp != null) {
+                                com.bingo.multiplayer.presentation.common.PlayerAvatarCache.put("u:${p.username.trim().lowercase().removePrefix("@")}", bmp.asImageBitmap())
+                            }
+                            com.bingo.multiplayer.presentation.common.PlayerAvatarCache.notifyAvatarChanged(p.username)
+                        }
+                        playerRegistry[p.id] = p.copy(
+                            displayName = effDisplay,
+                            username = effUsername,
+                            avatarUrl = effAvatar,
+                            lastSeenTimestamp = System.currentTimeMillis(),
+                            lobbyReadyStatus = effReady,
+                            readyVersion = effVersion,
+                            isHost = effIsHost
+                        )
+                    }
+                }
+                _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+            }
+
+            "JOIN", "HEARTBEAT" -> {
+                if (packet.playerId.isNotEmpty()) {
+                    val clean = packet.playerId.trim().lowercase().removePrefix("u_")
+                    val pCleanU = packet.username.trim().lowercase().removePrefix("@")
+                    val existingKey = if (playerRegistry.containsKey(packet.playerId)) {
+                        packet.playerId
+                    } else {
+                        playerRegistry.entries.firstOrNull { (k, v) ->
+                            val cleanK = k.trim().lowercase().removePrefix("u_")
+                            val cleanUser = v.username.trim().lowercase().removePrefix("@")
+                            cleanK == clean || (pCleanU.isNotBlank() && (cleanUser == pCleanU || cleanK == pCleanU))
+                        }?.key ?: packet.playerId
+                    }
+                    val existing = playerRegistry[existingKey]
+
+                    if (!packet.avatarUrl.isNullOrBlank() && packet.avatarUrl != existing?.avatarUrl && packet.playerId != localPlayer?.id) {
+                        com.bingo.multiplayer.presentation.common.PlayerAvatarCache.evict(packet.username)
+                        val bmp = com.bingo.multiplayer.presentation.common.decodeAvatarBitmap(packet.avatarUrl, null)
+                        if (bmp != null) {
+                            com.bingo.multiplayer.presentation.common.PlayerAvatarCache.put("u:${packet.username.trim().lowercase().removePrefix("@")}", bmp.asImageBitmap())
+                        }
+                        com.bingo.multiplayer.presentation.common.PlayerAvatarCache.notifyAvatarChanged(packet.username)
+                    }
+
+                    val updated = LobbyLifecycleEngine.onRemotePlayerJoinOrHeartbeat(packet, existing, currentHostId)
+                    if (existingKey != packet.playerId) {
+                        playerRegistry.remove(existingKey)
+                    }
+                    playerRegistry[packet.playerId] = updated
+                    _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+
+                    // If Host receives a JOIN packet, Host immediately updates cloud registry and replies with a ROOM_STATE containing all players!
+                    if (packet.type == "JOIN" && localPlayer?.isHost == true && packet.playerId != localPlayer?.id) {
+                        val code = currentRoomCode
+                        if (code != null) {
+                            scope.launch(Dispatchers.IO) {
+                                roomRegistry.ready(code, packet.playerId, updated.lobbyReadyStatus, updated.readyVersion)
+                            }
+                        }
+                        localPlayer?.let { h ->
+                            broadcastPacket(
+                                RoomMessagePacket(
+                                    type = "ROOM_STATE",
+                                    playerId = h.id,
+                                    displayName = h.displayName,
+                                    username = h.username,
+                                    isHost = true,
+                                    avatarUrl = h.avatarUrl,
+                                    gamesPlayed = h.gamesPlayed,
+                                    gamesWon = h.gamesWon,
+                                    currentStreak = h.currentStreak,
+                                    level = h.level,
+                                    players = playerRegistry.values.toList(),
+                                    timestamp = System.currentTimeMillis()
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+
+            "READY_STATUS" -> {
+                if (packet.playerId.isNotEmpty()) {
+                    val clean = packet.playerId.trim().lowercase().removePrefix("u_")
+                    val pCleanU = packet.username.trim().lowercase().removePrefix("@")
+                    val existingKey = if (playerRegistry.containsKey(packet.playerId)) {
+                        packet.playerId
+                    } else {
+                        playerRegistry.entries.firstOrNull { (k, v) ->
+                            val cleanK = k.trim().lowercase().removePrefix("u_")
+                            val cleanUser = v.username.trim().lowercase().removePrefix("@")
+                            k == packet.playerId || cleanK == clean || (pCleanU.isNotBlank() && (cleanUser == pCleanU || cleanK == pCleanU))
+                        }?.key ?: packet.playerId
+                    }
+                    val existing = playerRegistry[existingKey]
+                    val targetKey = if (existingKey != packet.playerId && existingKey.startsWith("u_") && !packet.playerId.startsWith("u_")) {
+                        playerRegistry.remove(existingKey)
+                        packet.playerId
+                    } else {
+                        existingKey
+                    }
+
+                    val updated = LobbyLifecycleEngine.onRemoteReadyStatusPacket(packet, existing)
+                    if (updated != null) {
+                        val finalUpdated = if (updated.id != targetKey) updated.copy(id = targetKey) else updated
+                        playerRegistry[targetKey] = finalUpdated
+                        _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+                        val code = currentRoomCode
+                        if (code != null && localPlayer?.isHost == true) {
+                            scope.launch(Dispatchers.IO) {
+                                roomRegistry.ready(code, targetKey, finalUpdated.lobbyReadyStatus, finalUpdated.readyVersion)
+                            }
+                        }
+                    }
+                }
+            }
+
+            "KICK_PLAYER" -> {
+                if (activePeerSeed != 0L) return
+                val expectedHost = currentHostId ?: playerRegistry.values.firstOrNull { it.isHost }?.id
+                val senderId = packet.senderPlayerId.ifBlank { packet.playerId }
+                if (expectedHost.isNullOrBlank() || packet.playerId != expectedHost || (senderId.isNotBlank() && senderId != expectedHost)) {
+                    Log.w(TAG, "Rejected unauthorized KICK_PLAYER from ${packet.playerId} (expected host: $expectedHost)")
+                    return
+                }
+                val targetId = packet.targetPlayerId.ifBlank { packet.playerId }
+                if (targetId.isNotEmpty()) {
+                    playerRegistry.remove(targetId)
+                    _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+                }
+            }
+
+            "LEAVE" -> {
+                if (is1v1MatchActive) {
+                    // Protected by 1v1 heartbeat policy: transport disconnects or Last Will
+                    // must never alter immutable match participants or cause premature departure
+                    return
+                }
+                if (packet.transportOnly || activePeerSeed != 0L) {
+                    _incomingPackets.tryEmit(packet)
+                    return
+                }
+                val senderId = packet.senderPlayerId.ifBlank { packet.playerId }
+                if (senderId.isNotBlank() && senderId != packet.playerId) {
+                    Log.w(TAG, "Rejected spoofed LEAVE packet: sender $senderId != actor ${packet.playerId}")
+                    return
+                }
+                if (packet.playerId.isNotEmpty()) {
+                    val existing = playerRegistry[packet.playerId]
+                    if (existing != null) {
+                        if (existing.isHost) {
+                            val expectedHost = currentHostId ?: playerRegistry.values.firstOrNull { it.isHost }?.id
+                            if (packet.playerId != expectedHost || (senderId.isNotBlank() && senderId != expectedHost)) {
+                                Log.w(TAG, "Rejected unauthorized host LEAVE from ${packet.playerId}")
+                                return
+                            }
+                            playerRegistry.remove(packet.playerId)
+                        } else {
+                            val updated = LobbyLifecycleEngine.onPlayerLeave(existing)
+                            playerRegistry[packet.playerId] = updated
+                            val code = currentRoomCode
+                            if (code != null && localPlayer?.isHost == true) {
+                                scope.launch(Dispatchers.IO) {
+                                    roomRegistry.ready(code, packet.playerId, updated.lobbyReadyStatus, updated.readyVersion)
+                                }
+                            }
+                        }
+                        _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+                    }
+                }
+            }
+
+            "PING" -> {
+                if (packet.playerId == localPlayer?.id || com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(packet.playerId, localPlayer?.id ?: "")) {
+                    // Direct broker round-trip echo: provides exact client-to-broker network ping
+                    if (packet.pingTimestamp > 0L) {
+                        val brokerRtt = System.currentTimeMillis() - packet.pingTimestamp
+                        if (brokerRtt in 0L..5000L) {
+                            lastBrokerReceiveEchoAt = android.os.SystemClock.elapsedRealtime()
+                            val cur = _pingMs.value
+                            val smoothed = if (cur <= 0L) brokerRtt.coerceAtLeast(1L) else ((cur * 0.60) + (brokerRtt.coerceAtLeast(1L) * 0.40)).toLong().coerceAtLeast(1L)
+                            _pingMs.value = smoothed
+                            lastPingTimestamp = System.currentTimeMillis()
+                        }
+                    } else {
+                        lastBrokerReceiveEchoAt = android.os.SystemClock.elapsedRealtime()
+                    }
+                }
+            }
+
+            "MATCH_HEARTBEAT" -> {
+                val policy = matchHeartbeatPolicy
+                if (policy != null && packet.matchId == policy.matchId) {
+                    val myId = localPlayer?.id ?: ""
+                    val isForMe = packet.peerUid == myId || com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(packet.peerUid, myId)
+                    val isFromPeer = packet.playerId == policy.peerUid || com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(packet.playerId, policy.peerUid)
+                    if (isForMe && isFromPeer) {
+                        if (packet.heartbeatAction == "PROBE") {
+                            // Foreground peer sent PROBE; reply immediately with ACK addressing requesting generation
+                            if (AppLifecycleObserver.isAppInForeground.value) {
+                                val ackPacket = RoomMessagePacket(
+                                    type = "MATCH_HEARTBEAT",
+                                    protocolVersion = packet.protocolVersion,
+                                    matchId = packet.matchId,
+                                    playerId = myId,
+                                    peerUid = packet.playerId,
+                                    connectionGeneration = packet.connectionGeneration,
+                                    sequence = packet.sequence,
+                                    challengeId = packet.challengeId,
+                                    heartbeatAction = "ACK",
+                                    timestamp = System.currentTimeMillis()
+                                )
+                                broadcastPacket(ackPacket)
+                            }
+                        } else if (packet.heartbeatAction == "ACK") {
+                            // Verify generation matches our active connection generation
+                            if (packet.connectionGeneration == activeMatchConnectionGeneration) {
+                                val challengeSentAt = outstandingChallenges.remove(packet.challengeId)
+                                val nowMonotonic = android.os.SystemClock.elapsedRealtime()
+                                if (challengeSentAt != null && (nowMonotonic - challengeSentAt) <= 5000L) {
+                                    val decision = policy.onFreshPeerResponse(nowMonotonic)
+                                    if (decision !is com.bingo.multiplayer.domain.engine.HeartbeatDecision.NoOp) {
+                                        _matchHeartbeatDecisions.tryEmit(decision)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            "PONG" -> {
+                // Legacy PONG handling ignored to prevent multi-device ping jitter
+            }
+        }
+
+        // Note: Generic fallback for non-heartbeat packets was removed per HB12.
+        // Only dedicated challenge-response ACKs with valid generation and latency <= 5s
+        // establish peer liveness. State synchronization is notified when validated and applied by coordinator.
+
+        // Deliver game packets to listeners (START_GAME, PICK_NUMBER, GAME_SYNC, PLAY_AGAIN_REQUEST, SURRENDER, LEAVE, etc.)
+        _incomingPackets.tryEmit(packet)
+    }
+
+    fun updateLocalReadyStatus(status: String) {
+        val p = localPlayer ?: return
+        val updated = LobbyLifecycleEngine.onLocalStatusChange(p, status)
+        localPlayer = updated
+        playerRegistry[p.id] = updated
+        _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+        val packet = RoomMessagePacket(
+            type = "READY_STATUS",
+            playerId = p.id,
+            displayName = p.displayName,
+            username = p.username,
+            isHost = p.isHost,
+            avatarUrl = p.avatarUrl,
+            readyStatus = updated.lobbyReadyStatus,
+            readyVersion = updated.readyVersion,
+            timestamp = updated.lastSeenTimestamp
+        )
+        broadcastPacket(packet)
+        requestLobbyCompatibility()
+        scope.launch(Dispatchers.IO) {
+            delay(150L)
+            broadcastPacket(packet)
+            delay(300L)
+            broadcastPacket(packet)
+        }
+        val code = currentRoomCode
+        if (code != null) {
+            scope.launch(Dispatchers.IO) {
+                roomRegistry.ready(code, p.id, updated.lobbyReadyStatus, updated.readyVersion)
+            }
+        }
+    }
+
+    fun updatePlayerReadyStatus(playerId: String, status: String) {
+        val existing = playerRegistry[playerId] ?: return
+        val updated = LobbyLifecycleEngine.onLocalStatusChange(existing, status)
+        playerRegistry[playerId] = updated
+        _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+        val code = currentRoomCode
+        if (code != null) {
+            scope.launch(Dispatchers.IO) {
+                roomRegistry.ready(code, playerId, updated.lobbyReadyStatus, updated.readyVersion)
+            }
+        }
+    }
+
+    fun removePlayer(playerId: String) {
+        val targetPlayer = playerRegistry[playerId]
+        kickedPlayerIds.add(playerId)
+        if (targetPlayer != null && targetPlayer.username.isNotBlank()) {
+            kickedPlayerIds.add(targetPlayer.username.trim().lowercase().removePrefix("@"))
+        }
+        playerRegistry.remove(playerId)
+        _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+        val code = currentRoomCode
+        if (code != null) {
+            scope.launch(Dispatchers.IO) {
+                roomRegistry.remove(code, playerId)
+            }
+        }
+        scope.launch(Dispatchers.IO) {
+            val kickPacket = RoomMessagePacket(
+                type = "KICK_PLAYER",
+                targetPlayerId = playerId,
+                playerId = localPlayer?.id ?: ""
+            )
+            broadcastPacket(kickPacket)
+            delay(150L)
+            broadcastPacket(kickPacket)
+            delay(300L)
+            broadcastPacket(kickPacket)
+        }
+    }
+
+    fun disconnect() {
+        metadataWatchJob?.cancel(); metadataWatchJob = null
+        val leavingConnection = roomConnectionId
+        roomConnectionId = UUID.randomUUID().toString()
+        _connectionReady.value = false
+        activePeerSeed = 0L
+        lastEmittedMetaSeed = 0L
+        peerBindJob?.cancel(); peerBindJob = null
+        peerSyncReply?.cancel(); peerSyncReply = null
+        peerSubscriptionTopic = null
+        peerSyncMarker = null
+        lobbyChallenges.clear()
+        verifiedLobbyPeers.clear()
+        val p = localPlayer
+        val code = currentRoomCode
+        val client = mqttClient
+
+        if (client != null && client.isConnected && p != null && code != null) {
+            try {
+                val leavePacket = RoomMessagePacket(
+                    type = "LEAVE",
+                    transportOnly = true, roomCode = code,
+                    playerId = p.id,
+                    senderInstanceId = instanceId,
+                    timestamp = System.currentTimeMillis()
+                )
+                val payload = FastPacketCodec.encode(leavePacket)
+                val msg = MqttMessage(payload.toByteArray(StandardCharsets.UTF_8)).apply {
+                    qos = 1
+                }
+                client.publish(getTopic(code), msg)
+                val offline = RoomMessagePacket(type = "PLAYER_PRESENCE", playerId = p.id, senderPlayerId = p.id,
+                    roomCode = code, connectionGeneration = leavingConnection, senderInstanceId = instanceId,
+                    lifecycleSequence = Long.MAX_VALUE, readyStatus = "OFFLINE", presenceStatus = "OFFLINE",
+                    timestamp = System.currentTimeMillis())
+                client.publish("bingo/emqx7/room/$code/availability/${p.id}",
+                    MqttMessage(FastPacketCodec.encode(offline).toByteArray(StandardCharsets.UTF_8)).apply {
+                        qos = 1; isRetained = true
+                    }).waitForCompletion(500L)
+            } catch (_: Exception) {}
+
+        }
+
+        stopMatchHeartbeat()
+        heartbeatJob?.cancel()
+        livenessJob?.cancel()
+        pingJob?.cancel()
+        heartbeatJob = null
+        livenessJob = null
+        pingJob = null
+        _pingMs.value = 0L
+
+        mqttClient = null
+        disconnectJob = scope.launch(Dispatchers.IO) {
+            MqttClientShutdown.close(client, quiesceMillis = 1500L)
+        }
+
+        currentRoomCode = null
+        currentLobbySessionId = ""
+        boundPublisherKey = null
+        predecessorHostId = null
+        lobbyMetadataClosed = false
+        latestMetadataRevision = -1L
+        localPlayer = null
+        currentHostId = null
+        isSubscribed = false
+        lastStartedMatchSeed = 0L
+        // Completed seed receipts survive connection replacement and room changes.
+        lastDirectHeartbeatTimestamps.clear()
+        playerRegistry.clear()
+        kickedPlayerIds.clear()
+        _players.value = emptyList()
+    }
+
+    @androidx.annotation.VisibleForTesting
+    suspend fun drainForTests() {
+        disconnectJob?.join()
+        connectionJob?.join()
+        retryJob?.cancelAndJoin()
+        retryJob = null
+        heartbeatJob?.cancelAndJoin()
+        heartbeatJob = null
+        livenessJob?.cancelAndJoin()
+        livenessJob = null
+        pingJob?.cancelAndJoin()
+        pingJob = null
+        matchHeartbeatJob?.cancelAndJoin()
+        matchHeartbeatJob = null
+        matchWatchdogJob?.cancelAndJoin()
+        matchWatchdogJob = null
+        metadataWatchJob?.cancelAndJoin()
+        metadataWatchJob = null
+        scope.coroutineContext[Job]?.children?.toList()?.forEach { child ->
+            if (child.isActive) child.join()
+        }
+    }
+
+    fun getLastSeenTimestamp(playerId: String): Long {
+        if (playerId.isBlank()) return 0L
+        val clean = playerId.trim().lowercase().removePrefix("u_")
+        var maxTimestamp = 0L
+        playerRegistry.entries.forEach { (k, v) ->
+            val cleanK = k.trim().lowercase().removePrefix("u_")
+            val cleanUser = v.username.trim().lowercase().removePrefix("@")
+            val cleanDisplay = v.displayName.trim().lowercase()
+            if (cleanK == clean || (cleanUser.isNotBlank() && cleanUser == clean) || (cleanDisplay.isNotBlank() && cleanDisplay == clean)) {
+                if (v.lastSeenTimestamp > maxTimestamp) {
+                    maxTimestamp = v.lastSeenTimestamp
+                }
+            }
+        }
+        val direct = getLastDirectHeartbeat(playerId)
+        return maxOf(maxTimestamp, direct)
+    }
+
+    companion object {
+        @Volatile var activeInstance: OnlineRoomSyncManager? = null
+        var clientProvider: ((brokerUrl: String, clientId: String) -> MqttAsyncClient)? = null
+    }
+}
+
+internal class CompletedMqttToken(clientId: String) : MqttToken(clientId) {
+    override fun waitForCompletion() {}
+    override fun waitForCompletion(timeout: Long) {}
+    override fun isComplete() = true
+}
+
+internal class CompletedMqttDeliveryToken(clientId: String) : MqttDeliveryToken(clientId) {
+    override fun waitForCompletion() {}
+    override fun waitForCompletion(timeout: Long) {}
+    override fun isComplete() = true
+}
+
+internal class WireCapturingMqttClient(
+    serverURI: String,
+    clientId: String
+) : MqttAsyncClient(serverURI, clientId, MemoryPersistence()) {
+    @Volatile var online = false
+    private var callback: MqttCallbackExtended? = null
+    private val subscriptions = java.util.concurrent.CopyOnWriteArrayList<AutoCloseable>()
+    private val clientJob = SupervisorJob()
+    private val clientScope = CoroutineScope(Dispatchers.IO + clientJob)
+
+    override fun setCallback(callback: MqttCallback?) {
+        if (callback is MqttCallbackExtended) {
+            this.callback = callback
+        }
+    }
+
+    override fun isConnected(): Boolean = online
+
+    override fun connect(): IMqttToken {
+        online = true
+        return CompletedMqttToken(clientId)
+    }
+
+    override fun connect(options: MqttConnectOptions?): IMqttToken {
+        online = true
+        return CompletedMqttToken(clientId)
+    }
+
+    override fun connect(userContext: Any?, callback: IMqttActionListener?): IMqttToken {
+        online = true
+        callback?.onSuccess(CompletedMqttToken(clientId))
+        this.callback?.connectComplete(false, serverURI)
+        return CompletedMqttToken(clientId)
+    }
+
+    override fun connect(options: MqttConnectOptions?, userContext: Any?, callback: IMqttActionListener?): IMqttToken {
+        online = true
+        callback?.onSuccess(CompletedMqttToken(clientId))
+        this.callback?.connectComplete(false, serverURI)
+        return CompletedMqttToken(clientId)
+    }
+
+    override fun subscribe(topic: String, qos: Int): IMqttToken {
+        subscribeToWire(topic)
+        return CompletedMqttToken(clientId)
+    }
+
+    override fun subscribe(topic: String, qos: Int, userContext: Any?, callback: IMqttActionListener?): IMqttToken {
+        subscribeToWire(topic)
+        callback?.onSuccess(CompletedMqttToken(clientId))
+        return CompletedMqttToken(clientId)
+    }
+
+    override fun subscribe(topicFilters: Array<out String>, qos: IntArray): IMqttToken {
+        topicFilters.forEach { subscribeToWire(it) }
+        return CompletedMqttToken(clientId)
+    }
+
+    override fun subscribe(topicFilters: Array<out String>, qos: IntArray, userContext: Any?, callback: IMqttActionListener?): IMqttToken {
+        topicFilters.forEach { subscribeToWire(it) }
+        callback?.onSuccess(CompletedMqttToken(clientId))
+        return CompletedMqttToken(clientId)
+    }
+
+    private fun subscribeToWire(topic: String) {
+        val wire = EmqxTransport.wireOverride
+        if (wire != null) {
+            clientScope.launch {
+                try {
+                    val sub = wire.subscribe(topic) { payload, _ ->
+                        this@WireCapturingMqttClient.callback?.messageArrived(topic, MqttMessage(payload))
+                    }
+                    subscriptions.add(sub)
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    override fun publish(topic: String, payload: ByteArray?, qos: Int, retained: Boolean): IMqttDeliveryToken {
+        publishToWire(topic, payload ?: ByteArray(0), retained)
+        return CompletedMqttDeliveryToken(clientId)
+    }
+
+    override fun publish(topic: String, message: MqttMessage?): IMqttDeliveryToken {
+        publishToWire(topic, message?.payload ?: ByteArray(0), message?.isRetained ?: false)
+        return CompletedMqttDeliveryToken(clientId)
+    }
+
+    override fun publish(topic: String, payload: ByteArray?, qos: Int, retained: Boolean, userContext: Any?, callback: IMqttActionListener?): IMqttDeliveryToken {
+        publishToWire(topic, payload ?: ByteArray(0), retained)
+        callback?.onSuccess(CompletedMqttToken(clientId))
+        return CompletedMqttDeliveryToken(clientId)
+    }
+
+    override fun publish(topic: String, message: MqttMessage?, userContext: Any?, callback: IMqttActionListener?): IMqttDeliveryToken {
+        publishToWire(topic, message?.payload ?: ByteArray(0), message?.isRetained ?: false)
+        callback?.onSuccess(CompletedMqttToken(clientId))
+        return CompletedMqttDeliveryToken(clientId)
+    }
+
+    private fun publishToWire(topic: String, payload: ByteArray, retained: Boolean) {
+        val wire = EmqxTransport.wireOverride
+        if (wire != null) {
+            clientScope.launch {
+                try {
+                    wire.publish(topic, payload, retained)
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    override fun disconnect(): IMqttToken {
+        cleanUp()
+        return CompletedMqttToken(clientId)
+    }
+
+    override fun disconnect(quiesceTimeout: Long): IMqttToken {
+        cleanUp()
+        return CompletedMqttToken(clientId)
+    }
+
+    override fun disconnect(userContext: Any?, callback: IMqttActionListener?): IMqttToken {
+        cleanUp()
+        callback?.onSuccess(CompletedMqttToken(clientId))
+        return CompletedMqttToken(clientId)
+    }
+
+    override fun disconnect(quiesceTimeout: Long, userContext: Any?, callback: IMqttActionListener?): IMqttToken {
+        cleanUp()
+        callback?.onSuccess(CompletedMqttToken(clientId))
+        return CompletedMqttToken(clientId)
+    }
+
+    override fun disconnectForcibly() {
+        cleanUp()
+    }
+
+    override fun disconnectForcibly(disconnectTimeout: Long) {
+        cleanUp()
+    }
+
+    override fun disconnectForcibly(quiesceTimeout: Long, disconnectTimeout: Long) {
+        cleanUp()
+    }
+
+    override fun disconnectForcibly(quiesceTimeout: Long, disconnectTimeout: Long, sendDisconnectPacket: Boolean) {
+        cleanUp()
+    }
+
+    override fun close() {
+        cleanUp()
+    }
+
+    override fun close(force: Boolean) {
+        cleanUp()
+    }
+
+    private fun cleanUp() {
+        online = false
+        subscriptions.forEach { runCatching { it.close() } }
+        subscriptions.clear()
+        clientJob.cancelChildren()
+        clientJob.cancel()
+        runCatching {
+            runBlocking {
+                clientJob.join()
+            }
+        }
+    }
+}
