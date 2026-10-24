@@ -303,6 +303,7 @@ export class NotificationInbox {
       ),
       invalidToken: previous?.invalidToken || "",
       friendRevision: previous?.friendRevision || 0,
+      onlineLifetimeMillis: previous?.onlineLifetimeMillis || 15000,
       sessionHash,
       revokeHash: await digest(revokeSecret),
       updatedAt: now,
@@ -444,7 +445,10 @@ export class NotificationInbox {
       ? `online-notice:${session.uid}:${targetUid || input.toUsername}` : null;
     if (onlineKey) {
       const previous = await this.storage.get(onlineKey);
-      if (previous && input.createdAt - previous.createdAt < 3600000)
+      const configuredInterval = Number(this.env.FRIEND_ONLINE_INTERVAL_MS || 3600000);
+      const interval = Number.isSafeInteger(configuredInterval) && configuredInterval >= 60000
+        ? configuredInterval : 3600000;
+      if (previous && input.createdAt - previous.createdAt < interval)
         return { status: "suppressed", id: input.id };
     }
     if (input.kind === "FRIEND_ACCEPTED") {

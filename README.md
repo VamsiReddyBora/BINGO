@@ -1,16 +1,14 @@
-# Bingo 1.0.2 — Build 67
+# Bingo 1.0.3 — Build 70
 
 Android Bingo with AI, MQTT online multiplayer, Nearby Network play, friends and background notifications.
 
 ## This release
 
-- Home opens using local authentication and never waits for saved-room discovery. Automatic update/broadcast dialogs wait for the first rendered app destination.
-- Completed checkpoints open in a read-only saved-result screen without reconnecting to the old match. Boards, selected numbers and accepted chat remain available; Home closes only the matching saved-result card.
-- Live finished-board viewers can continue reviewing after the host intentionally closes the lobby. The result offers Back to Home instead of entering a stale lobby.
-- A backgrounded or unreachable host produces a waiting state, not an intentional lobby closure. A fresh MQTT room response is required before Return to Lobby changes local match state.
-- Existing gameplay rules, continuous-one-hour FCM online-alert policy, invitations, friends, photos, Online and Nearby behavior are preserved.
-
-- The Home EMQX note uses its original server wording and keeps the ten-second outage state across Dashboard/Settings navigation. Internet loss, real broker recovery and app foreground grace retain their existing behavior.
+- When notification authorization needs Google sign-in, Home offers Reconnect or Later after startup and other dialogs. Gameplay and lobbies are not interrupted. Healthy accounts keep using automatic renewal.
+- Reconnect preserves the existing Google player account and data, renews notification registration and synchronizes friend permissions. Delivery diagnostics distinguish Google authorization, relay, token and enqueue failures.
+- Friend-online alerts require 30 minutes of continuous absence before another return alert. Brief app switches stay silent. Online system notifications contain one sentence without a repeated body.
+- The Home EMQX warning uses the approved broker-specific wording and retains its ten-second grace/state across tabs.
+- Startup, saved results, lobby recovery, gameplay rules, Online, Nearby, AI, friends and photos retain the existing behavior.
 
 ## Source layout
 
@@ -37,6 +35,6 @@ From `cloudflare_worker/`, run `npm ci` and `npm test`. Supply `SERVICE_ACCOUNT_
 
 ## Versioned releases and privacy
 
-Versions 1.0, 1.0.1 and 1.0.2 have separate Git tags, APKs and source archives. Main reflects the latest published source. Source packages exclude signing keys, passwords, real Firebase client configuration, account/player data, device addresses, local tooling, logs and build caches. Existing intentional in-app developer contact links are retained.
+Versions 1.0, 1.0.1, 1.0.2 and 1.0.3 have separate Git tags, APKs and source archives. Main reflects the latest published source. Source packages exclude signing keys, passwords, real Firebase client configuration, account/player data, device addresses, local tooling, logs and build caches. Existing intentional in-app developer contact links are retained.
 
 See `AGENT_HANDOFF.md` for verification results and remaining hardware acceptance limits.

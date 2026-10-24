@@ -7,7 +7,7 @@ import java.util.concurrent.Executors
 
 class FriendOnlineAnnouncementsTest {
     private val start = 1_800_000_000_000L
-    private val hour = FriendOnlineAnnouncements.OFFLINE_INTERVAL
+    private val interval = FriendOnlineAnnouncements.OFFLINE_INTERVAL
 
     @Test fun firstAppearanceCreatesOneDurableNotice() {
         val prefs = FakeSharedPreferences(); val store = FriendOnlineAnnouncements(prefs)
@@ -19,14 +19,14 @@ class FriendOnlineAnnouncementsTest {
     @Test fun fiveMinuteAbsenceDoesNotProduceAnotherNotice() {
         val store = FriendOnlineAnnouncements(FakeSharedPreferences())
         store.active("bob", start); store.offline("bob", start + 10_000)
-        assertNull(store.active("bob", start + 310_000))
+        assertNull(store.active("bob", start + 10_000 + interval - 1))
     }
     @Test fun anHourSinceTheLastAlertDoesNotQualifyAFiveMinuteAbsence() {
         val store = FriendOnlineAnnouncements(FakeSharedPreferences())
         store.active("bob", start)
-        for (minute in 1..55) store.active("bob", start + minute * 60_000L)
-        store.offline("bob", start + 55 * 60_000L)
-        assertNull(store.active("bob", start + hour))
+        for (minute in 1..55) store.active("bob", start + minute * interval / 60)
+        store.offline("bob", start + 55 * interval / 60)
+        assertNull(store.active("bob", start + interval))
     }
     @Test fun repeatedFiveMinuteReturnsForTwoHoursStaySilent() {
         val store = FriendOnlineAnnouncements(FakeSharedPreferences())
@@ -40,19 +40,19 @@ class FriendOnlineAnnouncementsTest {
         val prefs = FakeSharedPreferences(); val store = FriendOnlineAnnouncements(prefs)
         val first = store.active("bob", start)!!; store.offline("bob", start + 1_000)
         assertNull(FriendOnlineAnnouncements(prefs).active("other", 0))
-        val returned = FriendOnlineAnnouncements(prefs).active("bob", start + 1_000 + hour)!!
+        val returned = FriendOnlineAnnouncements(prefs).active("bob", start + 1_000 + interval)!!
         assertNotEquals(first.id, returned.id)
     }
     @Test fun returningJustBeforeAnHourRestartsTheInactivityPeriod() {
         val store = FriendOnlineAnnouncements(FakeSharedPreferences())
         store.active("bob", start); store.offline("bob", start + 1_000)
-        assertNull(store.active("bob", start + hour))
-        store.offline("bob", start + hour + 1_000)
-        assertNull(store.active("bob", start + hour + 301_000))
+        assertNull(store.active("bob", start + interval))
+        store.offline("bob", start + interval + 1_000)
+        assertNull(store.active("bob", start + interval + 1_000 + interval - 1))
     }
     @Test fun processDeathWithoutBackgroundCallbackUsesTheLastCheckpoint() {
         val prefs = FakeSharedPreferences(); FriendOnlineAnnouncements(prefs).active("bob", start)
-        assertNotNull(FriendOnlineAnnouncements(prefs).active("bob", start + hour + 15_000))
+        assertNotNull(FriendOnlineAnnouncements(prefs).active("bob", start + interval + 15_000))
     }
     @Test fun shortProcessRestartDoesNotResetTheNotificationClock() {
         val prefs = FakeSharedPreferences(); FriendOnlineAnnouncements(prefs).active("bob", start)
@@ -60,13 +60,13 @@ class FriendOnlineAnnouncementsTest {
     }
     @Test fun anAbruptKillCannotTurnASlightlyShorterAbsenceIntoAnHour() {
         val prefs = FakeSharedPreferences(); FriendOnlineAnnouncements(prefs).active("bob", start)
-        assertNull(FriendOnlineAnnouncements(prefs).active("bob", start + hour - 1))
+        assertNull(FriendOnlineAnnouncements(prefs).active("bob", start + interval - 1))
     }
     @Test fun duplicateOfflineCallbacksDoNotPostponeTheHour() {
         val store = FriendOnlineAnnouncements(FakeSharedPreferences())
         store.active("bob", start); store.offline("bob", start + 1_000)
         store.offline("bob", start + 300_000)
-        assertNotNull(store.active("bob", start + hour + 1_000))
+        assertNotNull(store.active("bob", start + interval + 1_000))
     }
     @Test fun accountsHaveIndependentAvailabilityAndRecipientHistory() {
         val store = FriendOnlineAnnouncements(FakeSharedPreferences())
@@ -84,7 +84,7 @@ class FriendOnlineAnnouncementsTest {
     @Test fun lateQueueCompletionCannotConsumeANewerReturn() {
         val store = FriendOnlineAnnouncements(FakeSharedPreferences())
         val first = store.active("bob", start)!!; store.offline("bob", start + 1)
-        val second = store.active("bob", start + hour + 1)!!
+        val second = store.active("bob", start + interval + 1)!!
         assertFalse(store.queued("bob", first.id, "stuart"))
         assertTrue(store.active("bob", second.createdAt + 1)!!.queued.isEmpty())
     }

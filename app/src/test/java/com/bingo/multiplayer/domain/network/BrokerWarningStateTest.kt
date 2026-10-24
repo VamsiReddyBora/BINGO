@@ -61,7 +61,7 @@ class BrokerWarningStateTest {
             .first { File(it, "app/src/main/java").isDirectory }
         val folder = File(root, "app/src/main/java/com/bingo/multiplayer/presentation/menu")
         val home = File(folder,"MainMenuScreen.kt").readText()
-        assertTrue(home.contains("EMQX server is temporarily unavailable. Online game play may not work properly. Please use Developer note to report this issue."))
+        assertTrue(home.contains("Unable to connect to the EMQX MQTT broker. Online invitations and match synchronization may be interrupted. Please report this through Developer Note."))
         assertFalse(home.contains("Online server is not responding."))
         assertTrue(File(folder,"BrokerWarningPresentation.kt").readText().contains("BrokerWarningPresentation.visibility(context)"))
     }

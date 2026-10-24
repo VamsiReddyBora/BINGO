@@ -43,8 +43,9 @@ class NotificationAccountStore(private val prefs: SharedPreferences) {
         val revoke = prefs.getString("revoke", null) ?: return@synchronized null
         registration to revoke
     }
-    fun forgetSession(account: NotificationAccount) = synchronized(guard) {
-        if (account() == account) prefs.edit().remove("session").remove("sessionExpiry").commit() else false
+    fun forgetSession(account: NotificationAccount, rejectedToken: String? = null) = synchronized(guard) {
+        if (account() == account && (rejectedToken == null || prefs.getString("session", null) == rejectedToken))
+            prefs.edit().remove("session").remove("sessionExpiry").commit() else false
     }
     companion object {
         private val guard = Any()

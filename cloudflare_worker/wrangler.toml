@@ -6,6 +6,8 @@ compatibility_date = "2026-01-01"
 # Set to the Web OAuth client ID linked to Android sign-in before deployment.
 GOOGLE_CLIENT_ID = "957593338442-ol5p4icr1a8e15m8lb1ln5mab5n1r5lp.apps.googleusercontent.com"
 FIREBASE_PROJECT_ID = "bingo-6bb09"
+# Match NotificationOnlineConfig.OFFLINE_INTERVAL_MS. Restore both to 3600000 for one hour.
+FRIEND_ONLINE_INTERVAL_MS = "1800000"
 LEGACY_API_URL = "https://keyvalue.immanuel.co/api/KeyVal"
 
 [[durable_objects.bindings]]

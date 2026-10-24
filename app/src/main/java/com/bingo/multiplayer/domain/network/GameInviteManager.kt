@@ -39,7 +39,8 @@ fun GameInvite.toEvent() = NotificationEvent(eventId, NotificationKind.GAME_INVI
 
 enum class InviteSendResult(val message: String) {
     QUEUED("Invitation queued. It will be sent when connected."),
-    SENT("Invitation sent."), REQUESTED("Request sent."), FAILED("EMQX unavailable or recipient unavailable. Please try again.")
+    SENT("Invitation sent."), SENT_PUSH_UNAVAILABLE("Invitation sent online. Background notification could not be queued."),
+    REQUESTED("Request sent."), FAILED("EMQX unavailable or recipient unavailable. Please try again.")
 }
 
 internal enum class InviteDeliveryAttempt { REGISTERED, RETRY, REJECTED }
@@ -87,6 +88,7 @@ object GameInviteManager {
             roomCode = cleanRoom,
             roomSessionId = room?.sessionId.orEmpty(), senderPublicKey = null)
         try {
+            var pushQueued = true
             val sent = dispatchInviteAttempt(
                 readiness = { InvitationReadinessResult.Ready },
                 isCurrent = { NotificationRuntime.account(context) == account && payload.expiresAt > System.currentTimeMillis() },
@@ -94,11 +96,15 @@ object GameInviteManager {
                 registerEvent = {
                     // The MQTT PUBACK completes the live send. Push wakes a closed/background app
                     // asynchronously, using the same identity and expiry rather than delaying joining.
-                    if (!payload.isPlayRequest) BingoFcmManager.sendInvitePush(payload)
+                    if (!payload.isPlayRequest) {
+                        pushQueued = BingoFcmManager.sendInvitePush(payload)
+                        if (!pushQueued) NotificationDeliveryStatus.pushUnavailable()
+                    }
                     InvitationTrace.mark(payload.eventId, "send_complete")
                 })
             if (sent != InviteDeliveryAttempt.REGISTERED) InviteSendResult.FAILED
-            else if (invite.isPlayRequest) InviteSendResult.REQUESTED else InviteSendResult.SENT
+            else if (invite.isPlayRequest) InviteSendResult.REQUESTED
+            else if (!pushQueued) InviteSendResult.SENT_PUSH_UNAVAILABLE else InviteSendResult.SENT
         } catch (e: CancellationException) { throw e }
         catch (_: Exception) { InviteSendResult.FAILED }
     }

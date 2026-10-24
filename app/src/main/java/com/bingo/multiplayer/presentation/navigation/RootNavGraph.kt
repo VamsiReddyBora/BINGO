@@ -7431,6 +7431,11 @@ fun RootNavGraph(
             NotificationPolicy.eligible(invite.toEvent(), account, System.currentTimeMillis()) &&
             account != null && !NotificationRuntime.ledger(context).handled(account.uid, invite.eventId)
     }
+    com.bingo.multiplayer.presentation.components.NotificationReconnectPrompt(
+        user = currentAuthUser,
+        canPrompt = currentRoute == Screen.MainMenu.route && currentInvite == null && !isJoiningRoom &&
+            !showLeaveMatchDialog && opponentSurrenderMessage == null && opponentDisconnectMessage == null
+    )
     if (currentInvite != null) {
         AlertDialog(
             onDismissRequest = {

@@ -182,6 +182,50 @@ function setup() {
     instance = new NotificationInbox({ storage }, env);
   return { storage, instance };
 }
+
+test("Configured five-minute online cooldown releases at the exact boundary", async () => {
+  const { instance: i } = setup();
+  i.env = { ...i.env, FRIEND_ONLINE_INTERVAL_MS: "300000" };
+  const s = await enroll(i), t = await enroll(i, targetIdentity());
+  await call(i, t, "/v2/friends", { uids: [s.uid], revision: 1 });
+  const first = input("FRIEND_ONLINE", "five-minute-first");
+  await call(i, s, "/v2/events", first);
+  const clock = Date.now;
+  try {
+    Date.now = () => first.createdAt + 299999;
+    assert.equal((await (await call(i, s, "/v2/events", input("FRIEND_ONLINE", "just-before-five"))).json()).status, "suppressed");
+    Date.now = () => first.createdAt + 300000;
+    assert.equal((await (await call(i, s, "/v2/events", input("FRIEND_ONLINE", "at-five"))).json()).status, "queued");
+  } finally { Date.now = clock; }
+});
+
+test("Configured thirty-minute online cooldown suppresses five-minute returns and releases at the boundary", async () => {
+  const { instance: i } = setup();
+  i.env = { ...i.env, FRIEND_ONLINE_INTERVAL_MS: "1800000" };
+  const s = await enroll(i), t = await enroll(i, targetIdentity());
+  await call(i, t, "/v2/friends", { uids: [s.uid], revision: 1 });
+  const first = input("FRIEND_ONLINE", "thirty-minute-first");
+  await call(i, s, "/v2/events", first);
+  const clock = Date.now;
+  try {
+    Date.now = () => first.createdAt + 300000;
+    assert.equal((await (await call(i, s, "/v2/events", input("FRIEND_ONLINE", "at-five-minutes"))).json()).status, "suppressed");
+    Date.now = () => first.createdAt + 1799999;
+    assert.equal((await (await call(i, s, "/v2/events", input("FRIEND_ONLINE", "just-before-thirty"))).json()).status, "suppressed");
+    Date.now = () => first.createdAt + 1800000;
+    assert.equal((await (await call(i, s, "/v2/events", input("FRIEND_ONLINE", "at-thirty"))).json()).status, "queued");
+  } finally { Date.now = clock; }
+});
+
+test("Renewing notification authentication preserves the registered online delivery lifetime", async () => {
+  const { instance: i } = setup(), s = await enroll(i), t = await enroll(i, targetIdentity());
+  await call(i, t, "/v2/register", { token: t.token, revision: 1, onlineLifetimeMillis: 120000 });
+  await call(i, t, "/v2/friends", { uids: [s.uid], revision: 1 });
+  const event = input("FRIEND_ONLINE", "renewed-auth-lifetime");
+  await call(i, s, "/v2/events", event);
+  const renewed = await enroll(i, { ...targetIdentity(), tokenRevision: 1 });
+  assert.equal((await inbox(i, renewed))[0].expiresAt, event.expiresAt);
+});
 async function enroll(i, u = identity()) {
   const r = await i.fetch(
     new Request("https://internal/internal/enroll", {

@@ -8,6 +8,13 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.net.Uri
 import android.widget.Toast
+import com.bingo.multiplayer.domain.notifications.NotificationAccount
+import com.bingo.multiplayer.domain.notifications.NotificationApiException
+import com.bingo.multiplayer.domain.notifications.NotificationDiagnostics
+import com.bingo.multiplayer.domain.notifications.NotificationDeliveryStatus
+import com.bingo.multiplayer.domain.notifications.NotificationGoogleAuth
+import com.bingo.multiplayer.domain.notifications.NotificationRuntime
+import com.google.android.gms.auth.api.signin.GoogleSignIn
 import androidx.compose.ui.text.style.TextAlign
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -2255,6 +2262,36 @@ private fun NotificationSettingsContent(
         onDispose { notificationLifecycle.lifecycle.removeObserver(observer) }
     }
     val deliveryMessage by com.bingo.multiplayer.domain.notifications.NotificationDeliveryStatus.message.collectAsState()
+    val needsGoogleAuthorization by NotificationDeliveryStatus.needsGoogleAuthorization.collectAsState()
+    val repairScope = rememberCoroutineScope()
+    var notificationRepairAccount by remember { mutableStateOf<NotificationAccount?>(null) }
+    var notificationRepairBusy by remember { mutableStateOf(false) }
+    val notificationRepairLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val expected = notificationRepairAccount
+        notificationRepairAccount = null
+        if (expected == null) {
+            notificationRepairBusy = false
+            return@rememberLauncherForActivityResult
+        }
+        repairScope.launch {
+            try {
+                val google = try { GoogleSignIn.getSignedInAccountFromIntent(result.data).getResult(com.google.android.gms.common.api.ApiException::class.java) }
+                    catch (error: com.google.android.gms.common.api.ApiException) { throw NotificationGoogleAuth.failure(error.statusCode) }
+                NotificationGoogleAuth.reconnect(context.applicationContext, expected, google.id, google.idToken)
+                if (NotificationRuntime.account(context) == expected)
+                    Toast.makeText(context, "Google reconnected. Registering background notifications…", Toast.LENGTH_LONG).show()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (error: NotificationApiException) {
+                if (NotificationRuntime.account(context) == expected) {
+                    NotificationDeliveryStatus.failed(error)
+                    NotificationDiagnostics.failure(context, null, null, "RECONNECT_FAILED", error)
+                }
+            } catch (_: Exception) {
+                if (NotificationRuntime.account(context) == expected)
+                    NotificationDeliveryStatus.failed(NotificationApiException(503, "Notification reconnection is temporarily unavailable"))
+            } finally { notificationRepairBusy = false }
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -2263,11 +2300,26 @@ private fun NotificationSettingsContent(
     ) {
         deliveryMessage?.let { message ->
             Text(message, fontSize = 12.sp, color = tokens.textSecondary, modifier = Modifier.padding(vertical = 6.dp))
-            TextButton(onClick = {
-                com.bingo.multiplayer.domain.notifications.NotificationRuntime.account(context)?.let {
-                    com.bingo.multiplayer.domain.notifications.NotificationWork.register(context, it)
+            TextButton(enabled = !notificationRepairBusy, onClick = {
+                NotificationRuntime.account(context)?.let { expected ->
+                    if (needsGoogleAuthorization && NotificationRuntime.profile(context)?.provider == AuthProvider.GOOGLE) {
+                        try {
+                            val intent = NotificationGoogleAuth.intent(context, expected)
+                            notificationRepairAccount = expected
+                            notificationRepairBusy = true
+                            notificationRepairLauncher.launch(intent)
+                        } catch (error: NotificationApiException) {
+                            notificationRepairAccount = null
+                            notificationRepairBusy = false
+                            NotificationDeliveryStatus.failed(error)
+                        } catch (_: RuntimeException) {
+                            notificationRepairAccount = null
+                            notificationRepairBusy = false
+                            NotificationDeliveryStatus.failed(NotificationApiException(503, "Google sign-in is unavailable on this device"))
+                        }
+                    } else com.bingo.multiplayer.domain.notifications.NotificationWork.register(context, expected, "manual:${System.currentTimeMillis()}")
                 }
-            }) { Text("Retry notifications") }
+            }) { Text(if (notificationRepairBusy) "Reconnecting…" else if (needsGoogleAuthorization && NotificationRuntime.profile(context)?.provider == AuthProvider.GOOGLE) "Reconnect notifications" else "Retry notifications") }
         }
         if (!areOsNotificationsEnabled || blockedNotificationCategories.isNotBlank()) {
             Surface(

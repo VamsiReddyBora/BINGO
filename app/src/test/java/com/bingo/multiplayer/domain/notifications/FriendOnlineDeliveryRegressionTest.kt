@@ -16,8 +16,10 @@ class FriendOnlineDeliveryRegressionTest {
     @Test fun anotherOnlineEventAfterFiveMinutesDoesNotAlertAgain() {
         val prefs = FakeSharedPreferences()
         assertTrue(NotificationLedger(prefs) { start }.present(online(start, "return-one"), true).show)
-        assertFalse(NotificationLedger(prefs) { start + 300_000 }
-            .present(online(start + 300_000, "return-two"), false).show)
+        // Historical name retained: a new notice stays silent until the configured interval ends.
+        val beforeBoundary = start + FriendOnlineAnnouncements.OFFLINE_INTERVAL - 1
+        assertFalse(NotificationLedger(prefs) { beforeBoundary }
+            .present(online(beforeBoundary, "return-two"), false).show)
     }
     @Test fun aFailedAndroidPostCanRetryTheSameOnlineEvent() {
         val ledger = NotificationLedger(FakeSharedPreferences()) { start }

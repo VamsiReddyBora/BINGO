@@ -516,7 +516,7 @@ fun MainMenuScreen(
                                     fontWeight = FontWeight.Normal
                                 )
                             ) {
-                                append("EMQX server is temporarily unavailable. Online game play may not work properly. Please use Developer note to report this issue.")
+                                append("Unable to connect to the EMQX MQTT broker. Online invitations and match synchronization may be interrupted. Please report this through Developer Note.")
                             }
                         },
                         fontSize = 11.sp,

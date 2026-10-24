@@ -173,20 +173,17 @@ object BingoNotificationManager {
             NotificationKind.FRIEND_ONLINE -> ACTION_INVITE_FRIEND
             else -> ACTION_VIEW_FRIENDS
         }
-        val title = when(event.kind) {
-            NotificationKind.GAME_INVITE -> "🎮 Match invite from ${event.senderDisplayName}"
-            NotificationKind.FRIEND_ONLINE -> "🟢 ${event.senderDisplayName} is online"
-            NotificationKind.FRIEND_REQUEST -> "👥 New friend request"
-            NotificationKind.FRIEND_ACCEPTED -> "🎉 Friend request accepted"
-        }
+        val notificationText = com.bingo.multiplayer.domain.notifications.NotificationPresentation.systemText(event)
         try {
             val builder = NotificationCompat.Builder(context, channel).setSmallIcon(R.drawable.ic_notification)
-                .setContentTitle(title).setContentText(NotificationRuntime.eventText(event))
-                .setStyle(NotificationCompat.BigTextStyle().bigText(NotificationRuntime.eventText(event)))
+                .setContentTitle(notificationText.title)
                 .setContentIntent(intent(context, event, action)).setAutoCancel(true).setOnlyAlertOnce(true)
                 .setTimeoutAfter((event.expiresAt - System.currentTimeMillis()).coerceAtLeast(1))
                 .setPriority(NotificationCompat.PRIORITY_HIGH).setCategory(NotificationCompat.CATEGORY_SOCIAL)
                 .setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setSilent(!claim.alert)
+            notificationText.body?.let { body ->
+                builder.setContentText(body).setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            }
             if (event.kind == NotificationKind.GAME_INVITE) {
                 builder.setCategory(NotificationCompat.CATEGORY_EVENT)
                     .addAction(R.drawable.ic_notification, "Accept", intent(context, event, ACTION_ACCEPT_INVITE))

@@ -5,10 +5,8 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import okio.ByteString.Companion.toByteString
-import com.bingo.multiplayer.domain.network.NetworkConfig
 import com.bingo.multiplayer.domain.model.AuthProvider
 import com.google.android.gms.auth.api.signin.GoogleSignIn
-import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import kotlinx.coroutines.tasks.await
 import org.json.JSONObject
 import java.security.KeyPairGenerator
@@ -76,19 +74,17 @@ object NotificationIdentity {
 
     suspend fun proof(context: Context, account: NotificationAccount): JSONObject {
         val user = NotificationRuntime.profile(context)
-            ?: throw NotificationApiException(401, "Sign in again to enable push notifications")
-        if (user.uid != account.uid || notificationUsername(user.username) != account.username) throw NotificationApiException(401, "Account changed")
+            ?: throw NotificationApiException(401, "Account changed", NotificationPhase.ACCOUNT_CHECK, failure = NotificationFailure.ACCOUNT_CHANGED)
+        if (user.uid != account.uid || notificationUsername(user.username) != account.username) throw NotificationApiException(401, "Account changed", NotificationPhase.ACCOUNT_CHECK, failure = NotificationFailure.ACCOUNT_CHANGED)
         if (user.provider == AuthProvider.GOOGLE) {
-            if (NetworkConfig.NOTIFICATION_GOOGLE_CLIENT_ID.isBlank()) throw NotificationApiException(503, "Notification sign-in is not configured")
-            val options = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN).requestEmail().requestProfile()
-                .requestIdToken(NetworkConfig.NOTIFICATION_GOOGLE_CLIENT_ID).build()
+            val options = NotificationGoogleAuth.options(context)
             val google = try { GoogleSignIn.getClient(context, options).silentSignIn().await() }
             catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
             catch (error: com.google.android.gms.common.api.ApiException) {
-                throw NotificationApiException(if (error.statusCode == 7) 503 else 401, "Sign in again to enable secure notifications")
+                throw NotificationGoogleAuth.failure(error.statusCode)
             }
-            if ("google_${google.id}" != account.uid) throw NotificationApiException(401, "Google account does not match")
-            val token = google.idToken ?: throw NotificationApiException(401, "Sign in again to enable notifications")
+            NotificationAuthRecovery.verifyGoogleAccount(account, NotificationRuntime.account(context), google.id)
+            val token = google.idToken ?: throw NotificationApiException(401, "Reconnect Google to enable notifications", NotificationPhase.GOOGLE_SIGN_IN, failure = NotificationFailure.TOKEN_MISSING)
             return JSONObject().put("provider", "google").put("idToken", token)
         }
         val key = publicKey()

@@ -320,10 +320,5 @@ object NotificationRuntime {
         account(context)?.let { NotificationWork.sync(context, it) }
         scope.launch { showNextInvite(context) }
     }
-    fun eventText(event: NotificationEvent): String = when (event.kind) {
-        NotificationKind.GAME_INVITE -> "${event.senderDisplayName} invited you to room #${event.roomCode}"
-        NotificationKind.FRIEND_REQUEST -> "👥 @${event.senderUsername} sent you a friend request!"
-        NotificationKind.FRIEND_ACCEPTED -> "🎉 @${event.senderUsername} accepted your friend request! You are now friends."
-        NotificationKind.FRIEND_ONLINE -> "🟢 ${event.senderDisplayName} is online"
-    }
+    fun eventText(event: NotificationEvent): String = NotificationPresentation.message(event)
 }

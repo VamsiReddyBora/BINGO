@@ -23,7 +23,7 @@ class FriendOnlineAnnouncements(private val prefs: SharedPreferences) {
         val previous = read(uid)
         val since = previous?.let { if (it.offlineSince > 0) it.offlineSince else it.lastActiveAt } ?: 0
         // After a hard process kill, the last checkpoint can predate the actual exit.
-        // Wait one checkpoint extra rather than announce a short absence as a full hour.
+        // Wait one checkpoint extra rather than overstate the continuous absence.
         val interval = OFFLINE_INTERVAL + if (previous?.offlineSince == 0L) CHECKPOINT_INTERVAL else 0L
         val eligible = previous == null || (since > 0 && now >= since && now - since >= interval)
         val next = if (eligible) State(now, noticeId = UUID.randomUUID().toString(), noticeAt = now)
@@ -50,7 +50,7 @@ class FriendOnlineAnnouncements(private val prefs: SharedPreferences) {
     }
 
     companion object {
-        const val OFFLINE_INTERVAL = 3_600_000L
+        const val OFFLINE_INTERVAL = NotificationOnlineConfig.OFFLINE_INTERVAL_MS
         private const val CHECKPOINT_INTERVAL = 15_000L
         private val guard = Any()
     }
