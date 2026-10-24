@@ -1,9 +1,9 @@
 {
-  "versionName": "1.0.1",
-  "versionCode": 66,
-  "tagName": "v1.0.1",
-  "downloadUrl": "https://github.com/VamsiReddyBora/BINGO/releases/download/v1.0.1/Bingo-1.0.1.apk",
-  "apkSize": 8072922,
-  "sha256": "5eee171938ff73c66aa1ca6b995fbd9f2d7ce0c6b08f25ef436c2c2ec95db8b5",
-  "releaseNotes": "Friend-online alerts stay silent during short app switches and notify again after an hour offline.\nFaster background invitation display and improved notification reliability.\nClearer Android notification settings and private delivery diagnostics."
+  "versionName": "1.0.2",
+  "versionCode": 67,
+  "tagName": "v1.0.2",
+  "downloadUrl": "https://github.com/VamsiReddyBora/BINGO/releases/download/v1.0.2/Bingo-1.0.2.apk",
+  "apkSize": 8089302,
+  "sha256": "7c8848dbed30627fa429acf72dafee34ed0755843a1420ace5785b31302442a6",
+  "releaseNotes": "Faster startup with saved matches.\nView completed results without reconnecting to old rooms.\nCorrect lobby return after the host leaves, with temporary interruptions still recoverable.\nUpdate prompts appear after startup finishes.\nEMQX warning state survives tab switches."
 }
