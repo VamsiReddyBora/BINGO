@@ -117,6 +117,10 @@ internal object RoomMetadataApi {
     }
     private fun transport(): RoomMetadataTransport = transportOverride ?: defaultMqttTransport()
     suspend fun read(code: String): Result<OnlineRoomSession?> = transport().read(code)
+    suspend fun readLive(code: String): Result<OnlineRoomSession?> {
+        val current = transport()
+        return if (current is MqttRoomMetadataTransport) current.readLive(code) else current.read(code)
+    }
     suspend fun readCandidate(code: String): OnlineRoomSession? =
         runCatching { (transport() as? MqttRoomMetadataTransport)?.readCandidate(code) }.getOrNull()
     fun coordinator() = RoomMetadataCoordinator(transport(), OnlineRoomRegistry::rememberCanonicalRoom)

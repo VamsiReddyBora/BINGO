@@ -11,9 +11,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import com.bingo.multiplayer.domain.network.AppLifecycleObserver
 import com.bingo.multiplayer.domain.network.EmqxBrokerMonitor
-import com.bingo.multiplayer.domain.network.brokerWarningVisibility
+import com.bingo.multiplayer.domain.network.BrokerWarningState
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -22,11 +26,20 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 internal fun rememberBrokerWarningVisible(): Boolean {
     val context = LocalContext.current.applicationContext
     val visibility = remember(context) {
-        brokerWarningVisibility(internetAvailability(context),
-            AppLifecycleObserver.isAppInForeground, EmqxBrokerMonitor.isBrokerDown)
+        BrokerWarningPresentation.visibility(context)
     }
-    val visible by visibility.collectAsState(initial = false)
+    val visible by visibility.collectAsState()
     return visible
+}
+
+/** Application context only. Tab disposal never owns or stops the outage grace period. */
+private object BrokerWarningPresentation {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var shared: StateFlow<Boolean>? = null
+
+    @Synchronized fun visibility(context: Context): StateFlow<Boolean> = shared ?: BrokerWarningState(scope,
+        internetAvailability(context.applicationContext), AppLifecycleObserver.isAppInForeground,
+        EmqxBrokerMonitor.isBrokerDown).visible.also { shared = it }
 }
 
 /** Observe Android connectivity without adding HTTP probes or changing the MQTT connection. */

@@ -179,6 +179,9 @@ fun GameScreen(
     disconnectedPlayerIds: List<String> = emptyList(),
     awayPlayerIds: List<String> = emptyList(),
     isLobbyAvailable: Boolean = true,
+    lobbyStatusMessage: String = "",
+    lobbyCheckInProgress: Boolean = false,
+    onCheckLobby: (() -> Unit)? = null,
     typingPlayerName: String? = null,
     onSetTyping: (Boolean) -> Unit = {},
     onResumeGame: () -> Unit = onTogglePause,
@@ -404,7 +407,7 @@ fun GameScreen(
         showSurrenderDialog = true
     }
     BackHandler(enabled = isGameOver) {
-        if (onReturnToLobby != null) {
+        if (isLobbyAvailable && onReturnToLobby != null) {
             onReturnToLobby()
         } else {
             onBackToMenu()
@@ -491,7 +494,7 @@ fun GameScreen(
     BackHandler(enabled = !isGameOver && isGamePaused) {}
 
     if (showSurrenderDialog && !hostUnavailable) {
-        val isMultiplayerLobbyGame = (onReturnToLobby != null)
+        val isMultiplayerLobbyGame = onReturnToLobby != null && (!isGameOver || isLobbyAvailable)
         AlertDialog(
             onDismissRequest = { showSurrenderDialog = false },
             shape = RoundedCornerShape(24.dp),
@@ -524,6 +527,8 @@ fun GameScreen(
                         animateStampDrop = false
                         if (isMultiplayerLobbyGame && isGameOver) {
                             onReturnToLobby?.invoke()
+                        } else if (isGameOver) {
+                            onBackToMenu()
                         } else {
                             onSurrender()
                         }
@@ -954,9 +959,28 @@ fun GameScreen(
                                 }
                             }
                         } else {
+                            if (lobbyStatusMessage.isNotBlank()) {
+                                Text(
+                                    text = lobbyStatusMessage,
+                                    color = tokens.textSecondary,
+                                    fontSize = 12.sp,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                                )
+                            }
+                            if (!isLobbyAvailable && onCheckLobby != null) {
+                                OutlinedButton(
+                                    onClick = onCheckLobby,
+                                    enabled = !lobbyCheckInProgress,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Text(if (lobbyCheckInProgress) "Checking lobby…" else "Check lobby")
+                                }
+                            }
                             Button(
                                 onClick = {
-                                    if (onReturnToLobby != null) {
+                                    if (isLobbyAvailable && onReturnToLobby != null) {
                                         onReturnToLobby()
                                     } else {
                                         onBackToMenu()
@@ -978,7 +1002,7 @@ fun GameScreen(
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = "Return to Lobby",
+                                    text = if (isLobbyAvailable && onReturnToLobby != null) "Return to Lobby" else "Back to Home",
                                     color = tokens.primaryButtonText,
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 15.sp

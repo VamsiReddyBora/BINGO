@@ -209,6 +209,16 @@ internal class MqttRoomMetadataTransport(
             .getOrNull()?.takeIf { validRecord(code, it) }
     }
 
+    /** Post-match lobby admission requires a running room writer, not an old retained snapshot. */
+    suspend fun readLive(code: String): Result<OnlineRoomSession?> = try {
+        watch(code)
+        val current = rooms[code]
+        if (current != null && (current.isTerminalClosed || current.status == "CLOSED" ||
+                (writer(current) == actor() && !isRetired(current, actor())))) Result.success(current)
+        else Result.success(liveSnapshot(code)?.let { remember(code, json.encodeToString(it).toByteArray()) })
+    } catch (e: CancellationException) { throw e }
+    catch (e: Exception) { Result.failure(e) }
+
     override suspend fun read(code: String): Result<OnlineRoomSession?> = try {
         watch(code)
         val local = actor()

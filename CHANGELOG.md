@@ -1,3 +1,7 @@
+# Version 1.0.2 — Build 67
+
+Fix startup waiting on saved-match room lookup, gate automatic startup dialogs on real UI readiness, show completed saved results without live rejoin, and prevent returning to a closed or unresponsive post-match lobby. Temporary host absence remains recoverable. Restore the EMQX Home-note wording and preserve its outage state across tab switches. Preserve all existing gameplay and notification policies.
+
 # Changelog
 
 ## 1.0.1 — Build 66

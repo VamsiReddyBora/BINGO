@@ -1446,8 +1446,10 @@ open class OnlineRoomSyncManager(
                 (currentLobbySessionId.isNotBlank() && session.sessionId != currentLobbySessionId)) return
             if (canonical.sessionId == session.sessionId && (canonical.status == "CLOSED" || canonical.isTerminalClosed)) {
                 lobbyMetadataClosed = true
-                if (activePeerSeed == 0L) _incomingPackets.tryEmit(RoomMessagePacket("LOBBY_EXPIRED", roomCode = code,
-                    playerId = session.hostId, senderPlayerId = session.hostId))
+                // Finished-board viewers still need the room closure. Active-game handling
+                // keeps its existing policy; this is not a surrender or transport disconnect.
+                _incomingPackets.tryEmit(RoomMessagePacket("LOBBY_EXPIRED", roomCode = code,
+                    playerId = session.hostId, senderPlayerId = session.hostId, lobbySessionId = session.sessionId))
             }
             return
         }

@@ -169,6 +169,27 @@ fun MainMenuScreen(
     LaunchedEffect(ongoingMatch?.roomCode, currentAccountUid) {
         val original = ongoingMatch ?: run { isMatchVerifiedActive = false; return@LaunchedEffect }
         val uid = currentAccountUid ?: return@LaunchedEffect
+        fun recordAcceptedResult(recovered: OngoingMatchData) {
+            val board = recovered.playerBoard
+            val others = recovered.participants.filter { it.id != uid }
+            authRepository.recordMatch(mode = "Online Match", opponentName = others.joinToString { it.displayName },
+                didWin = recovered.winnerPlayerId == uid, boardSize = recovered.boardSize,
+                matchTitle = if (recovered.winnerPlayerId == uid) "Online match won 🏆" else
+                    if (uid in recovered.runnerPlayerIds) "Online match runner-up 🥈" else "Online match lost",
+                opponentUid = others.singleOrNull()?.id.orEmpty(),
+                turnsTaken = recovered.pickedByPlayers.count { it == uid },
+                linesCompleted = board?.completedLinesCount ?: 0,
+                durationSeconds = ((recovered.lastPlayerActivityAt - recovered.startedAt) / 1000L).coerceAtLeast(0),
+                finalBoardNumbers = board?.cells?.map { it.number } ?: emptyList(),
+                markedNumbers = board?.cells?.filter { it.isMarked }?.map { it.number } ?: emptyList(),
+                stableResultId = "match:${recovered.roomCode}:${recovered.matchSeed}:$uid", expectedAccountUid = uid)
+        }
+        // The accepted final checkpoint is enough to view a result, even without a running room.
+        if (original.isMatchFinished) {
+            recordAcceptedResult(original)
+            isMatchVerifiedActive = true
+            return@LaunchedEffect
+        }
         if (original.simplifiedRulesVersion > 0) {
             var retryDelay = 2000L
             while (isActive) {
@@ -189,19 +210,7 @@ fun MainMenuScreen(
                     ongoingMatch = recovered
                     isMatchVerifiedActive = true
                     if (recovered.isMatchFinished) {
-                        val board = recovered.playerBoard
-                        val others = recovered.participants.filter { it.id != uid }
-                        authRepository.recordMatch(mode = "Online Match", opponentName = others.joinToString { it.displayName },
-                            didWin = recovered.winnerPlayerId == uid, boardSize = recovered.boardSize,
-                            matchTitle = if (recovered.winnerPlayerId == uid) "Online match won 🏆" else
-                                if (uid in recovered.runnerPlayerIds) "Online match runner-up 🥈" else "Online match lost",
-                            opponentUid = others.singleOrNull()?.id.orEmpty(),
-                            turnsTaken = recovered.pickedByPlayers.count { it == uid },
-                            linesCompleted = board?.completedLinesCount ?: 0,
-                            durationSeconds = ((recovered.lastPlayerActivityAt - recovered.startedAt) / 1000L).coerceAtLeast(0),
-                            finalBoardNumbers = board?.cells?.map { it.number } ?: emptyList(),
-                            markedNumbers = board?.cells?.filter { it.isMarked }?.map { it.number } ?: emptyList(),
-                            stableResultId = "match:${recovered.roomCode}:${recovered.matchSeed}:$uid", expectedAccountUid = uid)
+                        recordAcceptedResult(recovered)
                         break
                     }
                     // No periodic discovery heartbeat. Recheck only when inactivity could actually expire.
@@ -507,7 +516,7 @@ fun MainMenuScreen(
                                     fontWeight = FontWeight.Normal
                                 )
                             ) {
-                                append("Online server is not responding. Please use Developer Note to report this issue.")
+                                append("EMQX server is temporarily unavailable. Online game play may not work properly. Please use Developer note to report this issue.")
                             }
                         },
                         fontSize = 11.sp,

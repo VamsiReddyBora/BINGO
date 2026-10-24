@@ -410,6 +410,9 @@ class PresenceAndFriendRequestTest {
 
     @Test
     fun testOnlineRoomSession_compactPayloadUnderLimit() {
+        // Stable full-length epoch values: wall-clock variation changes gzip size by a few
+        // bytes and must not make this strict legacy payload/roundtrip regression random.
+        val snapshotTime = 1_792_792_345_678L
         val players = (1..8).map { i ->
             com.bingo.multiplayer.domain.model.Player(
                 id = "user_id_$i",
@@ -423,7 +426,7 @@ class PresenceAndFriendRequestTest {
                 gamesWon = 0,
                 currentStreak = 0,
                 level = 1,
-                lastSeenTimestamp = System.currentTimeMillis(),
+                lastSeenTimestamp = snapshotTime,
                 lobbyReadyStatus = if (i == 1) "READY" else "NOT_READY"
             )
         }
@@ -436,6 +439,8 @@ class PresenceAndFriendRequestTest {
             hostAvatarUrl = null,
             status = "WAITING",
             boardSize = 5,
+            createdAt = snapshotTime,
+            lastHeartbeat = snapshotTime,
             players = players
         )
 

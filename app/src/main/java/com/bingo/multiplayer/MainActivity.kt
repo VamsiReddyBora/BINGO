@@ -6,6 +6,8 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.core.view.WindowCompat
 import com.bingo.multiplayer.core.designsystem.BingoAppTheme
@@ -25,12 +27,15 @@ import com.bingo.multiplayer.presentation.navigation.RootNavGraph
 
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var authRepository: AuthRepository
     private lateinit var friendsRepository: FriendsRepository
+    private val launchReady = MutableStateFlow(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -84,11 +89,12 @@ class MainActivity : ComponentActivity() {
         // Process notification launch actions
         handleNotificationIntent(intent)
 
-        // Asynchronously check for app updates and active broadcast silently after launch splash animation completes
+        // A fixed sleep cannot tell whether startup has finished. Wait for a rendered destination.
         lifecycleScope.launch {
-            delay(3500)
+            launchReady.first { it }
+            delay(500L)
             AppUpdateManager.checkForUpdates(applicationContext, manual = false)
-            delay(500)
+            delay(500L)
             BroadcastMessageManager.checkForBroadcast(applicationContext)
         }
 
@@ -128,12 +134,16 @@ class MainActivity : ComponentActivity() {
                 cellBorderEnabled = cellBorderEnabled,
                 cellBorderColorHex = cellBorderColorHex
             ) {
+                val readyForDialogs by launchReady.collectAsState()
                 RootNavGraph(
                     authRepository = authRepository,
-                    friendsRepository = friendsRepository
+                    friendsRepository = friendsRepository,
+                    onLaunchReady = { launchReady.value = true }
                 )
-                AppUpdateDialog()
-                BroadcastMessageDialog()
+                if (readyForDialogs) {
+                    AppUpdateDialog()
+                    BroadcastMessageDialog()
+                }
             }
         }
     }
