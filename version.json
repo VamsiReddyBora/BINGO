@@ -1,9 +1,9 @@
 {
   "versionName": "1.0.2",
-  "versionCode": 68,
+  "versionCode": 69,
   "tagName": "v1.0.2",
-  "downloadUrl": "https://vamsireddybora.github.io/BINGO/Bingo-1.0.2-build68.apk",
-  "apkSize": 8093402,
-  "sha256": "8aa434fafc54885cc915835216ba39dd27628bdf6867460577060ce5151928b6",
-  "releaseNotes": "Build 68 — notification repair.\nReconnect background notifications with your existing Google account from Settings when prompted.\nFriend-online notifications use a five-minute offline-return interval for testing.\nImproved notification diagnostics and EMQX connection message."
+  "downloadUrl": "https://vamsireddybora.github.io/BINGO/Bingo-1.0.2-build69.apk",
+  "apkSize": 8097501,
+  "sha256": "62dca24804c8024083ed878d6ad985064a4dd052c6b69c185e46aa72a1bcf051",
+  "releaseNotes": "Build 69 — notification improvements.\nAutomatic Home reminder when Google notification authorization needs reconnection, with Reconnect and Later.\nFriend-online alerts now require 30 continuous offline minutes.\nOnline notifications show one sentence without repeating the title and body."
 }
