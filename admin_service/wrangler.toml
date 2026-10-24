@@ -1,0 +1,19 @@
+name = "bingo-admin-control"
+main = "worker.js"
+keep_vars = true
+compatibility_date = "2026-10-01"
+
+[vars]
+ALLOWED_ORIGIN = "https://vamsireddybora.github.io"
+PASSKEY_RP_ID = "vamsireddybora.github.io"
+PUBLIC_URL = "https://bingo-admin-control.vamsireddy2534.workers.dev"
+LEGACY_API_URL = "https://keyvalue.immanuel.co/api/KeyVal"
+MQTT_URL = "wss://p0812f88.ala.asia-southeast1.emqxsl.com:8084/mqtt"
+
+[[durable_objects.bindings]]
+name = "ADMIN"
+class_name = "AdminControl"
+
+[[migrations]]
+tag = "admin-control-v1"
+new_sqlite_classes = ["AdminControl"]
