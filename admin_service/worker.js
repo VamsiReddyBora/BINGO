@@ -751,6 +751,9 @@ export class AdminControl {
         const row = await this.player(op.target, true),
           backup = row.binId ? await this.legacy.backup(row.binId) : null,
           p = await this.policy(op.target);
+        // Persist the same deletion policy to the store the Android listener observes
+        // before deleting records, so a stale local history cannot recreate them.
+        await this.legacy.mirrorProfile(op.target, row.profile, p);
         if (backup) {
           backup.matchHistory = (backup.matchHistory || []).filter(
             (m) =>

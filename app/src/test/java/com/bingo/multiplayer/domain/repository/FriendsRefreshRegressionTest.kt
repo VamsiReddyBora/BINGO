@@ -33,6 +33,13 @@ class FriendsRefreshRegressionTest {
         }
     }
     private class Source(val store: FirebaseFriendsStore) : FriendsDataSource {
+        var liveRoster: ((FriendsBackup) -> Unit)? = null
+        var liveProfile: ((PlayerRegistryEntry) -> Unit)? = null
+        var closed = false
+        override fun watchFriends(uid: String, onRoster: (FriendsBackup) -> Unit, onProfile: (PlayerRegistryEntry) -> Unit): AutoCloseable {
+            liveRoster = onRoster; liveProfile = onProfile
+            return AutoCloseable { closed = true }
+        }
         val backups = mutableListOf<List<Friend>>()
         var backupSucceeds = true
         var backupGate: CompletableDeferred<Unit>? = null
@@ -56,6 +63,27 @@ class FriendsRefreshRegressionTest {
         override suspend fun refreshPresence(usernames: List<String>) {}
     }
     private val kevin = UserProfile("k", "kevin", "Kevin")
+
+    @Test fun liveAdminFriendAddRemoveRestoreAndProfileResetReachTheSameRepositoryList() = runTest {
+        val source = Source(FirebaseFriendsStore(Documents()))
+        val repo = FriendsRepository(AuthRepositoryTest.FakeSharedPreferences(), source, { kevin }, this)
+        val listener = repo.startListeningForRequests("kevin", {}, {})
+        val stuart = Friend("s", "stuart", "Stuart", gamesPlayed=50, gamesWon=40, level=50)
+        source.liveRoster!!(FriendsBackup(listOf(stuart)))
+        assertTrue(repo.isFriend("stuart"))
+        source.liveProfile!!(PlayerRegistryEntry("stuart", "s", "New Stuart", gamesPlayed=1, gamesWon=0, level=1, adminRevision=2))
+        assertEquals(1, repo.friends.value.single().level)
+        assertEquals(1, repo.friends.value.single().gamesPlayed)
+        source.liveRoster!!(FriendsBackup(listOf(stuart)))
+        assertEquals("An older roster card must not restore pre-reset statistics", 1, repo.friends.value.single().level)
+        source.liveRoster!!(FriendsBackup(emptyList(), removedKeys=friendKeys(stuart)))
+        assertFalse(repo.isFriend("stuart"))
+        source.liveRoster!!(FriendsBackup(listOf(stuart), restoredKeys=friendKeys(stuart)))
+        assertTrue(repo.isFriend("stuart"))
+        listener.close(); assertTrue(source.closed)
+        source.liveRoster!!(FriendsBackup(emptyList(), removedKeys=friendKeys(stuart)))
+        assertTrue("Detached listeners cannot change the roster", repo.isFriend("stuart"))
+    }
 
     @Test fun declinedOutgoingRequestClearsAfterReconciliationWithoutAnMqttPacket() = runTest {
         val store = FirebaseFriendsStore(Documents())

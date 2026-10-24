@@ -390,6 +390,9 @@ class AuthRepositoryTest {
         // Attempt restore on clean repository for requestedGoogleId
         val freshPrefs = FakeSharedPreferences()
         val freshRepo = createTestRepo(freshPrefs)
+        // Establish the state the test promises before exercising rejection; the
+        // constructor resolves it asynchronously and may still be Loading under load.
+        freshRepo.verifyPersistedSession()
         val restored = freshRepo.restoreCloudUserData(requestedGoogleId)
 
         assertFalse("restoreCloudUserData must reject backup with mismatched UID", restored)
@@ -1143,6 +1146,91 @@ class AuthRepositoryTest {
         val entry5 = repoRestart.sessionManager.lookupGoogleProfileSync(googleId)
         assertNotNull("publicKey must not be erased after verifyPersistedSession", entry5?.publicKey)
         assertEquals("publicKey must match original key after verifyPersistedSession", expectedKey, entry5?.publicKey)
+    }
+
+    private fun adminSnapshot(revision: Long, vararg fields: Pair<String, Any?>): Map<String, Any?> = mapOf(
+        "adminRevision" to revision,
+        "adminChanges" to fields.associate { it.first to mapOf("revision" to revision, "value" to it.second) }
+    )
+
+    @Test fun adminLevel100BecomesCurrentAndPersistedProfile() = runBlocking {
+        repository.onGoogleSignInSuccess("admin_level", "Original", "test@example.com", "admin_level")
+        val uid = repository.getPersistedUserSync()!!.uid
+        repository.applyCloudAdminSnapshot(adminSnapshot(1, "level" to 100, "xp" to 40000), uid, repository.sessionGeneration.get())
+        assertEquals(100, (repository.authState.value as AuthState.Authenticated).user.level)
+        assertEquals(100, repository.getPersistedUserSync()!!.level)
+        repository.recordGameFinished(true)
+        assertEquals("Normal subsequent results must preserve the granted level", 100, repository.getPersistedUserSync()!!.level)
+    }
+
+    @Test fun adminCanLowerStatisticsAndAnOldSnapshotCannotUndoIt() {
+        repository.onGoogleSignInSuccess("admin_reset", "Original", "test@example.com", "admin_reset")
+        repeat(3) { repository.recordGameFinished(true) }
+        val uid = repository.getPersistedUserSync()!!.uid; val gen = repository.sessionGeneration.get()
+        repository.applyCloudAdminSnapshot(adminSnapshot(2, "gamesPlayed" to 1, "gamesWon" to 0,
+            "currentStreak" to 0, "bestStreak" to 0, "level" to 1, "xp" to 0), uid, gen)
+        assertEquals(1, repository.getPersistedUserSync()!!.gamesPlayed)
+        assertEquals(0, repository.getPersistedUserSync()!!.gamesWon)
+        repository.applyCloudAdminSnapshot(adminSnapshot(1, "gamesPlayed" to 50, "gamesWon" to 40), uid, gen)
+        assertEquals(1, repository.getPersistedUserSync()!!.gamesPlayed)
+    }
+
+    @Test fun adminPhotoReplacementAndExplicitRemovalClearBothCachedSources() {
+        repository.onGoogleSignInSuccess("admin_photo", "Original", "test@example.com", "admin_photo")
+        val uid = repository.getPersistedUserSync()!!.uid; val gen = repository.sessionGeneration.get()
+        repository.applyCloudAdminSnapshot(adminSnapshot(1, "avatarBase64" to "new-photo", "avatarUrl" to null), uid, gen)
+        assertEquals("new-photo", repository.getPersistedUserSync()!!.avatarBase64)
+        repository.applyCloudAdminSnapshot(adminSnapshot(2, "avatarBase64" to null, "avatarUrl" to null), uid, gen)
+        assertNull(repository.getPersistedUserSync()!!.avatarBase64)
+        assertNull(repository.getPersistedUserSync()!!.avatarUrl)
+    }
+
+    @Test fun adminMatchRemovalCannotBeRestoredByALaterCloudHistoryMerge() {
+        repository.onGoogleSignInSuccess("admin_history", "Original", "test@example.com", "admin_history")
+        val uid = repository.getPersistedUserSync()!!.uid; val gen = repository.sessionGeneration.get()
+        val old = com.bingo.multiplayer.domain.model.MatchRecord(id="removed", timestamp=100)
+        val keep = old.copy(id="keep", timestamp=300)
+        repository.persistMatchHistory(listOf(old, keep), uid)
+        repository.applyCloudAdminSnapshot(adminSnapshot(1) + mapOf("adminDeletedMatches" to listOf("removed")), uid, gen)
+        assertEquals(listOf("keep"), repository.getMatchHistory().map { it.id })
+        repository.persistMatchHistory(listOf(old), uid)
+        assertEquals(listOf("keep"), repository.getMatchHistory().map { it.id })
+    }
+
+    @Test fun adminProfileAndHistoryPolicySurviveRestartAndIgnoreAnOlderLegacyBackup() = runBlocking {
+        val id = "admin_restart"; repository.onGoogleSignInSuccess(id, "Original", "test@example.com", id)
+        repeat(3) { repository.recordGameFinished(true) }
+        repository.sessionManager.drainBackgroundJobs()
+        val uid = repository.getPersistedUserSync()!!.uid
+        repository.applyCloudAdminSnapshot(adminSnapshot(2, "gamesPlayed" to 1, "gamesWon" to 0,
+            "level" to 100, "xp" to 40000), uid, repository.sessionGeneration.get())
+        assertTrue(repository.restoreCloudUserData(id))
+        assertEquals(1, repository.getPersistedUserSync()!!.gamesPlayed)
+        val restart = createTestRepo(fakePrefs)
+        restart.verifyPersistedSession()
+        assertEquals(100, restart.getPersistedUserSync()!!.level)
+        assertEquals(1, restart.getPersistedUserSync()!!.gamesPlayed)
+        assertEquals(2L, restart.getPersistedUserSync()!!.adminRevision)
+    }
+
+    @Test fun lateAdminCallbackCannotModifyTheNextAccount() {
+        repository.onGoogleSignInSuccess("admin_old", "Old", "old@example.com", "admin_old")
+        val uid = repository.getPersistedUserSync()!!.uid; val gen = repository.sessionGeneration.get()
+        repository.onGoogleSignInSuccess("admin_new", "New", "new@example.com", "admin_new")
+        assertFalse(repository.applyCloudAdminSnapshot(adminSnapshot(1, "level" to 100), uid, gen))
+        assertEquals(1, repository.getPersistedUserSync()!!.level)
+        assertFalse(repository.removeAdminAccount(uid, gen))
+        assertEquals("google_admin_new", repository.getPersistedUserSync()!!.uid)
+    }
+
+    @Test fun adminAccountRemovalClearsTheSessionAndItsSavedHistory() {
+        repository.onGoogleSignInSuccess("admin_removed", "Original", "test@example.com", "admin_removed")
+        val uid = repository.getPersistedUserSync()!!.uid
+        repository.persistMatchHistory(listOf(com.bingo.multiplayer.domain.model.MatchRecord(id="old")), uid)
+        assertTrue(repository.removeAdminAccount(uid, repository.sessionGeneration.get()))
+        assertEquals(AuthState.Unauthenticated, repository.authState.value)
+        assertNull(repository.getPersistedUserSync())
+        assertTrue(repository.getMatchHistory(uid).isEmpty())
     }
 
     // ── Test Doubles & In-Memory SharedPreferences ──

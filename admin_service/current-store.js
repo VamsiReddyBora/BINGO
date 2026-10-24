@@ -53,6 +53,19 @@ export class CurrentPlayerStore extends LegacyStore {
     return [...this.directoryProfiles.keys()].sort();
   }
   project(raw, name) {
+    const applied = Number(raw.adminAppliedRevision) || 0;
+    const pending = Object.fromEntries(
+      Object.entries(raw.adminChanges || {})
+        .filter(
+          ([, change]) =>
+            change.revision > applied &&
+            change.revision <= (raw.adminRevision || 0),
+        )
+        .map(([key, change]) => [key, change.value]),
+    );
+    raw = { ...raw, ...pending };
+    if (Object.hasOwn(pending, "avatarBase64"))
+      raw.avatarUrl = raw.avatarBase64 || raw.avatarUrl || null;
     const fields = [
       "uid",
       "displayName",
@@ -196,7 +209,12 @@ export class CurrentPlayerStore extends LegacyStore {
       changed.avatarUrl = changed.avatarBase64 || changed.avatarUrl || null;
     await this.firestoreSet("users/" + profile.uid, {
       ...changed,
+      // Keep the versioned edits alongside the projection. An older/offline APK cannot
+      // erase the administrator's intent by uploading its cached public profile.
       adminRevision: policy.revision,
+      adminChanges: policy.fields || {},
+      adminDeletedMatches: policy.deletedMatches || [],
+      adminClearMatchesBefore: policy.clearMatchesBefore || 0,
     });
     // A compact lookup mirror cannot overwrite the canonical Firebase profile on an admin read.
     await this.set(

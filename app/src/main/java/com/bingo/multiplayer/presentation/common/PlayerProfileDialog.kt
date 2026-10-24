@@ -55,7 +55,8 @@ data class PlayerProfileData(
     val level: Int = 1,
     val isOnline: Boolean = false,
     val lastSeenDisplay: String = "offline",
-    val lastSeenTimestamp: Long = 0L
+    val lastSeenTimestamp: Long = 0L,
+    val adminRevision: Long = 0L
 ) {
     val winRatePercentage: Int
         get() = if (gamesPlayed > 0) ((gamesWon.toFloat() / gamesPlayed) * 100).toInt() else 0
@@ -67,6 +68,19 @@ data class PlayerProfileData(
             level >= 3 -> "Silver Competitor"
             else -> "Bronze Player"
         }
+
+    fun withRegistry(entry: PlayerRegistryEntry): PlayerProfileData {
+        if (entry.adminRevision < adminRevision || (entry.uid != playerId &&
+            entry.username.trim().removePrefix("@").lowercase() != username.trim().removePrefix("@").lowercase())) return this
+        val card = Friend(playerId, username, displayName, avatarUrl, gamesPlayed = gamesPlayed,
+            gamesWon = gamesWon, currentStreak = currentStreak, level = level, adminRevision = adminRevision)
+        val effective = com.bingo.multiplayer.domain.engine.FriendCareerStats.merge(card, entry)
+        return copy(displayName = if (entry.adminRevision >= adminRevision) entry.displayName else displayName,
+            avatarUrl = effective.avatarUrl, gamesPlayed = effective.gamesPlayed, gamesWon = effective.gamesWon,
+            currentStreak = effective.currentStreak, level = effective.level,
+            bestStreak = if (entry.adminRevision > adminRevision) entry.bestStreak else maxOf(bestStreak, entry.bestStreak),
+            adminRevision = effective.adminRevision)
+    }
 
     companion object {
         fun fromPlayer(p: Player, currentUser: com.bingo.multiplayer.domain.model.UserProfile? = null): PlayerProfileData {
@@ -106,8 +120,9 @@ data class PlayerProfileData(
                 level = if (isMe && currentUser != null) currentUser.level else (if (p.level > 1) p.level else (cached?.level?.coerceAtLeast(1) ?: 1)),
                 isOnline = isOnline,
                 lastSeenDisplay = statusText,
-                lastSeenTimestamp = p.lastSeenTimestamp
-            )
+                lastSeenTimestamp = p.lastSeenTimestamp,
+                adminRevision = if (isMe) currentUser?.adminRevision ?: 0L else 0L
+            ).let { initial -> if (!isMe && cached != null) initial.withRegistry(cached) else initial }
         }
 
         fun fromRegistryEntry(entry: PlayerRegistryEntry): PlayerProfileData {
@@ -126,7 +141,8 @@ data class PlayerProfileData(
                 level = entry.level,
                 isOnline = isOnline,
                 lastSeenDisplay = statusText,
-                lastSeenTimestamp = entry.lastSeenTimestamp
+                lastSeenTimestamp = entry.lastSeenTimestamp,
+                adminRevision = entry.adminRevision
             )
         }
 
@@ -137,16 +153,11 @@ data class PlayerProfileData(
             val statusText = com.bingo.multiplayer.domain.network.PresenceManager.getRichDisplayStatus(cleanUser, friend.lastSeenTimestamp)
             val isOnline = com.bingo.multiplayer.domain.network.PresenceManager.isStatusOnline(statusText)
             val cached = com.bingo.multiplayer.domain.network.AccountSessionManager.getCachedPlayer(cleanUser)
-            val won = maxOf(cached?.gamesWon ?: 0, friend.gamesWon)
-            val played = maxOf(cached?.gamesPlayed ?: 0, friend.gamesPlayed)
-            val streak = cached?.let {
-                com.bingo.multiplayer.domain.engine.FriendCareerStats.merge(friend, it).currentStreak
-            } ?: friend.currentStreak
-            val best = maxOf(cached?.bestStreak ?: 0, cached?.currentStreak ?: 0, friend.currentStreak)
-            val lvl = maxOf(cached?.level ?: 1, friend.level.coerceAtLeast(1))
-            val avatar = cached?.avatarUrl?.takeIf { it.isNotBlank() } ?: friend.avatarUrl
-            val dName = cached?.displayName?.takeIf { it.isNotBlank() } ?: friend.displayName
-            val pId = cached?.uid?.takeIf { it.isNotBlank() } ?: friend.uid
+            val effective = cached?.let { com.bingo.multiplayer.domain.engine.FriendCareerStats.merge(friend, it) } ?: friend
+            val won = effective.gamesWon; val played = effective.gamesPlayed; val streak = effective.currentStreak
+            val best = if (cached != null && cached.adminRevision >= friend.adminRevision) cached.bestStreak else friend.currentStreak
+            val lvl = effective.level; val avatar = effective.avatarUrl
+            val dName = effective.displayName; val pId = effective.uid
             return PlayerProfileData(
                 playerId = pId,
                 username = cleanUser,
@@ -159,7 +170,8 @@ data class PlayerProfileData(
                 level = lvl,
                 isOnline = isOnline,
                 lastSeenDisplay = statusText,
-                lastSeenTimestamp = friend.lastSeenTimestamp
+                lastSeenTimestamp = friend.lastSeenTimestamp,
+                adminRevision = effective.adminRevision
             )
         }
     }
@@ -213,45 +225,29 @@ fun PlayerProfileDialog(
 
     var effectiveData by remember(playerData) { mutableStateOf(playerData) }
 
-    LaunchedEffect(playerData.username, playerData.playerId, isSelf) {
+    val profileCacheVersion by com.bingo.multiplayer.domain.network.AccountSessionManager.registryCacheVersion.collectAsState()
+    LaunchedEffect(playerData.username, playerData.playerId, isSelf, currentUser, profileCacheVersion) {
         if (isSelf && currentUser != null) {
             effectiveData = effectiveData.copy(
                 displayName = currentUser.displayName,
-                avatarUrl = currentUser.avatarBase64?.takeIf { it.isNotBlank() } ?: currentUser.avatarUrl ?: effectiveData.avatarUrl,
+                avatarUrl = currentUser.avatarBase64?.takeIf { it.isNotBlank() } ?: currentUser.avatarUrl,
                 gamesPlayed = currentUser.gamesPlayed,
                 gamesWon = currentUser.gamesWon,
                 currentStreak = currentUser.currentStreak,
                 bestStreak = currentUser.bestStreak,
-                level = currentUser.level
+                level = currentUser.level,
+                adminRevision = currentUser.adminRevision
             )
         } else if (targetUsername.isNotBlank()) {
             val cached = com.bingo.multiplayer.domain.network.AccountSessionManager.getCachedPlayer(targetUsername)
             if (cached != null) {
-                effectiveData = effectiveData.copy(
-                    displayName = cached.displayName.ifBlank { effectiveData.displayName },
-                    avatarUrl = cached.avatarUrl?.takeIf { it.isNotBlank() } ?: effectiveData.avatarUrl,
-                    gamesPlayed = maxOf(cached.gamesPlayed, effectiveData.gamesPlayed),
-                    gamesWon = maxOf(cached.gamesWon, effectiveData.gamesWon),
-                    currentStreak = if (cached.gamesPlayed >= effectiveData.gamesPlayed && cached.gamesWon >= effectiveData.gamesWon)
-                        cached.currentStreak.coerceAtLeast(0) else effectiveData.currentStreak,
-                    bestStreak = maxOf(cached.bestStreak, effectiveData.bestStreak),
-                    level = maxOf(cached.level, effectiveData.level).coerceAtLeast(1)
-                )
+                effectiveData = effectiveData.withRegistry(cached)
             }
             try {
                 val sessionManager = com.bingo.multiplayer.domain.network.AccountSessionManager()
                 val entry = sessionManager.searchPlayerByUsername(targetUsername, forceRefresh = false)
                 if (entry != null) {
-                    effectiveData = effectiveData.copy(
-                        displayName = entry.displayName.ifBlank { effectiveData.displayName },
-                        avatarUrl = entry.avatarUrl?.takeIf { it.isNotBlank() } ?: effectiveData.avatarUrl,
-                        gamesPlayed = maxOf(entry.gamesPlayed, effectiveData.gamesPlayed),
-                        gamesWon = maxOf(entry.gamesWon, effectiveData.gamesWon),
-                        currentStreak = if (entry.gamesPlayed >= effectiveData.gamesPlayed && entry.gamesWon >= effectiveData.gamesWon)
-                            entry.currentStreak.coerceAtLeast(0) else effectiveData.currentStreak,
-                        bestStreak = maxOf(entry.bestStreak, effectiveData.bestStreak),
-                        level = maxOf(entry.level, effectiveData.level).coerceAtLeast(1)
-                    )
+                    effectiveData = effectiveData.withRegistry(entry)
                 }
             } catch (_: Exception) {}
         }

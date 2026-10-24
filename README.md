@@ -1,14 +1,8 @@
-# Bingo 1.0.3 — Build 70
+# Bingo — Build 71 admin synchronization update
 
-Android Bingo with AI, MQTT online multiplayer, Nearby Network play, friends and background notifications.
+Android Bingo with AI, MQTT multiplayer, Nearby Network play, friends and notifications.
 
-## This release
-
-- When notification authorization needs Google sign-in, Home offers Reconnect or Later after startup and other dialogs. Gameplay and lobbies are not interrupted. Healthy accounts keep using automatic renewal.
-- Reconnect preserves the existing Google player account and data, renews notification registration and synchronizes friend permissions. Delivery diagnostics distinguish Google authorization, relay, token and enqueue failures.
-- Friend-online alerts require 30 minutes of continuous absence before another return alert. Brief app switches stay silent. Online system notifications contain one sentence without a repeated body.
-- The Home EMQX warning uses the approved broker-specific wording and retains its ten-second grace/state across tabs.
-- Startup, saved results, lobby recovery, gameplay rules, Online, Nearby, AI, friends and photos retain the existing behavior.
+This source adds live application of admin profile, level/statistics, photo, history and friendship edits through Firebase. See ADMIN_APP_SYNC.md. Gameplay rules and transports remain unchanged. Build 71 is published through GitHub Pages for in-app installation; the GitHub v1.0.3 release and its Build 70 source/APK are retained separately.
 
 ## Source layout
 

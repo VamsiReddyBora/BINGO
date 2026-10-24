@@ -44,6 +44,8 @@ internal interface FriendsDataSource {
     suspend fun send(request: FriendRequest): Boolean
     suspend fun accept(request: FriendRequest, user: UserProfile): Boolean
     suspend fun decline(request: FriendRequest): Boolean
+    fun watchFriends(uid: String, onRoster: (FriendsBackup) -> Unit,
+        onProfile: (com.bingo.multiplayer.domain.network.PlayerRegistryEntry) -> Unit): AutoCloseable = AutoCloseable {}
     fun listen(username: String, onPacket: (FriendRequestPacket) -> Unit): AutoCloseable
     suspend fun refreshPresence(usernames: List<String>)
 }
@@ -70,6 +72,8 @@ internal class NetworkFriendsDataSource(context: Context) : FriendsDataSource {
     override suspend fun accept(request: FriendRequest, user: UserProfile) =
         FriendRequestManager.acceptFriendRequest(request, user)
     override suspend fun decline(request: FriendRequest) = FriendRequestManager.declineFriendRequest(request)
+    override fun watchFriends(uid: String, onRoster: (FriendsBackup) -> Unit,
+        onProfile: (com.bingo.multiplayer.domain.network.PlayerRegistryEntry) -> Unit) = firestore.watchFriends(uid, onRoster, onProfile)
     override fun listen(username: String, onPacket: (FriendRequestPacket) -> Unit) =
         FriendRequestManager.startRequestListener(username, onPacket)
     override suspend fun refreshPresence(usernames: List<String>) {

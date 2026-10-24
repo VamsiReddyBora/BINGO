@@ -63,12 +63,13 @@ fun DashboardAndFriendsScreen(
     val firestoreMatches by remember(user.uid) {
         authRepository.streamFirestoreMatchHistory() ?: kotlinx.coroutines.flow.flowOf(emptyList())
     }.collectAsState(initial = emptyList())
-    val localMatches = remember { authRepository.getMatchHistory() }
-    val matchHistory = remember(localMatches, firestoreMatches) {
+    val historyVersion by authRepository.matchHistoryVersion.collectAsState()
+    val localMatches = remember(user.uid, historyVersion) { authRepository.getMatchHistory(user.uid) }
+    val matchHistory = remember(localMatches, firestoreMatches, historyVersion) {
         if (firestoreMatches.isEmpty()) {
             localMatches
         } else {
-            (localMatches + firestoreMatches)
+            authRepository.filterAdminMatchHistory(localMatches + firestoreMatches, user.uid)
                 .distinctBy { it.id }
                 .sortedByDescending { it.timestamp }
         }

@@ -46,7 +46,8 @@ async function call(path, method = "GET", data) {
 }
 const original = await call("/releases/cloud.firestore");
 const folder =
-  process.env.ADMIN_RULES_EVIDENCE || new URL("../local-rule-backups/", import.meta.url).pathname;
+  process.env.ADMIN_RULES_EVIDENCE ||
+  new URL("../local-rule-backups/", import.meta.url).pathname;
 await fs
   .writeFile(
     folder + "firestore-release-before.json",
@@ -71,7 +72,8 @@ await fs
 console.log("Current Firestore rules backed up.");
 if (!process.argv.includes("--deploy")) process.exit(0);
 const source = await fs.readFile(
-  new URL("../../firestore.rules", import.meta.url),
+  process.env.FIRESTORE_RULES_FILE ||
+    new URL("../../firestore.rules", import.meta.url),
   "utf8",
 );
 const compiled = await call("/rulesets", "POST", {

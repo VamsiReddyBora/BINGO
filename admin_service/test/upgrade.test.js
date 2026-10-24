@@ -4,7 +4,7 @@ import { CurrentPlayerStore } from "../current-store.js";
 import { releaseFixture } from "./publication-fixture.js";
 import { readBody } from "../http.js";
 import { toValue, fromValue } from "../legacy.js";
-import { roomObservation, rememberRoom } from "../model.js";
+import { roomObservation, rememberRoom, validatePatch } from "../model.js";
 import { selectPlayers, selectRooms } from "../../admin/model.js";
 import { AdminControl } from "../worker.js";
 import { MemoryStorage, FakeLegacy } from "./fixtures.js";
@@ -149,6 +149,9 @@ test("profile edit patches only requested fields and preserves concurrently accu
   });
   assert.equal(next.gamesPlayed, 21);
   assert.deepEqual(Object.keys(f.writes[0].fields).sort(), [
+    "adminChanges",
+    "adminClearMatchesBefore",
+    "adminDeletedMatches",
     "adminRevision",
     "displayName",
   ]);
@@ -541,4 +544,72 @@ test("announcement outbox retries a failed broker delivery without generating an
     "SYNCED",
   );
   assert.equal(JSON.parse(sent[0].messages[0].payload).id, "same-notice");
+});
+
+test("setting only level to 100 also sets compatible XP for the next real match", () => {
+  assert.deepEqual(validatePatch({ level: 100 }, { level: 1, xp: 0 }), {
+    level: 100,
+    xp: 40000,
+  });
+  assert.deepEqual(validatePatch({ level: 100 }, { level: 100, xp: 40100 }), {
+    level: 100,
+  });
+});
+test("Firebase policy carries exact reductions, null photos and history removals to the app", async () => {
+  const f = storeFixture();
+  const policy = {
+    revision: 2,
+    deletedMatches: ["round-2"],
+    clearMatchesBefore: 150,
+    fields: {
+      gamesPlayed: { revision: 2, value: 1 },
+      gamesWon: { revision: 2, value: 0 },
+      avatarUrl: { revision: 2, value: null },
+      avatarBase64: { revision: 2, value: null },
+    },
+  };
+  await f.store.mirrorProfile(
+    "bob",
+    (await f.store.read("bob")).profile,
+    policy,
+  );
+  const data = f.docs.get("users/uid_bob");
+  assert.deepEqual(data.adminChanges, policy.fields);
+  assert.deepEqual(data.adminDeletedMatches, ["round-2"]);
+  assert.equal(data.adminClearMatchesBefore, 150);
+  assert.equal(data.gamesPlayed, 1);
+  assert.equal(data.avatarUrl, null);
+  data.gamesPlayed = 2;
+  await f.store.mirrorProfile(
+    "bob",
+    (await f.store.read("bob")).profile,
+    policy,
+  );
+  assert.equal(
+    f.docs.get("users/uid_bob").gamesPlayed,
+    2,
+    "Retry must preserve subsequent gameplay",
+  );
+});
+
+test("an old client upload cannot hide a pending admin edit in fresh inspection", async () => {
+  const f = storeFixture();
+  Object.assign(f.docs.get("users/uid_bob"), {
+    level: 1,
+    adminRevision: 2,
+    adminAppliedRevision: 0,
+    adminChanges: {
+      level: { revision: 2, value: 100 },
+      gamesPlayed: { revision: 2, value: 1 },
+    },
+  });
+  assert.equal((await f.store.read("bob")).profile.level, 100);
+  assert.equal((await f.store.read("bob")).profile.gamesPlayed, 1);
+  Object.assign(f.docs.get("users/uid_bob"), {
+    level: 101,
+    gamesPlayed: 2,
+    adminAppliedRevision: 2,
+  });
+  assert.equal((await f.store.read("bob")).profile.level, 101);
+  assert.equal((await f.store.read("bob")).profile.gamesPlayed, 2);
 });

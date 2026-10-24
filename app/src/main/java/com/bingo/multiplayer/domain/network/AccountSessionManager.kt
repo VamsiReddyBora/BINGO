@@ -58,7 +58,8 @@ data class PlayerRegistryEntry(
     val lastSeenTimestamp: Long = System.currentTimeMillis(),
     val appVersion: String = NetworkConfig.APP_VERSION_NAME,
     val appVersionCode: Int = NetworkConfig.APP_VERSION_CODE,
-    val publicKey: String? = null
+    val publicKey: String? = null,
+    val adminRevision: Long = 0L
 ) {
     val isOnline: Boolean
         get() = (System.currentTimeMillis() - lastSeenTimestamp) < 120_000L
@@ -1793,6 +1794,8 @@ class AccountSessionManager(
         fun cachePlayer(entry: PlayerRegistryEntry) {
             val clean = entry.username.trim().lowercase().removePrefix("@")
             if (clean.isNotBlank()) {
+                val previous = registryCache[clean]?.second
+                if (previous?.uid == entry.uid && previous.adminRevision > entry.adminRevision) return
                 registryCache[clean] = Pair(System.currentTimeMillis(), entry)
                 if (entry.uid.isNotBlank()) {
                     registryCache[entry.uid.trim().lowercase()] = Pair(System.currentTimeMillis(), entry)

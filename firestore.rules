@@ -8,7 +8,9 @@ service cloud.firestore {
 
     // Only the administrative service account can create or remove these markers.
     match /adminTombstones/{userId} {
-      allow read, write: if false;
+      // A signed-in installation may observe this one UID marker to clear a removed account.
+      allow get: if request.auth != null;
+      allow list, write: if false;
     }
 
     // User profile and settings

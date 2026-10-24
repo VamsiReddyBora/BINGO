@@ -110,6 +110,11 @@ export function validatePatch(input, current = {}) {
     } else throw new Problem(400, `Unsupported profile field: ${key}`);
   }
   requireThat(Object.keys(result).length > 0, 400, "No changes supplied");
+  if (Object.hasOwn(result, "level") && !Object.hasOwn(result, "xp")) {
+    const xp = current.xp || 0;
+    if (Math.max(1, Math.floor(xp / 400)) !== result.level)
+      result.xp = result.level === 1 ? 0 : result.level * 400;
+  }
   const next = { ...current, ...result };
   requireThat(
     (next.gamesWon || 0) <= (next.gamesPlayed || 0),

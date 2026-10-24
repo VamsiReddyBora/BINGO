@@ -144,6 +144,11 @@ class FriendsRepository internal constructor(
             if (index < 0) merged += friend
             else {
                 val previous = merged[index]
+                if (previous.adminRevision > friend.adminRevision) return@friendLoop
+                if (friend.adminRevision > previous.adminRevision) {
+                    merged[index] = friend
+                    return@friendLoop
+                }
                 merged[index] = friend.copy(
                     uid = friend.uid.ifBlank { previous.uid },
                     username = friend.username.ifBlank { previous.username },
@@ -380,6 +385,18 @@ class FriendsRepository internal constructor(
         val active = activeAccount() ?: return AutoCloseable {}
         if (active.username != friendUsername(myUsername)) return AutoCloseable {}
         val closed = AtomicBoolean(false)
+        val cloudListener = remote.watchFriends(active.uid, { backup ->
+            synchronized(this@FriendsRepository) {
+                if (!closed.get() && isCurrent(active)) applyLiveFriends(active, backup)
+            }
+        }, { entry ->
+            synchronized(this@FriendsRepository) {
+                if (!closed.get() && isCurrent(active)) {
+                    com.bingo.multiplayer.domain.network.AccountSessionManager.cachePlayer(entry)
+                    updateFriendCareerStats(entry)
+                }
+            }
+        })
         val listener = remote.listen(active.username) { packet ->
             scope.launch {
                 syncMutex.withLock {
@@ -421,7 +438,24 @@ class FriendsRepository internal constructor(
                 }
             }
         }
-        return AutoCloseable { closed.set(true); listener.close() }
+        return AutoCloseable { closed.set(true); listener.close(); cloudListener.close() }
+    }
+
+    /** Firebase roster snapshots update the same observable list used by lobby and dashboard. */
+    private fun applyLiveFriends(active: Account, backup: FriendsBackup) {
+        val restored = removedKeys.filter { key ->
+            removalIds[key]?.let { it in backup.restoredRemovalIds } ?: (key in backup.restoredKeys)
+        }.toSet()
+        removalIds = removalIds.filterKeys { it !in restored }
+        removedKeys = (removedKeys - restored) + backup.removedKeys
+        backupCache = backup
+        backupReadAtNanos = System.nanoTime()
+        _friends.value = mergeFriends(_friends.value, backup.friends).filterNot(::wasRemoved)
+        val names = _friends.value.map { friendUsername(it.username) }.toSet()
+        _sentRequestUsernames.value = _sentRequestUsernames.value - names
+        outgoingTargets = outgoingTargets - names
+        persistOutgoing(active)
+        persistFriends(active)
     }
 
     fun removeFriend(uidOrUsername: String, currentUsername: String? = null) {

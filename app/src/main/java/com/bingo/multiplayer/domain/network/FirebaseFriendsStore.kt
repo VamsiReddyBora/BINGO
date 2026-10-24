@@ -120,7 +120,7 @@ internal class FirebaseFriendsStore(private val documents: FriendDocuments) {
     }
     private fun card(f: Friend): Map<String, Any?> = mapOf("uid" to f.uid, "username" to clean(f.username),
         "displayName" to f.displayName.take(50), "avatarUrl" to f.avatarUrl?.takeIf { !isLocalFilePath(it) && it.length <= 200000 },
-        "gamesPlayed" to f.gamesPlayed, "gamesWon" to f.gamesWon, "currentStreak" to f.currentStreak, "level" to f.level)
+        "gamesPlayed" to f.gamesPlayed, "gamesWon" to f.gamesWon, "currentStreak" to f.currentStreak, "level" to f.level, "adminRevision" to f.adminRevision)
     private fun friend(raw: Map<String, Any?>): Friend? {
         val id = raw["uid"] as? String ?: return null
         val name = raw["username"] as? String ?: return null
@@ -128,7 +128,8 @@ internal class FirebaseFriendsStore(private val documents: FriendDocuments) {
             gamesPlayed = (raw["gamesPlayed"] as? Number)?.toInt() ?: 0,
             gamesWon = (raw["gamesWon"] as? Number)?.toInt() ?: 0,
             currentStreak = (raw["currentStreak"] as? Number)?.toInt() ?: 0,
-            level = (raw["level"] as? Number)?.toInt() ?: 1)
+            level = (raw["level"] as? Number)?.toInt() ?: 1,
+            adminRevision = (raw["adminRevision"] as? Number)?.toLong() ?: 0L)
     }
     private fun requestData(r: FriendRequest, target: String): Map<String, Any?> = mapOf(
         "id" to r.id, "fromUid" to r.fromUid, "fromUsername" to clean(r.fromUsername),

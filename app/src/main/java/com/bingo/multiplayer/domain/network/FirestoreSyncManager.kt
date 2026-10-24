@@ -56,6 +56,8 @@ class FirestoreSyncManager(
     }
 
     private var profileListenerRegistration: ListenerRegistration? = null
+    private var accountRemovalListenerRegistration: ListenerRegistration? = null
+    private var syncRetryJob: kotlinx.coroutines.Job? = null
     private var privateSettingsListenerRegistration: ListenerRegistration? = null
     private var privateAccountListenerRegistration: ListenerRegistration? = null
 
@@ -67,29 +69,47 @@ class FirestoreSyncManager(
         user, AuthRepository.activeInstance?.getPersistedUserSync())
 
     internal fun watchAvatar(username: String, changed: (ProfileAvatar) -> Unit): AutoCloseable {
-        // Indexed name lookup works equally for friends, search results and unknown players;
-        // it cannot get stuck watching an obsolete UID from a screen's cached model.
-        val listener = firestore.collection(COLLECTION_USERS).whereEqualTo("username", username).limit(1)
+        // Watch the canonical username index so a duplicate/old UID cannot supply the photo.
+        val lock = Any()
+        var closed = false
+        var watchedUid: String? = null
+        var profile: ListenerRegistration? = null
+        val index = firestore.collection(COLLECTION_USERNAMES).document(username)
             .addSnapshotListener { snapshot, error ->
                 if (error != null || snapshot == null) return@addSnapshotListener
-                val document = snapshot.documents.firstOrNull()
-                if (document == null) {
-                    if (!snapshot.metadata.isFromCache) changed(ProfileAvatar(null))
-                } else if (document.contains("avatarUrl")) {
-                    changed(ProfileAvatar(document.getString("avatarUrl")
-                        ?.takeIf { it.isNotBlank() && !isLocalFilePath(it) }))
+                synchronized(lock) {
+                    if (closed) return@addSnapshotListener
+                    val uid = snapshot.getString("uid")
+                    if (uid == watchedUid) return@addSnapshotListener
+                    profile?.remove(); profile = null; watchedUid = uid
+                    if (uid.isNullOrBlank()) {
+                        if (!snapshot.metadata.isFromCache) changed(ProfileAvatar(null))
+                    } else profile = firestore.collection(COLLECTION_USERS).document(uid)
+                        .addSnapshotListener { document, failure ->
+                            synchronized(lock) {
+                                if (!closed && watchedUid == uid && failure == null && document != null) {
+                                    if (document.exists()) {
+                                        val data = CloudAdminPolicy.from(document.data.orEmpty()).publicProjection(document.data.orEmpty())
+                                        if (data.containsKey("avatarUrl")) changed(ProfileAvatar((data["avatarUrl"] as? String)
+                                            ?.takeIf { it.isNotBlank() && !isLocalFilePath(it) }))
+                                    } else if (!document.metadata.isFromCache) changed(ProfileAvatar(null))
+                                }
+                            }
+                        }
                 }
             }
-        return AutoCloseable { listener.remove() }
+        return AutoCloseable { synchronized(lock) { closed = true; index.remove(); profile?.remove() } }
     }
 
-    /** Public profile lookup also works for somebody outside the current friends list. */
+    /** Public lookup uses the same canonical UID as the admin directory. */
     internal suspend fun findPlayerByUsername(username: String): PlayerRegistryEntry? =
         kotlinx.coroutines.withTimeoutOrNull(2500L) {
             try {
-                val document = firestore.collection(COLLECTION_USERS).whereEqualTo("username", username).limit(1)
-                    .get().await().documents.firstOrNull() ?: return@withTimeoutOrNull null
-                fetchPlayerProfile(document.id)
+                val uid = firestore.collection(COLLECTION_USERNAMES).document(username).get().await().getString("uid")
+                    ?: firestore.collection(COLLECTION_USERS).whereEqualTo("username", username).limit(1)
+                        .get().await().documents.firstOrNull()?.id
+                    ?: return@withTimeoutOrNull null
+                fetchPlayerProfile(uid)
             } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
             catch (_: Exception) { null }
         }
@@ -100,6 +120,8 @@ class FirestoreSyncManager(
      */
     fun syncUserProfile(user: UserProfile, settings: UserSettings) {
         if (user.uid.isBlank()) return
+        val repository = AuthRepository.activeInstance
+        val generation = repository?.sessionGeneration?.get()
         scope.launch {
             try {
                 val userDocRef = firestore.collection(COLLECTION_USERS).document(user.uid)
@@ -140,7 +162,31 @@ class FirestoreSyncManager(
                     }
                 }
 
-                userDocRef.set(publicPayload, SetOptions.merge()).await()
+                val adminSnapshot = firestore.runTransaction { transaction ->
+                    val remote = transaction.get(userDocRef).data.orEmpty()
+                    val latest = repository?.getPersistedUserSync()
+                    if (repository != null && (repository.sessionGeneration.get() != generation || latest?.uid != user.uid))
+                        return@runTransaction null
+                    val effective = CloudAdminPolicy.from(remote).applyTo(latest ?: user)
+                    // Read the admin policy and write its resulting projection atomically. Firebase
+                    // retries this transaction if the administrator edits during an upload.
+                    val guarded = publicPayload + mapOf(
+                        "username" to effective.username.trim().lowercase().removePrefix("@"),
+                        "displayName" to effective.displayName,
+                        "avatarUrl" to (effective.avatarBase64?.takeIf { it.isNotBlank() }
+                            ?: effective.avatarUrl?.takeIf { !isLocalFilePath(it) }),
+                        "avatarBase64" to effective.avatarBase64,
+                        "gamesPlayed" to effective.gamesPlayed, "gamesWon" to effective.gamesWon,
+                        "currentStreak" to effective.currentStreak, "bestStreak" to effective.bestStreak,
+                        "level" to effective.level, "xp" to effective.xp,
+                        "adminAppliedRevision" to effective.adminRevision
+                    )
+                    transaction.set(userDocRef, guarded, SetOptions.merge())
+                    remote
+                }.await() ?: return@launch
+                if (repository != null && generation != null)
+                    repository.applyCloudAdminSnapshot(adminSnapshot, user.uid, generation)
+                if (repository != null && (repository.sessionGeneration.get() != generation || repository.getPersistedUserSync()?.uid != user.uid)) return@launch
 
                 // Claim / index username if present
                 if (user.username.isNotBlank()) {
@@ -192,6 +238,28 @@ class FirestoreSyncManager(
 
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to sync user profile to Firestore: ${e.message}")
+                retryAfterNetworkFailure(user.uid, e)
+            }
+        }
+    }
+
+    /** Transactions need connectivity; retain local changes and coalesce one retry while offline. */
+    private fun retryAfterNetworkFailure(uid: String, error: Exception) {
+        val code = (error as? com.google.firebase.firestore.FirebaseFirestoreException)?.code
+        if (code !in setOf(com.google.firebase.firestore.FirebaseFirestoreException.Code.UNAVAILABLE,
+                com.google.firebase.firestore.FirebaseFirestoreException.Code.DEADLINE_EXCEEDED,
+                com.google.firebase.firestore.FirebaseFirestoreException.Code.ABORTED)) return
+        val repository = AuthRepository.activeInstance ?: return
+        val generation = repository.sessionGeneration.get()
+        synchronized(this) {
+            if (syncRetryJob?.isActive == true) return
+            syncRetryJob = scope.launch {
+                kotlinx.coroutines.delay(10_000L)
+                synchronized(this@FirestoreSyncManager) { syncRetryJob = null }
+                val current = repository.getPersistedUserSync()
+                if (current?.uid != uid || repository.sessionGeneration.get() != generation) return@launch
+                syncUserProfile(current, repository.getSettings())
+                syncAllMatches(uid, repository.getMatchHistory(uid))
             }
         }
     }
@@ -228,6 +296,9 @@ class FirestoreSyncManager(
      */
     fun startRealtimeProfileListener(
         uid: String,
+        fallbackSettings: UserSettings = UserSettings(),
+        onAdminUpdate: (Map<String, Any?>) -> Unit = {},
+        onAccountRemoved: () -> Unit = {},
         onProfileUpdated: (UserProfile, UserSettings) -> Unit
     ) {
         if (uid.isBlank()) return
@@ -235,10 +306,14 @@ class FirestoreSyncManager(
 
         try {
             var currentProfile: UserProfile? = null
-            var currentSettings: UserSettings? = null
+            var currentSettings: UserSettings? = fallbackSettings
             var privateEmail: String? = null
 
             val userDocRef = firestore.collection(COLLECTION_USERS).document(uid)
+            accountRemovalListenerRegistration = firestore.collection("adminTombstones").document(uid)
+                .addSnapshotListener { snapshot, error ->
+                    if (error == null && snapshot?.exists() == true) onAccountRemoved()
+                }
             val settingsDocRef = userDocRef.collection("private").document("settings")
             val accountDocRef = userDocRef.collection("private").document("account")
 
@@ -263,6 +338,7 @@ class FirestoreSyncManager(
                         return@addSnapshotListener
                     }
                     try {
+                        onAdminUpdate(snapshot.data.orEmpty())
                         val username = snapshot.getString("username") ?: ""
                         val displayName = snapshot.getString("displayName") ?: "Player"
                         val email = snapshot.getString("email")
@@ -332,6 +408,8 @@ class FirestoreSyncManager(
     }
 
     fun stopRealtimeProfileListener() {
+        accountRemovalListenerRegistration?.remove()
+        accountRemovalListenerRegistration = null
         profileListenerRegistration?.remove()
         profileListenerRegistration = null
         privateSettingsListenerRegistration?.remove()
@@ -345,78 +423,35 @@ class FirestoreSyncManager(
     /**
      * Appends a match record into the subcollection `users/{uid}/matches/{matchId}`.
      */
-    fun recordMatch(uid: String, record: MatchRecord) {
-        if (uid.isBlank() || record.id.isBlank()) return
-        scope.launch {
-            try {
-                val matchDoc = firestore.collection(COLLECTION_USERS)
-                    .document(uid)
-                    .collection(SUBCOLLECTION_MATCHES)
-                    .document(record.id)
+    private fun matchPayload(record: MatchRecord): Map<String, Any?> = mapOf(
+        "id" to record.id, "mode" to record.mode, "opponentName" to record.opponentName,
+        "didWin" to record.didWin, "isDraw" to record.isDraw, "boardSize" to record.boardSize,
+        "timestamp" to record.timestamp, "matchTitle" to record.matchTitle, "opponentUid" to record.opponentUid,
+        "turnsTaken" to record.turnsTaken, "linesCompleted" to record.linesCompleted,
+        "durationSeconds" to record.durationSeconds, "finalBoardNumbers" to record.finalBoardNumbers,
+        "markedNumbers" to record.markedNumbers
+    )
 
-                val payload = hashMapOf<String, Any?>(
-                    "id" to record.id,
-                    "mode" to record.mode,
-                    "opponentName" to record.opponentName,
-                    "didWin" to record.didWin,
-                    "isDraw" to record.isDraw,
-                    "boardSize" to record.boardSize,
-                    "timestamp" to record.timestamp,
-                    "matchTitle" to record.matchTitle,
-                    "opponentUid" to record.opponentUid,
-                    "turnsTaken" to record.turnsTaken,
-                    "linesCompleted" to record.linesCompleted,
-                    "durationSeconds" to record.durationSeconds,
-                    "finalBoardNumbers" to record.finalBoardNumbers,
-                    "markedNumbers" to record.markedNumbers
-                )
+    fun recordMatch(uid: String, record: MatchRecord) = syncAllMatches(uid, listOf(record))
 
-                matchDoc.set(payload, SetOptions.merge()).await()
-                Log.d(TAG, "Recorded match ${record.id} in Firestore subcollection for uid $uid")
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to record match in Firestore: ${e.message}")
-            }
-        }
-    }
-
-    /**
-     * Bulk uploads an entire list of match records to `users/{uid}/matches`.
-     */
+    /** A stale device/legacy backup cannot recreate a record removed in admin. */
     fun syncAllMatches(uid: String, matches: List<MatchRecord>) {
         if (uid.isBlank() || matches.isEmpty()) return
         scope.launch {
             try {
-                matches.chunked(400).forEach { chunk ->
-                    val batch = firestore.batch()
-                    val matchesColl = firestore.collection(COLLECTION_USERS)
-                        .document(uid)
-                        .collection(SUBCOLLECTION_MATCHES)
-
-                    chunk.forEach { record ->
-                        val docRef = matchesColl.document(record.id)
-                        val payload = hashMapOf<String, Any?>(
-                            "id" to record.id,
-                            "mode" to record.mode,
-                            "opponentName" to record.opponentName,
-                            "didWin" to record.didWin,
-                            "isDraw" to record.isDraw,
-                            "boardSize" to record.boardSize,
-                            "timestamp" to record.timestamp,
-                            "matchTitle" to record.matchTitle,
-                            "opponentUid" to record.opponentUid,
-                            "turnsTaken" to record.turnsTaken,
-                            "linesCompleted" to record.linesCompleted,
-                            "durationSeconds" to record.durationSeconds,
-                            "finalBoardNumbers" to record.finalBoardNumbers,
-                            "markedNumbers" to record.markedNumbers
-                        )
-                        batch.set(docRef, payload, SetOptions.merge())
-                    }
-                    batch.commit().await()
+                val owner = firestore.collection(COLLECTION_USERS).document(uid)
+                matches.filter { it.id.isNotBlank() }.chunked(400).forEach { chunk ->
+                    firestore.runTransaction { transaction ->
+                        val policy = CloudAdminPolicy.from(transaction.get(owner).data.orEmpty())
+                        chunk.filter(policy::permits).forEach { record ->
+                            transaction.set(owner.collection(SUBCOLLECTION_MATCHES).document(record.id),
+                                matchPayload(record), SetOptions.merge())
+                        }
+                    }.await()
                 }
-                Log.d(TAG, "Successfully bulk-synced ${matches.size} matches to Firestore for uid $uid")
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to bulk-sync matches to Firestore: ${e.message}")
+                Log.w(TAG, "Failed to sync match history: ${e.message}")
+                retryAfterNetworkFailure(uid, e)
             }
         }
     }
@@ -550,7 +585,7 @@ class FirestoreSyncManager(
                         "uid" to friend.uid, "username" to friend.username,
                         "displayName" to friend.displayName, "avatarUrl" to friend.avatarUrl,
                         "gamesPlayed" to friend.gamesPlayed, "gamesWon" to friend.gamesWon,
-                        "currentStreak" to friend.currentStreak, "level" to friend.level
+                        "currentStreak" to friend.currentStreak, "level" to friend.level, "adminRevision" to friend.adminRevision
                     ), SetOptions.merge())
                 }
                 batch.commit().await()
@@ -592,33 +627,7 @@ class FirestoreSyncManager(
         try {
             val snapshot = firestore.collection(COLLECTION_USERS).document(uid)
                 .collection(SUBCOLLECTION_FRIENDS).get().await()
-            val friends = mutableListOf<Friend>()
-            val removed = mutableSetOf<String>()
-            val restoredKeys = mutableSetOf<String>()
-            val restoredIds = mutableSetOf<String>()
-            snapshot.documents.forEach { doc ->
-                val friend = Friend(
-                    uid = doc.getString("uid") ?: doc.id,
-                    username = doc.getString("username") ?: "",
-                    displayName = doc.getString("displayName") ?: doc.getString("username") ?: "Player",
-                    avatarUrl = doc.getString("avatarUrl"),
-                    isOnline = doc.getBoolean("isOnline") ?: false,
-                    lastSeenTimestamp = doc.getLong("lastSeenTimestamp") ?: 0L,
-                    gamesPlayed = doc.getLong("gamesPlayed")?.toInt() ?: 0,
-                    gamesWon = doc.getLong("gamesWon")?.toInt() ?: 0,
-                    currentStreak = doc.getLong("currentStreak")?.toInt() ?: 0,
-                    level = doc.getLong("level")?.toInt() ?: 1
-                )
-                if (doc.getBoolean("removed") == true) removed += friendKeys(friend)
-                else {
-                    friends += friend
-                    doc.getString("restoredRemovalId")?.takeIf { it.isNotBlank() }?.let {
-                        restoredIds += it
-                        restoredKeys += friendKeys(friend)
-                    }
-                }
-            }
-            FriendsBackup(friends, removed, restoredKeys, restoredIds)
+            decodeFriends(snapshot.documents)
         } catch (e: Exception) {
             Log.w(TAG, "Could not read friends backup: ${e.message}")
             null
@@ -644,6 +653,69 @@ class FirestoreSyncManager(
         }
     }
 
+    internal fun watchFriends(uid: String, onRoster: (com.bingo.multiplayer.domain.repository.FriendsBackup) -> Unit,
+        onProfile: (PlayerRegistryEntry) -> Unit): AutoCloseable {
+        val lock = Any()
+        var closed = false
+        val profiles = mutableMapOf<String, ListenerRegistration>()
+        val roster = firestore.collection(COLLECTION_USERS).document(uid).collection(SUBCOLLECTION_FRIENDS)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null || snapshot == null || snapshot.metadata.hasPendingWrites()) return@addSnapshotListener
+                synchronized(lock) {
+                    if (closed) return@addSnapshotListener
+                    val backup = decodeFriends(snapshot.documents)
+                    onRoster(backup)
+                    val ids = backup.friends.map { it.uid }.filter { it.isNotBlank() }.toSet()
+                    (profiles.keys - ids).forEach { profiles.remove(it)?.remove() }
+                    for (id in ids - profiles.keys) {
+                        profiles[id] = firestore.collection(COLLECTION_USERS).document(id).addSnapshotListener { doc, failure ->
+                            synchronized(lock) {
+                                if (!closed && id in profiles && failure == null && doc?.exists() == true && !doc.metadata.hasPendingWrites())
+                                    onProfile(decodePlayerProfile(doc))
+                            }
+                        }
+                    }
+                }
+            }
+        return AutoCloseable { synchronized(lock) {
+            closed = true; roster.remove(); profiles.values.forEach { it.remove() }; profiles.clear()
+        } }
+    }
+
+    private fun decodeFriends(documents: List<com.google.firebase.firestore.DocumentSnapshot>): com.bingo.multiplayer.domain.repository.FriendsBackup {
+        val friends = mutableListOf<Friend>(); val removed = mutableSetOf<String>()
+        val restoredKeys = mutableSetOf<String>(); val restoredIds = mutableSetOf<String>()
+        documents.forEach { doc ->
+            val friend = Friend(uid = doc.getString("uid") ?: doc.id,
+                username = doc.getString("username") ?: "", displayName = doc.getString("displayName") ?: doc.getString("username") ?: "Player",
+                isOnline = doc.getBoolean("isOnline") ?: false, lastSeenTimestamp = doc.getLong("lastSeenTimestamp") ?: 0L,
+                avatarUrl = doc.getString("avatarUrl"), gamesPlayed = doc.getLong("gamesPlayed")?.toInt() ?: 0,
+                gamesWon = doc.getLong("gamesWon")?.toInt() ?: 0, currentStreak = doc.getLong("currentStreak")?.toInt() ?: 0,
+                level = doc.getLong("level")?.toInt() ?: 1, adminRevision = doc.getLong("adminRevision") ?: 0L)
+            if (doc.getBoolean("removed") == true) removed += friendKeys(friend)
+            else {
+                friends += friend
+                doc.getString("restoredRemovalId")?.takeIf { it.isNotBlank() }?.let {
+                    restoredIds += it; restoredKeys += friendKeys(friend)
+                }
+            }
+        }
+        return com.bingo.multiplayer.domain.repository.FriendsBackup(friends, removed, restoredKeys, restoredIds)
+    }
+
+    private fun decodePlayerProfile(doc: com.google.firebase.firestore.DocumentSnapshot): PlayerRegistryEntry {
+        val data = CloudAdminPolicy.from(doc.data.orEmpty()).publicProjection(doc.data.orEmpty())
+        fun text(key: String) = data[key] as? String
+        fun number(key: String, fallback: Int = 0) = (data[key] as? Number)?.toInt() ?: text(key)?.toIntOrNull() ?: fallback
+        val key = text("installationPublicKey") ?: text("publicKey")
+        if (!key.isNullOrBlank()) AccountKeyStore.recordAuthoritativeKey(doc.id, key)
+        return PlayerRegistryEntry(username = text("username") ?: "", uid = doc.id,
+            displayName = text("displayName") ?: "Player", avatarUrl = text("avatarUrl"),
+            gamesPlayed = number("gamesPlayed"), gamesWon = number("gamesWon"),
+            currentStreak = number("currentStreak"), bestStreak = number("bestStreak", number("currentStreak")), level = number("level", 1),
+            publicKey = key, adminRevision = (data["adminRevision"] as? Number)?.toLong() ?: 0L)
+    }
+
     /**
      * Retrieves a single player's career profile from Firestore by their UID.
      */
@@ -652,30 +724,7 @@ class FirestoreSyncManager(
         try {
             val snapshot = firestore.collection(COLLECTION_USERS).document(uid).get().await()
             if (snapshot != null && snapshot.exists()) {
-                val username = snapshot.getString("username") ?: ""
-                val displayName = snapshot.getString("displayName") ?: "Player"
-                val avatarUrl = snapshot.getString("avatarUrl")
-                val gamesPlayed = snapshot.getLong("gamesPlayed")?.toInt() ?: 0
-                val gamesWon = snapshot.getLong("gamesWon")?.toInt() ?: 0
-                val currentStreak = snapshot.getLong("currentStreak")?.toInt() ?: 0
-                val bestStreak = snapshot.getLong("bestStreak")?.toInt() ?: currentStreak
-                val level = snapshot.getLong("level")?.toInt() ?: 1
-                val pubKey = snapshot.getString("installationPublicKey") ?: snapshot.getString("publicKey")
-                if (!pubKey.isNullOrBlank()) {
-                    com.bingo.multiplayer.domain.network.AccountKeyStore.recordAuthoritativeKey(uid, pubKey)
-                }
-                return@withContext PlayerRegistryEntry(
-                    username = username,
-                    uid = uid,
-                    displayName = displayName,
-                    avatarUrl = avatarUrl,
-                    gamesPlayed = gamesPlayed,
-                    gamesWon = gamesWon,
-                    currentStreak = currentStreak,
-                    bestStreak = bestStreak,
-                    level = level,
-                    publicKey = pubKey
-                )
+                return@withContext decodePlayerProfile(snapshot)
             }
         } catch (e: Exception) {
             Log.w(TAG, "fetchPlayerProfile error for $uid: ${e.message}")
@@ -700,31 +749,7 @@ class FirestoreSyncManager(
                             .await()
                     } ?: return@forEach
                     for (doc in querySnapshot.documents) {
-                        val uid = doc.id
-                        val username = doc.getString("username") ?: ""
-                        val displayName = doc.getString("displayName") ?: "Player"
-                        val avatarUrl = doc.getString("avatarUrl")
-                        val gamesPlayed = (doc.get("gamesPlayed") as? Number)?.toInt() ?: doc.getString("gamesPlayed")?.toIntOrNull() ?: doc.getLong("gamesPlayed")?.toInt() ?: 0
-                        val gamesWon = (doc.get("gamesWon") as? Number)?.toInt() ?: doc.getString("gamesWon")?.toIntOrNull() ?: doc.getLong("gamesWon")?.toInt() ?: 0
-                        val currentStreak = (doc.get("currentStreak") as? Number)?.toInt() ?: doc.getString("currentStreak")?.toIntOrNull() ?: doc.getLong("currentStreak")?.toInt() ?: 0
-                        val bestStreak = (doc.get("bestStreak") as? Number)?.toInt() ?: doc.getString("bestStreak")?.toIntOrNull() ?: doc.getLong("bestStreak")?.toInt() ?: currentStreak
-                        val level = (doc.get("level") as? Number)?.toInt() ?: doc.getString("level")?.toIntOrNull() ?: doc.getLong("level")?.toInt() ?: 1
-                        val pubKey = doc.getString("installationPublicKey") ?: doc.getString("publicKey")
-                        if (!pubKey.isNullOrBlank()) {
-                            com.bingo.multiplayer.domain.network.AccountKeyStore.recordAuthoritativeKey(uid, pubKey)
-                        }
-                        result[uid] = PlayerRegistryEntry(
-                            username = username,
-                            uid = uid,
-                            displayName = displayName,
-                            avatarUrl = avatarUrl,
-                            gamesPlayed = gamesPlayed,
-                            gamesWon = gamesWon,
-                            currentStreak = currentStreak,
-                            bestStreak = bestStreak,
-                            level = level,
-                            publicKey = pubKey
-                        )
+                        result[doc.id] = decodePlayerProfile(doc)
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "fetchPlayerProfiles chunk error: ${e.message}")

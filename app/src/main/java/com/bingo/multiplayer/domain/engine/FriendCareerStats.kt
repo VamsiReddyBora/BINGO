@@ -10,6 +10,13 @@ object FriendCareerStats {
         val entryUsername = entry.username.trim().lowercase().removePrefix("@")
         val sameUid = friend.uid.isNotBlank() && friend.uid == entry.uid
         if (!sameUid && (username.isBlank() || username != entryUsername)) return friend
+        if (entry.adminRevision < friend.adminRevision) return friend
+        if (entry.adminRevision > friend.adminRevision) return friend.copy(
+            displayName = entry.displayName, avatarUrl = entry.avatarUrl,
+            gamesPlayed = entry.gamesPlayed, gamesWon = entry.gamesWon,
+            currentStreak = entry.currentStreak, level = entry.level,
+            adminRevision = entry.adminRevision
+        )
         val wins = maxOf(friend.gamesWon, entry.gamesWon, 0)
         return friend.copy(
             gamesPlayed = maxOf(friend.gamesPlayed, entry.gamesPlayed, wins),

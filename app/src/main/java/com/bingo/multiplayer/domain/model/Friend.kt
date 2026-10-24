@@ -20,7 +20,8 @@ data class Friend(
     val currentStreak: Int = 0,
     val level: Int = 1,
     val generation: String = "",
-    val addedAt: Long = 0L
+    val addedAt: Long = 0L,
+    val adminRevision: Long = 0L
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -34,7 +35,8 @@ data class Friend(
                 gamesPlayed == other.gamesPlayed &&
                 gamesWon == other.gamesWon &&
                 currentStreak == other.currentStreak &&
-                level == other.level
+                level == other.level &&
+                adminRevision == other.adminRevision
     }
 
     override fun hashCode(): Int {
@@ -48,6 +50,7 @@ data class Friend(
         result = 31 * result + gamesWon
         result = 31 * result + currentStreak
         result = 31 * result + level
+        result = 31 * result + adminRevision.hashCode()
         return result
     }
 }

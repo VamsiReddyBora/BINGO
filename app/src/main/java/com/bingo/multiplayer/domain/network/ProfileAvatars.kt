@@ -59,6 +59,13 @@ internal class ProfileAvatarState(private val source: ProfileAvatarSource) {
         _records.value = _records.value + (name to value)
     }
 
+    @Synchronized fun adminChange(username: String, avatar: String?) {
+        val name = notificationUsername(username)
+        if (name.isBlank()) return
+        pendingLocal.remove(name)
+        _records.value = _records.value + (name to ProfileAvatar(avatar))
+    }
+
     companion object {
         fun resolve(records: Map<String, ProfileAvatar>, username: String?, supplied: String?): String? {
             val name = username?.let(::notificationUsername)

@@ -40,6 +40,10 @@ class AuthRepository(
         getPersistedUserSync()?.let { AuthState.Authenticated(it) } ?: AuthState.Loading
     )
     val authState: StateFlow<AuthState> = _authState.asStateFlow()
+    private val _matchHistoryVersion = MutableStateFlow(0L)
+    val matchHistoryVersion: StateFlow<Long> = _matchHistoryVersion.asStateFlow()
+    private var cloudListenerUid: String? = null
+    private var cloudListenerGeneration = -1L
 
     private val scope = CoroutineScope(Dispatchers.IO)
     internal val sessionGeneration = java.util.concurrent.atomic.AtomicLong(0L)
@@ -135,7 +139,8 @@ class AuthRepository(
             currentStreak = streak,
             bestStreak = bestStreak,
             level = level,
-            xp = xp
+            xp = xp,
+            adminRevision = prefs.getLong("${uid}_admin_revision", 0L)
         )
     }
 
@@ -203,27 +208,60 @@ class AuthRepository(
                 }
             }
 
-            if (context != null) {
-                scope.launch(Dispatchers.IO) {
-                    val authOk = awaitFirebaseAuth(expectedGen = capturedGen, targetUid = user.uid)
-                    if (!authOk || sessionGeneration.get() != capturedGen) return@launch
-                    val firestoreSync = com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(context)
-                    // 1. Immediately upload/sync current user profile and custom theme settings
-                    firestoreSync.syncUserProfile(user, getSettings())
+            startCloudSynchronization(user, capturedGen)
+        }
+        state
+    }
 
-                    // 2. Upload all existing match history records
-                    val existingMatches = getMatchHistory()
-                    if (existingMatches.isNotEmpty()) {
-                        firestoreSync.syncAllMatches(user.uid, existingMatches)
-                    }
+    /** Called by both the Firebase listener and its guarded profile-upload transaction. */
+    @Synchronized
+    internal fun applyCloudAdminSnapshot(snapshot: Map<String, Any?>, uid: String, expectedGen: Long): Boolean {
+        if (sessionGeneration.get() != expectedGen) return false
+        val current = (_authState.value as? AuthState.Authenticated)?.user ?: return false
+        if (current.uid != uid || getPersistedUserSync()?.uid != uid) return false
+        val policy = com.bingo.multiplayer.domain.network.CloudAdminPolicy.from(snapshot)
+        if (policy.revision <= current.adminRevision) return false
+        val updated = policy.applyTo(current)
+        val retained = getMatchHistory(uid).filter(policy::permits)
+        val historyJson = Json.encodeToString(retained)
+        // Store deletion intent before acknowledging the revision; a restart can safely replay it.
+        val historySaved = prefs.edit().putString("${uid}_admin_deleted_matches", Json.encodeToString(policy.deletedMatchIds.toList()))
+            .putLong("${uid}_admin_clear_matches_before", policy.clearMatchesBefore)
+            .putString("${uid}_match_history", historyJson).putString("match_history", historyJson).commit()
+        if (!historySaved) return false
+        if (!persistUser(updated, expectedGeneration = expectedGen, syncToCloud = false)) return false
+        _authState.value = AuthState.Authenticated(updated)
+        if (updated.uid.startsWith("google_")) setSavedGoogleDisplayName(updated.uid.removePrefix("google_"), updated.displayName)
+        _matchHistoryVersion.value++
+        if (policy.fields.any { (key, change) -> key.startsWith("avatar") && change.revision > current.adminRevision }) {
+            com.bingo.multiplayer.domain.network.ProfileAvatars.state.adminChange(updated.username,
+                updated.avatarBase64 ?: updated.avatarUrl)
+        }
+        return true
+    }
 
-                    firestoreSync.startRealtimeProfileListener(user.uid) { _, remoteSettings ->
+    private fun startCloudSynchronization(user: UserProfile, capturedGen: Long, token: String? = null) {
+        val ctx = context ?: return
+        scope.launch(Dispatchers.IO) {
+            val tokenToUse = token?.takeIf { !it.startsWith("google_token_") && !it.startsWith("guest_token_") && user.provider == AuthProvider.GOOGLE }
+            if (!awaitFirebaseAuth(tokenToUse, capturedGen, user.uid) || sessionGeneration.get() != capturedGen) return@launch
+            val firestoreSync = com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(ctx)
+            synchronized(this@AuthRepository) {
+                if (sessionGeneration.get() != capturedGen || getPersistedUserSync()?.uid != user.uid) return@launch
+                if (cloudListenerUid != user.uid || cloudListenerGeneration != capturedGen) {
+                    cloudListenerUid = user.uid
+                    cloudListenerGeneration = capturedGen
+                    firestoreSync.startRealtimeProfileListener(user.uid,
+                        fallbackSettings = getSettings(),
+                        onAdminUpdate = { snapshot -> applyCloudAdminSnapshot(snapshot, user.uid, capturedGen) },
+                        onAccountRemoved = { removeAdminAccount(user.uid, capturedGen) }
+                    ) { _, remoteSettings ->
                         // Preserve local dark theme, sound/vibration, and notification preferences to prevent remote echo from reverting local settings
                         val localDark = com.bingo.multiplayer.core.designsystem.ThemePreferences.isDarkTheme.value
                         val localSound = com.bingo.multiplayer.core.designsystem.SoundPreferences.soundEnabled.value
                         val localHaptics = com.bingo.multiplayer.core.designsystem.SoundPreferences.hapticsEnabled.value
                         val localPreset = com.bingo.multiplayer.core.designsystem.SoundPreferences.pickSoundPresetId.value
-                        val isNotifsConfigured = com.bingo.multiplayer.core.designsystem.NotificationPreferences.isLocallyConfigured(context)
+                        val isNotifsConfigured = com.bingo.multiplayer.core.designsystem.NotificationPreferences.isLocallyConfigured(ctx)
                         val consistentSettings = remoteSettings.copy(
                             darkTheme = localDark,
                             soundEnabled = localSound,
@@ -240,8 +278,24 @@ class AuthRepository(
                     }
                 }
             }
+            // Upload uses a transaction that reads the latest admin edits before writing.
+            firestoreSync.syncUserProfile(getPersistedUserSync()?.takeIf { it.uid == user.uid } ?: return@launch, getSettings())
+            val matches = getMatchHistory(user.uid)
+            if (matches.isNotEmpty()) firestoreSync.syncAllMatches(user.uid, matches)
         }
-        state
+    }
+
+    @Synchronized
+    internal fun removeAdminAccount(uid: String, expectedGen: Long): Boolean {
+        if (sessionGeneration.get() != expectedGen || getPersistedUserSync()?.uid != uid) return false
+        // A removed account must not back up its old profile during the forced sign-out.
+        signOut(backUpToCloud = false)
+        val editor = prefs.edit()
+        prefs.all.keys.filter { it.startsWith("${uid}_") || it.startsWith("applied_result_${uid}:") }
+            .forEach(editor::remove)
+        editor.apply()
+        _matchHistoryVersion.value++
+        return true
     }
 
     /**
@@ -283,7 +337,8 @@ class AuthRepository(
             currentStreak = existing.currentStreak,
             bestStreak = existing.bestStreak,
             level = existing.level,
-            xp = existing.xp
+            xp = existing.xp,
+            adminRevision = existing.adminRevision
         )
         persistUser(profile, idToken ?: "google_token_$googleId")
         val googleHostKey = com.bingo.multiplayer.domain.network.AccountKeyStore.getPublicKeyBase64(targetUid)
@@ -334,7 +389,8 @@ class AuthRepository(
             currentStreak = existing.currentStreak,
             bestStreak = existing.bestStreak,
             level = existing.level,
-            xp = existing.xp
+            xp = existing.xp,
+            adminRevision = existing.adminRevision
         )
         persistUser(profile, "guest_token_$guestId")
         com.bingo.multiplayer.domain.network.PresenceManager.setCurrentUser(cleanUser)
@@ -766,10 +822,17 @@ class AuthRepository(
         val scopedKey = if (!targetUid.isNullOrBlank()) "${targetUid}_match_history" else "match_history"
         val raw = prefs.getString(scopedKey, null) ?: prefs.getString("match_history", null) ?: return emptyList()
         return try {
-            kotlinx.serialization.json.Json.decodeFromString(raw)
+            filterAdminMatchHistory(kotlinx.serialization.json.Json.decodeFromString(raw), targetUid)
         } catch (_: Exception) {
             emptyList()
         }
+    }
+
+    fun filterAdminMatchHistory(matches: List<com.bingo.multiplayer.domain.model.MatchRecord>, uid: String? = null): List<com.bingo.multiplayer.domain.model.MatchRecord> {
+        val target = uid ?: getPersistedUserSync()?.uid ?: return matches
+        val removed = runCatching { Json.decodeFromString<List<String>>(prefs.getString("${target}_admin_deleted_matches", "[]") ?: "[]").toSet() }.getOrDefault(emptySet())
+        val cutoff = prefs.getLong("${target}_admin_clear_matches_before", 0L)
+        return matches.filter { it.id !in removed && (cutoff <= 0L || it.timestamp > cutoff) }
     }
 
     @Synchronized
@@ -791,7 +854,7 @@ class AuthRepository(
         val targetUid = uid ?: currentAuth?.uid ?: prefs.getString(KEY_UID, null)
         if (targetUid.isNullOrBlank()) return
 
-        val merged = (getMatchHistory(targetUid) + matches).distinctBy { it.id }
+        val merged = filterAdminMatchHistory(getMatchHistory(targetUid) + matches, targetUid).distinctBy { it.id }
             .sortedByDescending { it.timestamp }.take(1000)
         val jsonStr = kotlinx.serialization.json.Json.encodeToString(merged)
         val editor = prefs.edit().putString("${targetUid}_match_history", jsonStr)
@@ -799,6 +862,7 @@ class AuthRepository(
             editor.putString("match_history", jsonStr)
         }
         editor.apply()
+        _matchHistoryVersion.value++
     }
 
     fun streamFirestoreMatchHistory(): kotlinx.coroutines.flow.Flow<List<com.bingo.multiplayer.domain.model.MatchRecord>>? {
@@ -1000,6 +1064,7 @@ class AuthRepository(
         val current = (_authState.value as? AuthState.Authenticated)?.user
         if (current != null && current.uid != targetUid) return false
         val cloudProfile = cloudData.profile
+        if ((current?.adminRevision ?: 0L) > cloudProfile.adminRevision) return true
         val localAvatar = if (!cloudProfile.avatarBase64.isNullOrBlank()) {
             restoreAvatarFromBase64(cloudProfile.avatarBase64, cloudProfile.uid) ?: cloudProfile.avatarUrl
         } else cloudProfile.avatarUrl
@@ -1049,7 +1114,7 @@ class AuthRepository(
 
             if (cloudData.matchHistory.isNotEmpty()) {
                 val localHistory = getMatchHistory(finalProfile.uid)
-                val merged = (localHistory + cloudData.matchHistory)
+                val merged = filterAdminMatchHistory(localHistory + cloudData.matchHistory, finalProfile.uid)
                     .distinctBy { it.id }
                     .sortedByDescending { it.timestamp }
                     .let { if (it.size > 1000) it.take(1000) else it }
@@ -1075,11 +1140,11 @@ class AuthRepository(
     }
 
     @Synchronized
-    fun signOut() {
+    fun signOut(backUpToCloud: Boolean = true) {
         sessionGeneration.incrementAndGet()
         com.bingo.multiplayer.domain.network.LeaderboardSyncManager.reset()
         val current = (_authState.value as? AuthState.Authenticated)?.user
-        if (current != null) {
+        if (backUpToCloud && current != null) {
             val googleId = if (current.provider == AuthProvider.GOOGLE && current.uid.startsWith("google_")) {
                 current.uid.removePrefix("google_")
             } else current.uid
@@ -1093,6 +1158,8 @@ class AuthRepository(
                 sessionManager.backupUserDataSync(googleId, backup)
             }
         }
+        cloudListenerUid = null
+        cloudListenerGeneration = -1L
         sessionManager.stopSessionWatcher()
         com.bingo.multiplayer.domain.network.PresenceManager.stopPresence()
         if (context != null) {
@@ -1233,15 +1300,17 @@ class AuthRepository(
             currentStreak = streak,
             bestStreak = bestStreak,
             level = if (pfx.isNotEmpty() && prefs.contains("${pfx}level")) prefs.getInt("${pfx}level", 1) else if (pfx.isEmpty()) prefs.getInt(KEY_LEVEL, 1) else 1,
-            xp = if (pfx.isNotEmpty() && prefs.contains("${pfx}xp")) prefs.getInt("${pfx}xp", 0) else if (pfx.isEmpty()) prefs.getInt(KEY_XP, 0) else 0
+            xp = if (pfx.isNotEmpty() && prefs.contains("${pfx}xp")) prefs.getInt("${pfx}xp", 0) else if (pfx.isEmpty()) prefs.getInt(KEY_XP, 0) else 0,
+            adminRevision = prefs.getLong("${pfx}admin_revision", 0L)
         )
     }
 
     @Synchronized
-    private fun persistUser(profile: UserProfile, token: String? = null, expectedGeneration: Long? = null): Boolean {
+    private fun persistUser(profile: UserProfile, token: String? = null, expectedGeneration: Long? = null, syncToCloud: Boolean = true): Boolean {
         if (expectedGeneration != null && sessionGeneration.get() != expectedGeneration) return false
         val currentAuth = (_authState.value as? AuthState.Authenticated)?.user
         if (expectedGeneration != null && currentAuth != null && currentAuth.uid != profile.uid) return false
+        if (currentAuth?.uid == profile.uid && currentAuth.adminRevision > profile.adminRevision) return false
         val currentSavedUid = prefs.getString(KEY_UID, null)
         if (expectedGeneration != null && currentSavedUid != null && currentSavedUid != profile.uid) return false
 
@@ -1262,7 +1331,8 @@ class AuthRepository(
 
         if (profile.uid.isNotBlank()) {
             val pfx = "${profile.uid}_"
-            editor.putString("${pfx}username", profile.username)
+            editor.putLong("${pfx}admin_revision", profile.adminRevision)
+                .putString("${pfx}username", profile.username)
                 .putString("${pfx}name", profile.displayName)
                 .putString("${pfx}avatar", profile.avatarUrl)
                 .putString("${pfx}avatar_base64", profile.avatarBase64)
@@ -1279,25 +1349,12 @@ class AuthRepository(
         }
         editor.apply()
 
-        if (context != null && profile.username.isNotBlank()) {
+        if (syncToCloud && context != null && profile.username.isNotBlank()) {
             com.bingo.multiplayer.domain.notifications.NotificationRuntime.bind(context, profile.uid, profile.username)
             com.bingo.multiplayer.domain.network.BingoFcmManager.syncCurrentUserToken(context, profile.username)
         }
 
-        if (context != null && profile.uid.isNotBlank()) {
-            val gen = sessionGeneration.get()
-            scope.launch(Dispatchers.IO) {
-                val tokenToUse = if (token != null && !token.startsWith("google_token_") && !token.startsWith("guest_token_") && profile.provider == AuthProvider.GOOGLE) token else null
-                val authOk = awaitFirebaseAuth(idToken = tokenToUse, expectedGen = gen, targetUid = profile.uid)
-                if (!authOk || sessionGeneration.get() != gen) return@launch
-                val firestoreSync = com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(context)
-                firestoreSync.syncUserProfile(profile, getSettings())
-                val existingMatches = getMatchHistory(profile.uid)
-                if (existingMatches.isNotEmpty()) {
-                    firestoreSync.syncAllMatches(profile.uid, existingMatches)
-                }
-            }
-        }
+        if (syncToCloud && profile.uid.isNotBlank()) startCloudSynchronization(profile, sessionGeneration.get(), token)
         return true
     }
 
