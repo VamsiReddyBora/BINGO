@@ -1233,6 +1233,16 @@ class AuthRepositoryTest {
         assertTrue(repository.getMatchHistory(uid).isEmpty())
     }
 
+    @Test fun adminRevisionIsAcknowledgedOnlyAfterDurableApplicationForTheSameAccount() {
+        repository.onGoogleSignInSuccess("ack_fixture", "Fixture", "fixture@example.com", "ack_fixture")
+        val uid = repository.getPersistedUserSync()!!.uid; val gen = repository.sessionGeneration.get()
+        assertEquals(0L, repository.profileAdminAppliedRevision(uid, gen))
+        repository.applyCloudAdminSnapshot(adminSnapshot(3, "level" to 100), uid, gen)
+        assertEquals(3L, repository.profileAdminAppliedRevision(uid, gen))
+        assertNull(repository.profileAdminAppliedRevision("other-account", gen))
+        assertNull(repository.profileAdminAppliedRevision(uid, gen - 1))
+    }
+
     // ── Test Doubles & In-Memory SharedPreferences ──
 
     class FakeSharedPreferences : SharedPreferences {

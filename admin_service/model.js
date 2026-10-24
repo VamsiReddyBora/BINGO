@@ -344,3 +344,27 @@ export function constantEqual(a, b) {
   for (let i = 0; i < a.length; i++) n |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return n === 0;
 }
+
+/** A cloud write and a confirmed app application are different states. */
+export function profileSyncState(profile, revision, stale = false) {
+  if (stale) return { status: "UNKNOWN", label: "Sync unavailable" };
+  if (!revision) return { status: "NONE", label: "No admin edits" };
+  if ((Number(profile.adminRevision) || 0) < revision)
+    return { status: "PENDING_CLOUD", label: "Saving to cloud" };
+  const appliedRevision = Number(profile.adminAppliedRevision) || 0;
+  const appliedAt = Number(profile.adminAppliedAt) || 0;
+  const build = Number(profile.adminAppliedBuild) || 0;
+  if (appliedRevision >= revision && appliedAt > 0 && build >= 72)
+    return {
+      status: "APPLIED",
+      label: "Applied by app",
+      revision: appliedRevision,
+      appliedAt,
+      appBuild: build,
+    };
+  return {
+    status: "WAITING_APP",
+    label: "Waiting for app",
+    appBuild: Number(profile.appVersionCode) || null,
+  };
+}

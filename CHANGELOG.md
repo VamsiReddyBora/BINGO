@@ -1,3 +1,12 @@
+## Build 72 — Pages preview
+
+- Recover live admin edits when the app Google account and Firebase storage session differ.
+- Start the public profile observer before storage authentication; retry on failure and foreground return.
+- Confirm exact admin revision only after durable local application by the active account.
+- Show cloud-save and app-application status separately; preserve unsaved forms on receipt refresh.
+- Compact navigation, directory and profile controls without removing existing actions.
+- Preserve existing gameplay rules and GitHub release assets.
+
 # Version 1.0.3 — Build 70
 
 - Offer Reconnect or Later on Home when notification Google authorization needs approval. Preserve the current account and wait for startup and other dialogs.

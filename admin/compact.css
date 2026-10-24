@@ -1,0 +1,482 @@
+/* Dense operational layout. Existing actions, focus states and device approval remain. */
+body {
+  font-size: 12px;
+  line-height: 1.45;
+}
+#console {
+  --nav-width: 208px;
+  padding-left: var(--nav-width);
+}
+.sidebar {
+  width: 208px;
+  padding: 16px 12px;
+}
+.sidebar .brand {
+  margin-bottom: 20px;
+  font-size: 18px;
+}
+.sidebar .brand-mark {
+  width: 32px;
+  height: 32px;
+  font-size: 20px;
+}
+#navigation {
+  gap: 3px;
+}
+#navigation button {
+  min-height: 36px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+}
+.nav-label {
+  margin: 15px 8px 7px;
+}
+.sidebar-bottom {
+  padding-top: 12px;
+  margin-top: 12px;
+}
+.topbar {
+  height: 52px;
+  padding: 0 20px;
+}
+#menu-button {
+  display: inline-flex;
+}
+main {
+  max-width: none;
+  padding: 18px 20px 24px;
+}
+.section-heading {
+  margin-bottom: 14px;
+  align-items: center;
+}
+.section-heading h1 {
+  font-size: 23px;
+  margin: 0 0 4px;
+}
+.section-heading p {
+  margin: 0;
+}
+.section-heading .eyebrow,
+.heading-dot {
+  display: none;
+}
+button {
+  min-height: 32px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+}
+input,
+select,
+textarea {
+  padding: 7px 9px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+label {
+  gap: 4px;
+  font-size: 11px;
+}
+h2 {
+  font-size: 15px;
+}
+.panel {
+  padding: 14px;
+  border-radius: 8px;
+  box-shadow: none;
+}
+.panel > h2 {
+  margin: 0 0 10px;
+}
+.statistics {
+  gap: 0;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--panel);
+}
+.statistics .stat {
+  border: 0;
+  border-radius: 0;
+  border-right: 1px solid var(--line);
+  padding: 10px 14px;
+  background: transparent;
+}
+.statistics .stat:last-child {
+  border-right: 0;
+}
+.statistics .stat strong {
+  font-size: 21px;
+  line-height: 1.3;
+}
+.stat::before {
+  display: none;
+}
+.toolbar {
+  gap: 8px;
+  padding: 10px;
+  margin-bottom: 8px;
+}
+.list-heading {
+  margin: 6px 0 8px;
+}
+.list-heading p {
+  margin: 0;
+}
+.list-heading button {
+  min-width: 30px;
+}
+.list-heading label {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+.list-heading select {
+  padding: 4px 6px;
+}
+.table-wrap {
+  border-radius: 8px;
+}
+th {
+  font-size: 10px;
+  padding: 9px 10px;
+}
+td {
+  padding: 8px 10px;
+  vertical-align: middle;
+}
+td .small {
+  font-size: 10px;
+}
+.identity {
+  gap: 9px;
+}
+.identity strong {
+  font-size: 12px;
+}
+.identity small {
+  font-size: 10px;
+}
+.avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  font-size: 10px;
+  flex: 0 0 auto;
+}
+.badge {
+  font-size: 9px;
+  padding: 3px 6px;
+}
+.player-card {
+  padding: 13px;
+}
+.cards {
+  grid-template-columns: repeat(auto-fill, minmax(235px, 1fr));
+  gap: 10px;
+}
+.overview-metrics {
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.overview-metrics .stat {
+  padding: 12px;
+}
+.overview-metrics .stat strong {
+  font-size: 27px;
+}
+.overview-metrics .stat small {
+  font-size: 10px;
+}
+.overview-grid {
+  gap: 12px;
+}
+.overview-grid > .panel {
+  padding: 14px;
+}
+.roster-entry,
+.health-row,
+.room-row {
+  padding: 9px 0;
+}
+.panel-heading {
+  margin-bottom: 8px;
+}
+.quick-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.quick-actions p,
+.quick-actions .eyebrow {
+  display: none;
+}
+.quick-actions h2 {
+  font-size: 15px;
+  margin: 0 0 10px;
+}
+.quick-actions button {
+  flex: 1 1 auto;
+  background: var(--raised);
+  color: var(--text);
+}
+footer {
+  margin-top: 22px;
+  padding-top: 12px;
+}
+.sync-badge {
+  display: inline-block;
+  font-size: 10px;
+  white-space: nowrap;
+  padding: 3px 6px;
+  border-radius: 5px;
+  color: var(--muted);
+  background: var(--raised);
+}
+.sync-badge.applied {
+  color: var(--brand);
+  background: var(--accent-soft);
+}
+.sync-badge.waiting_app,
+.sync-badge.pending_cloud {
+  color: var(--amber);
+}
+.profile-sync {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+#inspector {
+  width: min(510px, 100%);
+  border-radius: 0;
+}
+#inspector .dialog-header {
+  padding: 12px 14px;
+  min-height: 62px;
+}
+#inspector .dialog-header h2 {
+  font-size: 16px;
+}
+#inspector-tabs {
+  padding: 6px 10px;
+  gap: 3px;
+}
+#inspector-tabs button {
+  padding: 6px 9px;
+  font-size: 11px;
+}
+#inspector-tabs .account-actions {
+  margin-left: auto;
+}
+#inspector .dialog-body {
+  padding: 12px 14px;
+}
+#inspector .dialog-body > .panel {
+  margin-bottom: 12px;
+  padding: 12px;
+}
+#inspector .photo-panel {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+#inspector .photo-panel h2 {
+  margin: 0;
+  font-size: 12px;
+}
+.photo-actions {
+  gap: 10px;
+  align-items: center;
+  flex: 1;
+}
+.photo-actions .avatar.large {
+  width: 36px;
+  height: 36px;
+  font-size: 12px;
+}
+.photo-actions .stack {
+  display: flex;
+  flex-direction: row;
+  gap: 7px;
+  align-items: center;
+}
+.photo-actions .upload-button {
+  min-height: 32px;
+  padding: 6px 9px;
+  margin: 0;
+  font-size: 11px;
+}
+.profile-form {
+  gap: 10px;
+}
+.profile-form label:first-child {
+  grid-column: 1 / -1;
+}
+.profile-form input {
+  min-height: 34px;
+}
+.level-help {
+  margin: 8px 0 0;
+  font-size: 10px;
+}
+.form-actions {
+  position: sticky;
+  bottom: -12px;
+  z-index: 1;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  padding: 10px 0 0;
+  margin-top: 12px;
+}
+.account-metadata summary {
+  cursor: pointer;
+  font-weight: 650;
+}
+.account-metadata .metadata {
+  padding-top: 12px;
+  gap: 12px;
+}
+#inspector-warning {
+  margin: 8px 14px 0;
+  padding: 8px 10px;
+  font-size: 10px;
+}
+.login-shell {
+  min-height: 100dvh;
+  grid-template-columns: 1fr;
+  place-items: center;
+  padding: 24px;
+}
+.login-story {
+  display: none;
+}
+.login-card {
+  max-width: 410px;
+  width: 100%;
+  padding: 26px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+.login-card h1 {
+  font-size: 24px;
+}
+.login-card > .eyebrow {
+  display: none;
+}
+.login-symbol {
+  margin-bottom: 16px;
+}
+.login-footnote {
+  font-size: 10px;
+  margin-top: 18px;
+}
+@media (min-width: 901px) {
+  body[data-nav="compact"] #console {
+    --nav-width: 68px;
+  }
+  body[data-nav="compact"] .sidebar {
+    width: 68px;
+    padding: 16px 8px;
+  }
+  body[data-nav="compact"] .sidebar .brand {
+    justify-content: center;
+    margin-bottom: 20px;
+  }
+  body[data-nav="compact"] .brand > span:not(.brand-mark),
+  body[data-nav="compact"] .sidebar .nav-text,
+  body[data-nav="compact"] .sidebar .nav-label,
+  body[data-nav="compact"] .sidebar .count,
+  body[data-nav="compact"] .sidebar-bottom > div {
+    display: none;
+  }
+  body[data-nav="compact"] #navigation button {
+    justify-content: center;
+    min-height: 40px;
+    padding: 9px;
+  }
+  body[data-nav="compact"] #navigation button.active::after {
+    display: none;
+  }
+  body[data-nav="compact"] .sidebar-bottom {
+    justify-content: center;
+  }
+}
+@media (max-width: 900px) {
+  #console {
+    padding-left: 0;
+  }
+  .sidebar {
+    width: 232px;
+  }
+  .topbar {
+    padding: 0 14px;
+  }
+  main {
+    padding: 14px;
+  }
+  .section-heading h1 {
+    font-size: 21px;
+  }
+}
+@media (max-width: 650px) {
+  main {
+    padding: 12px;
+  }
+  .statistics {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+  .statistics .stat {
+    padding: 8px 6px;
+  }
+  .statistics .stat span {
+    font-size: 9px;
+  }
+  .statistics .stat strong {
+    font-size: 18px;
+  }
+  .statistics .stat small {
+    display: none;
+  }
+  .toolbar {
+    gap: 7px;
+  }
+  .toolbar label {
+    min-width: 0;
+  }
+  .overview-metrics {
+    grid-template-columns: 1fr 1fr;
+  }
+  .overview-grid {
+    grid-template-columns: 1fr;
+  }
+  #inspector .photo-panel {
+    gap: 8px;
+  }
+  .photo-actions .stack {
+    gap: 5px;
+  }
+  #inspector-tabs button {
+    font-size: 10px;
+    padding: 6px 7px;
+  }
+}
+@media (pointer: coarse) {
+  button,
+  input,
+  select,
+  .upload-button {
+    min-height: 44px;
+  }
+  #inspector-tabs button,
+  #navigation button {
+    min-height: 44px;
+  }
+}

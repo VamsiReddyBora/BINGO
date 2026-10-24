@@ -1,6 +1,7 @@
 import {
   Problem,
   roomObservation,
+  profileSyncState,
   requireThat,
   username,
   decodeLegacy,
@@ -317,7 +318,25 @@ export class AdminControl {
     const profile = applyPolicy(raw.profile, policy);
     const etag = await digest(
       JSON.stringify({
-        profile,
+        profile: Object.fromEntries(
+          [
+            "uid",
+            "username",
+            "provider",
+            "displayName",
+            "avatarUrl",
+            "avatarBase64",
+            "gamesPlayed",
+            "gamesWon",
+            "currentStreak",
+            "bestStreak",
+            "level",
+            "xp",
+            "adminRevision",
+          ]
+            .filter((key) => profile[key] !== undefined)
+            .map((key) => [key, profile[key]]),
+        ),
         revision: policy.revision,
         deletedMatches: policy.deletedMatches,
         clearMatchesBefore: policy.clearMatchesBefore,
@@ -331,6 +350,11 @@ export class AdminControl {
       etag,
       sourceApplied:
         (Number(raw.profile.adminRevision) || 0) >= policy.revision,
+      sync: profileSyncState(
+        raw.profile,
+        policy.revision,
+        raw.stale || raw.registryOnly,
+      ),
     };
   }
   async list(force = false) {
@@ -392,6 +416,7 @@ export class AdminControl {
           revision: row.revision,
           etag: row.etag,
           sourceApplied: row.sourceApplied,
+          sync: row.sync,
           sourceStatus: row.stale
             ? "STALE"
             : row.registryOnly
@@ -562,6 +587,7 @@ export class AdminControl {
       revision: row.revision,
       etag: row.etag,
       sourceApplied: row.sourceApplied,
+      sync: row.sync,
       fetchedAt: Date.now(),
       historyPartial: row.backupError,
       friends: friends.filter(
@@ -792,7 +818,9 @@ export class AdminControl {
         operation: { ...op, data: undefined },
         message:
           op.status === "SYNCED"
-            ? "Change saved and synchronized"
+            ? ["PROFILE", "MATCH"].includes(op.type)
+              ? "Saved to cloud. Waiting for the app to confirm application."
+              : "Change saved and synchronized"
             : "Change saved in admin control; external synchronization is pending",
       },
       op.status === "SYNCED" ? 200 : 202,

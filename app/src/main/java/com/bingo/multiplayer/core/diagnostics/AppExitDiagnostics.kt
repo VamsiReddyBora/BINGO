@@ -54,6 +54,8 @@ object AppExitDiagnostics {
         try {
             append("\nNotification delivery:\n")
             append(com.bingo.multiplayer.domain.notifications.NotificationDiagnostics.read(context))
+            append("\nProfile synchronization:\n")
+            append(com.bingo.multiplayer.domain.repository.AuthRepository.activeInstance?.profileSyncDiagnostics() ?: "Cloud profile: not initialized\n")
         } catch (_: Exception) { append("Notification diagnostics unavailable.\n") }
     }
 }

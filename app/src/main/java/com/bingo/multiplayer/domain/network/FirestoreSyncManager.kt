@@ -56,6 +56,9 @@ class FirestoreSyncManager(
     }
 
     private var profileListenerRegistration: ListenerRegistration? = null
+    private var profileListenerEpoch = 0L
+    private var acknowledgementRetry: kotlinx.coroutines.Job? = null
+    private var acknowledgementJob: kotlinx.coroutines.Job? = null
     private var accountRemovalListenerRegistration: ListenerRegistration? = null
     private var syncRetryJob: kotlinx.coroutines.Job? = null
     private var privateSettingsListenerRegistration: ListenerRegistration? = null
@@ -141,6 +144,7 @@ class FirestoreSyncManager(
                     "xp" to user.xp,
                     "lastSeenTimestamp" to FieldValue.serverTimestamp(),
                     "appVersion" to user.appVersion,
+                    "appVersionCode" to user.appVersionCode,
                     "email" to FieldValue.delete(),
                     "settings" to FieldValue.delete()
                 )
@@ -178,8 +182,7 @@ class FirestoreSyncManager(
                         "avatarBase64" to effective.avatarBase64,
                         "gamesPlayed" to effective.gamesPlayed, "gamesWon" to effective.gamesWon,
                         "currentStreak" to effective.currentStreak, "bestStreak" to effective.bestStreak,
-                        "level" to effective.level, "xp" to effective.xp,
-                        "adminAppliedRevision" to effective.adminRevision
+                        "level" to effective.level, "xp" to effective.xp
                     )
                     transaction.set(userDocRef, guarded, SetOptions.merge())
                     remote
@@ -299,11 +302,12 @@ class FirestoreSyncManager(
         fallbackSettings: UserSettings = UserSettings(),
         onAdminUpdate: (Map<String, Any?>) -> Unit = {},
         onAccountRemoved: () -> Unit = {},
+        onProfileError: (Exception) -> Unit = {},
         onProfileUpdated: (UserProfile, UserSettings) -> Unit
-    ) {
-        if (uid.isBlank()) return
+    ): Boolean {
+        if (uid.isBlank()) return false
         stopRealtimeProfileListener()
-
+        val epoch = profileListenerEpoch
         try {
             var currentProfile: UserProfile? = null
             var currentSettings: UserSettings? = fallbackSettings
@@ -327,8 +331,10 @@ class FirestoreSyncManager(
             }
 
             profileListenerRegistration = userDocRef.addSnapshotListener { snapshot, error ->
+                if (epoch != profileListenerEpoch) return@addSnapshotListener
                 if (error != null) {
                     Log.w(TAG, "Profile snapshot listener error: ${error.message}")
+                    onProfileError(error)
                     return@addSnapshotListener
                 }
 
@@ -402,12 +408,20 @@ class FirestoreSyncManager(
                     notifyIfReady()
                 }
             }
+            return true
         } catch (e: Exception) {
             Log.w(TAG, "Failed to start Firestore profile listener: ${e.message}")
+            stopRealtimeProfileListener()
+            return false
         }
     }
 
     fun stopRealtimeProfileListener() {
+        profileListenerEpoch++
+        acknowledgementJob?.cancel()
+        acknowledgementJob = null
+        acknowledgementRetry?.cancel()
+        acknowledgementRetry = null
         accountRemovalListenerRegistration?.remove()
         accountRemovalListenerRegistration = null
         profileListenerRegistration?.remove()
@@ -416,6 +430,49 @@ class FirestoreSyncManager(
         privateSettingsListenerRegistration = null
         privateAccountListenerRegistration?.remove()
         privateAccountListenerRegistration = null
+    }
+
+    /** A separate proof follows durable local application; profile upload is not device receipt. */
+    internal fun acknowledgeAdminRevision(uid: String, revision: Long, generation: Long) {
+        val repository = AuthRepository.activeInstance ?: return
+        if (repository.profileAdminAppliedRevision(uid, generation) != revision) return
+        synchronized(this) {
+            if (acknowledgementJob?.isActive == true) return
+            acknowledgementJob = scope.launch {
+                try {
+                    val ref = firestore.collection(COLLECTION_USERS).document(uid)
+                    val confirmed = firestore.runTransaction { transaction ->
+                        val data = transaction.get(ref).data.orEmpty()
+                        if (repository.profileAdminAppliedRevision(uid, generation) != revision ||
+                            !profileAcknowledgementNeeded(data, revision, NetworkConfig.APP_VERSION_CODE)) return@runTransaction false
+                        transaction.update(ref, mapOf(
+                            "adminAppliedRevision" to revision,
+                            "adminAppliedAt" to FieldValue.serverTimestamp(),
+                            "adminAppliedBuild" to NetworkConfig.APP_VERSION_CODE,
+                            "appVersion" to NetworkConfig.APP_VERSION_NAME,
+                            "appVersionCode" to NetworkConfig.APP_VERSION_CODE
+                        ))
+                        true
+                    }.await()
+                    if (confirmed) repository.recordProfileSyncStatus(uid, generation, "ADMIN_ACKNOWLEDGED")
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    synchronized(this@FirestoreSyncManager) {
+                        if (acknowledgementRetry?.isActive != true) acknowledgementRetry = scope.launch {
+                            kotlinx.coroutines.delay(5_000L)
+                            synchronized(this@FirestoreSyncManager) { acknowledgementRetry = null }
+                            val latest = repository.profileAdminAppliedRevision(uid, generation)
+                            if (latest != null && latest > 0L) acknowledgeAdminRevision(uid, latest, generation)
+                        }
+                    }
+                } finally {
+                    synchronized(this@FirestoreSyncManager) { acknowledgementJob = null }
+                    val latest = repository.profileAdminAppliedRevision(uid, generation)
+                    if (latest != null && latest > revision) acknowledgeAdminRevision(uid, latest, generation)
+                }
+            }
+        }
     }
 
     // ── 2. MATCH HISTORY SYNC ──

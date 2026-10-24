@@ -11,11 +11,12 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' https://bingo-admin-control.vamsireddy2534.workers.dev; img-src 'self' data: blob: https:; object-src 'none'; base-uri 'none'; form-action 'self'"
     />
-    <title>Bingo — Command Center</title>
+    <title>Bingo Admin</title>
     <link rel="icon" href="./favicon.png" />
     <link rel="manifest" href="./manifest.json" />
     <link rel="stylesheet" href="./styles.css" />
     <link rel="stylesheet" href="./command.css" />
+    <link rel="stylesheet" href="./compact.css" />
     <script type="module" src="./app.js"></script>
   </head>
   <body>
@@ -27,7 +28,7 @@
         >
         <div class="story-content">
           <p class="eyebrow">BINGO / OPERATIONS</p>
-          <h1>Your community.<br />Under control.</h1>
+          <h1>Bingo administration.</h1>
           <p>
             A single place to look after your players,<br />your community and
             every game in between.
@@ -50,7 +51,7 @@
       <div class="login-card">
         <div class="login-symbol" data-icon="fingerprint"></div>
         <p class="eyebrow">PRIVATE ADMINISTRATOR WORKSPACE</p>
-        <h1>Access command.</h1>
+        <h1>Sign in</h1>
         <p class="muted" id="login-description">Checking secure sign-in…</p>
         <button id="passkey-sign-in" class="primary" hidden>
           <span data-icon="fingerprint"></span> Unlock with passkey
@@ -205,7 +206,7 @@
           <div class="section-heading command-heading">
             <div>
               <p class="eyebrow">BINGO / OPERATIONS</p>
-              <h1>Mission control<span class="heading-dot">.</span></h1>
+              <h1>Overview<span class="heading-dot">.</span></h1>
               <p class="muted">Your players, your games. One clear view.</p>
             </div>
             <span id="overview-status" class="connection"
@@ -545,11 +546,23 @@
         </div>
       </header>
       <nav id="inspector-tabs" aria-label="Player details">
-        <button data-section="overview" class="active">Overview</button
-        ><button data-section="matches">Matches</button
+        <button data-section="overview" class="active">Profile & stats</button
         ><button data-section="friends">Friends</button
-        ><button data-section="danger">Danger zone</button>
+        ><button data-section="matches">History</button
+        ><button
+          data-section="danger"
+          class="account-actions"
+          title="Account actions"
+        >
+          Account
+        </button>
       </nav>
+      <div
+        id="profile-sync"
+        class="profile-sync"
+        role="status"
+        aria-live="polite"
+      ></div>
       <div id="inspector-warning" class="notice warning" hidden></div>
       <div id="inspector-body" class="dialog-body"></div>
     </dialog>

@@ -1,6 +1,6 @@
-# Admin changes in the Android app — Build 71
+# Admin changes in the Android app — Build 72
 
-Install Build 71 or later to apply these controls to the running app. The administration website alone cannot change an older installed APK. Build 71 is delivered as a Pages in-app update; the published v1.0.3 release (Build 70) remains unchanged.
+Install Build 72 or later to apply these controls to the running app. The administration website alone cannot change an older installed APK. Build 72 is delivered as a Pages in-app update; the published v1.0.3 release (Build 70) remains unchanged.
 
 ## Expected behavior
 
@@ -14,12 +14,18 @@ Install Build 71 or later to apply these controls to the running app. The admini
 
 Connected clients apply changes as Firebase delivers them. Offline devices apply them after reconnecting. Timing depends on connectivity; this is not a guaranteed millisecond deadline. Gameplay still uses MQTT and stored data uses Firebase. No pick/turn/countdown/disconnection rule changes were made.
 
+## Repair in Build 72
+
+The prior startup required the locally signed-in Google account to match Firebase Authentication before observing the public profile. A restored app account could therefore stay disconnected from profile edits while normal gameplay continued. The public observer now starts independently, the existing storage session is retained, failures retry, and foreground return retries recovery. Guest identity binding and other authenticated paths remain unchanged. No Firebase rules are relaxed.
+
+Cloud save and app application now have separate status. The console shows **Waiting for app** after saving. **Applied by app** requires a receipt from Build 72 or newer, written only after the active account durably saves that exact admin revision. The receipt is the latest confirming client; it does not prove every signed-in device has received the edit. Offline devices stay pending until they connect. A receipt-only refresh preserves an unsaved inspector draft.
+
 ## Implementation
 
 Admin changes carry a monotonic revision and versioned field edits in the existing Firebase profile. The Android listener applies only unseen edits to the active account. Private settings are not required for profile updates; local sound/theme/notification preferences retain their existing handling. Profile uploads read the policy in a Firebase transaction before writing, and coalesce network-failure retries. Match uploads check history deletion intent in their transaction. No new remote admin startup polling client is introduced.
 
 ## Verification and limits
 
-Regression cases exercise the production profile callback, local persistence, restart/legacy restoration, account guards, history filtering and social repository callbacks. Admin service/browser tests use fictional backing records and real handler/passkey code. Real player records were not edited to manufacture evidence. Physical-device UI/timing acceptance is still required after installing Build 71.
+Regression cases exercise the production profile callback, local persistence, restart/legacy restoration, account guards, history filtering and social repository callbacks. Admin service/browser tests use fictional backing records and real handler/passkey code. Real player records were not edited to manufacture evidence. Physical-device UI/timing acceptance is still required after installing Build 72.
 
 The console inspects current peer-hosted room state; it does not fabricate controller packets or forcibly end a live match. Old APKs need updating to apply the new local behavior. Existing GitHub release tags, APKs and source archives remain separate.

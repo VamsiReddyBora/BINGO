@@ -81,6 +81,10 @@ export class CurrentPlayerStore extends LegacyStore {
       "lastSeenTimestamp",
       "appVersion",
       "adminRevision",
+      "adminAppliedRevision",
+      "adminAppliedAt",
+      "adminAppliedBuild",
+      "appVersionCode",
     ];
     return {
       ...Object.fromEntries(

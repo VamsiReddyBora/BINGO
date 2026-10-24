@@ -1,8 +1,8 @@
-# Bingo — Build 71 admin synchronization update
+# Bingo — Build 72 admin synchronization update
 
 Android Bingo with AI, MQTT multiplayer, Nearby Network play, friends and notifications.
 
-This source adds live application of admin profile, level/statistics, photo, history and friendship edits through Firebase. See ADMIN_APP_SYNC.md. Gameplay rules and transports remain unchanged. Build 71 is published through GitHub Pages for in-app installation; the GitHub v1.0.3 release and its Build 70 source/APK are retained separately.
+This source repairs profile-sync startup for locally signed-in Google accounts with an existing Firebase storage session, and adds a compact admin layout with honest app-application confirmation. It retains live admin profile, level/statistics, photo, history and friendship edits through Firebase. See ADMIN_APP_SYNC.md. Gameplay rules and transports remain unchanged. Build 72 is published through GitHub Pages for in-app installation; the GitHub v1.0.3 release and its Build 70 source/APK are retained separately.
 
 ## Source layout
 

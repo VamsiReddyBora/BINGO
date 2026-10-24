@@ -44,6 +44,11 @@ class AuthRepository(
     val matchHistoryVersion: StateFlow<Long> = _matchHistoryVersion.asStateFlow()
     private var cloudListenerUid: String? = null
     private var cloudListenerGeneration = -1L
+    private var cloudListenerFirebaseUid: String? = null
+    private val cloudSyncMutex = kotlinx.coroutines.sync.Mutex()
+    private var cloudSyncRetry: kotlinx.coroutines.Job? = null
+    private var cloudRetryDelayMs = 2_000L
+    private var cloudRetryGeneration = -1L
 
     private val scope = CoroutineScope(Dispatchers.IO)
     internal val sessionGeneration = java.util.concurrent.atomic.AtomicLong(0L)
@@ -93,6 +98,11 @@ class AuthRepository(
     init {
         checkPersistedSession()
         retryPendingAliasReleases()
+        if (context != null) scope.launch {
+            com.bingo.multiplayer.domain.network.AppLifecycleObserver.isAppInForeground.collect { foreground ->
+                if (foreground) getPersistedUserSync()?.let { startCloudSynchronization(it, sessionGeneration.get()) }
+            }
+        }
     }
 
     /**
@@ -229,10 +239,11 @@ class AuthRepository(
             .putLong("${uid}_admin_clear_matches_before", policy.clearMatchesBefore)
             .putString("${uid}_match_history", historyJson).putString("match_history", historyJson).commit()
         if (!historySaved) return false
-        if (!persistUser(updated, expectedGeneration = expectedGen, syncToCloud = false)) return false
+        if (!persistUser(updated, expectedGeneration = expectedGen, syncToCloud = false, durable = true)) return false
         _authState.value = AuthState.Authenticated(updated)
         if (updated.uid.startsWith("google_")) setSavedGoogleDisplayName(updated.uid.removePrefix("google_"), updated.displayName)
         _matchHistoryVersion.value++
+        recordProfileSyncStatus(uid, expectedGen, "ADMIN_EDIT_APPLIED")
         if (policy.fields.any { (key, change) -> key.startsWith("avatar") && change.revision > current.adminRevision }) {
             com.bingo.multiplayer.domain.network.ProfileAvatars.state.adminChange(updated.username,
                 updated.avatarBase64 ?: updated.avatarUrl)
@@ -240,22 +251,74 @@ class AuthRepository(
         return true
     }
 
+    @Synchronized
+    internal fun recordProfileSyncStatus(uid: String, generation: Long, stage: String) {
+        if (sessionGeneration.get() != generation || getPersistedUserSync()?.uid != uid) return
+        prefs.edit().putString("${uid}_profile_sync_stage", stage.take(80))
+            .putLong("${uid}_profile_sync_at", System.currentTimeMillis()).apply()
+    }
+
+    fun profileSyncDiagnostics(): String {
+        val current = getPersistedUserSync() ?: return "Cloud profile: no active account\n"
+        return "Cloud profile stage: " + prefs.getString("${current.uid}_profile_sync_stage", "NOT_STARTED") +
+            "\nCloud profile last activity (ms): " + prefs.getLong("${current.uid}_profile_sync_at", 0L) +
+            "\nAdmin revision saved locally: " + current.adminRevision + "\n"
+    }
+
+    @Synchronized
+    internal fun profileAdminAppliedRevision(uid: String, expectedGen: Long): Long? {
+        if (sessionGeneration.get() != expectedGen) return null
+        val active = (_authState.value as? AuthState.Authenticated)?.user ?: return null
+        val saved = getPersistedUserSync() ?: return null
+        if (active.uid != uid || saved.uid != uid) return null
+        return minOf(active.adminRevision, saved.adminRevision)
+    }
+
+    private fun retryCloudSynchronization(user: UserProfile, capturedGen: Long) {
+        synchronized(this) {
+            if (sessionGeneration.get() != capturedGen || getPersistedUserSync()?.uid != user.uid) return
+            if (cloudSyncRetry?.isActive == true && cloudRetryGeneration == capturedGen) return
+            cloudSyncRetry?.cancel()
+            cloudRetryGeneration = capturedGen
+            val delayMs = cloudRetryDelayMs
+            cloudRetryDelayMs = (cloudRetryDelayMs * 2L).coerceAtMost(60_000L)
+            cloudSyncRetry = scope.launch {
+                kotlinx.coroutines.delay(delayMs)
+                synchronized(this@AuthRepository) {
+                    if (sessionGeneration.get() != capturedGen || cloudRetryGeneration != capturedGen) return@launch
+                    cloudSyncRetry = null; cloudListenerUid = null
+                }
+                if (sessionGeneration.get() == capturedGen && getPersistedUserSync()?.uid == user.uid)
+                    startCloudSynchronization(getPersistedUserSync()!!, capturedGen)
+            }
+        }
+    }
+
     private fun startCloudSynchronization(user: UserProfile, capturedGen: Long, token: String? = null) {
         val ctx = context ?: return
         scope.launch(Dispatchers.IO) {
-            val tokenToUse = token?.takeIf { !it.startsWith("google_token_") && !it.startsWith("guest_token_") && user.provider == AuthProvider.GOOGLE }
-            if (!awaitFirebaseAuth(tokenToUse, capturedGen, user.uid) || sessionGeneration.get() != capturedGen) return@launch
-            val firestoreSync = com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(ctx)
-            synchronized(this@AuthRepository) {
+            cloudSyncMutex.lock()
+            try {
                 if (sessionGeneration.get() != capturedGen || getPersistedUserSync()?.uid != user.uid) return@launch
-                if (cloudListenerUid != user.uid || cloudListenerGeneration != capturedGen) {
-                    cloudListenerUid = user.uid
-                    cloudListenerGeneration = capturedGen
-                    firestoreSync.startRealtimeProfileListener(user.uid,
-                        fallbackSettings = getSettings(),
-                        onAdminUpdate = { snapshot -> applyCloudAdminSnapshot(snapshot, user.uid, capturedGen) },
-                        onAccountRemoved = { removeAdminAccount(user.uid, capturedGen) }
-                    ) { _, remoteSettings ->
+                val firestoreSync = com.bingo.multiplayer.domain.network.FirestoreSyncManager.getInstance(ctx)
+                fun attachObserver() {
+                    val firebaseUid = runCatching { com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid }.getOrNull()
+                    synchronized(this@AuthRepository) {
+                        if (sessionGeneration.get() != capturedGen || getPersistedUserSync()?.uid != user.uid) return
+                        if (cloudListenerUid == user.uid && cloudListenerGeneration == capturedGen && cloudListenerFirebaseUid == firebaseUid) return
+                        val attached = firestoreSync.startRealtimeProfileListener(user.uid,
+                            fallbackSettings = getSettings(),
+                            onAdminUpdate = { snapshot ->
+                                recordProfileSyncStatus(user.uid, capturedGen, "PROFILE_RECEIVED")
+                                applyCloudAdminSnapshot(snapshot, user.uid, capturedGen)
+                                val applied = profileAdminAppliedRevision(user.uid, capturedGen)
+                                if (applied != null && com.bingo.multiplayer.domain.network.profileAcknowledgementNeeded(
+                                        snapshot, applied, com.bingo.multiplayer.domain.network.NetworkConfig.APP_VERSION_CODE))
+                                    firestoreSync.acknowledgeAdminRevision(user.uid, applied, capturedGen)
+                            },
+                            onAccountRemoved = { removeAdminAccount(user.uid, capturedGen) },
+                            onProfileError = { retryCloudSynchronization(user, capturedGen) }
+                        ) { _, remoteSettings ->
                         // Preserve local dark theme, sound/vibration, and notification preferences to prevent remote echo from reverting local settings
                         val localDark = com.bingo.multiplayer.core.designsystem.ThemePreferences.isDarkTheme.value
                         val localSound = com.bingo.multiplayer.core.designsystem.SoundPreferences.soundEnabled.value
@@ -275,13 +338,44 @@ class AuthRepository(
                             inAppPlayerInvitesEnabled = if (isNotifsConfigured) com.bingo.multiplayer.core.designsystem.NotificationPreferences.inAppPlayerInvitesEnabled.value else remoteSettings.inAppPlayerInvitesEnabled
                         )
                         updateSettings(consistentSettings, syncToCloud = false, expectedGen = capturedGen)
+                        }
+                        if (!attached) throw IllegalStateException("Profile observer could not be attached")
+                        cloudListenerUid = user.uid
+                        cloudListenerGeneration = capturedGen
+                        cloudListenerFirebaseUid = firebaseUid
+                        recordProfileSyncStatus(user.uid, capturedGen, "OBSERVING")
                     }
                 }
+                val tokenToUse = token?.takeIf { !it.startsWith("google_token_") && !it.startsWith("guest_token_") && user.provider == AuthProvider.GOOGLE }
+                val ready = com.bingo.multiplayer.domain.network.beginProfileSynchronization(
+                    observe = { attachObserver() },
+                    openSession = {
+                        com.bingo.multiplayer.domain.network.openProfileStorageSession(user, tokenToUse) { authToken, target ->
+                            awaitFirebaseAuth(authToken, capturedGen, target)
+                        }
+                    },
+                    synchronize = synchronize@{
+                        if (sessionGeneration.get() != capturedGen) return@synchronize
+                        attachObserver() // Renew protected listeners if Firebase established a new session.
+                        val latest = getPersistedUserSync()?.takeIf { it.uid == user.uid } ?: return@synchronize
+                        firestoreSync.syncUserProfile(latest, getSettings())
+                        val matches = getMatchHistory(user.uid)
+                        if (matches.isNotEmpty()) firestoreSync.syncAllMatches(user.uid, matches)
+                    }
+                )
+                if (!ready) {
+                    recordProfileSyncStatus(user.uid, capturedGen, "STORAGE_SESSION_WAITING")
+                    retryCloudSynchronization(user, capturedGen)
+                } else synchronized(this@AuthRepository) { cloudRetryDelayMs = 2_000L }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                android.util.Log.w("AuthRepository", "Cloud profile synchronization is waiting: ${error.javaClass.simpleName}")
+                recordProfileSyncStatus(user.uid, capturedGen, "RETRY_" + error.javaClass.simpleName)
+                retryCloudSynchronization(user, capturedGen)
+            } finally {
+                cloudSyncMutex.unlock()
             }
-            // Upload uses a transaction that reads the latest admin edits before writing.
-            firestoreSync.syncUserProfile(getPersistedUserSync()?.takeIf { it.uid == user.uid } ?: return@launch, getSettings())
-            val matches = getMatchHistory(user.uid)
-            if (matches.isNotEmpty()) firestoreSync.syncAllMatches(user.uid, matches)
         }
     }
 
@@ -1158,7 +1252,10 @@ class AuthRepository(
                 sessionManager.backupUserDataSync(googleId, backup)
             }
         }
+        cloudSyncRetry?.cancel()
+        cloudSyncRetry = null
         cloudListenerUid = null
+        cloudListenerFirebaseUid = null
         cloudListenerGeneration = -1L
         sessionManager.stopSessionWatcher()
         com.bingo.multiplayer.domain.network.PresenceManager.stopPresence()
@@ -1306,7 +1403,7 @@ class AuthRepository(
     }
 
     @Synchronized
-    private fun persistUser(profile: UserProfile, token: String? = null, expectedGeneration: Long? = null, syncToCloud: Boolean = true): Boolean {
+    private fun persistUser(profile: UserProfile, token: String? = null, expectedGeneration: Long? = null, syncToCloud: Boolean = true, durable: Boolean = false): Boolean {
         if (expectedGeneration != null && sessionGeneration.get() != expectedGeneration) return false
         val currentAuth = (_authState.value as? AuthState.Authenticated)?.user
         if (expectedGeneration != null && currentAuth != null && currentAuth.uid != profile.uid) return false
@@ -1347,7 +1444,7 @@ class AuthRepository(
         if (token != null) {
             editor.putString(KEY_AUTH_TOKEN, token)
         }
-        editor.apply()
+        if (durable) { if (!editor.commit()) return false } else editor.apply()
 
         if (syncToCloud && context != null && profile.username.isNotBlank()) {
             com.bingo.multiplayer.domain.notifications.NotificationRuntime.bind(context, profile.uid, profile.username)

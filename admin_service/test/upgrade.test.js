@@ -4,7 +4,12 @@ import { CurrentPlayerStore } from "../current-store.js";
 import { releaseFixture } from "./publication-fixture.js";
 import { readBody } from "../http.js";
 import { toValue, fromValue } from "../legacy.js";
-import { roomObservation, rememberRoom, validatePatch } from "../model.js";
+import {
+  roomObservation,
+  rememberRoom,
+  validatePatch,
+  profileSyncState,
+} from "../model.js";
 import { selectPlayers, selectRooms } from "../../admin/model.js";
 import { AdminControl } from "../worker.js";
 import { MemoryStorage, FakeLegacy } from "./fixtures.js";
@@ -612,4 +617,83 @@ test("an old client upload cannot hide a pending admin edit in fresh inspection"
   });
   assert.equal((await f.store.read("bob")).profile.level, 101);
   assert.equal((await f.store.read("bob")).profile.gamesPlayed, 2);
+});
+
+test("cloud synchronization status never claims device application from a storage revision alone", () => {
+  assert.equal(profileSyncState({}, 0).status, "NONE");
+  assert.equal(
+    profileSyncState({ adminRevision: 1 }, 2).status,
+    "PENDING_CLOUD",
+  );
+  assert.equal(profileSyncState({ adminRevision: 2 }, 2).status, "WAITING_APP");
+  assert.equal(
+    profileSyncState({ adminRevision: 2, adminAppliedRevision: 2 }, 2).status,
+    "WAITING_APP",
+  );
+  assert.equal(
+    profileSyncState(
+      {
+        adminRevision: 2,
+        adminAppliedRevision: 2,
+        adminAppliedAt: 1,
+        adminAppliedBuild: 71,
+      },
+      2,
+    ).status,
+    "WAITING_APP",
+  );
+});
+test("actual new app receipt confirms only its applied revision and becomes unknown on stale reads", () => {
+  const profile = {
+    adminRevision: 3,
+    adminAppliedRevision: 2,
+    adminAppliedAt: 2000,
+    adminAppliedBuild: 72,
+  };
+  assert.equal(profileSyncState(profile, 3).status, "WAITING_APP");
+  assert.equal(
+    profileSyncState({ ...profile, adminAppliedRevision: 3 }, 3).status,
+    "APPLIED",
+  );
+  assert.equal(
+    profileSyncState({ ...profile, adminAppliedRevision: 3 }, 3, true).status,
+    "UNKNOWN",
+  );
+});
+test("receipt and app-build updates do not invalidate an unchanged profile edit", async () => {
+  const storage = new MemoryStorage(),
+    legacy = new FakeLegacy();
+  const controller = new AdminControl(
+    { storage },
+    {
+      TEST_LEGACY: legacy,
+      ALLOWED_ORIGIN: "https://admin.fixture",
+      PUBLIC_URL: "https://service.fixture",
+    },
+  );
+  const first = await controller.player("bob", true);
+  Object.assign(legacy.players.get("bob").profile, {
+    adminAppliedRevision: 0,
+    adminAppliedAt: 2000,
+    adminAppliedBuild: 72,
+    appVersionCode: 72,
+    lastSeenTimestamp: 3000,
+  });
+  const receipt = await controller.player("bob", true);
+  assert.equal(receipt.etag, first.etag);
+  legacy.players.get("bob").profile.gamesPlayed++;
+  assert.notEqual((await controller.player("bob", true)).etag, first.etag);
+});
+test("Firebase inspection includes the actual app receipt and build in fresh results", async () => {
+  const f = storeFixture();
+  Object.assign(f.docs.get("users/uid_bob"), {
+    adminAppliedRevision: 2,
+    adminAppliedAt: 12345,
+    adminAppliedBuild: 72,
+    appVersionCode: 72,
+  });
+  const profile = (await f.store.read("bob")).profile;
+  assert.equal(profile.adminAppliedAt, 12345);
+  assert.equal(profile.adminAppliedBuild, 72);
+  assert.equal(profile.appVersionCode, 72);
 });

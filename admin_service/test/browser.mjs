@@ -424,6 +424,87 @@ try {
     },
   );
   await check(
+    "Cloud save waits for actual app receipt while compact inspector preserves all controls",
+    async () => {
+      await page.waitForFunction(() =>
+        document
+          .querySelector("#profile-sync")
+          .textContent.includes("Waiting for app"),
+      );
+      assert.doesNotMatch(
+        await page.locator("#profile-sync").textContent(),
+        /Applied by app/,
+      );
+      assert.ok((await page.locator("#inspector").boundingBox()).width <= 510);
+      assert.equal(
+        await page.locator("#inspector-body .profile-form input").count(),
+        7,
+      );
+      await page.locator("#inspector-body details summary").click();
+      await page.getByText("uid_kevin", { exact: true }).waitFor();
+      await page.screenshot({
+        path: evidence + "/09-compact-inspector-waiting.png",
+        fullPage: true,
+      });
+      await page
+        .locator("#inspector-body input[name=displayName]")
+        .fill("Unsaved local draft");
+      const policy = await control.policy("kevin");
+      Object.assign(legacy.players.get("kevin").profile, {
+        adminAppliedRevision: policy.revision,
+        adminAppliedAt: Date.now(),
+        adminAppliedBuild: 72,
+        appVersionCode: 72,
+      });
+      // The normal five-second directory refresh also runs with the inspector open.
+      await page.waitForFunction(() =>
+        document
+          .querySelector("#profile-sync")
+          .textContent.includes("Applied by app"),
+      );
+      assert.equal(
+        await page
+          .locator("#inspector-body input[name=displayName]")
+          .inputValue(),
+        "Unsaved local draft",
+      );
+      assert.match(
+        await page.locator("#profile-sync").textContent(),
+        /Build 72/,
+      );
+      await page.screenshot({
+        path: evidence + "/10-app-receipt-confirmed.png",
+        fullPage: true,
+      });
+      await page
+        .locator("#inspector-body input[name=displayName]")
+        .fill("Kevin Updated");
+    },
+  );
+  await check(
+    "Desktop navigation collapses without removing available sections",
+    async () => {
+      await page.locator("#inspector-close").click();
+      await page.locator("#menu-button").click();
+      assert.equal(
+        await page.locator("body").getAttribute("data-nav"),
+        "expanded",
+      );
+      assert.ok((await page.locator(".sidebar").boundingBox()).width <= 208);
+      assert.equal(
+        await page.locator("#navigation button[data-tab]").count(),
+        8,
+      );
+      await page.locator("#menu-button").click();
+      assert.equal(
+        await page.locator("body").getAttribute("data-nav"),
+        "compact",
+      );
+      assert.ok((await page.locator(".sidebar").boundingBox()).width <= 68);
+      await inspect("kevin");
+    },
+  );
+  await check(
     "Failed writes visibly remain pending and retry successfully",
     async () => {
       legacy.failWrite = true;
