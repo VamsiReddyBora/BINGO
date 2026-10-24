@@ -1,3 +1,6 @@
+import { createPanels } from "./panels.js";
+import * as passkeys from "./passkeys.js";
+import { decorate } from "./icons.js";
 import {
   API_BASE,
   statusText,
@@ -32,6 +35,8 @@ const state = {
   matchOutcome: "ALL",
 };
 const tabs = [
+  "overview",
+  "matches",
   "players",
   "rooms",
   "announcements",
@@ -150,6 +155,11 @@ function identity(row) {
   );
 }
 function clearSession() {
+  passkeys.cancelVerification();
+  recoveryCodes = [];
+  $("recovery-code-list").replaceChildren();
+  setMenu(false);
+  panels.clear();
   state.generation++;
   state.session = null;
   state.snapshot = null;
@@ -169,13 +179,51 @@ function clearSession() {
   $("password").value = "";
   $("player-list").replaceChildren();
   $("inspector-body").replaceChildren();
+  for (const id of [
+    "release-content",
+    "announcement-content",
+    "activity-content",
+    "security-content",
+    "match-records",
+    "overview-players",
+    "overview-room-list",
+    "overview-health",
+    "room-inspector-body",
+  ])
+    $(id).replaceChildren();
   $("toasts").replaceChildren();
+  loadSignIn().catch((error) => {
+    $("login-error").textContent = error.message;
+  });
 }
 async function api(
   path,
-  { method = "GET", data, signal, auth = true, operationId } = {},
+  {
+    method = "GET",
+    data,
+    signal,
+    auth = true,
+    operationId,
+    skipVerification = false,
+  } = {},
 ) {
   if (auth && !state.session) throw new Error("Sign in to continue");
+  const mutation = method !== "GET";
+  if (mutation && data === undefined) data = {};
+  if (mutation) operationId ||= crypto.randomUUID();
+  let proof;
+  const session = state.session;
+  if (
+    mutation &&
+    auth &&
+    !skipVerification &&
+    path !== "logout" &&
+    !(path === "auth/register/options" && session.setupRequired)
+  ) {
+    proof = await passkeys.approve(api, path, method, data, operationId);
+    if (state.session !== session)
+      throw new Error("Sign in again before making changes.");
+  }
   const controller = new AbortController();
   state.controllers.add(controller);
   if (signal) {
@@ -185,14 +233,17 @@ async function api(
         once: true,
       });
   }
-  const timeout = setTimeout(() => controller.abort(), 45000);
+  const timeout = setTimeout(
+    () => controller.abort(),
+    path === "release" ? 150000 : 45000,
+  );
   const headers = { "Content-Type": "application/json" };
   if (auth) {
     if (!state.session) throw new Error("Sign in to continue");
     headers.Authorization = "Bearer " + state.session.token;
   }
-  if (method !== "GET")
-    headers["Idempotency-Key"] = operationId || crypto.randomUUID();
+  if (method !== "GET") headers["Idempotency-Key"] = operationId;
+  if (proof) headers["X-Action-Proof"] = proof;
   try {
     const res = await fetch(API_BASE + "/api/" + path, {
       method,
@@ -211,6 +262,7 @@ async function api(
         result.error || "Admin service could not complete the request",
       );
       error.status = res.status;
+      error.code = result.code;
       throw error;
     }
     return result;
@@ -302,11 +354,13 @@ async function refresh() {
       ["STALE", "PARTIAL", "UNAVAILABLE", "REGISTRY"].includes(p.sourceStatus),
     ).length;
     warning(
-      !snapshot.presenceConnected
-        ? "Live presence is unavailable. Player connectivity is shown as unknown."
-        : incomplete
-          ? `${incomplete} profile(s) have older, registry-only or unavailable backup data. Open a player for a fresh inspection. No missing statistics are replaced with zero.`
-          : "",
+      snapshot.identityConflicts?.length
+        ? `${snapshot.identityConflicts.length} username(s) have multiple or unmatched profile identities. The registered identity is shown. Review Storage audit in Settings; no records were automatically deleted.`
+        : !snapshot.presenceConnected
+          ? "Live presence is unavailable. Player connectivity is shown as unknown."
+          : incomplete
+            ? `${incomplete} profile(s) have older, registry-only or unavailable backup data. Open a player for a fresh inspection. No missing statistics are replaced with zero.`
+            : "",
     );
     $("connection").textContent = snapshot.presenceConnected
       ? "● Presence connected"
@@ -322,6 +376,8 @@ async function refresh() {
     $("nav-count").textContent = snapshot.total;
     renderDirectory();
     renderRooms();
+    panels.overview();
+    if (state.tab === "settings") renderStorageAudit();
     if (state.selected && state.detail) {
       const updated = snapshot.players.find(
         (p) => p.username === state.selected,
@@ -347,6 +403,8 @@ async function refresh() {
     $("connection").textContent = "● Data unavailable";
     $("connection").className = "connection stale";
     renderDirectory();
+    renderRooms();
+    panels.overview();
   } finally {
     if (generation === state.generation) {
       state.fetching = false;
@@ -572,10 +630,24 @@ async function switchTab(tab) {
     b.classList.toggle("active", b.dataset.tab === tab);
     b.setAttribute("aria-current", String(b.dataset.tab === tab));
   }
+  setMenu(false);
+  $("current-section").textContent = {
+    overview: "Mission control",
+    matches: "Match records",
+    players: "Players",
+    rooms: "Game rooms",
+    announcements: "Announcements",
+    release: "App release",
+    activity: "Audit & sync jobs",
+    settings: "Settings & security",
+  }[tab];
   history.replaceState(null, "", "#" + tab);
+  if (tab === "overview") panels.overview();
+  if (tab === "matches") await panels.matches();
   if (tab === "activity") await renderActivity();
   if (tab === "announcements") await renderAnnouncements();
   if (tab === "release") await renderRelease();
+  if (tab === "settings") await renderSecurity();
 }
 async function openPlayer(name) {
   state.readController?.abort();
@@ -1151,7 +1223,7 @@ function renderDanger(body, data) {
       h(
         "p",
         { class: "muted" },
-        "Remove existing cloud match logs. A removal marker prevents older backups from restoring those records.",
+        "Remove existing cloud match logs. Removal is applied to cloud history. Older offline backups may still retain local copies.",
       ),
       button(
         "Clear match history",
@@ -1177,7 +1249,7 @@ function renderDanger(body, data) {
       h(
         "p",
         { class: "muted" },
-        "Remove this account from the active directory, clean up linked records, and permanently block stale backups from restoring it. This cannot be undone from this console.",
+        "Remove this account from the active directory, clean up linked records, and block the removed identity from writing to Firebase. Offline copies may remain until synchronization. This cannot be undone from this console.",
       ),
       button(
         "Remove @" + data.username,
@@ -1281,84 +1353,7 @@ async function preparePhoto(file) {
   }
 }
 function renderRooms() {
-  const rooms = state.snapshot?.rooms || [];
-  $("rooms").replaceChildren(
-    ...rooms.map((room) =>
-      h(
-        "article",
-        { class: "panel" },
-        h("h2", {}, "#" + room.code),
-        h(
-          "p",
-          {},
-          badge(
-            room.status === "PLAYING" ? "PLAYING" : "IN_LOBBY",
-            room.status || "Waiting",
-          ),
-        ),
-        h(
-          "p",
-          { class: "muted" },
-          room.hostDisplayName ||
-            room.hostUsername ||
-            room.hostId ||
-            "Host not reported",
-        ),
-        h(
-          "p",
-          { class: "small muted" },
-          `${room.players?.length || 0} listed players · ${room.boardSize || "?"} × ${room.boardSize || "?"}`,
-        ),
-        h(
-          "p",
-          { class: "small muted" },
-          "Metadata " +
-            age(room.lastHeartbeat || room.timestamp || room.createdAt) +
-            (room.sourceStatus === "STALE" ? " · stale observation" : ""),
-        ),
-        button(
-          "Close lobby",
-          async () => {
-            if (
-              !(await confirmAction(
-                "Close lobby",
-                "Close the room listing for #" + room.code + "?",
-              ))
-            )
-              return;
-            try {
-              await api("rooms/" + encodeURIComponent(room.code) + "/close", {
-                method: "POST",
-                data: {},
-              });
-              toast("Lobby closure acknowledged.", "success");
-              await refresh();
-            } catch (e) {
-              toast(e.message, "error");
-            }
-          },
-          "danger",
-          {
-            disabled: room.status === "PLAYING",
-            title:
-              room.status === "PLAYING"
-                ? "Active matches are not treated as expired lobbies"
-                : "Close this lobby",
-          },
-        ),
-      ),
-    ),
-  );
-  if (!rooms.length)
-    $("rooms").append(
-      h(
-        "div",
-        { class: "empty" },
-        state.snapshot?.presenceConnected
-          ? "No room metadata was observed."
-          : "Live room observations are unavailable.",
-      ),
-    );
+  panels.rooms();
 }
 async function renderActivity() {
   const generation = state.generation;
@@ -1522,10 +1517,10 @@ async function renderAnnouncements() {
         data: input,
       });
       toast(
-        result.brokerAcknowledged
+        result.operation?.brokerAcknowledged
           ? "Notice saved; broker acknowledged. Device delivery is not yet confirmed."
           : "Notice saved; live broadcast acknowledgement is pending.",
-        result.brokerAcknowledged ? "success" : "warning",
+        result.operation?.brokerAcknowledged ? "success" : "warning",
       );
       renderAnnouncements();
     } catch (error) {
@@ -1568,7 +1563,7 @@ async function renderAnnouncements() {
                   )
                     return;
                   try {
-                    await api("announcements", {
+                    const cleared = await api("announcements", {
                       method: "POST",
                       data: {
                         target:
@@ -1578,7 +1573,14 @@ async function renderAnnouncements() {
                         active: false,
                       },
                     });
-                    toast("Notice cleared.", "success");
+                    toast(
+                      cleared.operation?.status === "SYNCED"
+                        ? "Notice cleared."
+                        : "Clear request saved; synchronization is pending.",
+                      cleared.operation?.status === "SYNCED"
+                        ? "success"
+                        : "warning",
+                    );
                     renderAnnouncements();
                   } catch (e) {
                     toast(e.message, "error");
@@ -1596,104 +1598,41 @@ async function renderAnnouncements() {
   }
 }
 async function renderRelease() {
-  const root = $("release-content");
-  root.replaceChildren(
-    h("div", { class: "loading" }, "Reading the actual release manifest…"),
-  );
-  const generation = state.generation;
-  try {
-    const result = await api("release");
-    if (generation !== state.generation) return;
-    const release = result.release;
-    const form = h(
-      "form",
-      { class: "panel settings" },
-      h(
-        "h2",
-        {},
-        "Current release: " +
-          release.versionName +
-          " · build " +
-          release.versionCode,
-      ),
-      h("p", { class: "small muted" }, "Fetched " + stamp(result.fetchedAt)),
-      field("Version name", "versionName", release.versionName),
-      field("Build number", "versionCode", release.versionCode, {
-        type: "number",
-        min: 1,
-      }),
-      field(
-        "Release tag",
-        "tag_name",
-        release.tag_name || "v" + release.versionName,
-      ),
-      field("HTTPS APK download URL", "downloadUrl", release.downloadUrl, {
-        type: "url",
-      }),
-      field("APK size in bytes", "apkSize", release.apkSize || 0, {
-        type: "number",
-        min: 0,
-      }),
-      h(
-        "label",
-        {},
-        "Release notes",
-        h(
-          "textarea",
-          { name: "releaseNotes", maxLength: 8000 },
-          release.releaseNotes || "",
-        ),
-      ),
-      h(
-        "label",
-        { class: "inline" },
-        h("input", { type: "checkbox", name: "allowRollback" }),
-        "Explicitly allow an older build number",
-      ),
-      h(
-        "div",
-        { class: "form-actions" },
-        h(
-          "button",
-          { type: "submit", class: "primary" },
-          "Review & publish manifest",
-        ),
-      ),
-    );
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const input = Object.fromEntries(new FormData(form));
-      input.versionCode = Number(input.versionCode);
-      input.apkSize = Number(input.apkSize);
-      input.allowRollback = !!input.allowRollback;
-      if (
-        !(await confirmAction(
-          "Publish app update manifest",
-          `Publish ${input.versionName} (build ${input.versionCode})? This changes what update player devices are offered.`,
-        ))
-      )
-        return;
-      try {
-        await api("release", { method: "PUT", data: input });
-        toast("Release manifest saved.", "success");
-        renderRelease();
-      } catch (error) {
-        toast(error.message, "error");
-      }
-    });
-    root.replaceChildren(form);
-  } catch (error) {
-    if (generation === state.generation)
-      root.replaceChildren(
-        h(
-          "div",
-          { class: "notice warning" },
-          "Release metadata is unavailable. No default version is presented as live. " +
-            error.message,
-        ),
-      );
-  }
+  return panels.releases();
 }
+
+const panels = createPanels({
+  state,
+  h,
+  $,
+  api,
+  button,
+  badge,
+  avatar,
+  stamp,
+  age,
+  num,
+  toast,
+  openPlayer,
+  confirmAction,
+  refresh,
+  rows,
+  switchTab,
+});
+for (const node of document.querySelectorAll("[data-goto]"))
+  node.addEventListener("click", () => switchTab(node.dataset.goto));
+for (const id of ["room-search", "room-status", "room-sort"])
+  $(id).addEventListener(id === "room-search" ? "input" : "change", () =>
+    panels.rooms(),
+  );
+for (const id of ["match-search", "match-outcome", "match-mode"])
+  $(id).addEventListener(id === "match-search" ? "input" : "change", () =>
+    panels.drawMatches(),
+  );
+$("refresh-matches").addEventListener("click", () => panels.matches());
+$("room-inspector-close").addEventListener("click", () =>
+  $("room-inspector").close(),
+);
 
 $("login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -1705,9 +1644,7 @@ $("login-form").addEventListener("submit", async (e) => {
       data: { password: $("password").value },
       auth: false,
     });
-    state.session = result;
-    sessionStorage.setItem("bingo_admin_session_v3", JSON.stringify(result));
-    await startConsole();
+    await acceptSession(result);
   } catch (error) {
     $("login-error").textContent =
       error.name === "AbortError"
@@ -1719,6 +1656,10 @@ $("login-form").addEventListener("submit", async (e) => {
 });
 async function startConsole() {
   const result = await api("session");
+  if (result.setupRequired) {
+    showEnrollment();
+    return;
+  }
   $("operator").textContent = result.operator;
   $("login").hidden = true;
   $("console").hidden = false;
@@ -1734,10 +1675,10 @@ $("theme").addEventListener("click", () => {
   const theme =
     document.documentElement.dataset.theme === "dark" ? "light" : "dark";
   document.documentElement.dataset.theme = theme;
-  localStorage.setItem("bingo_admin_theme_v3", theme);
+  localStorage.setItem("bingo_admin_theme_v4", theme);
 });
 document.documentElement.dataset.theme =
-  localStorage.getItem("bingo_admin_theme_v3") || "dark";
+  localStorage.getItem("bingo_admin_theme_v4") || "dark";
 for (const button of $("navigation").querySelectorAll("button"))
   button.addEventListener("click", () => switchTab(button.dataset.tab));
 for (const id of [
@@ -1770,7 +1711,7 @@ window.addEventListener("resize", () => {
 });
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") clearTimeout(state.timer);
-  else if (state.session) refresh();
+  else if (state.session && !state.session.setupRequired) refresh();
 });
 $("export").addEventListener("click", () => {
   const list = filtered();
@@ -1874,29 +1815,357 @@ $("password-form").addEventListener("submit", async (e) => {
     });
     clearSession();
     $("login-error").textContent =
-      "Password changed. Sign in again with the new password.";
+      "Recovery password changed. Unlock again with your passkey.";
   } catch (error) {
     toast(error.message, "error");
   }
 });
-try {
-  const saved = JSON.parse(
-    sessionStorage.getItem("bingo_admin_session_v3") || "null",
-  );
-  if (
-    saved &&
-    /^[a-f0-9]{64}$/.test(saved.token) &&
-    saved.expiresAt > Date.now()
-  ) {
-    state.session = saved;
-    startConsole().catch((error) => {
-      clearSession();
-      $("login-error").textContent = error.message;
-    });
-  }
-} catch {
-  sessionStorage.removeItem("bingo_admin_session_v3");
+// A reload always locks the workspace. No bearer token is persisted in browser storage.
+let recoveryCodes = [];
+let signInGeneration = 0;
+function setMenu(open) {
+  $("sidebar").classList.toggle("open", open);
+  $("nav-scrim").hidden = !open;
+  $("menu-button").setAttribute("aria-expanded", String(open));
 }
+$("menu-button").addEventListener("click", () =>
+  setMenu(!$("sidebar").classList.contains("open")),
+);
+$("nav-scrim").addEventListener("click", () => setMenu(false));
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") setMenu(false);
+});
+async function loadSignIn() {
+  const sequence = ++signInGeneration;
+  $("passkey-sign-in").hidden = true;
+  $("login-form").hidden = true;
+  $("enrollment-panel").hidden = true;
+  $("recovery-panel").hidden = true;
+  const info = await api("auth/status", { auth: false });
+  if (sequence !== signInGeneration || state.session) return;
+  if (!passkeys.supported()) {
+    $("login-description").textContent =
+      "Open this page in a browser that supports passkeys, on a device with a screen lock.";
+    return;
+  }
+  $("passkey-sign-in").hidden = !info.configured;
+  $("login-form").hidden = info.configured || info.initialized;
+  $("recovery-panel").hidden = !info.initialized;
+  $("login-description").textContent = info.configured
+    ? "Unlock your workspace with a quick verification on your device."
+    : info.initialized
+      ? "Use a recovery code to restore access to your workspace."
+      : "One-time setup: verify your administrator password, then create a passkey on your own device.";
+}
+function showEnrollment() {
+  signInGeneration++;
+  $("login").hidden = false;
+  $("console").hidden = true;
+  $("login-form").hidden = true;
+  $("passkey-sign-in").hidden = true;
+  $("recovery-panel").hidden = true;
+  $("enrollment-panel").hidden = false;
+  $("login-description").textContent =
+    "Create a passkey to protect your workspace. Your device will ask you to verify it's you.";
+  $("password").value = "";
+}
+async function acceptSession(result) {
+  state.session = {
+    token: result.token,
+    expiresAt: result.expiresAt,
+    operator: result.operator,
+    setupRequired: result.setupRequired,
+  };
+  if (result.setupRequired) showEnrollment();
+  else {
+    await startConsole();
+    if (result.recoveryCodes) showRecoveryCodes(result.recoveryCodes);
+  }
+}
+function showRecoveryCodes(codes) {
+  recoveryCodes = codes;
+  $("recovery-code-list").replaceChildren(
+    ...codes.map((code) => h("code", {}, code)),
+  );
+  if (!$("recovery-codes-dialog").open) $("recovery-codes-dialog").showModal();
+}
+async function loginAction(button, action) {
+  button.disabled = true;
+  $("login-error").textContent = "";
+  try {
+    await action();
+  } catch (error) {
+    $("login-error").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+$("passkey-sign-in").addEventListener("click", (e) =>
+  loginAction(e.currentTarget, async () =>
+    acceptSession(await passkeys.signIn(api)),
+  ),
+);
+$("enroll-passkey").addEventListener("click", (e) =>
+  loginAction(e.currentTarget, async () =>
+    acceptSession(await passkeys.register(api, $("passkey-label").value)),
+  ),
+);
+$("recovery-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const input = Object.fromEntries(new FormData(e.currentTarget));
+  loginAction(e.currentTarget.querySelector("button"), async () => {
+    const result = await api("auth/recover", {
+      method: "POST",
+      auth: false,
+      data: input,
+    });
+    e.target.reset();
+    await acceptSession(result);
+  });
+});
+$("verification-cancel").addEventListener("click", passkeys.cancelVerification);
+$("device-verification").addEventListener("cancel", (e) => {
+  e.preventDefault();
+  passkeys.cancelVerification();
+});
+$("download-recovery-codes").addEventListener("click", () =>
+  saveFile(
+    "Bingo-private-recovery-codes.txt",
+    "text/plain",
+    "Bingo Control recovery codes. Keep private. Each works once, with your recovery password.\n\n" +
+      recoveryCodes.join("\n"),
+  ),
+);
+function hideRecoveryCodes() {
+  recoveryCodes = [];
+  $("recovery-code-list").replaceChildren();
+  $("recovery-codes-dialog").close();
+}
+$("recovery-codes-done").addEventListener("click", hideRecoveryCodes);
+$("recovery-codes-dialog").addEventListener("cancel", (e) => {
+  e.preventDefault();
+  hideRecoveryCodes();
+});
+function renderStorageAudit() {
+  const root = $("storage-audit"),
+    snapshot = state.snapshot;
+  root.replaceChildren(
+    h("h2", {}, "Storage audit"),
+    h(
+      "p",
+      { class: "muted small" },
+      "Registered usernames are counted once. Duplicate profile identities remain visible for inspection and are never deleted by a refresh.",
+    ),
+  );
+  if (!snapshot) {
+    root.append(
+      h("p", { class: "muted" }, "Refresh the directory to inspect storage."),
+    );
+    return;
+  }
+  root.append(
+    h(
+      "p",
+      {},
+      `${snapshot.storageAccountCount ?? snapshot.total} stored profile documents · ${snapshot.total} visible registered usernames`,
+    ),
+  );
+  for (const conflict of snapshot.identityConflicts || []) {
+    const details = h(
+      "details",
+      {},
+      h(
+        "summary",
+        {},
+        "@" +
+          conflict.username +
+          " · " +
+          conflict.profiles.length +
+          " profile identities",
+      ),
+      h(
+        "p",
+        { class: "small muted" },
+        "Username registry: " + (conflict.canonicalUid || "No index entry"),
+      ),
+    );
+    for (const profile of conflict.profiles) {
+      const row = h(
+        "div",
+        { class: "health-row" },
+        h("span", {}, profile.displayName || profile.username),
+        h("span", { class: "mono" }, profile.uid),
+      );
+      if (profile.uid === conflict.canonicalUid)
+        row.append(h("span", { class: "badge online" }, "Registered identity"));
+      else
+        row.append(
+          button(
+            "Remove duplicate",
+            async () => {
+              if (
+                !(await confirmAction(
+                  "Remove duplicate profile identity",
+                  "Remove UID " +
+                    profile.uid +
+                    " only? The registered @" +
+                    conflict.username +
+                    " identity and username index will be preserved.",
+                  profile.uid,
+                ))
+              )
+                return;
+              try {
+                const result = await api("identities/remove", {
+                  method: "POST",
+                  data: {
+                    username: conflict.username,
+                    uid: profile.uid,
+                    confirm: profile.uid,
+                  },
+                });
+                toast(
+                  result.operation?.status === "SYNCED"
+                    ? "Duplicate cloud identity removed."
+                    : "Duplicate cleanup saved; follow Audit & sync jobs.",
+                  result.operation?.status === "SYNCED" ? "success" : "warning",
+                );
+                await refresh();
+                renderStorageAudit();
+              } catch (e) {
+                toast(e.message, "error");
+              }
+            },
+            "danger",
+            { disabled: !conflict.canonicalUid },
+          ),
+        );
+      details.append(row);
+    }
+    root.append(details);
+  }
+  if (!snapshot.identityConflicts?.length)
+    root.append(
+      h(
+        "p",
+        { class: "text-live" },
+        "No duplicate or unmatched identities in this snapshot.",
+      ),
+    );
+}
+async function renderSecurity() {
+  renderStorageAudit();
+  const root = $("security-content"),
+    generation = state.generation;
+  root.replaceChildren(
+    h("h2", {}, "Device verification"),
+    h("p", { class: "muted" }, "Loading your registered passkeys…"),
+  );
+  try {
+    const result = await api("auth/passkeys");
+    if (generation !== state.generation) return;
+    root.replaceChildren(
+      h("h2", {}, "Passkeys & recovery"),
+      h(
+        "p",
+        { class: "muted" },
+        "A fresh device approval protects every change. Add a second passkey so you can still get in if you lose a device.",
+      ),
+    );
+    for (const key of result.passkeys)
+      root.append(
+        h(
+          "div",
+          { class: "friend-row" },
+          h(
+            "div",
+            {},
+            h("strong", {}, key.label),
+            h(
+              "p",
+              { class: "muted small" },
+              "Added " +
+                stamp(key.createdAt) +
+                " · Last used " +
+                stamp(key.lastUsedAt),
+            ),
+          ),
+          button(
+            "Remove",
+            async () => {
+              if (
+                !(await confirmAction(
+                  "Remove passkey",
+                  "Remove “" +
+                    key.label +
+                    "”? All admin sessions will be locked.",
+                ))
+              )
+                return;
+              try {
+                await api("auth/passkeys/" + encodeURIComponent(key.id), {
+                  method: "DELETE",
+                });
+                await lock();
+              } catch (error) {
+                toast(error.message, "error");
+              }
+            },
+            "danger",
+            { disabled: result.passkeys.length <= 1 },
+          ),
+        ),
+      );
+    root.append(
+      h(
+        "div",
+        { class: "inline security-actions" },
+        button("Add a backup passkey", async () => {
+          const label = prompt("Name the new passkey", "Backup device");
+          if (label === null) return;
+          try {
+            const result = await passkeys.register(api, label);
+            state.session = {
+              token: result.token,
+              expiresAt: result.expiresAt,
+              operator: result.operator,
+              setupRequired: false,
+            };
+            await renderSecurity();
+            toast("Backup passkey added.", "success");
+          } catch (error) {
+            toast(error.message, "error");
+          }
+        }),
+        button("New recovery codes", async () => {
+          if (
+            !(await confirmAction(
+              "Replace recovery codes",
+              "Previously saved recovery codes will stop working. Download the new codes after approval.",
+            ))
+          )
+            return;
+          try {
+            const result = await api("auth/recovery/rotate", {
+              method: "POST",
+            });
+            showRecoveryCodes(result.recoveryCodes);
+          } catch (error) {
+            toast(error.message, "error");
+          }
+        }),
+      ),
+    );
+  } catch (error) {
+    if (generation === state.generation)
+      root.replaceChildren(h("p", { class: "error" }, error.message));
+  }
+}
+sessionStorage.removeItem("bingo_admin_session_v3");
+decorate();
+loadSignIn().catch((error) => {
+  $("login-error").textContent = error.message;
+});
 
 if ("serviceWorker" in navigator)
   navigator.serviceWorker
