@@ -299,6 +299,7 @@ function rows() {
       state.stale ||
       ["STALE", "REGISTRY", "UNAVAILABLE"].includes(row.sourceStatus)
     ) {
+      result.sync = { status: "UNKNOWN", label: "Sync unavailable" };
       for (const field of [
         "level",
         "gamesPlayed",
@@ -385,15 +386,21 @@ async function refresh() {
       if (!updated) {
         $("inspector").close();
         toast("The selected player is no longer in the directory.", "warning");
-      } else if (updated.etag && updated.etag !== state.detail.etag) {
-        $("inspector-warning").hidden = false;
-        $("inspector-warning").textContent =
-          "New account data is available. Refresh this inspection before making another change.";
+      } else {
+        state.detail.sync = updated.sync;
+        renderProfileSync(updated.sync);
+        if (updated.etag && updated.etag !== state.detail.etag) {
+          $("inspector-warning").hidden = false;
+          $("inspector-warning").textContent =
+            "New account data is available. Refresh this inspection before making another change.";
+        }
       }
     }
   } catch (error) {
     if (generation !== state.generation) return;
     state.stale = true;
+    if (state.selected)
+      renderProfileSync({ status: "UNKNOWN", label: "Sync unavailable" });
     warning(
       state.snapshot
         ? "Refresh failed. The directory below is the last verified snapshot; current presence is unknown. " +
@@ -496,6 +503,7 @@ function renderDirectory() {
             "Streak",
             "Version",
             "Observed",
+            "Profile sync",
             "",
           ].map((text) => h("th", { scope: "col" }, text)),
         ),
@@ -525,17 +533,21 @@ function renderDirectory() {
           h(
             "td",
             { class: "muted small" },
-            row.presence?.appVersion || p.appVersion || "Not reported",
+            (row.presence?.appVersion || p.appVersion || "—") +
+              (p.appVersionCode || row.presence?.appVersionCode
+                ? " · " + (p.appVersionCode || row.presence?.appVersionCode)
+                : ""),
           ),
           h(
             "td",
             { class: "muted small", title: stamp(row.presence?.observedAt) },
             age(row.presence?.observedAt),
           ),
+          h("td", {}, syncBadge(row.sync)),
           h(
             "td",
             {},
-            button("Inspect →", () => openPlayer(row.username), "", {
+            button("Edit", () => openPlayer(row.username), "", {
               "aria-label": "Inspect @" + row.username,
             }),
           ),
@@ -692,11 +704,48 @@ async function openPlayer(name) {
     );
   }
 }
+function syncBadge(sync) {
+  const status = sync?.status || "UNKNOWN";
+  return h(
+    "span",
+    {
+      class: "sync-badge " + status.toLowerCase(),
+      title: sync?.appliedAt
+        ? "Latest app confirmation: " +
+          stamp(sync.appliedAt) +
+          " · Build " +
+          sync.appBuild
+        : "Cloud save does not confirm that a phone applied an edit.",
+    },
+    sync?.label || "Sync unavailable",
+  );
+}
+function renderProfileSync(sync) {
+  const node = $("profile-sync");
+  node.replaceChildren(syncBadge(sync));
+  if (sync?.appliedAt)
+    node.append(
+      h(
+        "span",
+        { class: "muted small" },
+        "Build " + sync.appBuild + " · " + stamp(sync.appliedAt),
+      ),
+    );
+  else if (sync?.status === "WAITING_APP")
+    node.append(
+      h(
+        "span",
+        { class: "muted small" },
+        "Saved in Firebase. Awaiting the updated app.",
+      ),
+    );
+}
 function renderInspection() {
   const data = state.detail;
   if (!data) return;
   const p = data.profile,
     row = rows().find((r) => r.username === data.username);
+  renderProfileSync(data.sync);
   $("inspector-heading").replaceChildren(
     h(
       "div",
@@ -763,33 +812,11 @@ function meta(label, value) {
 }
 function renderOverview(body, data) {
   const p = data.profile;
-  body.append(
-    h(
-      "div",
-      { class: "profile-grid" },
-      ...[
-        ["Games played", p.gamesPlayed],
-        ["Wins", p.gamesWon],
-        [
-          "Win rate",
-          p.gamesPlayed
-            ? Math.round((p.gamesWon / p.gamesPlayed) * 100) + "%"
-            : "—",
-        ],
-        ["Current streak", p.currentStreak],
-        ["Best streak", p.bestStreak],
-        ["Level", p.level],
-      ].map(([k, v]) =>
-        h(
-          "div",
-          { class: "stat" },
-          h("span", {}, k),
-          h("strong", {}, typeof v === "number" ? num(v) : v),
-        ),
-      ),
-    ),
+  const photos = h(
+    "section",
+    { class: "panel photo-panel" },
+    h("h2", {}, "Photo"),
   );
-  const photos = h("section", { class: "panel" }, h("h2", {}, "Profile photo"));
   const upload = h("input", {
     type: "file",
     accept: "image/jpeg,image/png,image/webp",
@@ -837,11 +864,6 @@ function renderOverview(body, data) {
         ),
       ),
     ),
-    h(
-      "p",
-      { class: "muted small" },
-      "JPEG, PNG or WebP. Photos are resized before upload.",
-    ),
   );
   body.append(photos);
   const edit = h(
@@ -877,6 +899,11 @@ function renderOverview(body, data) {
   );
   edit.append(
     grid,
+    h(
+      "p",
+      { class: "muted small level-help" },
+      "Changing only level adjusts XP so your next game preserves that level.",
+    ),
     h(
       "div",
       { class: "form-actions" },
@@ -916,9 +943,9 @@ function renderOverview(body, data) {
   body.append(edit);
   body.append(
     h(
-      "section",
-      { class: "panel" },
-      h("h2", {}, "Account metadata"),
+      "details",
+      { class: "panel account-metadata" },
+      h("summary", {}, "Account details"),
       h(
         "div",
         { class: "metadata" },
@@ -926,7 +953,12 @@ function renderOverview(body, data) {
         meta("Username", "@" + data.username),
         meta("Email", p.email),
         meta("Account provider", p.provider),
-        meta("App version", p.appVersion),
+        meta(
+          "App version",
+          [p.appVersion, p.appVersionCode ? "Build " + p.appVersionCode : null]
+            .filter(Boolean)
+            .join(" · "),
+        ),
         meta("Admin revision", String(data.revision)),
         meta("Last fresh inspection", stamp(data.fetchedAt)),
       ),
@@ -1679,6 +1711,26 @@ $("theme").addEventListener("click", () => {
 });
 document.documentElement.dataset.theme =
   localStorage.getItem("bingo_admin_theme_v4") || "dark";
+for (const navButton of $("navigation").querySelectorAll("button")) {
+  const label = navButton.textContent.trim().replace(/\s+/g, " ");
+  navButton.setAttribute("aria-label", label);
+  navButton.title = label;
+  for (const node of [...navButton.childNodes])
+    if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) {
+      const span = h("span", { class: "nav-text" }, node.textContent.trim());
+      node.replaceWith(span);
+    }
+}
+function setCompactNavigation(compact) {
+  document.body.dataset.nav = compact ? "compact" : "expanded";
+  $("menu-button").setAttribute("aria-expanded", String(!compact));
+  if (innerWidth > 900)
+    $("menu-button").setAttribute(
+      "aria-label",
+      compact ? "Expand navigation" : "Collapse navigation",
+    );
+}
+setCompactNavigation(localStorage.getItem("bingo_admin_nav") !== "expanded");
 for (const button of $("navigation").querySelectorAll("button"))
   button.addEventListener("click", () => switchTab(button.dataset.tab));
 for (const id of [
@@ -1826,14 +1878,21 @@ let signInGeneration = 0;
 function setMenu(open) {
   $("sidebar").classList.toggle("open", open);
   $("nav-scrim").hidden = !open;
-  $("menu-button").setAttribute("aria-expanded", String(open));
+  $("menu-button").setAttribute(
+    "aria-expanded",
+    String(innerWidth > 900 ? document.body.dataset.nav !== "compact" : open),
+  );
 }
-$("menu-button").addEventListener("click", () =>
-  setMenu(!$("sidebar").classList.contains("open")),
-);
+$("menu-button").addEventListener("click", () => {
+  if (innerWidth > 900) {
+    const compact = document.body.dataset.nav !== "compact";
+    setCompactNavigation(compact);
+    localStorage.setItem("bingo_admin_nav", compact ? "compact" : "expanded");
+  } else setMenu(!$("sidebar").classList.contains("open"));
+});
 $("nav-scrim").addEventListener("click", () => setMenu(false));
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") setMenu(false);
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") setMenu(false);
 });
 async function loadSignIn() {
   const sequence = ++signInGeneration;

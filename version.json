@@ -1,9 +1,9 @@
 {
   "versionName": "1.0.3",
-  "versionCode": 71,
+  "versionCode": 72,
   "tagName": "v1.0.3",
-  "downloadUrl": "https://vamsireddybora.github.io/BINGO/Bingo-1.0.3-build71.apk",
-  "apkSize": 8109786,
-  "sha256": "50670cef309a3ff7146e9c5cbd4cc3552f6b81bdf0d176324766ea446ef661c0",
-  "releaseNotes": "Build 71: live admin profile, level, statistics and photo updates.\nFriend-list and history changes stay synchronized.\nExisting gameplay rules are preserved."
+  "downloadUrl": "https://vamsireddybora.github.io/BINGO/Bingo-1.0.3-build72.apk",
+  "apkSize": 8113887,
+  "sha256": "61b8bd14945e41ef4c38b1ae45879122d2bf05ff0494777c88aee66f583513ce",
+  "releaseNotes": "Build 72: repairs live admin profile, level, statistics and photo synchronization.\nCloud saves and confirmed app application have separate status.\nCompact admin controls; existing gameplay rules preserved."
 }
