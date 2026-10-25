@@ -1243,6 +1243,63 @@ class AuthRepositoryTest {
         assertNull(repository.profileAdminAppliedRevision(uid, gen - 1))
     }
 
+    private fun migrationSnapshot(uid: String) = mapOf<String, Any?>(
+        "uid" to uid, "username" to "migration_fixture", "displayName" to "Recovered player",
+        "provider" to "GOOGLE", "gamesPlayed" to 35L, "gamesWon" to 1L, "currentStreak" to 0L,
+        "bestStreak" to 1L, "level" to 3L, "xp" to 1200L,
+        "legacyMigration" to mapOf("schema" to 1L, "id" to "legacy-v1-fixture", "source" to "keyvalue-extendsclass")
+    )
+    @Test fun migratedFirebaseProfileRestoresStatisticsBeforeAnyLocalUpload() {
+        repository.onGoogleSignInSuccess("migration_fixture", "Fresh player", "fixture@example.com", "temporary_name")
+        val uid = repository.getPersistedUserSync()!!.uid; val gen = repository.sessionGeneration.get()
+        assertTrue(repository.applyCloudAdminSnapshot(migrationSnapshot(uid), uid, gen))
+        assertEquals(35, repository.getPersistedUserSync()!!.gamesPlayed)
+        assertEquals(3, repository.getPersistedUserSync()!!.level)
+        assertEquals(1200, repository.getPersistedUserSync()!!.xp)
+        assertEquals("migration_fixture", repository.getSavedGoogleUsername("migration_fixture"))
+    }
+    @Test fun migrationDoesNotReplayOverANewGameOrAnAdminReduction() {
+        repository.onGoogleSignInSuccess("migration_fixture", "Fresh player", "fixture@example.com", "migration_fixture")
+        val uid = repository.getPersistedUserSync()!!.uid; val gen = repository.sessionGeneration.get()
+        assertTrue(repository.applyCloudAdminSnapshot(migrationSnapshot(uid), uid, gen))
+        repository.recordGameFinished(true)
+        assertEquals(36, repository.getPersistedUserSync()!!.gamesPlayed)
+        assertFalse(repository.applyCloudAdminSnapshot(migrationSnapshot(uid), uid, gen))
+        repository.applyCloudAdminSnapshot(adminSnapshot(2L, "gamesPlayed" to 2, "gamesWon" to 1), uid, gen)
+        repository.applyCloudAdminSnapshot(migrationSnapshot(uid), uid, gen)
+        assertEquals(2, repository.getPersistedUserSync()!!.gamesPlayed)
+    }
+
+    @Test fun migrationMarkerSurvivesRestartWithoutReplayingOldStatistics() = runBlocking {
+        repository.onGoogleSignInSuccess("migration_fixture", "Fresh player", "fixture@example.com", "migration_fixture")
+        val uid = repository.getPersistedUserSync()!!.uid
+        repository.applyCloudAdminSnapshot(migrationSnapshot(uid), uid, repository.sessionGeneration.get())
+        repository.recordGameFinished(true)
+        val restarted = createTestRepo(fakePrefs)
+        restarted.verifyPersistedSession()
+        assertEquals("legacy-v1-fixture", restarted.getPersistedUserSync()!!.legacyMigrationId)
+        assertFalse(restarted.applyCloudAdminSnapshot(migrationSnapshot(uid), uid, restarted.sessionGeneration.get()))
+        assertEquals(36, restarted.getPersistedUserSync()!!.gamesPlayed)
+    }
+
+    @Test fun latePreMigrationBackupCannotReplaceRecoveredIdentityAndPhoto() = runBlocking {
+        val googleId = "migration_fixture"
+        repository.onGoogleSignInSuccess(googleId, "Fresh player", "fixture@example.com", "temporary_name")
+        repository.sessionManager.drainBackgroundJobs()
+        val original = repository.getPersistedUserSync()!!
+        repository.sessionManager.backupUserDataSync(googleId,
+            com.bingo.multiplayer.domain.model.CloudUserDataBackup(profile = original))
+        repository.applyCloudAdminSnapshot(migrationSnapshot(original.uid) + ("avatarBase64" to "imported-photo"),
+            original.uid, repository.sessionGeneration.get())
+        assertTrue(repository.restoreCloudUserData(googleId))
+        val restored = repository.getPersistedUserSync()!!
+        assertEquals("migration_fixture", restored.username)
+        assertEquals("imported-photo", restored.avatarBase64)
+        assertEquals(35, restored.gamesPlayed)
+        assertEquals("legacy-v1-fixture", restored.legacyMigrationId)
+        assertEquals("migration_fixture", repository.getSavedGoogleUsername(googleId))
+    }
+
     // ── Test Doubles & In-Memory SharedPreferences ──
 
     class FakeSharedPreferences : SharedPreferences {

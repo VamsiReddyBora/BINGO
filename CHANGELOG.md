@@ -1,3 +1,10 @@
+## Build 73 — legacy migration recovery preview
+
+- Add create-only, verified legacy-account migration planning and transactional import.
+- Recover imported account statistics/photo/canonical username before a local profile upload.
+- Persist a one-time recovery marker; preserve later games, admin edits and existing accounts.
+- Keep original legacy backups and all current gameplay behavior.
+
 ## Build 72 — Pages preview
 
 - Recover live admin edits when the app Google account and Firebase storage session differ.

@@ -1,32 +1,23 @@
-# Agent handoff — Build 72 admin synchronization
+# Agent handoff — Build 73 legacy account recovery preview
 
-Read SimplifiedGameRules.md and ADMIN_APP_SYNC.md before further changes. Preserve previous regressions and intentional gameplay behavior. Main now includes the updated admin console and Android Firebase application of owner edits; the v1.0.3 GitHub release/tag stays Build 70.
+Read SimplifiedGameRules.md, ADMIN_APP_SYNC.md and MIGRATION_RECOVERY.md before changing this source. Preserve intentional gameplay and every previous passing regression. Main contains clean current source; GitHub Releases and their existing tags/assets are unchanged. This APK is delivered through the existing Pages update feed.
 
-## Relevant paths
+## Current change
 
-- admin/: responsive Command Center, player directory/inspection, storage audit, rooms and match records, passkey-approved broadcasts and Pages update publishing.
-- admin_service/: existing authenticated Worker/Durable Object and Firebase/legacy compatibility adapter. Preserve the existing Durable Object name, namespace, credentials, passkeys, policies and deletion markers on deployment.
-- CloudAdminPolicy: versioned field edits, one-time local application, public projection and history deletion filtering.
-- FirestoreSyncManager: existing profile listener receives admin edits independently of private settings, guarded profile/history transactions, coalesced network retry, UID removal marker listener, live friend roster/profile listeners and canonical username photo lookup.
-- AuthRepository: account/session-generation guards, local application without upload feedback, per-UID revision/history filtering, legacy restore barrier, removal without backup, observable dashboard history updates.
-- FriendCareerStats/FriendsRepository and PlayerProfileData: reductions and explicit photo removal override older caches; normal results continue accumulating.
+The one-time migration planner accepts only verified readable original backups, excludes existing Firebase identities and deletion markers, and uses create-only atomic account transactions. Profiles, statistics, photos, saved matches and verified friends use existing Firebase collections. Private source archives retain recoverable legacy data without publishing it. Missing legacy username lookup aliases may be restored after verifying their original owner; source backup blobs remain untouched. Live plans, credentials, backups and account results stay in the private operator job.
 
-A level-only admin edit sets compatible XP, preventing the next game from recalculating level 100 back to 1. History removal does not silently change career statistics. Local theme, sound, notification preferences and all gameplay timing/turn/recovery/winner behavior are preserved.
+LegacyProfileRecovery is shared by AuthRepository's existing profile callback and FirestoreSyncManager's guarded upload. It applies an imported baseline once per matching original account, persists a recovery marker, preserves newer progress and administrator edits, and keeps the canonical recovered identity/photo when a pre-migration backup arrives late. Migration uses adminRevision zero; it is not an administrator edit. A Guest account still needs its original saved identity, and older Play Games identities are not reassigned to a new Google sign-in.
 
-## Build 72 additions
+## Existing behavior to preserve
 
-ProfileSyncStartup is the small production orchestration used by AuthRepository. It observes public data first, preserves guest binding, and uses the existing Firebase session for a local Google app account. Retry jobs and callbacks are scoped by UID/session generation. FirestoreSyncManager writes a separate receipt only after durable AuthRepository application; an upload alone is not proof. Terminal listener errors and foreground return recover observation. Existing Firebase rules and gameplay handlers are unchanged.
+The admin console and authenticated Worker retain their current compact layout, actions, passkeys, policies and deletion markers. ProfileSyncStartup observes public profiles before storage-session retries. A separate device receipt acknowledges a durable administrator edit; an upload alone is not proof. CloudAdminPolicy retains explicit reductions and photo/history removals. Local preferences and gameplay, MQTT invitations, turn timing, recovery, notifications and winner rules are unchanged.
 
-The compact console preserves its existing actions and passkey approvals. Profile-sync status is shown in the directory and inspector; a cloud save is not labelled applied. Receipt/build metadata does not invalidate an otherwise unchanged edit.
+## Verification
 
-## Validation
+SOURCE_MANIFEST.json records actual complete native and clean-source case counts, preservation of previous passing case identities, lint and signing checks, and service/browser results. Twelve new permanent client cases cover migrated baseline recovery, restart, replay, canonical identity, late backup delivery and the shared recovery guard. Two cases failed against the previous production callback. A strengthened canonical-username assertion also exposed a real late-backup race; its failure was retained and a deterministic restore-path regression added before the final passing runs. Migration service tests exercise planner, executor and REST preconditions with fictional data. Existing browser checks exercise the actual console and protected handlers with virtual WebAuthn, not real player mutations.
 
-SOURCE_MANIFEST.json records executed case counts, signing identity and source verification. This repair adds nine startup/account/receipt regressions to the previous suite. Five of the six original startup scenarios failed when the old authentication-first orchestration was executed; the repaired orchestration and the full suite pass. The source manifest records the final executed counts and comparison of permanent case identities. Browser tests exercise the actual UI and authenticated Worker using fictional stores and signed virtual WebAuthn assertions. No real player edits, test passkey enrollment, broadcasts or fake result records were performed. Physical-device acceptance of Build 72 remains to be done by the user; unit/browser results do not certify Android rendering or delivery time.
+Actual live import verification is recorded privately and is separate from automated fictional tests. Returning-phone acceptance, rendering and delivery latency remain physical-device checks. Never infer physical confirmation from unit tests or manufacture a device receipt.
 
-The release compiler initially exhausted its previous 2 GiB heap. Packaging was retried with a larger heap, one worker and no persistent daemon; that is a workspace build-resource adjustment, not an app behavior change.
+## Build and publication
 
-## Publication and privacy
-
-Pages carries Build 72 APK/update metadata; GitHub Releases and earlier tags/assets stay unchanged. Main contains current clean source. Build inputs (Firebase file, broker/storage/signing credentials) are supplied privately using the existing templates; never commit personal device addresses, keys, token files, logs or production account data. Keep intentional in-app support contacts. Public builds do not copy APKs to personal devices.
-
-No controller coordinator or continuous remote referee is introduced. Current room inspection is read-only for active/current-protocol rooms. Offline devices receive admin changes only after connectivity and updating the installed APK. Do not restore the removed startup admin polling client.
+Version name remains 1.0.3 and version code is 73. Supply signing, Firebase and broker/storage build inputs privately using the existing templates; never commit credentials, device addresses, production account lists or local logs. Keep intentional support contact links. Public builds do not copy APKs to personal devices. Do not deploy a new Worker for this standalone import, reset admin state, introduce a referee, or create a GitHub release without the owner's approval.

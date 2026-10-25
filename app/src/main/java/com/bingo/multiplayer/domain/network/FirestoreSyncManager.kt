@@ -171,7 +171,8 @@ class FirestoreSyncManager(
                     val latest = repository?.getPersistedUserSync()
                     if (repository != null && (repository.sessionGeneration.get() != generation || latest?.uid != user.uid))
                         return@runTransaction null
-                    val effective = CloudAdminPolicy.from(remote).applyTo(latest ?: user)
+                    val recovered = recoverLegacyProfile(latest ?: user, remote)
+                    val effective = CloudAdminPolicy.from(remote).applyTo(recovered)
                     // Read the admin policy and write its resulting projection atomically. Firebase
                     // retries this transaction if the administrator edits during an upload.
                     val guarded = publicPayload + mapOf(
@@ -192,8 +193,10 @@ class FirestoreSyncManager(
                 if (repository != null && (repository.sessionGeneration.get() != generation || repository.getPersistedUserSync()?.uid != user.uid)) return@launch
 
                 // Claim / index username if present
-                if (user.username.isNotBlank()) {
-                    val cleanUsername = user.username.trim().lowercase().removePrefix("@")
+                val indexedUser = repository?.getPersistedUserSync()?.takeIf { it.uid == user.uid }
+                    ?: recoverLegacyProfile(user, adminSnapshot)
+                if (indexedUser.username.isNotBlank()) {
+                    val cleanUsername = indexedUser.username.trim().lowercase().removePrefix("@")
                     firestore.collection(COLLECTION_USERNAMES)
                         .document(cleanUsername)
                         .set(

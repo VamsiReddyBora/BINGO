@@ -29,7 +29,8 @@ data class UserProfile(
     val xp: Int = 0,
     val appVersion: String = com.bingo.multiplayer.domain.network.NetworkConfig.APP_VERSION_NAME,
     val appVersionCode: Int = com.bingo.multiplayer.domain.network.NetworkConfig.APP_VERSION_CODE,
-    val adminRevision: Long = 0L
+    val adminRevision: Long = 0L,
+    val legacyMigrationId: String? = null
 ) {
     val activeStreak: Int
         get() = currentStreak

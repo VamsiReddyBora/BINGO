@@ -21,3 +21,14 @@ Before-proof limit: the false-confirmation state is reproduced with old marker f
 ## UI and acceptance limits
 
 The actual console and protected handlers are exercised in browser tests with fictional records and signed virtual WebAuthn. Desktop/mobile and light/dark screenshots are inspected. Existing controls and prior checks remain. This does not certify real Android rendering, radio delivery or every device state. The owner will install the Pages preview and verify admin-to-phone behavior in the morning. No GitHub release is created in this repair.
+
+
+## LEGACY-RECOVERY-001 — imported profile could be replaced by initial local defaults
+
+Affected production paths: AuthRepository.applyCloudAdminSnapshot and FirestoreSyncManager.syncUserProfile. Before proof: two permanent AuthRepository migration cases fail against the previous callback with a verified migration marker and adminRevision zero. After proof: shared recoverLegacyProfile is called by both the callback and guarded upload; account-scoped durable marker prevents replay. The full suite, source-copy verification and source manifest record final evidence. No regular profile/gameplay branch requires migration metadata.
+
+Permanent tests: migratedFirebaseProfileRestoresStatisticsBeforeAnyLocalUpload, migrationDoesNotReplayOverANewGameOrAnAdminReduction, migrationMarkerSurvivesRestartWithoutReplayingOldStatistics, LegacyProfileRecoveryTest, and admin_service/test/migration.test.js. The planner/REST executor tests include existing data, deletion and concurrent-write checks, idempotence, older history and private archival fidelity. Actual live data verification is separate from fictional automated tests. Physical returning-device acceptance is not claimed from unit tests.
+
+## LEGACY-RECOVERY-002 — late legacy restore replaced the recovered identity
+
+Production path: AuthRepository.restoreCloudUserData after applyCloudAdminSnapshot. A full suite run with a strengthened canonical-username assertion failed because a pending pre-migration backup reset the saved username. The failure is retained in the private operator evidence. The restore path now retains the migrated identity and photo when the backup lacks its recovery marker, while preserving existing statistics/history merging. Permanent deterministic regression: AuthRepositoryTest.latePreMigrationBackupCannotReplaceRecoveredIdentityAndPhoto. The canonical cached username assertion remains enabled in migratedFirebaseProfileRestoresStatisticsBeforeAnyLocalUpload. Final results are recorded in SOURCE_MANIFEST.json.

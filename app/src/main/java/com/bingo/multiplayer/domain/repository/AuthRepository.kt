@@ -150,7 +150,8 @@ class AuthRepository(
             bestStreak = bestStreak,
             level = level,
             xp = xp,
-            adminRevision = prefs.getLong("${uid}_admin_revision", 0L)
+            adminRevision = prefs.getLong("${uid}_admin_revision", 0L),
+            legacyMigrationId = prefs.getString("${uid}_legacy_migration_id", null)
         )
     }
 
@@ -230,8 +231,9 @@ class AuthRepository(
         val current = (_authState.value as? AuthState.Authenticated)?.user ?: return false
         if (current.uid != uid || getPersistedUserSync()?.uid != uid) return false
         val policy = com.bingo.multiplayer.domain.network.CloudAdminPolicy.from(snapshot)
-        if (policy.revision <= current.adminRevision) return false
-        val updated = policy.applyTo(current)
+        val recovered = com.bingo.multiplayer.domain.network.recoverLegacyProfile(current, snapshot)
+        val updated = policy.applyTo(recovered)
+        if (updated == current) return false
         val retained = getMatchHistory(uid).filter(policy::permits)
         val historyJson = Json.encodeToString(retained)
         // Store deletion intent before acknowledging the revision; a restart can safely replay it.
@@ -241,10 +243,17 @@ class AuthRepository(
         if (!historySaved) return false
         if (!persistUser(updated, expectedGeneration = expectedGen, syncToCloud = false, durable = true)) return false
         _authState.value = AuthState.Authenticated(updated)
-        if (updated.uid.startsWith("google_")) setSavedGoogleDisplayName(updated.uid.removePrefix("google_"), updated.displayName)
+        if (updated.uid.startsWith("google_")) {
+            val googleId = updated.uid.removePrefix("google_")
+            setSavedGoogleDisplayName(googleId, updated.displayName)
+            if (current.legacyMigrationId != updated.legacyMigrationId)
+                setSavedGoogleUsername(googleId, updated.username)
+        }
         _matchHistoryVersion.value++
         recordProfileSyncStatus(uid, expectedGen, "ADMIN_EDIT_APPLIED")
-        if (policy.fields.any { (key, change) -> key.startsWith("avatar") && change.revision > current.adminRevision }) {
+        if ((current.legacyMigrationId != updated.legacyMigrationId &&
+                (current.avatarBase64 != updated.avatarBase64 || current.avatarUrl != updated.avatarUrl)) ||
+            policy.fields.any { (key, change) -> key.startsWith("avatar") && change.revision > current.adminRevision }) {
             com.bingo.multiplayer.domain.network.ProfileAvatars.state.adminChange(updated.username,
                 updated.avatarBase64 ?: updated.avatarUrl)
         }
@@ -431,6 +440,7 @@ class AuthRepository(
             currentStreak = existing.currentStreak,
             bestStreak = existing.bestStreak,
             level = existing.level,
+            legacyMigrationId = existing.legacyMigrationId,
             xp = existing.xp,
             adminRevision = existing.adminRevision
         )
@@ -483,6 +493,7 @@ class AuthRepository(
             currentStreak = existing.currentStreak,
             bestStreak = existing.bestStreak,
             level = existing.level,
+            legacyMigrationId = existing.legacyMigrationId,
             xp = existing.xp,
             adminRevision = existing.adminRevision
         )
@@ -1163,13 +1174,20 @@ class AuthRepository(
             restoreAvatarFromBase64(cloudProfile.avatarBase64, cloudProfile.uid) ?: cloudProfile.avatarUrl
         } else cloudProfile.avatarUrl
 
+        // A backup from before import may arrive after the Firebase callback. Keep the
+        // recovered identity/photo while still merging valid newer progress and history.
+        val keepRecoveredIdentity = !current?.legacyMigrationId.isNullOrBlank() &&
+            current?.legacyMigrationId != cloudProfile.legacyMigrationId
         val finalProfile = cloudProfile.copy(
-            avatarUrl = localAvatar,
-            avatarBase64 = cloudProfile.avatarBase64,
+            username = if (keepRecoveredIdentity) current!!.username else cloudProfile.username,
+            displayName = if (keepRecoveredIdentity) current!!.displayName else cloudProfile.displayName,
+            avatarUrl = if (keepRecoveredIdentity) current!!.avatarUrl else localAvatar,
+            avatarBase64 = if (keepRecoveredIdentity) current!!.avatarBase64 else cloudProfile.avatarBase64,
             gamesPlayed = maxOf(current?.gamesPlayed ?: 0, cloudProfile.gamesPlayed),
             gamesWon = maxOf(current?.gamesWon ?: 0, cloudProfile.gamesWon),
             currentStreak = maxOf(current?.currentStreak ?: 0, cloudProfile.currentStreak),
             bestStreak = maxOf(current?.bestStreak ?: 0, cloudProfile.bestStreak, cloudProfile.currentStreak),
+            legacyMigrationId = current?.legacyMigrationId ?: cloudProfile.legacyMigrationId,
             level = maxOf(current?.level ?: 1, cloudProfile.level),
             xp = maxOf(current?.xp ?: 0, cloudProfile.xp)
         )
@@ -1390,6 +1408,7 @@ class AuthRepository(
         return UserProfile(
             uid = uid,
             displayName = "",
+            legacyMigrationId = if (pfx.isNotEmpty()) prefs.getString("${pfx}legacy_migration_id", null) else null,
             avatarUrl = if (pfx.isNotEmpty() && prefs.contains("${pfx}avatar")) prefs.getString("${pfx}avatar", null) else if (pfx.isEmpty()) prefs.getString(KEY_AVATAR, null) else null,
             avatarBase64 = if (pfx.isNotEmpty() && prefs.contains("${pfx}avatar_base64")) prefs.getString("${pfx}avatar_base64", null) else if (pfx.isEmpty()) prefs.getString(KEY_AVATAR_BASE64, null) else null,
             gamesPlayed = if (pfx.isNotEmpty() && prefs.contains("${pfx}games_played")) prefs.getInt("${pfx}games_played", 0) else if (pfx.isEmpty()) prefs.getInt(KEY_GAMES_PLAYED, 0) else 0,
@@ -1428,7 +1447,8 @@ class AuthRepository(
 
         if (profile.uid.isNotBlank()) {
             val pfx = "${profile.uid}_"
-            editor.putLong("${pfx}admin_revision", profile.adminRevision)
+            editor.putString("${pfx}legacy_migration_id", profile.legacyMigrationId)
+                .putLong("${pfx}admin_revision", profile.adminRevision)
                 .putString("${pfx}username", profile.username)
                 .putString("${pfx}name", profile.displayName)
                 .putString("${pfx}avatar", profile.avatarUrl)
