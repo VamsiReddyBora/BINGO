@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { AdminControl } from "../worker.js";
 import worker from "../worker.js";
 import { releaseFixture } from "./publication-fixture.js";
-import { passwordHash } from "../model.js";
+import { passwordHash, digest } from "../model.js";
 import { MemoryStorage, FakeLegacy } from "./fixtures.js";
 
 const require = createRequire(import.meta.url);
@@ -55,7 +55,8 @@ legacy.players.get("kevin").profile.avatarUrl =
   'x" onerror="window.untrustedAvatar=true';
 legacy.players.get("kevin").profile.email = "kevin@fictional.test";
 let failPresence = false,
-  delayKevin = false;
+  delayKevin = false,
+  versionEvidence = false;
 const read = legacy.read.bind(legacy);
 legacy.read = async (n) => {
   if (delayKevin && n === "kevin") await new Promise((r) => setTimeout(r, 600));
@@ -112,6 +113,9 @@ const env = {
           status: "PLAYING",
           timestamp: Date.now(),
           activityDetail: "Online 1v1",
+          ...(versionEvidence
+            ? { appVersion: "1.0.4", appVersionCode: 74 }
+            : {}),
         }),
         stuart: JSON.stringify({ status: "IN_LOBBY", timestamp: Date.now() }),
         bob: JSON.stringify({ status: "OFFLINE", timestamp: 0 }),
@@ -127,13 +131,32 @@ const context = await browser.newContext({
   acceptDownloads: true,
 });
 let lastToken,
-  approvedMutations = 0;
+  approvedMutations = 0,
+  sessionReads = 0,
+  passkeyLogins = 0,
+  failSession = false,
+  playerReads = 0;
 const errors = [],
   results = [];
 await context.route(
   "https://bingo-admin-control.vamsireddy2534.workers.dev/**",
   async (route) => {
     const r = route.request();
+    if (new URL(r.url()).pathname === "/api/players") playerReads++;
+    if (new URL(r.url()).pathname === "/api/session") {
+      sessionReads++;
+      if (failSession) {
+        await route.fulfill({
+          status: 503,
+          headers: { "Access-Control-Allow-Origin": origin },
+          contentType: "application/json",
+          body: JSON.stringify({ error: "Temporary test outage" }),
+        });
+        return;
+      }
+    }
+    if (new URL(r.url()).pathname === "/api/auth/login/options")
+      passkeyLogins++;
     if (r.headers().authorization)
       lastToken = r.headers().authorization.slice(7);
     if (r.headers()["x-action-proof"]) approvedMutations++;
@@ -202,6 +225,10 @@ async function login() {
     () => document.querySelector("#nav-count").textContent === "3",
   );
 }
+async function refreshDirectory() {
+  await page.locator("#refresh").click();
+  await page.waitForFunction(()=>!document.querySelector("#refresh").disabled);
+}
 async function inspect(name) {
   await page
     .getByRole("button", { name: "Inspect @" + name, exact: true })
@@ -250,6 +277,290 @@ try {
         await page.locator("#player-list").innerText(),
         /Online 1v1/,
       );
+    },
+  );
+  const usabilityCases = [
+    [
+      "Version name and build stay paired from one report",
+      async () => {
+        const profile = legacy.players.get("kevin").profile;
+        profile.appVersion = "1.0.3";
+        profile.appVersionCode = 71;
+        versionEvidence = true;
+        try {
+          await refreshDirectory();
+          const row = page.locator("#player-list tr").filter({
+            has: page.getByRole("button", {
+              name: "Inspect @kevin",
+              exact: true,
+            }),
+          });
+          await row
+            .getByText("1.0.4 · Build 74", { exact: true })
+            .waitFor({ timeout: 3000 });
+          assert.doesNotMatch(await row.innerText(), /1\.0\.4 · (?:Build )?71/);
+        } finally {
+          versionEvidence = false;
+          delete profile.appVersion;
+          delete profile.appVersionCode;
+          await refreshDirectory();
+        }
+      },
+    ],
+    [
+      "Missing presence time uses a clear activity label",
+      async () => {
+        await page.locator("#card-view").click();
+        assert.doesNotMatch(
+          await page.locator("#player-list").innerText(),
+          /Status observed No observation/,
+        );
+        await page.locator("#table-view").click();
+      },
+    ],
+    [
+      "Dark page and navigation use pure black",
+      async () => {
+        await page.locator("#theme").click();
+        try {
+          const colors = await page.evaluate(() => [
+            getComputedStyle(document.body).backgroundColor,
+            getComputedStyle(document.querySelector(".sidebar"))
+              .backgroundColor,
+          ]);
+          assert.deepEqual(colors, ["rgb(0, 0, 0)", "rgb(0, 0, 0)"]);
+          await page.screenshot({
+            path: evidence + "/11-pure-black-desktop.png",
+            fullPage: true,
+            animations: "disabled",
+          });
+        } finally {
+          await page.locator("#theme").click();
+        }
+      },
+    ],
+    [
+      "Refresh restores the server-validated session without another passkey",
+      async () => {
+        const reads = sessionReads,
+          logins = passkeyLogins;
+        await page.reload();
+        try {
+          await page
+            .locator("#console")
+            .waitFor({ state: "visible", timeout: 3000 });
+          assert.ok(sessionReads > reads);
+          assert.equal(passkeyLogins, logins);
+          const remembered = await page.evaluate(() =>
+            JSON.parse(sessionStorage.getItem("bingo_admin_session_v4")),
+          );
+          assert.equal(remembered.token, lastToken);
+          await page.waitForFunction(
+            () => document.querySelector("#nav-count").textContent === "3",
+          );
+        } finally {
+          if (!(await page.locator("#console").isVisible())) await login();
+        }
+      },
+    ],
+  ];
+  for (const [name, run] of usabilityCases) {
+    try {
+      await check(name, run);
+    } catch (error) {
+      if (!process.env.ADMIN_USABILITY_BEFORE) throw error;
+      results.push({ case: name, status: "FAIL", error: error.message });
+      console.log("CONFIRMED BEFORE FAILURE " + name + ": " + error.message);
+      await page.locator("#table-view").click();
+    }
+  }
+  if (process.env.ADMIN_USABILITY_BEFORE)
+    throw Object.assign(Error("Before-fix reproduction completed"), {
+      baselineComplete: true,
+    });
+  await check(
+    "Build filters, sync filters, status counts and reset operate on the directory",
+    async () => {
+      const originals = new Map(
+        [...legacy.players].map(([n, r]) => [n, { ...r.profile }]),
+      );
+      for (const [n, code] of [
+        ["kevin", 74],
+        ["stuart", 73],
+        ["bob", 71],
+      ])
+        Object.assign(legacy.players.get(n).profile, {
+          appVersion: "1.0.3",
+          appVersionCode: code,
+        });
+      try {
+        await refreshDirectory();
+        await page.locator("#search").fill("@KEVIN");
+        assert.equal(await page.locator("#player-list tbody tr").count(), 1);
+        await page.locator("#search").fill("");
+        await page.locator("#build-filter").selectOption("74");
+        assert.equal(await page.locator("#player-list tbody tr").count(), 1);
+        assert.match(
+          await page.locator("#player-list").innerText(),
+          /Build 74/,
+        );
+        legacy.players.get("kevin").profile.appVersionCode = 75;
+        await refreshDirectory();
+        assert.equal(await page.locator("#build-filter").inputValue(), "74");
+        assert.equal(await page.locator("#player-list tbody tr").count(), 0);
+        legacy.players.get("kevin").profile.appVersionCode = 74;
+        await refreshDirectory();
+        await page.locator("#sync-filter").selectOption("NONE");
+        assert.equal(await page.locator("#player-list tbody tr").count(), 1);
+        await page.locator("#reset-filters").click();
+        await page
+          .locator("#statistics button")
+          .filter({ hasText: "Playing" })
+          .click();
+        assert.equal(
+          await page.locator("#status-filter").inputValue(),
+          "PLAYING",
+        );
+        assert.equal(await page.locator("#player-list tbody tr").count(), 1);
+        await page.locator("#reset-filters").click();
+        assert.equal(await page.locator("#player-list tbody tr").count(), 3);
+      } finally {
+        for (const [n, p] of originals) legacy.players.get(n).profile = p;
+        await refreshDirectory();
+      }
+    },
+  );
+  await check(
+    "Temporary session-check outage keeps data hidden and permits retry without a passkey",
+    async () => {
+      failSession = true;
+      const logins = passkeyLogins;
+      await page.reload();
+      await page.locator("#restore-session").waitFor({ state: "visible" });
+      assert.equal(await page.locator("#console").isVisible(), false);
+      assert.ok(
+        await page.evaluate(() =>
+          sessionStorage.getItem("bingo_admin_session_v4"),
+        ),
+      );
+      assert.equal(passkeyLogins, logins);
+      failSession = false;
+      await page.locator("#restore-session").click();
+      await page.locator("#console").waitFor({ state: "visible" });
+      await page.waitForFunction(
+        () => document.querySelector("#nav-count").textContent === "3",
+      );
+      assert.equal(passkeyLogins, logins);
+    },
+  );
+  await check(
+    "Expired server session locks on refresh without automatic verification prompts",
+    async () => {
+      const key = "session:" + (await digest(lastToken)),
+        saved = await storage.get(key),
+        logins = passkeyLogins;
+      await storage.put(key, { ...saved, expiresAt: Date.now() - 1 });
+      await page.reload();
+      await page.locator("#passkey-sign-in").waitFor({ state: "visible" });
+      assert.equal(await page.locator("#console").isVisible(), false);
+      assert.equal(
+        await page.evaluate(() =>
+          sessionStorage.getItem("bingo_admin_session_v4"),
+        ),
+        null,
+      );
+      assert.equal(passkeyLogins, logins);
+      await login();
+    },
+  );
+  await check(
+    "A forged stored token cannot expose player data before server validation",
+    async () => {
+      await page.evaluate(() =>
+        sessionStorage.setItem(
+          "bingo_admin_session_v4",
+          JSON.stringify({
+            token: "f".repeat(64),
+            expiresAt: Date.now() + 60000,
+            setupRequired: false,
+            authMethod: "passkey",
+          }),
+        ),
+      );
+      const reads = playerReads;
+      await page.reload();
+      await page.locator("#passkey-sign-in").waitFor({ state: "visible" });
+      assert.equal(await page.locator("#console").isVisible(), false);
+      assert.equal(playerReads, reads);
+      assert.equal(
+        await page.evaluate(() =>
+          sessionStorage.getItem("bingo_admin_session_v4"),
+        ),
+        null,
+      );
+      await login();
+    },
+  );
+  await check(
+    "Disabled browser storage retains a working in-memory authenticated console",
+    async () => {
+      await page.addInitScript(() => {
+        if (new URL(location.href).searchParams.has("storageBlocked"))
+          for (const key of ["sessionStorage", "localStorage"])
+            Object.defineProperty(window, key, {
+              get() {
+                throw new DOMException("Storage disabled", "SecurityError");
+              },
+            });
+      });
+      await page.goto(origin + "/BINGO/admin/index.html?storageBlocked=1");
+      await page.locator("#passkey-sign-in").waitFor({ state: "visible" });
+      await login();
+      assert.equal(await page.locator("#console").isVisible(), true);
+      await page.goto(origin + "/BINGO/admin/index.html");
+      await page.locator("#console").waitFor({ state: "visible" });
+      await page.waitForFunction(
+        () => document.querySelector("#nav-count").textContent === "3",
+      );
+    },
+  );
+  await check(
+    "Player context shows status, paired version and activity without null placeholders",
+    async () => {
+      await inspect("bob");
+      const text = await page.locator("#player-context").innerText();
+      assert.match(text, /Offline/);
+      assert.doesNotMatch(text, /\bnull\b|No observation/);
+      await close();
+    },
+  );
+
+  await check(
+    "Manual refresh ages activity and expires live status without network polling",
+    async () => {
+      await page.locator("#navigation button[data-tab=settings]").click();
+      await page.locator("#refresh-interval").selectOption("0");
+      await page.locator("#navigation button[data-tab=players]").click();
+      await refreshDirectory();
+      const reads = playerReads;
+      await page.waitForTimeout(21000);
+      assert.equal(playerReads, reads);
+      assert.equal(
+        await page.locator("#player-list .badge.unknown").count(),
+        2,
+      );
+      assert.match(
+        await page.locator("#statistics").innerText(),
+        /Active in app\s+0/,
+      );
+      assert.match(
+        await page.locator("#player-list").innerText(),
+        /Last seen (?:1[5-9]|2[0-9])s ago/,
+      );
+      await page.locator("#navigation button[data-tab=settings]").click();
+      await page.locator("#refresh-interval").selectOption("5000");
+      await page.locator("#navigation button[data-tab=players]").click();
+      await refreshDirectory();
     },
   );
   await page.screenshot({
@@ -387,7 +698,7 @@ try {
     async () => {
       legacy.players.get("kevin").profile.displayName = "Renamed Kevin";
       legacy.players.get("kevin").profile.currentStreak = 2;
-      await page.locator("#refresh").click();
+      await refreshDirectory();
       await page.waitForFunction(() =>
         document
           .querySelector("#player-list")
@@ -395,7 +706,7 @@ try {
       );
       assert.equal(legacy.players.get("kevin").profile.gamesPlayed, 10);
       legacy.players.get("kevin").profile.displayName = "Kevin O'Connor";
-      await page.locator("#refresh").click();
+      await refreshDirectory();
       await page.waitForFunction(() =>
         document
           .querySelector("#player-list")
@@ -656,7 +967,7 @@ try {
     async () => {
       const before = legacy.writes.length;
       legacy.failDirectory = true;
-      await page.locator("#refresh").click();
+      await refreshDirectory();
       await page.waitForFunction(() =>
         document
           .querySelector("#data-warning")
@@ -668,7 +979,7 @@ try {
         3,
       );
       legacy.failDirectory = false;
-      await page.locator("#refresh").click();
+      await refreshDirectory();
     },
   );
   await check("Service worker preserves the separate game cache", async () => {
@@ -677,19 +988,31 @@ try {
       await navigator.serviceWorker.ready;
     });
     await page.reload();
-    assert.equal(await page.locator("#console").isVisible(), false);
+    await page.locator("#console").waitFor({ state: "visible" });
+    assert.ok(
+      await page.evaluate(() =>
+        sessionStorage.getItem("bingo_admin_session_v4"),
+      ),
+    );
     assert.equal(
       await page.evaluate(() =>
         sessionStorage.getItem("bingo_admin_session_v3"),
       ),
       null,
     );
-    await login();
     assert.ok(
       (await page.evaluate(() => caches.keys())).includes("bingo-game-fixture"),
     );
   });
   await check("Mobile layout has no horizontal document overflow", async () => {
+    await page.setViewportSize({ width: 320, height: 740 });
+    await page.waitForTimeout(100);
+    assert.equal(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+      true,
+    );
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForTimeout(150);
     assert.equal(
@@ -794,7 +1117,7 @@ try {
         legacy.identityConflicts = [];
         legacy.storageAccountCount = 3;
       };
-      await page.locator("#refresh").click();
+      await refreshDirectory();
       await page
         .getByText(/username.*multiple or unmatched profile identities/)
         .waitFor();
@@ -836,6 +1159,13 @@ try {
       await page.locator("#lock").click();
       await visible("#login");
       assert.equal(await page.locator("#player-list").innerText(), "");
+      assert.equal(await page.locator("#player-context").innerText(), "");
+      assert.equal(
+        await page.evaluate(() =>
+          sessionStorage.getItem("bingo_admin_session_v4"),
+        ),
+        null,
+      );
       const response = await control.fetch(
         new Request("https://admin.test/api/players", {
           headers: { Authorization: "Bearer " + saved.token },
@@ -854,9 +1184,13 @@ try {
     status: "PASS",
   });
 } catch (error) {
-  results.push({ case: "Browser run", status: "FAIL", error: error.stack });
-  await page.screenshot({ path: evidence + "/failure.png", fullPage: true });
-  throw error;
+  if (error.baselineComplete) {
+    process.exitCode = 1;
+  } else {
+    results.push({ case: "Browser run", status: "FAIL", error: error.stack });
+    await page.screenshot({ path: evidence + "/failure.png", fullPage: true });
+    throw error;
+  }
 } finally {
   await fs.writeFile(
     evidence + "/results.json",

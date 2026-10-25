@@ -2,6 +2,12 @@ import { createPanels } from "./panels.js";
 import * as passkeys from "./passkeys.js";
 import { decorate } from "./icons.js";
 import {
+  readSession,
+  rememberSession,
+  forgetSession,
+  tabStorage,
+} from "./session.js";
+import {
   API_BASE,
   statusText,
   statusClass,
@@ -10,9 +16,27 @@ import {
   playersCsv,
   photoSource,
   matchFilter,
+  currentPresence,
+  playerVersion,
+  playerActivity,
+  relativeTime,
 } from "./model.js";
 
 const $ = (id) => document.getElementById(id);
+const preference = (key, fallback) => {
+  try {
+    return localStorage.getItem(key) || fallback;
+  } catch {
+    return fallback;
+  }
+};
+const savePreference = (key, value) => {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* Optional preference only. */
+  }
+};
 const state = {
   session: null,
   snapshot: null,
@@ -44,6 +68,9 @@ const tabs = [
   "activity",
   "settings",
 ];
+let renderedPresence = "";
+const presenceSignature = (list) =>
+  list.map((r) => r.username + ":" + r.presence?.status).join("|");
 const h = (tag, attrs = {}, ...children) => {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(attrs)) {
@@ -91,15 +118,7 @@ const stamp = (value) =>
         timeStyle: "short",
       })
     : "Not observed";
-const age = (value) => {
-  if (!value) return "No observation";
-  const n = Math.max(0, Math.floor((Date.now() - value) / 1000));
-  return n < 60
-    ? `${n}s ago`
-    : n < 3600
-      ? `${Math.floor(n / 60)}m ago`
-      : `${Math.floor(n / 3600)}h ago`;
-};
+const age = relativeTime;
 const button = (text, onClick, classes = "", attrs = {}) =>
   h("button", { type: "button", class: classes, onClick, ...attrs }, text);
 const badge = (status, label) =>
@@ -171,12 +190,14 @@ function clearSession() {
   state.controllers.clear();
   clearTimeout(state.timer);
   state.timer = null;
-  sessionStorage.removeItem("bingo_admin_session_v3");
+  forgetSession();
+  $("restore-session").hidden = true;
   for (const dialog of document.querySelectorAll("dialog[open]"))
     dialog.close();
   $("console").hidden = true;
   $("login").hidden = false;
   $("password").value = "";
+  $("login-error").textContent = "";
   $("player-list").replaceChildren();
   $("inspector-body").replaceChildren();
   for (const id of [
@@ -189,6 +210,9 @@ function clearSession() {
     "overview-room-list",
     "overview-health",
     "room-inspector-body",
+    "player-context",
+    "profile-sync",
+    "inspector-heading",
   ])
     $(id).replaceChildren();
   $("toasts").replaceChildren();
@@ -235,7 +259,7 @@ async function api(
   }
   const timeout = setTimeout(
     () => controller.abort(),
-    path === "release" ? 150000 : 45000,
+    path === "release" ? 150000 : path === "session" ? 12000 : 45000,
   );
   const headers = { "Content-Type": "application/json" };
   if (auth) {
@@ -252,9 +276,13 @@ async function api(
       signal: controller.signal,
       cache: "no-store",
     });
-    const result = await res.json();
+    const result = await res.json().catch(() => ({}));
     if (res.status === 401 && auth) {
-      clearSession();
+      if (state.session === session) {
+        clearSession();
+        $("login-error").textContent =
+          "Your admin session expired. Please sign in again.";
+      }
       throw new Error("Your admin session expired. Sign in again.");
     }
     if (!res.ok) {
@@ -290,11 +318,17 @@ function filters() {
     status: $("status-filter").value,
     provider: $("provider-filter").value,
     sort: $("sort").value,
+    build: $("build-filter").value,
+    sync: $("sync-filter").value,
   };
 }
 function rows() {
   return (state.snapshot?.players || []).map((row) => {
     let result = { ...row, profile: { ...row.profile } };
+    result.presence = currentPresence(
+      row,
+      !state.stale && !!state.snapshot?.presenceConnected,
+    );
     if (
       state.stale ||
       ["STALE", "REGISTRY", "UNAVAILABLE"].includes(row.sourceStatus)
@@ -310,14 +344,6 @@ function rows() {
       ])
         delete result.profile[field];
     }
-    if (state.stale)
-      result.presence = {
-        ...row.presence,
-        status: "UNKNOWN",
-        detail: row.presence?.detail
-          ? "Last verified activity: " + row.presence.detail
-          : "",
-      };
     return result;
   });
 }
@@ -389,6 +415,9 @@ async function refresh() {
       } else {
         state.detail.sync = updated.sync;
         renderProfileSync(updated.sync);
+        renderPlayerContext(
+          rows().find((row) => row.username === state.selected),
+        );
         if (updated.etag && updated.etag !== state.detail.etag) {
           $("inspector-warning").hidden = false;
           $("inspector-warning").textContent =
@@ -401,6 +430,10 @@ async function refresh() {
     state.stale = true;
     if (state.selected)
       renderProfileSync({ status: "UNKNOWN", label: "Sync unavailable" });
+    if (state.selected)
+      renderPlayerContext(
+        rows().find((row) => row.username === state.selected),
+      );
     warning(
       state.snapshot
         ? "Refresh failed. The directory below is the last verified snapshot; current presence is unknown. " +
@@ -423,37 +456,88 @@ async function refresh() {
 function renderDirectory() {
   const list = rows(),
     snapshot = state.snapshot;
+  renderedPresence = presenceSignature(list);
+  const selectedBuild = $("build-filter").value;
+  const builds = [
+    ...new Set(list.map((r) => playerVersion(r).build).filter(Boolean)),
+  ].sort((a, b) => b - a);
+  const missingBuild =
+    /^\d+$/.test(selectedBuild) && !builds.includes(Number(selectedBuild));
+  $("build-filter").replaceChildren(
+    h("option", { value: "ALL" }, "All builds"),
+    ...builds.map((code) =>
+      h("option", { value: String(code) }, "Build " + code),
+    ),
+    ...(missingBuild
+      ? [
+          h(
+            "option",
+            { value: selectedBuild },
+            "Build " + selectedBuild + " (no players)",
+          ),
+        ]
+      : []),
+    h("option", { value: "UNKNOWN" }, "Build not reported"),
+  );
+  $("build-filter").value = [
+    "ALL",
+    "UNKNOWN",
+    ...builds.map(String),
+    ...(missingBuild ? [selectedBuild] : []),
+  ].includes(selectedBuild)
+    ? selectedBuild
+    : "ALL";
   $("statistics").replaceChildren(
     ...[
-      ["Registered players", snapshot ? list.length : null],
+      ["Registered players", snapshot ? list.length : null, "ALL"],
       [
         "Active in app",
         snapshot
           ? list.filter((p) => activeStatus.has(p.presence?.status)).length
           : null,
+        "ACTIVE",
       ],
       [
         "Playing",
         snapshot
           ? list.filter((p) => p.presence?.status === "PLAYING").length
           : null,
+        "PLAYING",
       ],
       [
         "In lobby",
         snapshot
           ? list.filter((p) => p.presence?.status === "IN_LOBBY").length
           : null,
+        "IN_LOBBY",
       ],
       [
-        "Unknown status",
+        "Offline",
+        snapshot
+          ? list.filter((p) => p.presence?.status === "OFFLINE").length
+          : null,
+        "OFFLINE",
+      ],
+      [
+        "No live status",
         snapshot
           ? list.filter((p) => p.presence?.status === "UNKNOWN").length
           : null,
+        "UNKNOWN",
       ],
-    ].map(([label, value]) =>
+    ].map(([label, value, status]) =>
       h(
-        "div",
-        { class: "stat" },
+        "button",
+        {
+          type: "button",
+          class: "stat stat-filter",
+          "aria-pressed": String($("status-filter").value === status),
+          onClick: () => {
+            $("status-filter").value = status;
+            state.page = 1;
+            renderDirectory();
+          },
+        },
         h("span", {}, label),
         h("strong", {}, num(value)),
       ),
@@ -502,7 +586,7 @@ function renderDirectory() {
             "Wins",
             "Streak",
             "Version",
-            "Observed",
+            "Last activity",
             "Profile sync",
             "",
           ].map((text) => h("th", { scope: "col" }, text)),
@@ -522,7 +606,7 @@ function renderDirectory() {
             "td",
             {},
             badge(s),
-            row.presence?.detail
+            row.presence?.detail && s !== "UNKNOWN"
               ? h("div", { class: "muted small" }, row.presence.detail)
               : null,
           ),
@@ -533,15 +617,24 @@ function renderDirectory() {
           h(
             "td",
             { class: "muted small" },
-            (row.presence?.appVersion || p.appVersion || "—") +
-              (p.appVersionCode || row.presence?.appVersionCode
-                ? " · " + (p.appVersionCode || row.presence?.appVersionCode)
-                : ""),
+            h(
+              "span",
+              { title: playerVersion(row).title },
+              playerVersion(row).label,
+            ),
           ),
           h(
             "td",
-            { class: "muted small", title: stamp(row.presence?.observedAt) },
-            age(row.presence?.observedAt),
+            {
+              class: "muted small",
+              "data-player-activity": row.username,
+              title:
+                playerActivity(row).source +
+                (playerActivity(row).at
+                  ? " · " + stamp(playerActivity(row).at)
+                  : ""),
+            },
+            playerActivity(row).label,
           ),
           h("td", {}, syncBadge(row.sync)),
           h(
@@ -568,6 +661,9 @@ function renderDirectory() {
             "article",
             { class: "player-card" },
             h("div", { class: "card-top" }, identity(row), badge(s)),
+            row.presence?.detail && s !== "UNKNOWN"
+              ? h("p", { class: "small muted" }, row.presence.detail)
+              : null,
             h(
               "div",
               { class: "mini-stats" },
@@ -581,17 +677,21 @@ function renderDirectory() {
             ),
             h(
               "p",
-              { class: "muted small" },
-              row.presence?.detail ||
-                "Status observed " + age(row.presence?.observedAt),
+              { class: "muted small", "data-player-activity": row.username },
+              playerActivity(row).label,
             ),
+            syncBadge(row.sync),
             h(
               "div",
               { class: "card-bottom" },
               h(
                 "span",
                 { class: "small muted" },
-                row.presence?.appVersion || p.appVersion || "Version unknown",
+                h(
+                  "span",
+                  { title: playerVersion(row).title },
+                  playerVersion(row).label,
+                ),
               ),
               button("Inspect →", () => openPlayer(row.username), "", {
                 "aria-label": "Inspect @" + row.username,
@@ -602,6 +702,9 @@ function renderDirectory() {
       ),
     );
   }
+  $("reset-filters").hidden = !Object.entries(filters()).some(([k, v]) =>
+    k === "query" ? !!v : k !== "sort" && v !== "ALL",
+  );
   $("pagination").replaceChildren(
     button(
       "← Previous",
@@ -740,12 +843,35 @@ function renderProfileSync(sync) {
       ),
     );
 }
+function renderPlayerContext(row) {
+  if (!row) return;
+  const version = playerVersion(row),
+    activity = playerActivity(row);
+  $("player-context").replaceChildren(
+    ...[
+      badge(row.presence?.status),
+      h("span", { title: version.title }, version.label),
+      h(
+        "span",
+        {
+          title:
+            activity.source + (activity.at ? " · " + stamp(activity.at) : ""),
+        },
+        activity.label,
+      ),
+      row.presence?.roomCode && row.presence.status !== "UNKNOWN"
+        ? h("span", { class: "mono" }, "Room #" + row.presence.roomCode)
+        : null,
+    ].filter(Boolean),
+  );
+}
 function renderInspection() {
   const data = state.detail;
   if (!data) return;
   const p = data.profile,
     row = rows().find((r) => r.username === data.username);
   renderProfileSync(data.sync);
+  renderPlayerContext(row || { profile: p });
   $("inspector-heading").replaceChildren(
     h(
       "div",
@@ -755,14 +881,7 @@ function renderInspection() {
         "div",
         {},
         h("h2", { id: "inspector-title" }, p.displayName || data.username),
-        h(
-          "p",
-          { class: "small muted" },
-          "@" +
-            data.username +
-            " · " +
-            (statusText[row?.presence?.status] || "Unknown"),
-        ),
+        h("p", { class: "small muted" }, "@" + data.username),
       ),
     ),
   );
@@ -935,7 +1054,27 @@ function renderOverview(body, data) {
     if (
       await confirmAction(
         "Update player profile",
-        "Save these profile/statistics changes for @" + data.username + "?",
+        "Save these changes for @" +
+          data.username +
+          "?\n\n" +
+          Object.entries(diff)
+            .map(
+              ([key, value]) =>
+                (({
+                  displayName: "Display name",
+                  gamesPlayed: "Games played",
+                  gamesWon: "Wins",
+                  currentStreak: "Current streak",
+                  bestStreak: "Best streak",
+                  xp: "Experience",
+                  level: "Level",
+                })[key] || key) +
+                ": " +
+                (p[key] ?? "Not set") +
+                " → " +
+                value,
+            )
+            .join("\n"),
       )
     )
       await change(data, "", "PATCH", { patch: diff });
@@ -955,9 +1094,19 @@ function renderOverview(body, data) {
         meta("Account provider", p.provider),
         meta(
           "App version",
-          [p.appVersion, p.appVersionCode ? "Build " + p.appVersionCode : null]
-            .filter(Boolean)
-            .join(" · "),
+          playerVersion({
+            profile: p,
+            presence: rows().find((r) => r.username === data.username)
+              ?.presence,
+          }).label,
+        ),
+        meta(
+          "Last activity",
+          playerActivity({
+            profile: p,
+            presence: rows().find((r) => r.username === data.username)
+              ?.presence,
+          }).label,
         ),
         meta("Admin revision", String(data.revision)),
         meta("Last fresh inspection", stamp(data.fetchedAt)),
@@ -1689,9 +1838,21 @@ $("login-form").addEventListener("submit", async (e) => {
 async function startConsole() {
   const result = await api("session");
   if (result.setupRequired) {
+    forgetSession();
     showEnrollment();
     return;
   }
+  if (
+    result.authMethod !== "passkey" ||
+    !Number.isFinite(result.expiresAt) ||
+    result.expiresAt <= Date.now()
+  )
+    throw new Error(
+      "The saved session could not be verified by the admin service.",
+    );
+  state.session = { ...state.session, ...result, setupRequired: false };
+  rememberSession(state.session);
+  $("restore-session").hidden = true;
   $("operator").textContent = result.operator;
   $("login").hidden = true;
   $("console").hidden = false;
@@ -1707,10 +1868,16 @@ $("theme").addEventListener("click", () => {
   const theme =
     document.documentElement.dataset.theme === "dark" ? "light" : "dark";
   document.documentElement.dataset.theme = theme;
-  localStorage.setItem("bingo_admin_theme_v4", theme);
+  savePreference("bingo_admin_theme_v4", theme);
+  document.querySelector('meta[name="theme-color"]').content =
+    theme === "dark" ? "#000000" : "#f1f5f8";
 });
-document.documentElement.dataset.theme =
-  localStorage.getItem("bingo_admin_theme_v4") || "dark";
+document.documentElement.dataset.theme = preference(
+  "bingo_admin_theme_v4",
+  "dark",
+);
+document.querySelector('meta[name="theme-color"]').content =
+  document.documentElement.dataset.theme === "dark" ? "#000000" : "#f1f5f8";
 for (const navButton of $("navigation").querySelectorAll("button")) {
   const label = navButton.textContent.trim().replace(/\s+/g, " ");
   navButton.setAttribute("aria-label", label);
@@ -1730,13 +1897,15 @@ function setCompactNavigation(compact) {
       compact ? "Expand navigation" : "Collapse navigation",
     );
 }
-setCompactNavigation(localStorage.getItem("bingo_admin_nav") !== "expanded");
+setCompactNavigation(preference("bingo_admin_nav", "compact") !== "expanded");
 for (const button of $("navigation").querySelectorAll("button"))
   button.addEventListener("click", () => switchTab(button.dataset.tab));
 for (const id of [
   "search",
   "status-filter",
   "provider-filter",
+  "build-filter",
+  "sync-filter",
   "sort",
   "page-size",
 ])
@@ -1745,6 +1914,34 @@ for (const id of [
     renderDirectory();
   });
 $("refresh-interval").addEventListener("change", schedule);
+$("reset-filters").addEventListener("click", () => {
+  $("search").value = "";
+  for (const id of [
+    "status-filter",
+    "provider-filter",
+    "build-filter",
+    "sync-filter",
+  ])
+    $(id).value = "ALL";
+  state.page = 1;
+  renderDirectory();
+});
+document.addEventListener("keydown", (event) => {
+  if (
+    event.key === "/" &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.altKey &&
+    !["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName) &&
+    !event.target.isContentEditable &&
+    state.session &&
+    state.tab === "players" &&
+    !document.querySelector("dialog[open]")
+  ) {
+    event.preventDefault();
+    $("search").focus();
+  }
+});
 $("table-view").addEventListener("click", () => {
   state.view = "table";
   state.viewExplicit = true;
@@ -1887,7 +2084,7 @@ $("menu-button").addEventListener("click", () => {
   if (innerWidth > 900) {
     const compact = document.body.dataset.nav !== "compact";
     setCompactNavigation(compact);
-    localStorage.setItem("bingo_admin_nav", compact ? "compact" : "expanded");
+    savePreference("bingo_admin_nav", compact ? "compact" : "expanded");
   } else setMenu(!$("sidebar").classList.contains("open"));
 });
 $("nav-scrim").addEventListener("click", () => setMenu(false));
@@ -1934,6 +2131,7 @@ async function acceptSession(result) {
     expiresAt: result.expiresAt,
     operator: result.operator,
     setupRequired: result.setupRequired,
+    authMethod: result.authMethod,
   };
   if (result.setupRequired) showEnrollment();
   else {
@@ -2189,7 +2387,9 @@ async function renderSecurity() {
               expiresAt: result.expiresAt,
               operator: result.operator,
               setupRequired: false,
+              authMethod: result.authMethod,
             };
+            rememberSession(state.session);
             await renderSecurity();
             toast("Backup passkey added.", "success");
           } catch (error) {
@@ -2220,11 +2420,71 @@ async function renderSecurity() {
       root.replaceChildren(h("p", { class: "error" }, error.message));
   }
 }
-sessionStorage.removeItem("bingo_admin_session_v3");
 decorate();
-loadSignIn().catch((error) => {
+async function bootstrap() {
+  const saved = readSession();
+  if (!saved) return loadSignIn();
+  state.session = saved;
+  $("login-description").textContent = "Checking your saved session…";
+  for (const id of ["login-form", "passkey-sign-in", "recovery-panel"])
+    $(id).hidden = true;
+  $("login-error").textContent = "";
+  try {
+    await startConsole();
+  } catch (error) {
+    // A 401 already clears the tab and loads sign-in. An outage keeps the
+    // saved token for an explicit retry, while the console stays concealed.
+    if (!state.session) return;
+    state.session = null;
+    $("console").hidden = true;
+    $("login").hidden = false;
+    $("restore-session").hidden = false;
+    $("login-error").textContent =
+      "Could not verify your saved session. Retry when connected, or sign in again.";
+    await loadSignIn();
+  }
+}
+$("restore-session").addEventListener("click", async () => {
+  $("restore-session").disabled = true;
+  try {
+    await bootstrap();
+  } catch (error) {
+    $("login-error").textContent = error.message;
+  } finally {
+    $("restore-session").disabled = false;
+  }
+});
+bootstrap().catch((error) => {
   $("login-error").textContent = error.message;
 });
+
+// Age the existing snapshot even in manual-refresh mode, without extra requests.
+// Expired status is unknown; it never becomes an invented offline observation.
+setInterval(() => {
+  if (
+    !state.session ||
+    !state.snapshot ||
+    state.fetching ||
+    document.visibilityState !== "visible"
+  )
+    return;
+  const latest = rows();
+  if (presenceSignature(latest) !== renderedPresence) {
+    const focused = document.activeElement?.getAttribute("aria-label");
+    renderDirectory();
+    panels.overview();
+    if (focused?.startsWith("Inspect @"))
+      [...$("player-list").querySelectorAll("button")]
+        .find((b) => b.getAttribute("aria-label") === focused)
+        ?.focus({ preventScroll: true });
+  }
+  for (const node of document.querySelectorAll("[data-player-activity]")) {
+    const row = latest.find((r) => r.username === node.dataset.playerActivity);
+    if (row) node.textContent = playerActivity(row).label;
+  }
+  if (state.selected)
+    renderPlayerContext(latest.find((r) => r.username === state.selected));
+}, 5000);
 
 if ("serviceWorker" in navigator)
   navigator.serviceWorker

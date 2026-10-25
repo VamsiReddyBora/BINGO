@@ -1,4 +1,4 @@
-# Bingo — Build 73 legacy account recovery preview
+# Bingo — Build 73 and current admin console
 
 Android Bingo with AI, MQTT multiplayer, Nearby Network play, friends and notifications.
 
@@ -32,3 +32,5 @@ From `cloudflare_worker/`, run `npm ci` and `npm test`. Supply `SERVICE_ACCOUNT_
 Versions 1.0, 1.0.1, 1.0.2 and 1.0.3 have separate Git tags, APKs and source archives. Main reflects the latest published source. Source packages exclude signing keys, passwords, real Firebase client configuration, account/player data, device addresses, local tooling, logs and build caches. Existing intentional in-app developer contact links are retained.
 
 See `AGENT_HANDOFF.md` for verification results and remaining hardware acceptance limits.
+
+The admin console has a website-only usability update: validated session restoration, coherent app versions, clearer status, black dark theme and combined player controls. See ADMIN_USABILITY.md. The Android APK is unchanged.

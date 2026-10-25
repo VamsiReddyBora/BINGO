@@ -1,3 +1,12 @@
+## Admin website usability update
+
+- Restore a server-validated tab session on refresh; preserve expiry, Lock and per-action device approval.
+- Pair app version/build correctly; make missing status and last activity clear.
+- Use pure black in dark mode; retain compact desktop/mobile controls.
+- Add build/sync filters, clickable status counts, @username search and precise profile-change confirmation.
+- Age manual snapshots without polling; preserve drafts and selected build filters.
+- Keep Android Build 73, Pages APK/update feed and GitHub Releases unchanged.
+
 ## Build 73 — legacy migration recovery preview
 
 - Add create-only, verified legacy-account migration planning and transactional import.

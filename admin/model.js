@@ -6,7 +6,7 @@ export const statusText = {
   PLAYING: "Playing",
   AWAY: "Away",
   OFFLINE: "Offline",
-  UNKNOWN: "Unknown",
+  UNKNOWN: "Not confirmed",
 };
 export const statusClass = {
   ONLINE: "online",
@@ -17,11 +17,100 @@ export const statusClass = {
   UNKNOWN: "unknown",
 };
 export const activeStatus = new Set(["ONLINE", "IN_LOBBY", "PLAYING"]);
+const timestamp = (value) =>
+  Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : 0;
+export function relativeTime(value, now = Date.now()) {
+  const at = timestamp(value);
+  if (!at) return "Not reported";
+  const seconds = Math.max(0, Math.floor((now - at) / 1000));
+  return seconds < 60
+    ? `${seconds}s ago`
+    : seconds < 3600
+      ? `${Math.floor(seconds / 60)}m ago`
+      : seconds < 86400
+        ? `${Math.floor(seconds / 3600)}h ago`
+        : `${Math.floor(seconds / 86400)}d ago`;
+}
+export function currentPresence(row, available = true, now = Date.now()) {
+  const p = row.presence || {},
+    at = timestamp(p.observedAt);
+  const known = Object.hasOwn(statusText, p.status);
+  const fresh = at > 0 && at <= now + 60000 && now - at <= 15000;
+  return {
+    ...p,
+    status:
+      !available ||
+      !known ||
+      (p.status !== "OFFLINE" && !fresh) ||
+      at > now + 60000
+        ? "UNKNOWN"
+        : p.status,
+  };
+}
+export function playerVersion(row = {}) {
+  const p = row.profile || {},
+    live = row.presence || {};
+  const version = (v) => (typeof v === "string" && v.trim() ? v.trim() : null);
+  const build = (v) =>
+    Number.isSafeInteger(Number(v)) && Number(v) > 0 ? Number(v) : null;
+  const hasLive = version(live.appVersion) || build(live.appVersionCode);
+  const hasSaved = version(p.appVersion) || build(p.appVersionCode);
+  // Never combine a live version name with a saved build number (or vice versa).
+  const useLive =
+    hasLive &&
+    (!hasSaved || timestamp(live.observedAt) >= timestamp(p.lastSeenTimestamp));
+  const source = useLive ? live : p;
+  const name = version(source.appVersion),
+    code = build(source.appVersionCode);
+  return {
+    name,
+    build: code,
+    source: useLive ? "presence" : "profile",
+    label:
+      [name, code ? "Build " + code : null].filter(Boolean).join(" · ") ||
+      "Not reported",
+    title:
+      (useLive
+        ? "App version reported with player status"
+        : "Last app version saved to Firebase") +
+      (!code ? ". Build number not reported." : "."),
+  };
+}
+export function playerActivity(row = {}, now = Date.now()) {
+  const p = row.presence || {},
+    at = timestamp(p.observedAt),
+    rawProfileAt = timestamp(row.profile?.lastSeenTimestamp);
+  const profileAt = rawProfileAt <= now + 60000 ? rawProfileAt : 0;
+  if (at && at <= now + 60000 && at >= profileAt)
+    return {
+      at,
+      label: "Last seen " + relativeTime(at, now),
+      source: "MQTT status",
+    };
+  if (profileAt && profileAt <= now + 60000)
+    return {
+      at: profileAt,
+      label: "Profile synced " + relativeTime(profileAt, now),
+      source: "Firebase profile; live status not confirmed",
+    };
+  return {
+    at: 0,
+    label: "No activity reported",
+    source: "No player status or profile sync time has been reported",
+  };
+}
 export function selectPlayers(
   players,
-  { query = "", status = "ALL", provider = "ALL", sort = "name" } = {},
+  {
+    query = "",
+    status = "ALL",
+    provider = "ALL",
+    sort = "name",
+    build = "ALL",
+    sync = "ALL",
+  } = {},
 ) {
-  const q = query.trim().toLowerCase();
+  const q = query.trim().toLowerCase().replace(/^@/, "");
   return players
     .filter((row) => {
       const p = row.profile || {},
@@ -35,7 +124,15 @@ export function selectPlayers(
           )) &&
         (status === "ALL" ||
           (status === "ACTIVE" ? activeStatus.has(s) : status === s)) &&
-        (provider === "ALL" || p.provider === provider)
+        (provider === "ALL" || p.provider === provider) &&
+        (build === "ALL" ||
+          (build === "UNKNOWN"
+            ? !playerVersion(row).build
+            : playerVersion(row).build === Number(build))) &&
+        (sync === "ALL" ||
+          (sync === "WAITING"
+            ? ["PENDING_CLOUD", "WAITING_APP"].includes(row.sync?.status)
+            : row.sync?.status === sync))
       );
     })
     .sort((a, b) => {
@@ -77,8 +174,16 @@ export function selectPlayers(
           (y.gamesWon ?? -1) - (x.gamesWon ?? -1) ||
           a.username.localeCompare(b.username)
         );
+      if (sort === "build")
+        return (
+          (playerVersion(b).build || 0) - (playerVersion(a).build || 0) ||
+          a.username.localeCompare(b.username)
+        );
       if (sort === "recent")
-        return (b.presence?.observedAt || 0) - (a.presence?.observedAt || 0);
+        return (
+          playerActivity(b).at - playerActivity(a).at ||
+          a.username.localeCompare(b.username)
+        );
       return a.username.localeCompare(b.username);
     });
 }
@@ -102,6 +207,7 @@ export function playersCsv(rows) {
       "Current streak",
       "Best streak",
       "App version",
+      "App build",
       "Last observation",
       "Profile source",
     ],
@@ -119,7 +225,8 @@ export function playersCsv(rows) {
         p.gamesWon,
         p.currentStreak,
         p.bestStreak,
-        r.presence?.appVersion || p.appVersion,
+        playerVersion(r).name,
+        playerVersion(r).build,
         r.presence?.observedAt
           ? new Date(r.presence.observedAt).toISOString()
           : "",

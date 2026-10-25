@@ -1,3 +1,7 @@
+# Current admin website update
+
+Read ADMIN_USABILITY.md. Server-validated tab session restoration replaces forced logout on every refresh; server expiry/revocation and fresh passkey approval for every mutation remain. Versions are paired by source; unknown status is not treated as offline. Directory filters, profile context, change confirmation and dark/mobile layout are improved. The website updates independently of the unchanged Build73 APK, update feed and GitHub Releases. No Worker deployment or production player mutation is required. Current website verification is recorded in SOURCE_MANIFEST.json; Android validation remains the previous unchanged Build73 run.
+
 # Agent handoff — Build 73 legacy account recovery preview
 
 Read SimplifiedGameRules.md, ADMIN_APP_SYNC.md and MIGRATION_RECOVERY.md before changing this source. Preserve intentional gameplay and every previous passing regression. Main contains clean current source; GitHub Releases and their existing tags/assets are unchanged. This APK is delivered through the existing Pages update feed.
