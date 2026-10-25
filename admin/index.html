@@ -6,7 +6,7 @@
       name="viewport"
       content="width=device-width, initial-scale=1, viewport-fit=cover"
     />
-    <meta name="theme-color" content="#090e19" />
+    <meta name="theme-color" content="#000000" />
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' https://bingo-admin-control.vamsireddy2534.workers.dev; img-src 'self' data: blob: https:; object-src 'none'; base-uri 'none'; form-action 'self'"
@@ -107,6 +107,9 @@
           </form>
         </details>
         <p id="login-error" class="error" role="alert"></p>
+        <button id="restore-session" type="button" hidden>
+          Retry saved session
+        </button>
         <p class="login-footnote">
           <span data-icon="lock"></span> Your device verifies it's you using a
           fingerprint, face or screen-lock PIN. Biometric data stays on your
@@ -210,7 +213,7 @@
               <p class="muted">Your players, your games. One clear view.</p>
             </div>
             <span id="overview-status" class="connection"
-              >Awaiting observations</span
+              >Connecting to live status</span
             >
           </div>
           <div id="overview-metrics" class="overview-metrics"></div>
@@ -218,7 +221,7 @@
             <section class="panel">
               <div class="panel-heading">
                 <h2>Player pulse</h2>
-                <span class="small muted">Recently observed</span>
+                <span class="small muted">Latest activity</span>
               </div>
               <div id="overview-players"></div>
             </section>
@@ -291,7 +294,7 @@
                 <option value="PLAYING">Playing</option>
                 <option value="AWAY">Away</option>
                 <option value="OFFLINE">Offline</option>
-                <option value="UNKNOWN">Unknown / stale</option>
+                <option value="UNKNOWN">No live status</option>
               </select></label
             >
             <label
@@ -304,6 +307,22 @@
               </select></label
             >
             <label
+              ><span class="sr-only">App build</span
+              ><select id="build-filter">
+                <option value="ALL">All builds</option>
+              </select></label
+            >
+            <label
+              ><span class="sr-only">Profile synchronization</span
+              ><select id="sync-filter">
+                <option value="ALL">All sync states</option>
+                <option value="WAITING">Waiting for sync</option>
+                <option value="APPLIED">Applied by app</option>
+                <option value="NONE">No admin edits</option>
+                <option value="UNKNOWN">Sync unavailable</option>
+              </select></label
+            >
+            <label
               ><span class="sr-only">Sort players</span
               ><select id="sort">
                 <option value="presence">Active players first</option>
@@ -311,11 +330,13 @@
                 <option value="level">Highest level</option>
                 <option value="played">Most games</option>
                 <option value="wins">Most wins</option>
-                <option value="recent">Recently observed</option>
+                <option value="recent">Recent activity</option>
+                <option value="build">Newest app build</option>
                 <option value="winrate">Highest win rate</option>
               </select></label
             >
             <button id="export">↓ Export filtered</button>
+            <button id="reset-filters" hidden>Clear filters</button>
           </div>
           <div class="list-heading">
             <p id="result-count" class="small muted">Loading player records…</p>
@@ -475,6 +496,11 @@
             <p class="muted small">
               Background tabs stop polling. Status age remains visible.
             </p>
+            <p class="muted small">
+              Refreshing keeps this tab signed in after the server verifies your
+              session. It locks after 30 minutes of inactivity or 12 hours.
+              Every change still requires device approval.
+            </p>
             <hr />
             <form id="password-form">
               <h2>Recovery password</h2>
@@ -557,6 +583,7 @@
           Account
         </button>
       </nav>
+      <div id="player-context" class="player-context" aria-live="polite"></div>
       <div
         id="profile-sync"
         class="profile-sync"
