@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "revision": 1,
+  "audience": "2778fa42104c3f64703c5fe9abcbd76b356a4167176fac0a22ee08f22f11b3f9",
+  "minBuild": 75,
+  "maxBuild": 0,
+  "enabled": true,
+  "inheritGlobal": false,
+  "strings": {
+    "home.online.description": "OTA test: Hello Bob!"
+  },
+  "homeStyle": {
+    "backgroundOpacity": 0.08
+  },
+  "background": null
+}
