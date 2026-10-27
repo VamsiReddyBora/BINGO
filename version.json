@@ -1,9 +1,9 @@
 {
-  "versionName": "1.0.3",
-  "versionCode": 73,
-  "tagName": "v1.0.3",
-  "downloadUrl": "https://vamsireddybora.github.io/BINGO/Bingo-1.0.3-build73.apk",
-  "apkSize": 8113892,
-  "sha256": "b5c195880bdcf9cd3216948c87c8b4e4c4ee96b81b36424504774883ac4a8343",
-  "releaseNotes": "Build 73: recover migrated legacy profiles, statistics, photos and canonical usernames.\nProtect imported data before local profile uploads and preserve later games/admin edits.\nExisting gameplay and notification behavior preserved."
+  "versionName": "1.0.4",
+  "versionCode": 76,
+  "tagName": "v1.0.4",
+  "downloadUrl": "https://vamsireddybora.github.io/BINGO/Bingo-1.0.4-build76.apk",
+  "apkSize": 8146657,
+  "sha256": "ba19510cda5bc3c49de77fd1c89303f3b984bd5cab8b0329c88f0b03ea98c46b",
+  "releaseNotes": "Background updates for supported Home content, with progress and rollback.\nAPK updates for everyone or selected accounts, with verified downloads.\nAdmin update controls; current Bingo visuals and gameplay preserved."
 }
