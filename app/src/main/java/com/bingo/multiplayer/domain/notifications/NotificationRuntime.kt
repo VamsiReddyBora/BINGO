@@ -87,6 +87,7 @@ object NotificationRuntime {
             GameInviteManager.onAccountChanged()
             BingoNotificationManager.clearPendingActions()
             BroadcastMessageManager.onAccountChanged()
+            AppUpdateManager.onAccountChanged(context)
             NotificationDeliveryStatus.clear()
             matchActive = false
             scope.launch { preparePresentation(context) }

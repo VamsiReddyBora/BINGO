@@ -6,6 +6,8 @@ import { createRequire } from "node:module";
 import { AdminControl } from "../worker.js";
 import worker from "../worker.js";
 import { releaseFixture } from "./publication-fixture.js";
+import { contentFixture } from "./content-fixture.js";
+import { targetedReleaseFixture } from "./targeted-release-fixture.js";
 import { passwordHash, digest } from "../model.js";
 import { MemoryStorage, FakeLegacy } from "./fixtures.js";
 
@@ -64,6 +66,8 @@ legacy.read = async (n) => {
 };
 const password = "browser-fixture-password-123";
 const publication = releaseFixture();
+const contentPublication = contentFixture();
+const selectedPublication = targetedReleaseFixture();
 legacy.recentMatches = async () => [
   {
     id: "fixture-match",
@@ -84,6 +88,8 @@ const env = {
   }),
   TEST_LEGACY: legacy,
   TEST_RELEASES: publication.publisher,
+  TEST_CONTENT: contentPublication.publisher,
+  TEST_TARGETED_RELEASES: selectedPublication.publisher,
   TEST_BROKER: async () => {
     if (failPresence) throw Error("offline");
     return {
@@ -1136,6 +1142,67 @@ try {
       await page.locator("#navigation button[data-tab=players]").click();
     },
   );
+  await check("Silent content publishes only to the selected UID through passkey approval", async () => {
+    const nativeFeed = structuredClone(publication.feed);
+    const nav = page.locator("#navigation button[data-tab=release]");
+    if (await page.locator("#menu-button").getAttribute("aria-expanded") === "false") await page.locator("#menu-button").click();
+    await nav.click();
+    await page.locator(".content-panel > summary").click();
+    await page.locator("[data-content-target]").selectOption("bob");
+    await page.waitForFunction(()=>document.querySelector("[data-content-status]")?.textContent.includes("revision 0"));
+    await page.locator("[data-content-wording] > summary").click();
+    await page.locator('[data-content-field="home.online.title"]').fill("Bob preview");
+    await page.locator("[data-content-publish]").click();
+    await confirm();
+    await page.waitForFunction(()=>document.querySelector("[data-content-status]")?.textContent.includes("revision 1"));
+    const audience = await contentPublication.publisher.audience("uid_bob");
+    assert.equal(contentPublication.manifest(`content/users/${audience}.json`).strings["home.online.title"],"Bob preview");
+    assert.equal(contentPublication.manifest(),null);
+    assert.deepEqual(publication.feed,nativeFeed);
+    await page.screenshot({path:evidence+"/42-ota-content.png",fullPage:true});
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false);
+  });
+  await check("A selected user's test content can return to the public channel", async () => {
+    await page.locator("[data-content-inherit]").check();
+    assert.equal(await page.locator('[data-content-field="home.online.title"]').isDisabled(),true);
+    await page.locator("[data-content-publish]").click();await confirm();
+    await page.waitForFunction(()=>document.querySelector("[data-content-status]")?.textContent.includes("revision 2"));
+    const audience = await contentPublication.publisher.audience("uid_bob");
+    assert.equal(contentPublication.manifest(`content/users/${audience}.json`).inheritGlobal,true);
+    assert.deepEqual(contentPublication.manifest(`content/users/${audience}.json`).strings,{});
+    const playersNav = page.locator("#navigation button[data-tab=players]");
+    if (await page.locator("#menu-button").getAttribute("aria-expanded") === "false") await page.locator("#menu-button").click();
+    await playersNav.click();
+  });
+  await check("APK publishing targets only the selected account without changing the public update", async () => {
+    const publicBefore = structuredClone(publication.feed);
+    if (await page.locator("#menu-button").getAttribute("aria-expanded") === "false") await page.locator("#menu-button").click();
+    await page.locator("#navigation button[data-tab=release]").click();
+    await page.locator("[data-apk-target]").selectOption("bob");
+    await page.getByRole("heading", { name: "No selected-account offer", exact: true }).waitFor();
+    await page.locator('input[name=versionName]').fill('1.0.3');
+    await page.locator('input[name=versionCode]').fill('76');
+    await page.locator('input[name=apk]').setInputFiles({name:'Bingo-fixture.apk',mimeType:'application/vnd.android.package-archive',buffer:Buffer.from(selectedPublication.input.apkBase64,'base64')});
+    await page.getByRole('button',{name:'Review & publish update',exact:true}).click();
+    await confirm();
+    await page.getByRole('heading',{name:'v1.0.3',exact:true}).waitFor();
+    const audience = await selectedPublication.publisher.audience('uid_bob');
+    assert.equal((await selectedPublication.publisher.state(audience)).release.versionCode,76);
+    assert.deepEqual(publication.feed,publicBefore);
+    assert.equal(selectedPublication.store.files.get('version.json'),'original-version');
+    assert.equal(await page.locator('[data-apk-target]').inputValue(),'bob');
+    await page.screenshot({path:evidence+'/44-targeted-apk.png',fullPage:true});
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false);
+  });
+  await check("Withdrawing a selected APK offer preserves the public release and returns the account to it", async () => {
+    await page.getByRole('button',{name:'Withdraw selected offer',exact:true}).click();await confirm();
+    await page.getByRole('heading',{name:'No selected-account offer',exact:true}).waitFor();
+    const audience = await selectedPublication.publisher.audience('uid_bob');
+    assert.equal((await selectedPublication.publisher.state(audience)).channel.enabled,false);
+    assert.equal(publication.feed.versionCode,71);
+    if (await page.locator("#menu-button").getAttribute("aria-expanded") === "false") await page.locator("#menu-button").click();
+    await page.locator("#navigation button[data-tab=players]").click();
+  });
   await check(
     "Typed deletion removes player from live directory and detail",
     async () => {

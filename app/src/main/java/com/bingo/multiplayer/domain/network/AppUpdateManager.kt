@@ -19,7 +19,16 @@ import kotlinx.coroutines.withContext
 import okhttp3.Request
 import org.json.JSONObject
 import java.io.File
-import java.io.FileOutputStream
+import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.isActive
+import android.content.pm.PackageManager
+import android.content.pm.PackageInfo
+import java.security.MessageDigest
+import java.util.concurrent.TimeUnit
 
 data class AppUpdateInfo(
     val hasUpdate: Boolean,
@@ -27,7 +36,11 @@ data class AppUpdateInfo(
     val latestVersionName: String,
     val downloadUrl: String,
     val releaseNotes: String,
-    val apkSize: Long
+    val apkSize: Long,
+    val versionCode: Long = 0,
+    val sha256: String = "",
+    val audience: String = "ALL",
+    val accountUid: String? = null
 )
 
 sealed class UpdateState {
@@ -43,14 +56,7 @@ sealed class UpdateState {
 object AppUpdateManager {
     private const val TAG = "AppUpdateManager"
 
-    /**
-     * Resilient multi-tier update endpoints checked in sequence:
-     * 1. Primary: Fastly CDN edge on GitHub Pages (vamsireddybora.github.io) - zero rate limit, instant.
-     * 2. Secondary: Raw GitHub blob endpoint.
-     * 3. Tertiary: KeyValue cloud store (keyvalue.immanuel.co) - already verified connected for game accounts.
-     * 4. Quaternary: jsDelivr multi-CDN network.
-     * 5. Quinary: Official GitHub Releases API.
-     */
+    /** Public fallback feeds remain compatible with older installed apps. */
     val UPDATE_ENDPOINTS = listOf(
         "https://vamsireddybora.github.io/BINGO/version.json",
         "https://raw.githubusercontent.com/VamsiReddyBora/BINGO/gh-pages/version.json",
@@ -62,7 +68,35 @@ object AppUpdateManager {
     private val _updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
     val updateState: StateFlow<UpdateState> = _updateState.asStateFlow()
 
-    private val scope = CoroutineScope(Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val accountEpoch = AtomicLong()
+    private val checkEpoch = AtomicLong()
+    @Volatile private var observedUid: String? = null
+    @Volatile private var checkJob: Job? = null
+    @Volatile private var downloadJob: Job? = null
+    @Volatile private var preparedInstall: Pair<File, AppUpdateInfo>? = null
+    private var lastCheckAt = -60_000L
+    private val updateHttp by lazy { NetworkConfig.httpClient.newBuilder().connectTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS).callTimeout(45, TimeUnit.SECONDS).build() }
+
+    private val downloadHttp by lazy { updateHttp.newBuilder().callTimeout(2, TimeUnit.MINUTES).build() }
+
+    @Synchronized private fun publish(context: Context, owner: String, epoch: Long, value: UpdateState, request: Long? = null) {
+        if (uid(context) == owner && accountEpoch.get() == epoch && (request == null || request == checkEpoch.get()))
+            _updateState.value = value
+    }
+    private fun uid(context: Context) = com.bingo.multiplayer.domain.notifications.NotificationRuntime.profile(context)?.uid.orEmpty()
+    fun isOfferForCurrentAccount(context: Context, info: AppUpdateInfo) = ApkUpdateFeeds.allowed(info, uid(context))
+    @Synchronized fun onAccountChanged(context: Context) {
+        val current = uid(context)
+        if (observedUid == current) return
+        observedUid = current; accountEpoch.incrementAndGet(); checkEpoch.incrementAndGet()
+        checkJob?.cancel(); downloadJob?.cancel(); pendingInstallApk = null
+        preparedInstall?.first?.delete(); preparedInstall = null
+        hasDismissedInSession = false; lastCheckAt = -60_000L
+        _updateState.value = UpdateState.Idle
+        BingoNotificationManager.cancelUpdateNotification(context)
+    }
     private var hasDismissedInSession = false
     @Volatile
     private var pendingInstallApk: File? = null
@@ -168,7 +202,9 @@ object AppUpdateManager {
                 latestVersionName = cleanTag,
                 downloadUrl = apkDownloadUrl,
                 releaseNotes = releaseNotes,
-                apkSize = apkSize
+                apkSize = apkSize,
+                versionCode = remoteCode,
+                sha256 = json.optString("sha256", "").lowercase()
             )
         } catch (e: Exception) {
             Log.w(TAG, "Failed to parse update payload: ${e.message}")
@@ -176,135 +212,64 @@ object AppUpdateManager {
         }
     }
 
-    /**
-     * Checks multiple redundant cloud sources for a newer version in the background.
-     * @param manual If true, sets state to UpToDate if no update is found (for explicit user clicks in Settings).
-     */
-    fun checkForUpdates(context: Context, manual: Boolean = false) {
-        com.bingo.multiplayer.core.designsystem.NotificationPreferences.init(context)
-        if (!manual && !com.bingo.multiplayer.core.designsystem.NotificationPreferences.inAppNotificationsEnabled.value) return
-        if (!manual && hasDismissedInSession) {
-            Log.d(TAG, "Update check skipped: user already dismissed update prompt in this session")
-            return
+    private suspend fun resolve(context: Context, owner: String): AppUpdateInfo? {
+        val feeds = ApkUpdateFeeds { endpoint ->
+            withContext(Dispatchers.IO) {
+                val url = if (endpoint.contains("github.io") && endpoint.endsWith(".json")) endpoint + "?check=" + System.currentTimeMillis() else endpoint
+                updateHttp.newCall(Request.Builder().url(url).header("Accept", "application/json")
+                    .header("Cache-Control", "no-cache").header("User-Agent", "BingoMultiplayer-App").build()).execute().use { response ->
+                    if (response.code == 404) return@withContext null
+                    require(response.isSuccessful) { "Update feed unavailable" }
+                    val body = requireNotNull(response.body)
+                    require(body.contentLength() <= 131072)
+                    val output = java.io.ByteArrayOutputStream()
+                    body.byteStream().use { input ->
+                        val bytes = ByteArray(8192)
+                        while (true) { val n = input.read(bytes); if (n < 0) break
+                            require(output.size() + n <= 131072); output.write(bytes, 0, n) }
+                    }
+                    output.toByteArray().toString(Charsets.UTF_8)
+                }
+            }
         }
+        return feeds.resolve(owner, getInstalledVersionName(context), getInstalledVersionCode(context))
+    }
 
-        scope.launch {
-            if (_updateState.value is UpdateState.Downloading) {
-                Log.d(TAG, "Download in progress, ignoring check request")
-                return@launch
-            }
-
-            _updateState.value = UpdateState.Checking
-            val currentVersion = getInstalledVersionName(context)
-            val currentVersionCode = getInstalledVersionCode(context)
-
-            var resolvedUpdateInfo: AppUpdateInfo? = null
-            var lastErrorMessage: String? = null
-
-            for (endpointUrl in UPDATE_ENDPOINTS) {
-                try {
-                    val request = Request.Builder()
-                        .url(endpointUrl)
-                        .header("Accept", "application/json, text/plain, */*")
-                        .header("User-Agent", "BingoMultiplayer-App/$currentVersion")
-                        .get()
-                        .build()
-
-                    val response = NetworkConfig.httpClient.newCall(request).execute()
-                    if (response.isSuccessful) {
-                        val body = response.body?.string().orEmpty().trim()
-                        response.close()
-
-                        var cleanBody = body
-                        // If response is a quoted JSON string from KeyValue, unwrap it
-                        if (cleanBody.startsWith("\"") && cleanBody.endsWith("\"") && cleanBody.length >= 2) {
-                            cleanBody = cleanBody.substring(1, cleanBody.length - 1)
-                                .replace("\\\"", "\"")
-                                .replace("\\\\", "\\")
-                        }
-
-                        if (cleanBody.isNotBlank() && cleanBody != "null" && cleanBody != "\"\"") {
-                            val info = parseUpdatePayload(cleanBody, currentVersion, currentVersionCode)
-                            if (info != null) {
-                                resolvedUpdateInfo = info
-                                Log.i(TAG, "Successfully resolved update info from $endpointUrl: $info")
-                                break
-                            }
-                        }
-                    } else {
-                        response.close()
-                    }
-                } catch (e: Exception) {
-                    lastErrorMessage = e.message
-                    Log.w(TAG, "Failed to fetch update from $endpointUrl: ${e.message}")
-                }
-            }
-
-            if (resolvedUpdateInfo != null) {
-                if (resolvedUpdateInfo.hasUpdate) {
-                    _updateState.value = UpdateState.UpdateAvailable(resolvedUpdateInfo)
-                } else {
-                    if (manual) {
-                        _updateState.value = UpdateState.UpToDate
-                    } else {
-                        _updateState.value = UpdateState.Idle
-                    }
-                }
-            } else {
-                if (manual) {
-                    val friendlyMsg = if (lastErrorMessage?.contains("resolve host", ignoreCase = true) == true) {
-                        "No internet connection. Please check your network and try again."
-                    } else {
-                        "Unable to check for updates. Please check your connection and try again."
-                    }
-                    _updateState.value = UpdateState.Error(friendlyMsg)
-                } else {
-                    _updateState.value = UpdateState.Idle
-                }
+    @Synchronized fun checkForUpdates(context: Context, manual: Boolean = false) {
+        val app = context.applicationContext
+        onAccountChanged(app)
+        com.bingo.multiplayer.core.designsystem.NotificationPreferences.init(app)
+        if (!manual && (!com.bingo.multiplayer.core.designsystem.NotificationPreferences.inAppNotificationsEnabled.value || hasDismissedInSession)) return
+        if (_updateState.value is UpdateState.Downloading || _updateState.value is UpdateState.ReadyToInstall) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (!manual && now - lastCheckAt < 60_000L) return
+        lastCheckAt = now
+        val owner = uid(app); val epoch = accountEpoch.get(); val request = checkEpoch.incrementAndGet()
+        checkJob?.cancel()
+        _updateState.value = UpdateState.Checking
+        checkJob = scope.launch {
+            try {
+                val info = resolve(app, owner)
+                if (epoch != accountEpoch.get() || request != checkEpoch.get() || uid(app) != owner) return@launch
+                publish(app, owner, epoch, when {
+                    info == null -> if (manual) UpdateState.Error("Unable to check for updates. Please try again.") else UpdateState.Idle
+                    info.hasUpdate -> UpdateState.UpdateAvailable(info)
+                    manual -> UpdateState.UpToDate
+                    else -> UpdateState.Idle
+                }, request)
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) {
+                if (epoch == accountEpoch.get() && request == checkEpoch.get() && uid(app) == owner)
+                    publish(app, owner, epoch, if (manual) UpdateState.Error("Unable to check for updates. Please try again.") else UpdateState.Idle, request)
             }
         }
     }
 
-    /**
-     * Silently queries update endpoints without mutating in-app dialog state.
-     * Used by background WorkManager to check for updates and post system notifications.
-     */
     suspend fun queryUpdateSilently(context: Context): AppUpdateInfo? = withContext(Dispatchers.IO) {
-        val currentVersion = getInstalledVersionName(context)
-        val currentVersionCode = getInstalledVersionCode(context)
-        for (endpointUrl in UPDATE_ENDPOINTS) {
-            try {
-                val request = Request.Builder()
-                    .url(endpointUrl)
-                    .header("Accept", "application/json, text/plain, */*")
-                    .header("User-Agent", "BingoMultiplayer-App/$currentVersion")
-                    .get()
-                    .build()
-
-                val response = NetworkConfig.httpClient.newCall(request).execute()
-                if (response.isSuccessful) {
-                    val body = response.body?.string().orEmpty().trim()
-                    response.close()
-
-                    var cleanBody = body
-                    if (cleanBody.startsWith("\"") && cleanBody.endsWith("\"") && cleanBody.length >= 2) {
-                        cleanBody = cleanBody.substring(1, cleanBody.length - 1)
-                            .replace("\\\"", "\"")
-                            .replace("\\\\", "\\")
-                    }
-
-                    if (cleanBody.isNotBlank() && cleanBody != "null" && cleanBody != "\"\"") {
-                        val info = parseUpdatePayload(cleanBody, currentVersion, currentVersionCode)
-                        if (info != null) {
-                            return@withContext info
-                        }
-                    }
-                } else {
-                    response.close()
-                }
-            } catch (_: Exception) {}
-        }
-        null
+        onAccountChanged(context)
+        val owner = uid(context); val epoch = accountEpoch.get()
+        val info = resolve(context, owner)
+        if (epoch == accountEpoch.get() && uid(context) == owner) info else null
     }
 
     private fun getUpdateDir(context: Context): File {
@@ -315,97 +280,73 @@ object AppUpdateManager {
         return dir
     }
 
-    /**
-     * Downloads APK from the given URL and tracks progress with automatic CDN fallback.
-     */
-    fun startDownload(context: Context, downloadUrl: String, onComplete: ((File) -> Unit)? = null) {
-        scope.launch {
+    /** Targeted downloads never substitute the public APK. Verify bytes, package, build and signer. */
+    @Synchronized fun startDownload(context: Context, downloadUrl: String, onComplete: ((File) -> Unit)? = null) {
+        val app = context.applicationContext
+        onAccountChanged(app)
+        val offer = (_updateState.value as? UpdateState.UpdateAvailable)?.info ?: return
+        if (offer.downloadUrl != downloadUrl || !isOfferForCurrentAccount(app, offer)) return
+        val owner = uid(app); val epoch = accountEpoch.get()
+        _updateState.value = UpdateState.Downloading(0f, 0, offer.apkSize)
+        downloadJob?.cancel()
+        downloadJob = scope.launch {
+            val file = File(getUpdateDir(app), "Bingo_Update_" + UUID.randomUUID() + ".apk")
+            var completed = false
             try {
-                _updateState.value = UpdateState.Downloading(0f, 0L, 0L)
-                val targetFile = File(getUpdateDir(context), "Bingo_Update.apk")
-                if (targetFile.exists()) {
-                    targetFile.delete()
-                }
-
-                // Prepare redundant download candidate URLs in case one CDN node is blocked
-                val downloadCandidates = mutableListOf(downloadUrl)
-                if (!downloadUrl.contains("vamsireddybora.github.io")) {
-                    downloadCandidates.add("https://vamsireddybora.github.io/BINGO/Bingo.apk")
-                }
-                if (!downloadUrl.contains("raw.githubusercontent.com")) {
-                    downloadCandidates.add("https://raw.githubusercontent.com/VamsiReddyBora/BINGO/gh-pages/Bingo.apk")
-                }
-
-                var downloadSuccess = false
-                var lastDownloadError: String? = null
-
-                for (url in downloadCandidates) {
+                val urls = ApkUpdateFeeds.downloadCandidates(offer)
+                var last: Exception? = null
+                for (url in urls) {
                     try {
-                        val request = Request.Builder()
-                            .url(url)
-                            .header("User-Agent", "BingoMultiplayer-App")
-                            .get()
-                            .build()
-
-                        val response = NetworkConfig.httpClient.newCall(request).execute()
-                        if (!response.isSuccessful) {
-                            response.close()
-                            continue
-                        }
-
-                        val responseBody = response.body
-                        if (responseBody == null) {
-                            response.close()
-                            continue
-                        }
-
-                        val totalBytes = responseBody.contentLength()
-
-                        responseBody.byteStream().use { input ->
-                            FileOutputStream(targetFile).use { output ->
-                                val buffer = ByteArray(16384)
-                                var bytesRead: Int
-                                var totalDownloaded = 0L
-                                var lastProgressReport = 0L
-
-                                while (input.read(buffer).also { bytesRead = it } != -1) {
-                                    output.write(buffer, 0, bytesRead)
-                                    totalDownloaded += bytesRead
-
+                        downloadHttp.newCall(Request.Builder().url(url).header("User-Agent", "BingoMultiplayer-App").build()).execute().use { response ->
+                            require(response.isSuccessful) { "APK download unavailable" }
+                            val body = requireNotNull(response.body)
+                            require(body.contentLength() <= ApkUpdateFiles.MAX_BYTES)
+                            var reportedAt = 0L
+                            body.byteStream().use { input -> ApkUpdateFiles.copy(input, file, offer.apkSize, offer.sha256,
+                                stillCurrent = { isActive && epoch == accountEpoch.get() && uid(app) == owner },
+                                progress = { bytes ->
                                     val now = System.currentTimeMillis()
-                                    if (now - lastProgressReport > 100 || totalDownloaded == totalBytes) {
-                                        lastProgressReport = now
-                                        val progress = if (totalBytes > 0) totalDownloaded.toFloat() / totalBytes else 0f
-                                        _updateState.value = UpdateState.Downloading(progress, totalDownloaded, totalBytes)
+                                    if (now - reportedAt >= 100 || bytes == offer.apkSize) {
+                                        if (epoch == accountEpoch.get() && uid(app) == owner)
+                                            publish(app, owner, epoch, UpdateState.Downloading(if (offer.apkSize > 0) bytes.toFloat() / offer.apkSize else 0f, bytes, offer.apkSize))
+                                        reportedAt = now
                                     }
-                                }
-                                output.flush()
-                            }
+                                }) }
                         }
-                        response.close()
-
-                        if (targetFile.exists() && targetFile.length() > 0) {
-                            downloadSuccess = true
-                            Log.i(TAG, "APK download completed from $url: ${targetFile.absolutePath} (${targetFile.length()} bytes)")
-                            break
+                        validateArchive(app, file, offer)
+                        synchronized(AppUpdateManager) {
+                            check(isActive && epoch == accountEpoch.get() && uid(app) == owner)
+                            preparedInstall?.first?.delete()
+                            preparedInstall = file to offer
+                            _updateState.value = UpdateState.ReadyToInstall(file)
+                            completed = true
                         }
-                    } catch (e: Exception) {
-                        lastDownloadError = e.message
-                        Log.w(TAG, "Failed downloading from $url: ${e.message}")
-                    }
+                        break
+                    } catch (e: CancellationException) { throw e }
+                    catch (e: Exception) { file.delete(); last = e }
                 }
-
-                if (downloadSuccess) {
-                    _updateState.value = UpdateState.ReadyToInstall(targetFile)
-                    onComplete?.invoke(targetFile)
-                } else {
-                    _updateState.value = UpdateState.Error(lastDownloadError ?: "Download failed. Please check internet connection.")
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "APK download failed: ${e.message}", e)
-                _updateState.value = UpdateState.Error(e.message ?: "Download failed")
-            }
+                if (!completed) throw (last ?: IllegalStateException("APK download failed"))
+                runCatching { onComplete?.invoke(file) }
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) {
+                if (epoch == accountEpoch.get() && uid(app) == owner)
+                    publish(app, owner, epoch, UpdateState.Error("The update could not be verified or downloaded. Please check again and retry."))
+            } finally { if (!completed) file.delete() }
         }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun validateArchive(context: Context, file: File, offer: AppUpdateInfo) {
+        val flags = if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
+        val installed = context.packageManager.getPackageInfo(context.packageName, flags)
+        val archive = requireNotNull(context.packageManager.getPackageArchiveInfo(file.path, flags)) { "Invalid APK" }
+        val code = if (Build.VERSION.SDK_INT >= 28) archive.longVersionCode else archive.versionCode.toLong()
+        require(archive.packageName == context.packageName && archive.versionName == offer.latestVersionName && code > getInstalledVersionCode(context))
+        require(offer.versionCode == 0L || code == offer.versionCode)
+        fun signatures(info: PackageInfo) = (if (Build.VERSION.SDK_INT >= 28) info.signingInfo?.apkContentsSigners else info.signatures)
+            .orEmpty().map { signature -> MessageDigest.getInstance("SHA-256").digest(signature.toByteArray()).toList() }.toSet()
+        require(signatures(installed).isNotEmpty() && signatures(installed) == signatures(archive)) { "APK signing key changed" }
+        require(isOfferForCurrentAccount(context, offer)) { "Update account changed" }
     }
 
     /**
@@ -413,6 +354,12 @@ object AppUpdateManager {
      */
     fun installApk(context: Context, apkFile: File) {
         try {
+            val prepared = preparedInstall
+            if (prepared == null || prepared.first != apkFile || !isOfferForCurrentAccount(context, prepared.second)) {
+                pendingInstallApk = null
+                _updateState.value = UpdateState.Error("Please check for updates again for this account.")
+                return
+            }
             if (!apkFile.exists() || apkFile.length() == 0L) {
                 Log.e(TAG, "APK file does not exist or is empty: ${apkFile.absolutePath}")
                 _updateState.value = UpdateState.Error("Downloaded file is missing or corrupt.")
@@ -486,8 +433,9 @@ object AppUpdateManager {
      * Dismisses the update dialog or resets state back to Idle.
      * Records dismissal for this session so the user is not prompted again until restart.
      */
-    fun dismiss(context: Context? = null) {
+    @Synchronized fun dismiss(context: Context? = null) {
         hasDismissedInSession = true
+        checkEpoch.incrementAndGet(); checkJob?.cancel()
         if (context != null) {
             BingoNotificationManager.cancelUpdateNotification(context)
         }

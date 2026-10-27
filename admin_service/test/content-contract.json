@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "revision": 1,
+  "audience": "ALL",
+  "minBuild": 74,
+  "maxBuild": 0,
+  "enabled": true,
+  "inheritGlobal": false,
+  "strings": { "home.online.title": "Online Match", "home.online.description": "Host or join a room with friends." },
+  "homeStyle": { "verticalPaddingDp": 12, "titleSp": 15, "descriptionSp": 12, "descriptionMaxLines": 1, "backgroundOpacity": 0.08 },
+  "background": null
+}

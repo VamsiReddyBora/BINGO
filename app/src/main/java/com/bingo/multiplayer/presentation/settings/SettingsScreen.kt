@@ -2149,6 +2149,8 @@ fun SettingsScreen(
                 }
             }
             val updateState by AppUpdateManager.updateState.collectAsState()
+            val otaRuntime = remember { com.bingo.multiplayer.domain.content.ContentUpdateRuntime.get(context) }
+            val otaStatus by otaRuntime.status.collectAsState()
 
             Column(
                 modifier = Modifier.fillMaxWidth(),
@@ -2160,6 +2162,8 @@ fun SettingsScreen(
                     fontWeight = FontWeight.Medium,
                     color = tokens.textMuted
                 )
+                com.bingo.multiplayer.presentation.common.ContentUpdateIndicator(
+                    user.uid, otaStatus, settingsLink = true)
 
                 Spacer(modifier = Modifier.height(10.dp))
 

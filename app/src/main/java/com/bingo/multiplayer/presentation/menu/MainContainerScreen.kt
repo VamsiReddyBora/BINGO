@@ -28,6 +28,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
@@ -35,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -95,6 +98,15 @@ fun MainContainerScreen(
         uid = "guest",
         displayName = "Player"
     )
+    val contentContext = LocalContext.current
+    val contentRuntime = remember { com.bingo.multiplayer.domain.content.ContentUpdateRuntime.get(contentContext) }
+    val contentForeground by com.bingo.multiplayer.domain.network.AppLifecycleObserver.isAppInForeground.collectAsState()
+    val contentUid = (authState as? AuthState.Authenticated)?.user?.uid?.takeIf { it.isNotBlank() }
+    DisposableEffect(contentUid, contentForeground) {
+        if (contentForeground) com.bingo.multiplayer.domain.network.AppUpdateManager.checkForUpdates(contentContext)
+        val lease = if (contentUid != null && contentForeground) contentRuntime.enterHome(contentUid) else null
+        onDispose { lease?.close() }
+    }
 
     Box(
         modifier = Modifier

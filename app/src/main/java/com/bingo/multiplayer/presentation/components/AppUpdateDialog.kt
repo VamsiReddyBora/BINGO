@@ -121,6 +121,13 @@ fun AppUpdateDialog() {
                             }
                         }
 
+                        if (state.info.versionCode > 0) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Build ${state.info.versionCode}" + if (state.info.audience != "ALL") " · For your account" else "",
+                                fontSize = 12.sp, color = tokens.textMuted
+                            )
+                        }
                         if (state.info.apkSize > 0) {
                             val sizeMb = String.format(Locale.US, "%.1f MB", state.info.apkSize / (1024f * 1024f))
                             Spacer(modifier = Modifier.height(4.dp))

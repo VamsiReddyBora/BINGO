@@ -1,8 +1,13 @@
-# Bingo — Build 73 and current admin console
+# Bingo 1.0.4 — Build 76
 
 Android Bingo with AI, MQTT multiplayer, Nearby Network play, friends and notifications.
 
-This source adds one-time recovery of verified imported legacy accounts before local profile uploads. See MIGRATION_RECOVERY.md. It retains the repair to profile-sync startup for locally signed-in Google accounts with an existing Firebase storage session, and adds a compact admin layout with honest app-application confirmation. It retains live admin profile, level/statistics, photo, history and friendship edits through Firebase. See ADMIN_APP_SYNC.md. Gameplay rules and transports remain unchanged. Build 73 is published through GitHub Pages for in-app installation; the GitHub v1.0.3 release and its Build 70 source/APK are retained separately.
+## This release
+
+- Supported Home text, layout values and static images can update in the background, with progress, validation and rollback. Current visuals remain the defaults. See [OTA_CONTENT_UPDATES.md](OTA_CONTENT_UPDATES.md).
+- APK updates can be offered to everyone or one registered account. Downloads verify size, checksum, package, build and signing certificate. Android still asks for installation approval. See [APK_UPDATE_CHANNELS.md](APK_UPDATE_CHANNELS.md).
+- Existing admin profile/statistics/photo/friendship synchronization and legacy account recovery remain included.
+- Existing gameplay rules, MQTT match traffic, Firebase storage and notification behavior are preserved. This release contains Bingo only.
 
 ## Source layout
 
@@ -29,7 +34,7 @@ From `cloudflare_worker/`, run `npm ci` and `npm test`. Supply `SERVICE_ACCOUNT_
 
 ## Versioned releases and privacy
 
-Versions 1.0, 1.0.1, 1.0.2 and 1.0.3 have separate Git tags, APKs and source archives. Main reflects the latest published source. Source packages exclude signing keys, passwords, real Firebase client configuration, account/player data, device addresses, local tooling, logs and build caches. Existing intentional in-app developer contact links are retained.
+Versions 1.0, 1.0.1, 1.0.2, 1.0.3 and 1.0.4 have separate Git tags, APKs and source archives. Main reflects the latest published source. Source packages exclude signing keys, passwords, real Firebase client configuration, account/player data, device addresses, local state, logs and build caches. Existing intentional in-app developer contact links are retained.
 
 See `AGENT_HANDOFF.md` for verification results and remaining hardware acceptance limits.
 

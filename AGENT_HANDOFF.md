@@ -1,27 +1,25 @@
-# Current admin website update
+# Agent handoff — Bingo 1.0.4, Build 76
 
-Read ADMIN_USABILITY.md. Server-validated tab session restoration replaces forced logout on every refresh; server expiry/revocation and fresh passkey approval for every mutation remain. Versions are paired by source; unknown status is not treated as offline. Directory filters, profile context, change confirmation and dark/mobile layout are improved. The website updates independently of the unchanged Build73 APK, update feed and GitHub Releases. No Worker deployment or production player mutation is required. Current website verification is recorded in SOURCE_MANIFEST.json; Android validation remains the previous unchanged Build73 run.
+This is the clean release source. Main and tag v1.0.4 identify the same source tree; previous version tags/APKs/source ZIPs remain separate. Read SimplifiedGameRules.md before changing gameplay. Keep fixes covered by production-path regressions and retain all previous valid assertions. Do not introduce a gameplay-policy change as a networking repair.
 
-# Agent handoff — Build 73 legacy account recovery preview
+## Architecture and behavior
 
-Read SimplifiedGameRules.md, ADMIN_APP_SYNC.md and MIGRATION_RECOVERY.md before changing this source. Preserve intentional gameplay and every previous passing regression. Main contains clean current source; GitHub Releases and their existing tags/assets are unchanged. This APK is delivered through the existing Pages update feed.
+MQTT transports invitations, rooms and gameplay. Firebase stores player data. The authenticated Cloudflare notification relay delivers background pushes; the admin service controls existing player data and update publication. Preserve these roles, game rules, manual pause, turn timers, winners, rejoin behavior and friend/photo synchronization.
 
-## Current change
+This release includes the existing notification-reconnection prompt, 30-minute friend-online return interval, saved-result/lobby fixes, live admin profile/statistics/photo/friendship synchronization and verified legacy account recovery. See ADMIN_APP_SYNC.md and MIGRATION_RECOVERY.md.
 
-The one-time migration planner accepts only verified readable original backups, excludes existing Firebase identities and deletion markers, and uses create-only atomic account transactions. Profiles, statistics, photos, saved matches and verified friends use existing Firebase collections. Private source archives retain recoverable legacy data without publishing it. Missing legacy username lookup aliases may be restored after verifying their original owner; source backup blobs remain untouched. Live plans, credentials, backups and account results stay in the private operator job.
+## New update support
 
-LegacyProfileRecovery is shared by AuthRepository's existing profile callback and FirestoreSyncManager's guarded upload. It applies an imported baseline once per matching original account, persists a recovery marker, preserves newer progress and administrator edits, and keeps the canonical recovered identity/photo when a pre-migration backup arrives late. Migration uses adminRevision zero; it is not an administrator edit. A Guest account still needs its original saved identity, and older Play Games identities are not reassigned to a new Google sign-in.
+Read OTA_CONTENT_UPDATES.md and APK_UPDATE_CHANNELS.md. Content updates are data only: supported Home strings, bounded layout values and static backgrounds. No executable code, new native feature or general hotpatching is downloaded. The default visuals remain unchanged. The temporary selected-account test text was withdrawn using a higher content revision; retain that withdrawal manifest on Pages.
 
-## Existing behavior to preserve
+APK offers use the public feed or a SHA-256 Firebase-UID target route. Higher known native build numbers win; account changes invalidate stale checks/downloads/installer ownership. Downloads verify size/hash and Android package/version/build/signing identity. Android installer approval is retained. The admin service and Pages controls have already been deployed. Preserve existing Pages content and account-target manifests during future APK publications.
 
-The admin console and authenticated Worker retain their current compact layout, actions, passkeys, policies and deletion markers. ProfileSyncStartup observes public profiles before storage-session retries. A separate device receipt acknowledges a durable administrator edit; an upload alone is not proof. CloudAdminPolicy retains explicit reductions and photo/history removals. Local preferences and gameplay, MQTT invitations, turn timing, recovery, notifications and winner rules are unchanged.
+## Build, privacy and validation
 
-## Verification
+Use JDK 17 and SDK 34. See README.md. Supply app/google-services.json, local.release.properties and production signing/deployment inputs privately from the included templates. The published source externalizes deployment values into BuildConfig; it contains no signing keys, device addresses, passwords, real service account, player records or local logs. Existing intentional support contact links remain.
 
-SOURCE_MANIFEST.json records actual complete native and clean-source case counts, preservation of previous passing case identities, lint and signing checks, and service/browser results. Twelve new permanent client cases cover migrated baseline recovery, restart, replay, canonical identity, late backup delivery and the shared recovery guard. Two cases failed against the previous production callback. A strengthened canonical-username assertion also exposed a real late-backup race; its failure was retained and a deterministic restore-path regression added before the final passing runs. Migration service tests exercise planner, executor and REST preconditions with fictional data. Existing browser checks exercise the actual console and protected handlers with virtual WebAuthn, not real player mutations.
+SOURCE_MANIFEST.json records the executed release verification and file hashes. Policy/JVM/browser checks do not replace native Android installer, WorkManager or notification testing. The previous Build 75 APK and a selected-account content change were exercised by the owner. Build 76 is a versioned publication of that implementation, with no new gameplay changes.
 
-Actual live import verification is recorded privately and is separate from automated fictional tests. Returning-phone acceptance, rendering and delivery latency remain physical-device checks. Never infer physical confirmation from unit tests or manufacture a device receipt.
+## Release validation fixture correction
 
-## Build and publication
-
-Version name remains 1.0.3 and version code is 73. Supply signing, Firebase and broker/storage build inputs privately using the existing templates; never commit credentials, device addresses, production account lists or local logs. Keep intentional support contact links. Public builds do not copy APKs to personal devices. Do not deploy a new Worker for this standalone import, reset admin state, introduce a referee, or create a GitHub release without the owner's approval.
+RELEASE-TEST-01: an initial release run failed `AuthRepositoryTest.latePreMigrationBackupCannotReplaceRecoveredIdentityAndPhoto` because a fresh fake cloud gateway retained process-wide bin/backup caches from an earlier fake store. The test setup now clears those caches, and the scenario checks that its backup fixture was saved. All original recovery assertions remain. This changes test isolation only; production account and gameplay code are unchanged. The initial failure is retained in private release evidence, and final verification is recorded in SOURCE_MANIFEST.json.

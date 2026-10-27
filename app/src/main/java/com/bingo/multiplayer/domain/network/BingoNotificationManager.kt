@@ -218,9 +218,13 @@ object BingoNotificationManager {
     fun onAppForeground(context: Context) { NotificationRuntime.onForeground(context) }
 
     fun showUpdate(context: Context, info: AppUpdateInfo) {
+        val expected = NotificationRuntime.account(context)
+        if (!AppUpdateManager.isOfferForCurrentAccount(context, info)) return
+        val currentUid = NotificationRuntime.profile(context)?.uid.orEmpty()
+        if (!ApkUpdateOfferPolicy.matchesAccount(info.accountUid, currentUid, expected?.uid)) return
         if (AppLifecycleObserver.isAppInForeground.value || !info.hasUpdate) return
-        showNotice(context, "update:${info.latestVersionTag}", CHANNEL_UPDATES, NOTIFICATION_ID_UPDATE,
-            "Bingo ${info.latestVersionName} is available", "Tap to see what's new and update.", showUpdate = true)
+        showNotice(context, ApkUpdateOfferPolicy.noticeKey(info.versionCode, info.latestVersionTag), CHANNEL_UPDATES, NOTIFICATION_ID_UPDATE,
+            "Bingo ${info.latestVersionName} is available", "Tap to see what's new and update.", showUpdate = true, expected = expected)
     }
     fun showBroadcast(context: Context, message: BroadcastMessage) {
         val expected = NotificationRuntime.account(context) ?: return

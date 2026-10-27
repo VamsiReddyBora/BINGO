@@ -20,6 +20,8 @@ import {
 } from "./model.js";
 import { CurrentPlayerStore } from "./current-store.js";
 import { ReleasePublisher } from "./releases.js";
+import { ContentPublisher } from "./content.js";
+import { TargetedReleasePublisher } from "./targeted-releases.js";
 import { brokerTcp } from "./mqtt.js";
 
 import { json, readBody as body } from "./http.js";
@@ -71,6 +73,8 @@ export class AdminControl {
     this.env = env;
     this.legacy = env.TEST_LEGACY || new CurrentPlayerStore(env);
     this.releases = env.TEST_RELEASES || new ReleasePublisher(env, this.legacy);
+    this.content = env.TEST_CONTENT || new ContentPublisher(env);
+    this.targetedReleases = env.TEST_TARGETED_RELEASES || new TargetedReleasePublisher(env, this.legacy);
     this.broker = env.TEST_BROKER || ((args) => brokerTcp(env, args));
     this.mutations = Promise.resolve();
     this.cachedSnapshot = null;
@@ -496,6 +500,25 @@ export class AdminControl {
       );
       return json({ operations: operations.slice(0, 100) });
     }
+    if (path === "/api/content") {
+      const target = url.searchParams.get("target") || "ALL";
+      const row = target === "ALL" ? null : await this.player(username(target), true);
+      const audience = await this.content.audience(row ? row.profile.uid : "ALL");
+      const current = await this.content.state(audience);
+      return json({manifest:current.manifest,revision:current.revision,audience,
+        head:current.head,publishConfigured:current.publishConfigured,target});
+    }
+    if (path === "/api/targeted-release") {
+      const target = username(url.searchParams.get("target"));
+      const row = await this.player(target, true);
+      requireThat(!row.stale && row.profile.uid, 503, "Current player identity is unavailable");
+      const audience = await this.targetedReleases.audience(row.profile.uid);
+      const result = await this.targetedReleases.state(audience);
+      const publicFeed = await this.releases.feed();
+      return json({ channel: result.channel, release: result.release, revision: result.revision,
+        audience, target, head: result.head, publishConfigured: result.publishConfigured,
+        source: result.source, publicVersionCode: publicFeed.release.versionCode });
+    }
     if (path === "/api/release") {
       const result = await this.releases.feed();
       const deployment = this.releases.deployment
@@ -626,6 +649,8 @@ export class AdminControl {
         );
       if (type === "ANNOUNCEMENT")
         await store.put("announcement-intent:" + target, id);
+      if (type === "CONTENT") await store.put("content-intent:" + target, id);
+      if (type === "APK_RELEASE") await store.put("apk-intent:" + target, id);
       await store.put("operation:" + id, operation);
       await store.put("audit:" + String(now).padStart(16, "0") + ":" + id, {
         id,
@@ -693,6 +718,21 @@ export class AdminControl {
           ],
         });
         op.brokerAcknowledged = true;
+      } else if (op.type === "CONTENT") {
+        const latest = await this.storage.get("content-intent:" + op.target);
+        if (latest && latest !== op.id) {
+          op.status="SUPERSEDED";op.error="Newer content replaced this operation";
+          await this.storage.put("operation:"+op.id,op);
+          return json({operation:{...op,data:undefined},message:op.error});
+        }
+        op.publication = await this.content.publish(op.data);
+      } else if (op.type === "APK_RELEASE") {
+        if (await this.storage.get("apk-intent:" + op.target) !== op.id) {
+          op.status = "SUPERSEDED"; op.error = "Newer APK offer replaced this operation";
+          await this.storage.put("operation:" + op.id, op);
+          return json({ operation: { ...op, data: undefined }, message: op.error });
+        }
+        op.publication = await this.targetedReleases.publish(op.data);
       } else if (op.type === "RELEASE") {
         op.publication = await this.releases.publish(op.data);
       } else if (op.type === "CREATE") {
@@ -804,7 +844,7 @@ export class AdminControl {
       delete op.error;
     } catch (e) {
       op.status =
-        op.type === "RELEASE" && e.status === 409 ? "SUPERSEDED" : "PENDING";
+        ["RELEASE", "APK_RELEASE"].includes(op.type) && e.status === 409 ? "SUPERSEDED" : "PENDING";
       op.error =
         e instanceof Problem
           ? e.message
@@ -834,7 +874,7 @@ export class AdminControl {
     }
     const input = await body(
       request,
-      path === "/api/release" ? 17000000 : 110000,
+      path === "/api/release" || path === "/api/targeted-release" ? 17000000 : path === "/api/content" ? 3000000 : 110000,
     );
     const operationId = request.headers.get("Idempotency-Key");
     if (operationId) {
@@ -986,6 +1026,26 @@ export class AdminControl {
         { username: name, uid },
         { removed: true },
       );
+    }
+    if (path === "/api/content") {
+      requireThat(request.method === "PUT",405,"Method not allowed");
+      const target = input.target === "ALL" ? "ALL" : username(input.target);
+      const row = target === "ALL" ? null : await this.player(target,true);
+      requireThat(!row?.stale && (!row || row.profile.uid),503,"Current player identity is unavailable");
+      const audience = await this.content.audience(row ? row.profile.uid : "ALL");
+      const prepared = await this.content.prepare(input,audience);
+      return this.saveOperation(session,"CONTENT",audience,prepared,
+        {revision:prepared.expectedRevision},{revision:prepared.manifest.revision,audience});
+    }
+    if (path === "/api/targeted-release") {
+      requireThat(request.method === "PUT", 405, "Method not allowed");
+      const target = username(input.target), row = await this.player(target, true);
+      requireThat(!row.stale && row.profile.uid, 503, "Current player identity is unavailable");
+      const audience = await this.targetedReleases.audience(row.profile.uid);
+      const prepared = await this.targetedReleases.prepare(input, audience);
+      return this.saveOperation(session, "APK_RELEASE", audience, prepared,
+        { revision: prepared.expectedRevision }, { revision: prepared.channel.revision, enabled: prepared.channel.enabled,
+          versionCode: prepared.channel.release?.versionCode || null });
     }
     if (path === "/api/release") {
       requireThat(request.method === "PUT", 405, "Method not allowed");

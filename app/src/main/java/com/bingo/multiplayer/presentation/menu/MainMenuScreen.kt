@@ -106,6 +106,11 @@ fun MainMenuScreen(
     )
 
     val currentAccountUid = userProfile.uid.takeIf { it.isNotBlank() && it != "guest" }
+    val contentRuntime = remember { com.bingo.multiplayer.domain.content.ContentUpdateRuntime.get(context) }
+    val contentStatus by contentRuntime.status.collectAsState()
+    fun contentText(key: String, fallback: String) = com.bingo.multiplayer.domain.content.ContentPacks.text(contentStatus, currentAccountUid, key, fallback)
+    val contentStyle = contentStatus.takeIf { it.uid == currentAccountUid }?.cache?.active?.pack
+        ?.takeIf { it.enabled }?.homeStyle ?: com.bingo.multiplayer.domain.content.ContentHomeStyle()
     var selectedAiDifficulty by remember { mutableStateOf(AiDifficulty.EASY) }
     var ongoingMatch by remember { mutableStateOf(OngoingMatchStore.getOngoingMatch(context, currentAccountUid)) }
     var isMatchVerifiedActive by remember { mutableStateOf(false) }
@@ -239,6 +244,8 @@ fun MainMenuScreen(
             .background(tokens.background)
     ) {
         val screenHeight = maxHeight
+        val compactContentHeader = maxWidth < 340.dp
+        com.bingo.multiplayer.presentation.common.ContentHomeBackground(currentAccountUid, contentStatus, Modifier.matchParentSize())
         // Estimated height of content up to bottom of Nearby Network card:
         // Top padding 20.dp + Top bar 36.dp + Spacers ~40.dp + AI card ~92.dp + Online card ~72.dp + Nearby card ~72.dp ~= 332.dp
         // If ongoing match is present, it adds ~88.dp.
@@ -263,15 +270,18 @@ fun MainMenuScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "B I N G O",
+                        text = if (compactContentHeader) "BINGO" else "B I N G O",
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                         style = BingoTheme.typography.logoTitle.copy(fontSize = 24.sp),
                         color = tokens.cellNeutralText
                     )
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    com.bingo.multiplayer.presentation.common.ContentUpdateIndicator(currentAccountUid, contentStatus)
                     // Ping Display (Matches GameScreen exactly, updates every 1 second, just left of Theme Toggle)
                     val pingColor = when {
                         displayedPingMs <= 0L -> Color.Gray
@@ -462,15 +472,18 @@ fun MainMenuScreen(
             CompactAiModeCard(
                 selectedDifficulty = selectedAiDifficulty,
                 onDifficultyChanged = { selectedAiDifficulty = it },
-                onPlayClicked = { onPlayAi(selectedAiDifficulty) }
+                onPlayClicked = { onPlayAi(selectedAiDifficulty) },
+                title = contentText("home.ai.title", "Play vs AI"),
+                description = contentText("home.ai.description", "Solo practice match with bot")
             )
 
             Spacer(modifier = Modifier.height(12.dp))
 
             // ── 2. Online Match Card (Compact) ──
             CompactMenuCard(
-                title = "Online Match",
-                description = "Host or join multiplayer rooms with friends.",
+                title = contentText("home.online.title", "Online Match"),
+                description = contentText("home.online.description", "Host or join multiplayer rooms with friends."),
+                contentStyle = contentStyle,
                 icon = Icons.Default.CastConnected,
                 accentColor = if (tokens.isDark) Color.White else tokens.accentOpponent,
                 onClick = onPlayOnline
@@ -480,8 +493,9 @@ fun MainMenuScreen(
 
             // ── 3. Nearby Network Card (Compact) ──
             CompactMenuCard(
-                title = "Nearby Network",
-                description = "Zero-latency Wi-Fi & Hotspot peer discovery.",
+                title = contentText("home.nearby.title", "Nearby Network"),
+                description = contentText("home.nearby.description", "Zero-latency Wi-Fi & Hotspot peer discovery."),
+                contentStyle = contentStyle,
                 icon = Icons.Default.Wifi,
                 accentColor = if (tokens.isDark) Color.White else tokens.accentOrange,
                 onClick = onPlayNearbyNetwork
@@ -516,7 +530,7 @@ fun MainMenuScreen(
                                     fontWeight = FontWeight.Normal
                                 )
                             ) {
-                                append("Unable to connect to the EMQX MQTT broker. Online invitations and match synchronization may be interrupted. Please report this through Developer Note.")
+                                append(contentText("home.serverNote", "Unable to connect to the EMQX MQTT broker. Online invitations and match synchronization may be interrupted. Please report this through Developer Note."))
                             }
                         },
                         fontSize = 11.sp,
@@ -544,7 +558,7 @@ fun MainMenuScreen(
                     horizontalArrangement = Arrangement.Center
                 ) {
                     Text(
-                        text = "developer note ☕",
+                        text = contentText("home.developerNote", "developer note ☕"),
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium,
                         color = tokens.cellNeutralText
@@ -565,7 +579,9 @@ fun MainMenuScreen(
 private fun CompactAiModeCard(
     selectedDifficulty: AiDifficulty,
     onDifficultyChanged: (AiDifficulty) -> Unit,
-    onPlayClicked: () -> Unit
+    onPlayClicked: () -> Unit,
+    title: String = "Play vs AI",
+    description: String = "Solo practice match with bot"
 ) {
     val tokens = BingoTheme.colors
     val haptic = LocalHapticFeedback.current
@@ -593,13 +609,13 @@ private fun CompactAiModeCard(
 
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Play vs AI",
+                        text = title,
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,
                         color = tokens.cellNeutralText
                     )
                     Text(
-                        text = "Solo practice match with bot",
+                        text = description,
                         fontSize = 12.sp,
                         color = tokens.textMuted
                     )
@@ -712,6 +728,7 @@ private fun CompactMenuCard(
     description: String,
     icon: ImageVector,
     accentColor: Color,
+    contentStyle: com.bingo.multiplayer.domain.content.ContentHomeStyle = com.bingo.multiplayer.domain.content.ContentHomeStyle(),
     onClick: () -> Unit
 ) {
     val tokens = BingoTheme.colors
@@ -750,7 +767,7 @@ private fun CompactMenuCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(horizontal = 16.dp, vertical = (contentStyle.verticalPaddingDp ?: 16).dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
@@ -766,7 +783,7 @@ private fun CompactMenuCard(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = title,
-                        fontSize = 15.sp,
+                        fontSize = (contentStyle.titleSp ?: 15).sp,
                         fontWeight = FontWeight.Bold,
                         color = tokens.cellNeutralText
                     )
@@ -792,7 +809,8 @@ private fun CompactMenuCard(
 
                 Text(
                     text = description,
-                    fontSize = 12.sp,
+                    fontSize = (contentStyle.descriptionSp ?: 12).sp,
+                    maxLines = contentStyle.descriptionMaxLines ?: Int.MAX_VALUE,
                     lineHeight = 15.sp,
                     color = tokens.textMuted
                 )

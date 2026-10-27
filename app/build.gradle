@@ -22,8 +22,8 @@ android {
         applicationId "com.bingo.multiplayer"
         minSdk 24
         targetSdk 34
-        versionCode 73
-        versionName "1.0.3"
+        versionCode 76
+        versionName "1.0.4"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField "String", "BINGO_MQTT_USERNAME", groovy.json.JsonOutput.toJson(releaseValue("BINGO_MQTT_USERNAME"))

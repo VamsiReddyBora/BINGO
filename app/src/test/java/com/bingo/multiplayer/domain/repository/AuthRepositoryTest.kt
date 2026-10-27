@@ -27,6 +27,13 @@ class AuthRepositoryTest {
         previousWire = com.bingo.multiplayer.domain.network.EmqxTransport.wireOverride
         com.bingo.multiplayer.domain.network.EmqxTransport.wireOverride = com.bingo.multiplayer.domain.network.EmqxWireFixture()
         previousGateway = com.bingo.multiplayer.domain.network.AccountSessionManager.customCloudGateway
+        // Each test gets a new fake cloud store. Clear process-wide lookup/backup caches
+        // too, so cached bin IDs from a previous fixture cannot point into that empty store.
+        for (name in listOf("binIdCache", "registryCache", "backupMemoryCache")) {
+            val field = com.bingo.multiplayer.domain.network.AccountSessionManager::class.java
+                .getDeclaredField(name).apply { isAccessible = true }
+            (field.get(null) as MutableMap<*, *>).clear()
+        }
         val memoryStore = ConcurrentHashMap<String, String>()
         com.bingo.multiplayer.domain.network.AccountSessionManager.customCloudGateway = object : com.bingo.multiplayer.domain.network.AccountSessionManager.CloudStorageGateway {
             override suspend fun getKeyValue(key: String): String? = memoryStore[key]
@@ -1287,8 +1294,9 @@ class AuthRepositoryTest {
         repository.onGoogleSignInSuccess(googleId, "Fresh player", "fixture@example.com", "temporary_name")
         repository.sessionManager.drainBackgroundJobs()
         val original = repository.getPersistedUserSync()!!
-        repository.sessionManager.backupUserDataSync(googleId,
-            com.bingo.multiplayer.domain.model.CloudUserDataBackup(profile = original))
+        assertTrue("The old backup fixture must exist before testing late recovery",
+            repository.sessionManager.backupUserDataSync(googleId,
+                com.bingo.multiplayer.domain.model.CloudUserDataBackup(profile = original)))
         repository.applyCloudAdminSnapshot(migrationSnapshot(original.uid) + ("avatarBase64" to "imported-photo"),
             original.uid, repository.sessionGeneration.get())
         assertTrue(repository.restoreCloudUserData(googleId))

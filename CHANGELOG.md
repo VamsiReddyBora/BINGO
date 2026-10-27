@@ -1,3 +1,11 @@
+# Bingo 1.0.4 — Build 76
+
+- Add supported silent Home content updates for everyone or a selected account, with background progress, atomic storage, validation and rollback.
+- Add public and selected-account APK offers with account ownership guards and verified downloads. Native changes continue to require an APK installation.
+- Add compact admin publication controls for both update types, retaining existing passkey approval and audits.
+- Retain current Bingo visuals, game rules, MQTT/Firebase roles, admin synchronization, notifications, and earlier regression coverage.
+- Preserve previous release tags, APKs and source archives. Main contains this release's clean source.
+
 ## Admin website usability update
 
 - Restore a server-validated tab session on refresh; preserve expiry, Lock and per-action device approval.
