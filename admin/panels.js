@@ -21,6 +21,7 @@ export function createPanels({
 }) {
   let matchRows = [],
     matchSequence = 0;
+  let releaseSequence = 0;
   const empty = (text) =>
     h(
       "div",
@@ -437,16 +438,24 @@ export function createPanels({
         empty("No recent saved results match these filters."),
       );
   }
-  async function releases() {
+  async function releases(selectedTarget = "ALL") {
     const root = $("release-content"),
       generation = state.generation;
+    const sequence = ++releaseSequence;
+    const targeted = selectedTarget !== "ALL";
+    const endpoint = targeted ? "targeted-release" : "release";
     root.replaceChildren(
       h("div", { class: "loading" }, "Reading the actual update feed…"),
     );
     try {
-      const result = await api("release");
-      if (generation !== state.generation) return;
-      const current = result.release;
+      const result = await api(endpoint + (targeted ? "?target=" + encodeURIComponent(selectedTarget) : ""));
+      if (generation !== state.generation || sequence !== releaseSequence) return;
+      const current = result.release || { versionName: "—", versionCode: 0 };
+      const target = h("select", { "data-apk-target": "" },
+        h("option", { value: "ALL" }, "Everyone"),
+        ...rows().map(p => h("option", { value: p.username }, "@" + p.username)));
+      target.value = selectedTarget;
+      target.addEventListener("change", () => releases(target.value));
       const form = h(
         "form",
         { class: "panel release-form" },
@@ -455,8 +464,9 @@ export function createPanels({
         h(
           "p",
           { class: "muted small" },
-          "Use a compiled, signed APK. This publishes the in-app update through Pages and its fallback feed; existing GitHub Releases and source tags stay separate.",
+          "Choose Everyone or one account. Selected-account offers require Build 75+ and do not change the public update feed. APK installation still uses Android approval.",
         ),
+        h("label", {}, "APK audience", target),
       );
       const grid = h("div", { class: "form-grid" });
       const field = (label, name, value, type = "text") =>
@@ -477,7 +487,7 @@ export function createPanels({
         field(
           "Build number",
           "versionCode",
-          Number(current.versionCode) + 1,
+          Math.max(Number(current.versionCode), Number(result.publicVersionCode || 0)) + 1,
           "number",
         ),
       );
@@ -565,8 +575,8 @@ export function createPanels({
           { class: "release-orbit", "aria-hidden": "true" },
           h("span", {}, "↗"),
         ),
-        h("p", { class: "eyebrow" }, "CURRENT UPDATE"),
-        h("h2", {}, "v" + current.versionName),
+        h("p", { class: "eyebrow" }, targeted ? "OFFER FOR @" + selectedTarget : "CURRENT PUBLIC UPDATE"),
+        h("h2", {}, current.versionCode ? "v" + current.versionName : "No selected-account offer"),
         h("p", { class: "build-label" }, "BUILD " + current.versionCode),
         h(
           "span",
@@ -584,7 +594,7 @@ export function createPanels({
         h("hr"),
         h("p", { class: "small muted" }, "Source: " + result.source),
         h("p", { class: "small" }, current.releaseNotes || "No release notes"),
-        h(
+        current.downloadUrl ? h(
           "a",
           {
             href: current.downloadUrl,
@@ -593,7 +603,7 @@ export function createPanels({
             class: "download-link",
           },
           "Open current APK ↗",
-        ),
+        ) : h("p", { class: "small muted" }, "This account follows the public update until an offer is published."),
         h(
           "small",
           { class: "mono muted checksum" },
@@ -601,6 +611,18 @@ export function createPanels({
         ),
       );
       root.replaceChildren(h("div", { class: "release-grid" }, form, live));
+      if (targeted && result.channel?.enabled) {
+        live.append(button("Withdraw selected offer", async () => {
+          if (!(await confirmAction("Withdraw APK offer", "Remove the offer for @" + selectedTarget + "? Their installed APK is kept; future checks follow the public update."))) return;
+          if (sequence !== releaseSequence || generation !== state.generation) return;
+          try {
+            await api(endpoint, { method: "PUT", data: { target: selectedTarget, enabled: false, expectedRevision: result.revision } });
+            if (sequence !== releaseSequence || generation !== state.generation) return;
+            toast("Withdrawal saved. Wait for Pages deployment before checking the phone.", "success");
+            await releases(selectedTarget);
+          } catch (e) { if (generation === state.generation && sequence === releaseSequence) toast(e.message, "error"); }
+        }));
+      }
       root.append(createContentPanel({h,api,button,rows,confirmAction,toast}));
       if (!result.publishConfigured)
         form.append(
@@ -622,6 +644,7 @@ export function createPanels({
             releaseNotes: values.get("releaseNotes"),
             sha256: String(values.get("sha256") || "").trim(),
             expectedVersionCode: current.versionCode,
+            ...(targeted ? { target: selectedTarget, expectedRevision: result.revision } : {}),
           };
         if (!f && !input.downloadUrl) {
           toast("Select an APK or provide its download URL.", "error");
@@ -634,7 +657,7 @@ export function createPanels({
         if (
           !(await confirmAction(
             "Publish in-app update",
-            `Offer ${input.versionName} (build ${input.versionCode}) to your players? Verify the APK version and signing key before approval.`,
+            `Offer ${input.versionName} (build ${input.versionCode}) to ${targeted ? "@" + selectedTarget + " only" : "everyone"}? Verify the APK version and signing key before approval.`,
           ))
         )
           return;
@@ -650,25 +673,25 @@ export function createPanels({
                 reject(new Error("Could not read the APK"));
               reader.readAsDataURL(f);
             });
-          if (generation !== state.generation) return;
-          const answer = await api("release", { method: "PUT", data: input });
-          if (generation !== state.generation) return;
+          if (generation !== state.generation || sequence !== releaseSequence) return;
+          const answer = await api(endpoint, { method: "PUT", data: input });
+          if (generation !== state.generation || sequence !== releaseSequence) return;
           toast(
             answer.operation?.status === "SYNCED"
               ? "Update committed. Pages deployment is starting; track it in Audit & sync jobs."
               : "Publication saved; an external step is pending. Check Audit & sync jobs.",
             answer.operation?.status === "SYNCED" ? "success" : "warning",
           );
-          await releases();
+          await releases(selectedTarget);
         } catch (e) {
-          if (generation === state.generation) toast(e.message, "error");
+          if (generation === state.generation && sequence === releaseSequence) toast(e.message, "error");
         } finally {
           submit.disabled = false;
           submit.textContent = "Review & publish update";
         }
       });
     } catch (e) {
-      if (generation === state.generation)
+      if (generation === state.generation && sequence === releaseSequence)
         root.replaceChildren(
           h(
             "div",
@@ -681,6 +704,7 @@ export function createPanels({
   function clear() {
     matchRows = [];
     matchSequence++;
+    releaseSequence++;
   }
   return { overview, rooms, matches, drawMatches, releases, clear };
 }
