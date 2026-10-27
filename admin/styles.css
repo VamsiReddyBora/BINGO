@@ -1454,3 +1454,8 @@ footer {
     transition: none !important;
   }
 }
+.content-panel { margin-top: 16px; }
+.content-panel > summary { cursor: pointer; font-weight: 700; }
+.content-panel form { display: grid; gap: 12px; margin-top: 12px; }
+.content-panel label { display: grid; gap: 5px; font-size: .82rem; }
+.content-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 10px; }

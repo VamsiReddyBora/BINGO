@@ -1,4 +1,5 @@
 import { selectRooms, matchFilter, activeStatus } from "./model.js";
+import { createContentPanel } from "./content-panel.js";
 
 export function createPanels({
   state,
@@ -600,6 +601,7 @@ export function createPanels({
         ),
       );
       root.replaceChildren(h("div", { class: "release-grid" }, form, live));
+      root.append(createContentPanel({h,api,button,rows,confirmAction,toast}));
       if (!result.publishConfigured)
         form.append(
           h(
