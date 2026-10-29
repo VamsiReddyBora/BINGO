@@ -1,9 +1,9 @@
 {
   "versionName": "1.0.4",
-  "versionCode": 76,
+  "versionCode": 81,
   "tagName": "v1.0.4",
-  "downloadUrl": "https://vamsireddybora.github.io/BINGO/Bingo-1.0.4-build76.apk",
-  "apkSize": 8146657,
-  "sha256": "ba19510cda5bc3c49de77fd1c89303f3b984bd5cab8b0329c88f0b03ea98c46b",
-  "releaseNotes": "Background updates for supported Home content, with progress and rollback.\nAPK updates for everyone or selected accounts, with verified downloads.\nAdmin update controls; current Bingo visuals and gameplay preserved."
+  "downloadUrl": "https://vamsireddybora.github.io/BINGO/Bingo-1.0.4-build81.apk",
+  "apkSize": 8171210,
+  "sha256": "d1a0775b70592ec111cbeecbbdd9e652486462339b784d058711e47113de49d5",
+  "releaseNotes": "A more colourful celebration! Win and loss effects now draw a fresh random mix from expanded emoji lists.\nYour selected 50-emoji motion is retained. Settings → Animations keeps a simple on/off switch; testing controls have been removed.\nExisting gameplay and result stamps are preserved."
 }
