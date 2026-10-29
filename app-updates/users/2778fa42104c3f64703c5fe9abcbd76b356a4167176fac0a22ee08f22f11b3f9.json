@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "audience": "2778fa42104c3f64703c5fe9abcbd76b356a4167176fac0a22ee08f22f11b3f9",
+  "revision": 1,
+  "enabled": true,
+  "release": {
+    "versionName": "1.0.4",
+    "versionCode": 77,
+    "tagName": "v1.0.4",
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.4-build77-9fb963af8df5b8be153c83936cbdcecb3d5dd4135776abdb0fa8a998e569b1f2.apk",
+    "apkSize": 8154836,
+    "sha256": "9fb963af8df5b8be153c83936cbdcecb3d5dd4135776abdb0fa8a998e569b1f2",
+    "releaseNotes": "Bob-only preview: staggered win/loss emoji cannons with a brief freeze and fall.\nSettings → Animations: saved toggle plus Preview win / Preview loss.\nExisting match rules and result stamp preserved."
+  }
+}
