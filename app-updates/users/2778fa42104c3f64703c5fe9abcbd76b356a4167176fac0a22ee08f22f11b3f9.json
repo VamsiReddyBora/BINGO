@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "2778fa42104c3f64703c5fe9abcbd76b356a4167176fac0a22ee08f22f11b3f9",
-  "revision": 2,
+  "revision": 3,
   "enabled": true,
   "release": {
     "versionName": "1.0.4",
-    "versionCode": 78,
+    "versionCode": 79,
     "tagName": "v1.0.4",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.4-build78-941048ca69c55583bad049e647e3cac8cf6c6fe22d412bc5ffb7620659a0ae67.apk",
-    "apkSize": 8154836,
-    "sha256": "941048ca69c55583bad049e647e3cac8cf6c6fe22d412bc5ffb7620659a0ae67",
-    "releaseNotes": "Bob-only preview: full-bottom emoji burst, all launches within one second, continuous arcs and fall, finishes in four seconds.\nSettings → Animations: saved toggle plus Preview win / Preview loss.\nExisting match rules and result stamp preserved."
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.4-build79-94f44a6a55007263eb95b59a4884ec9a522e082b28c57b6a8008f5e831b792a7.apk",
+    "apkSize": 8175317,
+    "sha256": "94f44a6a55007263eb95b59a4884ec9a522e082b28c57b6a8008f5e831b792a7",
+    "releaseNotes": "Bob-only animation tuner: 40 default emojis, new win/loss pools, faster smooth ascent, local count/speed/spread/size/rotation controls, Copy values and Reset defaults.\nSettings → Animations: saved toggle plus Preview win / Preview loss.\nExisting match rules and result stamp preserved."
   }
 }
