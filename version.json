@@ -1,9 +1,9 @@
 {
   "versionName": "1.0.4",
-  "versionCode": 82,
+  "versionCode": 81,
   "tagName": "v1.0.4",
-  "downloadUrl": "https://vamsireddybora.github.io/BINGO/Bingo-1.0.4-build82.apk",
-  "apkSize": 8175312,
-  "sha256": "275be733153c648754923324582c60fc40adae7af2547452d8a5d808ddb86768",
-  "releaseNotes": "Animation testing controls are back in Settings → Animations.\nPreview win/loss, adjust emoji count, upward/falling speed, launch spread, size and rotation; reset defaults or copy your chosen values.\nThe current random emoji pools, selected motion defaults and gameplay are preserved."
+  "downloadUrl": "https://vamsireddybora.github.io/BINGO/Bingo-1.0.4-build81.apk",
+  "apkSize": 8171210,
+  "sha256": "d1a0775b70592ec111cbeecbbdd9e652486462339b784d058711e47113de49d5",
+  "releaseNotes": "A more colourful celebration! Win and loss effects now draw a fresh random mix from expanded emoji lists.\nYour selected 50-emoji motion is retained. Settings → Animations keeps a simple on/off switch; testing controls have been removed.\nExisting gameplay and result stamps are preserved."
 }
