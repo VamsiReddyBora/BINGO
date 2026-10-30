@@ -1,3 +1,15 @@
+# 1.0.6 — Build 85
+
+- Added manual MQTT cleanup preview/run controls and a local operator script. No cleanup scheduler is enabled.
+- Back up selected data privately, protect live/changed records, and confirm deletions using a fresh broker subscription.
+- Send redundant account announcements live without accumulating retained copies. Firebase account storage and gameplay rules remain unchanged.
+
+# 1.0.6 — Build 85
+
+- Added manual MQTT cleanup preview/run controls and a local operator script. No cleanup scheduler is enabled.
+- Back up selected data privately, protect live/changed records, and confirm deletions using a fresh broker subscription.
+- Send redundant account announcements live without accumulating retained copies. Firebase account storage and gameplay rules remain unchanged.
+
 # Bingo 1.0.4 — Build 76
 
 - Add supported silent Home content updates for everyone or a selected account, with background progress, atomic storage, validation and rollback.

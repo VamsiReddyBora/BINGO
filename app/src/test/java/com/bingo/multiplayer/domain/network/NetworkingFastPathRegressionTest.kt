@@ -65,7 +65,7 @@ class NetworkingFastPathRegressionTest {
     }
 
     @Test
-    fun claimUsernameMqttPublishesRetainedViaPersistentSocket() = runBlocking {
+    fun claimUsernameMqttPublishesLiveViaPersistentSocket() = runBlocking {
         val entry = PlayerRegistryEntry(
             username = "bob_builder",
             uid = "uid-bob-456",
@@ -74,25 +74,48 @@ class NetworkingFastPathRegressionTest {
             level = 3
         )
 
+        var liveBytes: ByteArray? = null
+        val handle = wireFixture.subscribe("bingo/v3/registry/bob_builder") { bytes, _ -> liveBytes = bytes }
         AccountSessionManager.defaultInstance.claimUsernameMqtt(entry, "google_bob_id_999")
+        AccountSessionManager.drainBackgroundJobsForTests()
+        handle.close()
 
         var foundRegistry = false
         var foundGoogle = false
         for (i in 1..20) {
             delay(50L)
-            if (wireFixture.retained.containsKey("bingo/v3/registry/bob_builder")) foundRegistry = true
-            if (wireFixture.retained.containsKey("bingo/v3/google_account/google_bob_id_999")) foundGoogle = true
+            if (wireFixture.published.contains("bingo/v3/registry/bob_builder")) foundRegistry = true
+            if (wireFixture.published.contains("bingo/v3/google_account/google_bob_id_999")) foundGoogle = true
             if (foundRegistry && foundGoogle) break
         }
 
-        assertTrue("Claim should publish retained registry entry via persistent socket", foundRegistry)
-        assertTrue("Claim should publish retained Google account mapping via persistent socket", foundGoogle)
+        assertTrue("Claim should publish the live registry entry via persistent socket", foundRegistry)
+        assertTrue("Claim should publish the live Google account mapping via persistent socket", foundGoogle)
+        assertFalse(wireFixture.retained.containsKey("bingo/v3/registry/bob_builder"))
+        assertFalse(wireFixture.retained.containsKey("bingo/v3/google_account/google_bob_id_999"))
 
-        val regBytes = wireFixture.retained["bingo/v3/registry/bob_builder"]
+        val regBytes = liveBytes
         assertNotNull(regBytes)
         val decoded = json.decodeFromString<PlayerRegistryEntry>(String(regBytes!!, StandardCharsets.UTF_8))
         assertEquals("bob_builder", decoded.username)
         assertEquals("Bob The Builder", decoded.displayName)
+    }
+
+    @Test
+    fun accountMirrorsDeliverLiveWithoutCreatingRetainedAccountCopies() = runBlocking {
+        val received = mutableListOf<String>()
+        val handle = wireFixture.subscribe("bingo/v3/registry/fixture_live_only") { bytes, _ ->
+            received.add(String(bytes, StandardCharsets.UTF_8))
+        }
+        try {
+            AccountSessionManager.defaultInstance.claimUsernameMqtt(
+                PlayerRegistryEntry("fixture_live_only", "google_fixture_live_only", "Live Only"),
+                "fixture_live_only")
+            AccountSessionManager.drainBackgroundJobsForTests()
+            assertTrue("Visible peers still receive profile changes", received.isNotEmpty())
+            assertFalse("Firebase owns persistent profiles", wireFixture.retained.containsKey("bingo/v3/registry/fixture_live_only"))
+            assertFalse("Account lookup copies must not fill broker storage", wireFixture.retained.containsKey("bingo/v3/google_account/fixture_live_only"))
+        } finally { handle.close() }
     }
 
     @Test

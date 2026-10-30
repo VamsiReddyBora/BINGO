@@ -1490,10 +1490,11 @@ class AccountSessionManager(
             // 1. Fast-path via persistent EMQX socket
             if (EmqxTransport.wire.isHealthy) {
                 try {
-                    EmqxTransport.wire.publish(topic, bytes, retained = true)
+                    // Firebase owns durable profiles. MQTT only announces the live change.
+                    EmqxTransport.wire.publish(topic, bytes, retained = false)
                     if (!googleId.isNullOrBlank()) {
                         val gTopic = "bingo/v3/google_account/$googleId"
-                        EmqxTransport.wire.publish(gTopic, bytes, retained = true)
+                        EmqxTransport.wire.publish(gTopic, bytes, retained = false)
                     }
                     Log.i("AccountSessionManager", "Claimed username @$clean via persistent EMQX")
                     return@launch
@@ -1512,7 +1513,7 @@ class AccountSessionManager(
                 client.connect(options).waitForCompletion(2000L)
                 val message = MqttMessage(bytes).apply {
                     qos = 1
-                    isRetained = true
+                    isRetained = false
                 }
                 client.publish(topic, message).waitForCompletion(2000L)
 

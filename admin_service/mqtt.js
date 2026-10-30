@@ -70,6 +70,7 @@ export function decodePackets(input) {
         topic: decoder.decode(body.slice(2, 2 + len)),
         payload: decoder.decode(body.slice(start)),
         qos,
+        retained: !!(type & 1),
         id: qos ? (body[2 + len] << 8) | body[3 + len] : 0,
       });
     } else result.push({ type: type >> 4, body });
@@ -180,7 +181,7 @@ export async function brokerTcp(env, args, connectFactory) {
 /** Short-lived retained snapshot. Gameplay is never routed through this service. */
 export async function brokerExchange(
   env,
-  { messages = [], snapshot = false } = {},
+  { messages = [], snapshot = false, rawFilters = null, guardedGroups = null } = {},
   transport = fetch,
 ) {
   if (!env.MQTT_USERNAME || !env.MQTT_PASSWORD)
@@ -194,17 +195,60 @@ export async function brokerExchange(
   if (!socket) throw new Problem(503, "Broker WebSocket unavailable");
   socket.accept();
   const state = { presence: {}, rooms: {}, registry: {}, connected: false };
+  const fenceTopic = rawFilters ? "bingo/emqx7/probe/cleanup_"+crypto.randomUUID() : null;
+  const subscriptionFilters = rawFilters ? [...rawFilters,fenceTopic] : ["bingo/v3/presence/#","bingo/v3/room_meta/#","bingo/v3/registry/#","bingo/emqx7/metadata/+/state"];
+  if (rawFilters) {
+    if (!snapshot || messages.length || rawFilters.length > 8 || rawFilters.some(t => !t.startsWith("bingo/")))
+      throw new Problem(400, "Invalid maintenance scope");
+    state.retainedRecords = {};
+    state.cleanup = { acknowledged: [], skipped: 0 };
+  }
   return new Promise((resolve, reject) => {
     let complete = false,
       quiet = null,
       pending = new Set(),
       nextId = 10,
-      subscribed = false;
+      subscribed = false,
+      deleting = false,
+      fenceSeen = !rawFilters;
+    const ackWaiters = new Map();
+    const startedAt = Date.now();
     const stream = new PacketStream();
+    async function guardedDelete() {
+      deleting = true;
+      try {
+        for (const group of guardedGroups) {
+          const current = Object.fromEntries(Object.entries(state.retainedRecords).filter(([t]) => group.prefixes.some(p => p.endsWith("/") ? t.startsWith(p) : t === p)));
+          if (Object.keys(current).length !== Object.keys(group.entries).length || Object.entries(group.entries).some(([t,p]) => current[t] !== p)) {
+            state.cleanup.skipped += group.topics.length; continue;
+          }
+          const removed = new Set();
+          for (let position=0;position<group.topics.length;position++) {
+            const topic=group.topics[position];
+            if (complete) return;
+            const observed=Object.fromEntries(Object.entries(state.retainedRecords).filter(([t])=>!removed.has(t) && group.prefixes.some(p=>p.endsWith('/')?t.startsWith(p):t===p)));
+            const expected=Object.entries(group.entries).filter(([t])=>!removed.has(t));
+            if(Object.keys(observed).length!==expected.length || expected.some(([t,p])=>observed[t]!==p)) {
+              state.cleanup.skipped+=group.topics.length-position;break;
+            }
+            if (!topic.startsWith("bingo/") || /[+#\x00]/.test(topic) || state.retainedRecords[topic] !== group.entries[topic]) { state.cleanup.skipped++; continue; }
+            const id = nextId++;
+            await new Promise((resolveAck, rejectAck) => {
+              const timer = setTimeout(() => { ackWaiters.delete(id); rejectAck(new Problem(503,"Cleanup acknowledgement timed out")); },6000);
+              ackWaiters.set(id,() => { clearTimeout(timer); state.cleanup.acknowledged.push(topic); resolveAck(); });
+              socket.send(mqttPublish(topic,"",true,id));
+            });
+            removed.add(topic);
+            await new Promise(r => setTimeout(r,150));
+          }
+        }
+        finish();
+      } catch (error) { finish(error); }
+    }
     const settle = () => {
       clearTimeout(quiet);
-      if (snapshot && subscribed && !pending.size)
-        quiet = setTimeout(() => finish(), 500);
+      if (snapshot && subscribed && fenceSeen && !pending.size && !deleting)
+        quiet = setTimeout(() => guardedGroups ? guardedDelete() : finish(), rawFilters ? Math.max(1200,2500-(Date.now()-startedAt)) : 500);
     };
     const finish = (error) => {
       if (complete) return;
@@ -220,11 +264,11 @@ export async function brokerExchange(
     const timeout = setTimeout(
       () =>
         finish(
-          state.connected && subscribed && messages.length === 0
+          !rawFilters && state.connected && subscribed && messages.length === 0
             ? null
             : new Problem(503, "Broker acknowledgement timed out"),
         ),
-      7500,
+      rawFilters ? (guardedGroups ? 120000 : 20000) : 7500,
     );
     socket.addEventListener("error", () =>
       finish(new Problem(503, "Broker connection failed")),
@@ -252,28 +296,38 @@ export async function brokerExchange(
             }
             if (snapshot)
               socket.send(
-                mqttSubscribe([
-                  "bingo/v3/presence/#",
-                  "bingo/v3/room_meta/#",
-                  "bingo/v3/registry/#",
-                  "bingo/emqx7/metadata/+/state",
-                ]),
+                mqttSubscribe(subscriptionFilters),
               );
             else if (!pending.size) return finish();
           } else if (p.type === 4) {
+            const acknowledgedId = (p.body[0] << 8) | p.body[1];
+            const waiter = ackWaiters.get(acknowledgedId);
+            if (waiter) { ackWaiters.delete(acknowledgedId); waiter(); continue; }
             pending.delete((p.body[0] << 8) | p.body[1]);
             if (!snapshot && !pending.size) finish();
             else settle();
           } else if (p.type === 9 || p.type === "publish") {
             if (p.type === 9) {
               if (
-                p.body.length < 5 ||
+                p.body.length !== 2+subscriptionFilters.length ||
                 [...p.body.slice(2)].some((x) => x === 128)
               )
                 return finish(new Problem(503, "Broker subscription rejected"));
               subscribed = true;
+              if (fenceTopic) socket.send(mqttPublish(fenceTopic,"cleanup-fence",false,nextId++));
             }
             if (p.type === "publish") {
+              if (fenceTopic && p.topic === fenceTopic) {
+                fenceSeen = p.payload === "cleanup-fence";
+                if (p.qos === 1) socket.send(bytes([64, 2], word(p.id)));
+                settle(); continue;
+              }
+              if (rawFilters && p.payload.length <= 700000) {
+                if (!p.payload) delete state.retainedRecords[p.topic];
+                else if (p.retained || Object.hasOwn(state.retainedRecords,p.topic) ||
+                  guardedGroups?.some(g => g.prefixes.some(prefix => prefix.endsWith('/') ? p.topic.startsWith(prefix) : p.topic === prefix)))
+                  state.retainedRecords[p.topic] = p.payload;
+              }
               const current = /^bingo\/emqx7\/metadata\/([^/]+)\/state$/.exec(
                 p.topic,
               );

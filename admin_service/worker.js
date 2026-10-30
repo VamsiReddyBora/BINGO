@@ -23,6 +23,7 @@ import { ReleasePublisher } from "./releases.js";
 import { ContentPublisher } from "./content.js";
 import { TargetedReleasePublisher } from "./targeted-releases.js";
 import { brokerTcp } from "./mqtt.js";
+import { CLEANUP_FILTERS, firebaseCleanupView, planRetainedCleanup, cleanupSummary, executeRetainedCleanup } from "./retained-cleanup.js";
 
 import { json, readBody as body } from "./http.js";
 import { PasskeySecurity } from "./passkeys.js";
@@ -468,6 +469,19 @@ export class AdminControl {
     return this.cachedSnapshot;
   }
   async read(path, url, session) {
+    if (path === "/api/mqtt-cleanup") {
+      const [snapshot, firebase] = await Promise.all([
+        this.broker({snapshot:true,rawFilters:CLEANUP_FILTERS}), firebaseCleanupView(this.legacy),
+      ]);
+      requireThat(snapshot.retainedRecords,503,"Broker inventory unavailable; no cleanup plan created");
+      const plan = await planRetainedCleanup(snapshot.retainedRecords,firebase);
+      const planId = crypto.randomUUID();
+      await this.storage.put("mqtt-cleanup:plan:"+planId,{...plan,sessionKey:session.key});
+      // Bound preview metadata; previews and refreshes never delete MQTT records.
+      for (const [key,value] of await this.storage.list({prefix:"mqtt-cleanup:plan:"}))
+        if (value.expiresAt <= Date.now()) await this.storage.delete(key);
+      return json({...cleanupSummary(plan),planId,lastRun:await this.storage.get("mqtt-cleanup:last") || null});
+    }
     if (path === "/api/session")
       return json({
         operator: session.operator,
@@ -897,6 +911,7 @@ export class AdminControl {
           409,
           "Operation identifier was already used for another change",
         );
+        if (existing.type === "MQTT_CLEANUP") return json(existing.result || {error:"Previous manual cleanup was interrupted; preview again"},existing.status === "SYNCED" ? 200 : 409);
         return json(
           {
             operation: { ...existing, data: undefined },
@@ -910,6 +925,25 @@ export class AdminControl {
       }
     }
     await this.security.guard(request, path, session, input);
+    if (path === "/api/mqtt-cleanup/run") {
+      requireThat(request.method === "POST" && typeof input.planId === "string" && /^[a-f0-9-]{36}$/.test(input.planId),400,"A valid cleanup preview is required");
+      requireThat(operationId,400,"Manual cleanup requires an operation identifier");
+      const planKey="mqtt-cleanup:plan:"+input.planId, plan=await this.storage.get(planKey);
+      requireThat(plan && plan.sessionKey === session.key && plan.expiresAt > Date.now(),409,"Cleanup preview expired; preview again");
+      const op={id:operationId,type:"MQTT_CLEANUP",target:"Expired MQTT records",status:"RUNNING",requestHash:session.requestHash,createdAt:Date.now(),updatedAt:Date.now(),manualOnly:true};
+      await this.storage.put("operation:"+operationId,op);
+      await this.storage.delete(planKey);
+      try {
+        const result=await executeRetainedCleanup(plan,{broker:this.broker,store:this.legacy});
+        await this.storage.put("mqtt-cleanup:last",result);
+        await this.storage.put("operation:"+operationId,{...op,status:"SYNCED",updatedAt:Date.now(),result});
+        await this.audit(session,"MQTT_CLEANUP","Expired MQTT records",null,result);
+        return json(result);
+      } catch (error) {
+        await this.storage.put("operation:"+operationId,{...op,status:"FAILED",updatedAt:Date.now(),error:"Manual cleanup interrupted; preview again. Recovery archives were preserved."});
+        throw error;
+      }
+    }
     if (path === "/api/password") {
       requireThat(
         typeof input.password === "string" &&
@@ -934,6 +968,7 @@ export class AdminControl {
     if (retry) {
       const op = await this.storage.get("operation:" + retry[1]);
       requireThat(op, 404, "Operation not found");
+      requireThat(op.type !== "MQTT_CLEANUP",409,"Manual cleanup requires a fresh preview in Settings");
       if (op.status !== "PENDING")
         return json({
           operation: { ...op, data: undefined },

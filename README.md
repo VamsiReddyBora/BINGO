@@ -1,8 +1,12 @@
-# Bingo 1.0.5 — Build 84
+# Bingo 1.0.6 — Build 85
 
 Android Bingo with AI, MQTT multiplayer, Nearby Network play, friends and notifications.
 
 ## This release
+
+- Manual retained-message maintenance is available in admin Settings and an operator script. No automatic cleanup is enabled. Redundant account announcements are now live-only; Firebase account storage and gameplay remain unchanged. See [MANUAL_MQTT_CLEANUP.md](MANUAL_MQTT_CLEANUP.md).
+
+- Manual retained-message maintenance is available in admin Settings and an operator script. No automatic cleanup is enabled. Redundant account announcements are now live-only; Firebase account storage and gameplay remain unchanged. See [MANUAL_MQTT_CLEANUP.md](MANUAL_MQTT_CLEANUP.md).
 
 - Win/loss emoji effects use the owner-tested final 50-emoji preset and two colorful fifteen-emoji palettes. Settings retains a simple on/off switch; testing controls are removed. See [RESULT_EMOJI_ANIMATION.md](RESULT_EMOJI_ANIMATION.md).
 
@@ -36,8 +40,8 @@ From `cloudflare_worker/`, run `npm ci` and `npm test`. Supply `SERVICE_ACCOUNT_
 
 ## Versioned releases and privacy
 
-Versions 1.0, 1.0.1, 1.0.2, 1.0.3, 1.0.4 and 1.0.5 have separate Git tags, APKs and source archives. Main reflects the latest published source. Source packages exclude signing keys, passwords, real Firebase client configuration, account/player data, device addresses, local state, logs and build caches. Existing intentional in-app developer contact links are retained.
+Versions 1.0, 1.0.1, 1.0.2, 1.0.3, 1.0.4 1.0.5 and 1.0.6 have separate Git tags, APKs and source archives. Main reflects the latest published source. Source packages exclude signing keys, passwords, real Firebase client configuration, account/player data, device addresses, local state, logs and build caches. Existing intentional in-app developer contact links are retained.
 
 See `AGENT_HANDOFF.md` for verification results and remaining hardware acceptance limits.
 
-The admin console has a website-only usability update: validated session restoration, coherent app versions, clearer status, black dark theme and combined player controls. See ADMIN_USABILITY.md. The admin service and site are unchanged in this release.
+The admin console has a website-only usability update: validated session restoration, coherent app versions, clearer status, black dark theme and combined player controls. See ADMIN_USABILITY.md. This release adds the manual maintenance controls to the admin service and site.

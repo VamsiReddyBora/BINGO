@@ -1108,49 +1108,59 @@ class AuthRepositoryTest {
     @Test
     fun testGoogleProfilePublicationsPreservePublicKeyAcrossRestartRenameAvatarAndCareer() = runBlocking {
         val googleId = "gid_auth_preservation_99"
+        var latestPublication: com.bingo.multiplayer.domain.network.PlayerRegistryEntry? = null
+        val wire = com.bingo.multiplayer.domain.network.EmqxTransport.wireOverride as com.bingo.multiplayer.domain.network.EmqxWireFixture
+        wire.beforePublish = { topic, bytes ->
+            if (topic == "bingo/v3/google_account/$googleId") latestPublication =
+                kotlinx.serialization.json.Json { ignoreUnknownKeys = true }.decodeFromString(bytes.toString(Charsets.UTF_8))
+        }
         repository.onGoogleSignInSuccess(googleId, "Kevin QA", "kevin@example.com", customUsername = "kevin_pres", idToken = "test_token_$googleId")
         repository.sessionManager.drainBackgroundJobs()
 
         repository.sessionManager.googleProfileCache.clear()
-        val entry1 = repository.sessionManager.lookupGoogleProfileSync(googleId)
+        val entry1 = latestPublication
         assertNotNull("Initial Google login must publish non-null publicKey", entry1?.publicKey)
         val expectedKey = entry1!!.publicKey
 
         // 1. Rename username
+        latestPublication = null
         assertTrue("updateUsername must succeed", repository.updateUsername("kevin_renamed"))
         repository.sessionManager.drainBackgroundJobs()
         repository.sessionManager.googleProfileCache.clear()
-        val entry2 = repository.sessionManager.lookupGoogleProfileSync(googleId)
+        val entry2 = latestPublication
         assertNotNull("publicKey must not be erased after updateUsername", entry2?.publicKey)
         assertEquals("publicKey must match original key after updateUsername", expectedKey, entry2?.publicKey)
         assertEquals("username must match updated username", "kevin_renamed", entry2?.username)
 
         // 2. Avatar remove
+        latestPublication = null
         assertTrue("removeProfileAvatar must succeed", repository.removeProfileAvatar())
         repository.sessionManager.drainBackgroundJobs()
         repository.sessionManager.googleProfileCache.clear()
-        val entry3 = repository.sessionManager.lookupGoogleProfileSync(googleId)
+        val entry3 = latestPublication
         assertNotNull("publicKey must not be erased after removeProfileAvatar", entry3?.publicKey)
         assertEquals("publicKey must match original key after removeProfileAvatar", expectedKey, entry3?.publicKey)
         assertNull("avatarUrl must be null after removal", entry3?.avatarUrl)
 
         // 3. Career match result
+        latestPublication = null
         repository.recordGameFinished(didWin = true)
         repository.sessionManager.drainBackgroundJobs()
         repository.sessionManager.googleProfileCache.clear()
-        val entry4 = repository.sessionManager.lookupGoogleProfileSync(googleId)
+        val entry4 = latestPublication
         assertNotNull("publicKey must not be erased after recordGameFinished", entry4?.publicKey)
         assertEquals("publicKey must match original key after recordGameFinished", expectedKey, entry4?.publicKey)
         assertTrue("gamesPlayed must increment", (entry4?.gamesPlayed ?: 0) >= 1)
 
         // 4. Session restore on startup via separate repository instance
+        latestPublication = null
         repository.sessionManager.googleProfileCache.clear()
         val repoRestart = createTestRepo(fakePrefs)
         val verifiedState = repoRestart.verifyPersistedSession()
         assertTrue("verifyPersistedSession must succeed", verifiedState is AuthState.Authenticated)
         repoRestart.sessionManager.drainBackgroundJobs()
         repoRestart.sessionManager.googleProfileCache.clear()
-        val entry5 = repoRestart.sessionManager.lookupGoogleProfileSync(googleId)
+        val entry5 = latestPublication
         assertNotNull("publicKey must not be erased after verifyPersistedSession", entry5?.publicKey)
         assertEquals("publicKey must match original key after verifyPersistedSession", expectedKey, entry5?.publicKey)
     }

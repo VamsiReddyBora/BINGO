@@ -68,6 +68,9 @@ const password = "browser-fixture-password-123";
 const publication = releaseFixture();
 const contentPublication = contentFixture();
 const selectedPublication = targetedReleaseFixture();
+const cleanupArchive=new Map(), cleanupRecords={}, cleanupWrites=[];
+legacy.firestoreGet=async path=>cleanupArchive.get(path)||null;
+legacy.firestoreSet=async(path,value)=>{assert.ok(path.startsWith('mqttMaintenanceArchives/'));cleanupArchive.set(path,value);};
 legacy.recentMatches = async () => [
   {
     id: "fixture-match",
@@ -90,8 +93,12 @@ const env = {
   TEST_RELEASES: publication.publisher,
   TEST_CONTENT: contentPublication.publisher,
   TEST_TARGETED_RELEASES: selectedPublication.publisher,
-  TEST_BROKER: async () => {
+  TEST_BROKER: async (args) => {
     if (failPresence) throw Error("offline");
+    if(args?.rawFilters) {
+      if(args.guardedGroups){for(const g of args.guardedGroups)for(const t of g.topics){cleanupWrites.push(t);delete cleanupRecords[t];}return{cleanup:{acknowledged:[...cleanupWrites],skipped:0}};}
+      return{retainedRecords:structuredClone(cleanupRecords)};
+    }
     return {
       connected: true,
       registry: {},
@@ -1202,6 +1209,27 @@ try {
     assert.equal(publication.feed.versionCode,71);
     if (await page.locator("#menu-button").getAttribute("aria-expanded") === "false") await page.locator("#menu-button").click();
     await page.locator("#navigation button[data-tab=players]").click();
+  });
+  await check("Manual MQTT cleanup previews, requests device verification and reports verified deletion",async()=>{
+    // The duplicate-identity scenario above installs its own Firestore lookup.
+    // Restore this scenario's actual archive fixture before checking readback.
+    legacy.firestoreGet=async path=>cleanupArchive.get(path)||null;
+    if(await page.locator('#menu-button').getAttribute('aria-expanded')==='false')await page.locator('#menu-button').click();
+    await page.locator('#navigation button[data-tab=settings]').click();
+    const old=Date.now()-172800000;
+    cleanupRecords['bingo/emqx7/social/invite/fixture/expired']=JSON.stringify({eventId:'expired',recipientUsername:'fixture',timestamp:old,expiresAt:old+120000});
+    assert.equal(await page.locator('#run-mqtt-cleanup').isDisabled(),true);
+    await page.locator('#preview-mqtt-cleanup').click();
+    await page.waitForFunction(()=>document.querySelector('#mqtt-cleanup-status').textContent.includes('1 eligible records'));
+    assert.equal(cleanupWrites.length,0);
+    await page.screenshot({path:evidence+'/45-cleanup-preview.png',fullPage:true});
+    page.once('dialog',dialog=>dialog.accept());
+    await page.locator('#run-mqtt-cleanup').click();
+    await page.waitForFunction(()=>document.querySelector('#mqtt-cleanup-status').textContent.includes('1 records removed and verified'));
+    assert.equal(cleanupWrites.length,1);assert.equal(cleanupArchive.size,1);
+    await page.screenshot({path:evidence+'/46-cleanup-finished.png',fullPage:true});
+    if(await page.locator('#menu-button').getAttribute('aria-expanded')==='false')await page.locator('#menu-button').click();
+    await page.locator('#navigation button[data-tab=players]').click();
   });
   await check(
     "Typed deletion removes player from live directory and detail",

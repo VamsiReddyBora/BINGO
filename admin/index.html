@@ -479,6 +479,15 @@
               <h1>Console settings</h1>
             </div>
           </div>
+          <section class="panel settings" id="mqtt-maintenance">
+            <h2>MQTT record cleanup</h2>
+            <p class="muted small">Manual only. Preview expired records, then verify on your device to clean them. Active games and Firebase player data are preserved.</p>
+            <div class="actions">
+              <button id="preview-mqtt-cleanup">Preview cleanup</button>
+              <button id="run-mqtt-cleanup" disabled>Clean old records</button>
+            </div>
+            <p id="mqtt-cleanup-status" class="muted small" role="status" aria-live="polite">No cleanup is scheduled.</p>
+          </section>
           <section id="storage-audit" class="panel settings"></section>
           <div
             id="security-content"

@@ -35,3 +35,5 @@ Coverage changes are intentional requirements, rather than removed gameplay regr
 Native visual acceptance and measured hardware FPS are not exercised by JVM checks. Verification totals are recorded in SOURCE_MANIFEST.json after the release checks finish.
 
 Verification: 1,251 Android tests passed, zero failures and eight optional live/device skips. The clean public source passed the same cases. All gameplay regressions were retained; retired adjustment/picker checks were replaced by final-preset and upgrade tests. Release lint: zero errors, 34 existing warnings. Original signing certificate and APK alignment verified. No new physical-device/FPS measurement was performed.
+
+Verification: 1,252 Android tests passed, zero failures and eight optional live/device skips. The clean public source passed the same cases. All gameplay regressions were retained; retired retained-account checks were replaced by live-publication checks preserving their payload/key assertions. Release lint: zero errors, 34 existing warnings. Original signing certificate and APK alignment verified. No new physical-device/FPS measurement was performed.
