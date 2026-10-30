@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "492e92d03b7d4c82194ec0a5c453b9a052ec6e36cbc8ea45f8d2c408fd135b6f",
-  "revision": 4,
+  "revision": 5,
   "enabled": true,
   "release": {
     "versionName": "1.0.6",
-    "versionCode": 90,
+    "versionCode": 91,
     "tagName": "v1.0.6",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.6-build90-098e3893fde39f97c2ea9e45390b210473dbcab5a387692b48d2fa5bdb7825f1.apk",
-    "apkSize": 8212186,
-    "sha256": "098e3893fde39f97c2ea9e45390b210473dbcab5a387692b48d2fa5bdb7825f1",
-    "releaseNotes": "Private update for Bob and Vampire.\nType directly in your profile bubble after tapping Chat; send with keyboard Enter or dismissal.\nLong-press your message to delete it. Lobby presets removed.\nSwitch light/dark theme from the game header; existing match rules preserved."
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.6-build91-41494f0068b44a0305b97500b846c831db9e425e75d01e38d52e2da3e3df31fe.apk",
+    "apkSize": 8220364,
+    "sha256": "41494f0068b44a0305b97500b846c831db9e425e75d01e38d52e2da3e3df31fe",
+    "releaseNotes": "Private update for Bob and Vampire.\nDetect keyboard closure at the Android window so a typed message sends automatically and an empty input closes without a second Back action.\nPreserve pending dismissal across brief keyboard-window focus changes.\nAuto-hide the phone status bar throughout app screens; swipe from the top to reveal it temporarily.\nShow bouncing dots above a player profile while they type in the lobby; clear automatically on stop, send or disconnect."
   }
 }
