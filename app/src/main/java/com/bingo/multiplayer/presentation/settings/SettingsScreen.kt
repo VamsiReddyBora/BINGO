@@ -176,6 +176,7 @@ fun SettingsScreen(
     var isQuickChatExpanded by remember { mutableStateOf(false) }
     var isNotificationsExpanded by remember { mutableStateOf(false) }
     var isSoundExpanded by remember { mutableStateOf(false) }
+    var isAnimationsExpanded by remember { mutableStateOf(false) }
 
     var selectedProfilePlayer by remember { mutableStateOf<PlayerProfileData?>(null) }
 
@@ -2106,6 +2107,29 @@ fun SettingsScreen(
 
                     AnimatedVisibility(visible = isSoundExpanded) {
                         SoundSettingsContent(context = context)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                color = tokens.surface,
+                border = BorderStroke(1.dp, tokens.surfaceBorder),
+                shadowElevation = 1.dp
+            ) {
+                Column(Modifier.fillMaxWidth()) {
+                    SettingsCardHeader(
+                        title = "ANIMATIONS",
+                        subtitle = "Match result effects",
+                        icon = Icons.Default.Star,
+                        isExpanded = isAnimationsExpanded,
+                        onToggle = { isAnimationsExpanded = !isAnimationsExpanded }
+                    )
+                    AnimatedVisibility(visible = isAnimationsExpanded) {
+                        ResultAnimationSettingsContent()
                     }
                 }
             }

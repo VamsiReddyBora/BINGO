@@ -46,6 +46,7 @@ class MainActivity : ComponentActivity() {
         ThemePreferences.init(applicationContext)
         com.bingo.multiplayer.core.designsystem.NotificationPreferences.init(applicationContext)
         com.bingo.multiplayer.core.designsystem.SoundPreferences.init(applicationContext)
+        com.bingo.multiplayer.core.designsystem.AnimationPreferences.init(applicationContext)
 
         // Immediately enforce window background and system bar icon contrast matching theme before UI composition
         val initIsDark = ThemePreferences.isDarkTheme.value

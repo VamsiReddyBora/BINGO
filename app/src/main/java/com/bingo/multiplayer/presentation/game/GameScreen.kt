@@ -440,37 +440,53 @@ fun GameScreen(
         }
     }
 
-    // ── Victory/Defeat Stamp & 360° Radial Starburst Celebration State ──
+    // Result stamp remains independent of the optional, one-shot emoji drawing.
     var showStampBadge by remember { mutableStateOf(false) }
-    var isEmojiBurstActive by remember { mutableStateOf(false) }
+    var resultEmojiAnimation by remember(matchSeed) { mutableStateOf<StampResultType?>(null) }
+    // Opening a saved result starts consumed; rotation/settings/board review must not replay it.
+    var resultEmojiConsumed by androidx.compose.runtime.saveable.rememberSaveable(matchSeed, myPlayerId) {
+        mutableStateOf(isGameOver)
+    }
+    val resultLifecycle = androidx.compose.ui.platform.LocalLifecycleOwner.current.lifecycle
+    val localResultStamp = when {
+        didPlayerWin -> StampResultType.WON
+        isRunner -> StampResultType.RUNNER
+        disconnectedPlayerIds.any { com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, myPlayerId) } -> StampResultType.OFFLINE
+        else -> StampResultType.LOST
+    }
+    val winningEmojiPreferred = com.bingo.multiplayer.core.designsystem.AnimationPreferences.winningEmojiAnimationEnabled
     var animateStampDrop by remember { mutableStateOf(true) }
-    var hasTriggeredCelebration by remember { mutableStateOf(false) }
 
     LaunchedEffect(isGameOver, didPlayerWin, isExitingMatch) {
         if (isExitingMatch) {
             showStampBadge = false
-            isEmojiBurstActive = false
+            resultEmojiAnimation = null
             animateStampDrop = false
             return@LaunchedEffect
         }
         if (isGameOver) {
             showStampBadge = true
             animateStampDrop = true
-            if (didPlayerWin) {
-                if (!hasTriggeredCelebration) {
-                    hasTriggeredCelebration = true
-                    isEmojiBurstActive = true
-                }
-            } else {
-                isEmojiBurstActive = false
-            }
+
         } else {
-            hasTriggeredCelebration = false
             showStampBadge = false
-            isEmojiBurstActive = false
+            resultEmojiAnimation = null
             animateStampDrop = true
             selectedReviewPlayerId = myPlayerId.ifBlank { "local" }
         }
+    }
+
+    LaunchedEffect(matchSeed, isGameOver, localResultStamp, isExitingMatch, winningEmojiPreferred) {
+        val decision = ResultEmojiPlayback.decide(
+            consumed = resultEmojiConsumed,
+            isGameOver = isGameOver,
+            result = localResultStamp,
+            exiting = isExitingMatch,
+            preferred = winningEmojiPreferred,
+            visible = resultLifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
+        )
+        resultEmojiConsumed = decision.consumed
+        resultEmojiAnimation = decision.launch
     }
 
     LaunchedEffect(selectedReviewPlayerId) {
@@ -522,7 +538,7 @@ fun GameScreen(
                     onClick = {
                         isExitingMatch = true
                         showSurrenderDialog = false
-                        isEmojiBurstActive = false
+                        resultEmojiAnimation = null
                         showStampBadge = false
                         animateStampDrop = false
                         if (isMultiplayerLobbyGame && isGameOver) {
@@ -651,6 +667,7 @@ fun GameScreen(
         )
     }
 
+    Box(Modifier.fillMaxSize()) {
     Scaffold(
         containerColor = tokens.background,
         topBar = {
@@ -1196,15 +1213,6 @@ fun GameScreen(
                 }
             )
 
-            // ── Fullscreen Winning Celebration Overlay (Only triggers on victory) ──
-            if (isEmojiBurstActive && didPlayerWin && !isExitingMatch) {
-                LaunchedEffect(Unit) {
-                    showStampBadge = true
-                    animateStampDrop = true
-                    isEmojiBurstActive = false
-                }
-            }
-
             // Item 4: Quick Chat Floating Toast Layer
             if (showQuickChat && !isGameOver) {
                 // Tap anywhere on the screen outside to dismiss automatically
@@ -1432,6 +1440,17 @@ fun GameScreen(
                     } catch (_: Exception) {}
                 }
             }
+        }
+    }
+
+        val emojiResult = resultEmojiAnimation
+        if (emojiResult != null && isGameOver && !isExitingMatch) {
+            ResultEmojiOverlay(
+                result = emojiResult,
+                seed = matchSeed xor gameMountTime,
+                onFinished = { resultEmojiAnimation = null },
+                modifier = Modifier.matchParentSize()
+            )
         }
     }
 

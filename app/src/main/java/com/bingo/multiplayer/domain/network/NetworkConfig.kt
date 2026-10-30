@@ -41,8 +41,8 @@ object NetworkConfig {
     /**
      * Current client application version metadata.
      */
-    const val APP_VERSION_NAME = "1.0.4"
-    const val APP_VERSION_CODE = 76
+    const val APP_VERSION_NAME = "1.0.5"
+    const val APP_VERSION_CODE = 84
 
     /**
      * Configures MqttConnectOptions with credentials and tuned low-latency socket factory.
