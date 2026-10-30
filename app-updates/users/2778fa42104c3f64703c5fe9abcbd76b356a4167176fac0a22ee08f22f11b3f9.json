@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "2778fa42104c3f64703c5fe9abcbd76b356a4167176fac0a22ee08f22f11b3f9",
-  "revision": 4,
+  "revision": 5,
   "enabled": true,
   "release": {
     "versionName": "1.0.4",
-    "versionCode": 80,
+    "versionCode": 82,
     "tagName": "v1.0.4",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.4-build80-ce4f479bcb448b7a7d715859da75233acc83cd8099ea469ac21d7e3130752dbd.apk",
-    "apkSize": 8175310,
-    "sha256": "ce4f479bcb448b7a7d715859da75233acc83cd8099ea469ac21d7e3130752dbd",
-    "releaseNotes": "Bob-only selected animation preset: 50 emojis, upward 1.20x, falling 1.40x, spread 900ms, size 0.80x, rotation 2.00x. Win: 😎🥳🤟🏻💥🎊🎉; loss: 😭😵‍💫💔🤦🥀. Saved tuning controls and previews retained.\nSettings → Animations: saved toggle plus Preview win / Preview loss.\nExisting match rules and result stamp preserved."
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.4-build82-275be733153c648754923324582c60fc40adae7af2547452d8a5d808ddb86768.apk",
+    "apkSize": 8175312,
+    "sha256": "275be733153c648754923324582c60fc40adae7af2547452d8a5d808ddb86768",
+    "releaseNotes": "Bob-only animation testing update: Preview win/loss, six adjustment sliders, Reset defaults and Copy values are restored in Settings → Animations.\nExisting random emoji pools and selected 50-emoji defaults are preserved.\nThe public update remains Build 81."
   }
 }
