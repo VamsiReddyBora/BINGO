@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "492e92d03b7d4c82194ec0a5c453b9a052ec6e36cbc8ea45f8d2c408fd135b6f",
-  "revision": 3,
+  "revision": 4,
   "enabled": true,
   "release": {
     "versionName": "1.0.6",
-    "versionCode": 89,
+    "versionCode": 90,
     "tagName": "v1.0.6",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.6-build89-b5af60541bd6c118859ba5bcd905dd1ed2a0ac62fda2e997aad79ab3aa69a384.apk",
-    "apkSize": 8224474,
-    "sha256": "b5af60541bd6c118859ba5bcd905dd1ed2a0ac62fda2e997aad79ab3aa69a384",
-    "releaseNotes": "Private update for Bob and Vampire.\nApply the final lobby bubble size, placement, text, scrolling and 537 ms bounce selected by Bob.\nRemove the temporary gear, previews, adjustments and saved experimental overrides.\nMessaging, joining, presets and gameplay behavior preserved."
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.6-build90-098e3893fde39f97c2ea9e45390b210473dbcab5a387692b48d2fa5bdb7825f1.apk",
+    "apkSize": 8212186,
+    "sha256": "098e3893fde39f97c2ea9e45390b210473dbcab5a387692b48d2fa5bdb7825f1",
+    "releaseNotes": "Private update for Bob and Vampire.\nType directly in your profile bubble after tapping Chat; send with keyboard Enter or dismissal.\nLong-press your message to delete it. Lobby presets removed.\nSwitch light/dark theme from the game header; existing match rules preserved."
   }
 }
