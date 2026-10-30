@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "audience": "492e92d03b7d4c82194ec0a5c453b9a052ec6e36cbc8ea45f8d2c408fd135b6f",
+  "revision": 1,
+  "enabled": true,
+  "release": {
+    "versionName": "1.0.6",
+    "versionCode": 86,
+    "tagName": "v1.0.6",
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.6-build86-edbb1d5d85438ca0a5a20da8eb392b311e2e8f493ea6ea670902ea25c0a95a6e.apk",
+    "apkSize": 8212187,
+    "sha256": "edbb1d5d85438ca0a5a20da8eb392b311e2e8f493ea6ea670902ea25c0a95a6e",
+    "releaseNotes": "Test update for Bob and Vampire only.\nRequest to join a friend’s lobby, with host approval.\nLobby message icon beside Ready/Start; only each player’s latest message appears by their profile.\nCreate personal presets, edit before sending, and long-press to delete. Presets are stored in your account.\nExisting gameplay and Ready/Start rules preserved. Please test before public release."
+  }
+}
