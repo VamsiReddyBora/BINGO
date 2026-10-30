@@ -1,9 +1,9 @@
 {
-  "versionName": "1.0.5",
-  "versionCode": 84,
-  "tagName": "v1.0.5",
-  "downloadUrl": "https://vamsireddybora.github.io/BINGO/Bingo-1.0.5-build84.apk",
-  "apkSize": 8171220,
-  "sha256": "3110b50125792b7dad143d2a6fa87d405e55839494665f11bdb97415563c8679",
-  "releaseNotes": "Colorful win/loss emoji celebrations with the finalized preset.\nWider coverage, faster ascent and slower fall.\nSimple on/off animation control; testing sliders and previews removed.\nExisting gameplay and networking preserved."
+  "versionName": "1.0.6",
+  "versionCode": 85,
+  "tagName": "v1.0.6",
+  "downloadUrl": "https://vamsireddybora.github.io/BINGO/Bingo-1.0.6-build85.apk",
+  "apkSize": 8171225,
+  "sha256": "54b42ff9751435d17bc539e3b19ddbf5acd2851243843b47226721bbed3016a5",
+  "releaseNotes": "Manual MQTT cleanup in admin Settings or the local operator script.\nNo automatic cleanup is enabled.\nVerified archives and fresh broker checks protect active or changed data.\nAvoid redundant retained account copies; existing gameplay preserved."
 }

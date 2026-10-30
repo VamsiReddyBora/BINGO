@@ -69,6 +69,7 @@ const tabs = [
   "settings",
 ];
 let renderedPresence = "";
+let mqttCleanupPreview = null;
 const presenceSignature = (list) =>
   list.map((r) => r.username + ":" + r.presence?.status).join("|");
 const h = (tag, attrs = {}, ...children) => {
@@ -174,6 +175,8 @@ function identity(row) {
   );
 }
 function clearSession() {
+  mqttCleanupPreview = null;
+  if ($("run-mqtt-cleanup")) $("run-mqtt-cleanup").disabled = true;
   passkeys.cancelVerification();
   recoveryCodes = [];
   $("recovery-code-list").replaceChildren();
@@ -259,7 +262,7 @@ async function api(
   }
   const timeout = setTimeout(
     () => controller.abort(),
-    path === "release" ? 150000 : path === "session" ? 12000 : 45000,
+    path === "release" || path.startsWith("mqtt-cleanup") ? 150000 : path === "session" ? 12000 : 45000,
   );
   const headers = { "Content-Type": "application/json" };
   if (auth) {
@@ -2310,6 +2313,32 @@ function renderStorageAudit() {
       ),
     );
 }
+
+$("preview-mqtt-cleanup")?.addEventListener("click", async () => {
+  const previewButton=$("preview-mqtt-cleanup"), runButton=$("run-mqtt-cleanup"), status=$("mqtt-cleanup-status");
+  mqttCleanupPreview=null; previewButton.disabled=true; runButton.disabled=true;
+  status.textContent="Checking old records…";
+  try {
+    const preview=await api("mqtt-cleanup");
+    mqttCleanupPreview=preview;
+    const categories=Object.entries(preview.categories || {}).map(([name,n])=>`${name.replaceAll("_"," ")}: ${n}`).join(" · ");
+    status.textContent=`${preview.eligibleRecords} eligible records · ${preview.batchRecords} in this batch.${categories ? " "+categories+"." : ""} Cleanup runs only when you choose it.`;
+    runButton.disabled=preview.batchRecords===0;
+  } catch (error) {status.textContent=error.message;}
+  finally {previewButton.disabled=false;}
+});
+$("run-mqtt-cleanup")?.addEventListener("click", async () => {
+  const preview=mqttCleanupPreview;
+  if (!preview?.batchRecords || !confirm(`Clean ${preview.batchRecords} verified old MQTT records? Recovery archives will be saved first. Firebase player data and active matches are preserved.`)) return;
+  const previewButton=$("preview-mqtt-cleanup"), runButton=$("run-mqtt-cleanup"), status=$("mqtt-cleanup-status");
+  mqttCleanupPreview=null; previewButton.disabled=true; runButton.disabled=true;
+  status.textContent="Cleaning verified records…";
+  try {
+    const result=await api("mqtt-cleanup/run",{method:"POST",data:{planId:preview.planId}});
+    status.textContent=`${result.deletedConfirmed} records removed and verified · ${result.skippedChanged} changed records kept · ${result.recreatedOrStillPresent} records still present. Preview again to check any remaining entries.`;
+  } catch (error) {status.textContent=error.message+" Preview again to inspect the current records.";}
+  finally {previewButton.disabled=false;}
+});
 async function renderSecurity() {
   renderStorageAudit();
   const root = $("security-content"),
