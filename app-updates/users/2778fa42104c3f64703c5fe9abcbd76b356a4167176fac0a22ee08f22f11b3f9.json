@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "2778fa42104c3f64703c5fe9abcbd76b356a4167176fac0a22ee08f22f11b3f9",
-  "revision": 5,
+  "revision": 6,
   "enabled": true,
   "release": {
     "versionName": "1.0.4",
-    "versionCode": 82,
+    "versionCode": 83,
     "tagName": "v1.0.4",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.4-build82-275be733153c648754923324582c60fc40adae7af2547452d8a5d808ddb86768.apk",
-    "apkSize": 8175312,
-    "sha256": "275be733153c648754923324582c60fc40adae7af2547452d8a5d808ddb86768",
-    "releaseNotes": "Bob-only animation testing update: Preview win/loss, six adjustment sliders, Reset defaults and Copy values are restored in Settings → Animations.\nExisting random emoji pools and selected 50-emoji defaults are preserved.\nThe public update remains Build 81."
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.4-build83-95f90e8e205b642dae75632c5f08f86133fcb1d5f6d54dd4419d679fecbdec4d.apk",
+    "apkSize": 8175304,
+    "sha256": "95f90e8e205b642dae75632c5f08f86133fcb1d5f6d54dd4419d679fecbdec4d",
+    "releaseNotes": "Bob-only animation tuning: wider, evenly distributed turnaround area with top/bottom, width, horizontal centre and sideways-drift controls.\nChoose 1–15 win emojis and 1–15 loss emojis. Your choices and all parameters are saved locally and included in Copy values.\nExisting shooting/falling timing, previews, match rules and gameplay are preserved. Public update remains Build 81."
   }
 }
