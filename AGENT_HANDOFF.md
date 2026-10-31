@@ -1,6 +1,6 @@
 # Agent handoff — Bingo 1.0.7, Build 95
 
-This is the clean release source for main/tag v1.0.7. Preserve previous releases, their tags, source ZIPs and APKs. Read SimplifiedGameRules.md before gameplay work.
+The Android baseline is the clean v1.0.7 release source; main additionally includes the authorized service-only maintenance described below. Preserve previous releases, their tags, source ZIPs and APKs. Read SimplifiedGameRules.md before gameplay work.
 
 ## Features included since public Build 85
 
@@ -16,7 +16,7 @@ The owner confirmed Build 94 still displays a dark status bar when the phone is 
 
 ## Preserve existing behavior
 
-MQTT carries gameplay/invitations; Firebase stores player data. Preserve SimplifiedGameRules.md, turns, pause/rejoin/wins, nearby mode, avatars, friends, push notifications, existing result animations and approved support contact links. Manual MQTT cleanup remains manual only. This package contains Bingo, without the Sudoku experiment.
+MQTT carries gameplay/invitations; Firebase stores player data. Preserve SimplifiedGameRules.md, turns, pause/rejoin/wins, nearby mode, avatars, friends, push notifications, existing result animations and approved support contact links. Automatic MQTT maintenance was authorized on 31 October 2026; manual runs still require a fresh preview/passkey. Read AUTOMATIC_MQTT_CLEANUP.md. This package contains Bingo, without the Sudoku experiment.
 
 Read APK_UPDATE_CHANNELS.md and OTA_CONTENT_UPDATES.md. OTA remains bounded data, not executable code. Package updates require Android installer consent and retain signing/hash checks. Keep historical public/targeted update assets separate.
 
@@ -27,3 +27,11 @@ Use JDK17 and Android SDK34. Supply google-services.json, deployment values and 
 Automated verification is recorded in SOURCE_MANIFEST.json. It does not establish physical-device status-bar appearance, Android installer behavior, notification delivery or frame rate. Optional real-device/live tests require explicit opt-in; no emulator or physical phone is used for release packaging.
 
 Verification: 1,340 automated Android tests passed, zero failures and nine unchanged optional skips. Clean-source case IDs/results match Build94; gameplay and networking logic are unchanged from that build. Android lint: zero errors, 34 warnings. Original signing certificate and APK alignment verified. The known status-bar appearance issue remains unresolved; no new physical-device UI/FPS verification is claimed.
+
+## Service maintenance — 31 October 2026
+
+The owner approved automatic retained cleanup after discussing the policy and requested a used/2,000 admin display. The existing admin Durable Object checks every 15 minutes and handles a bounded 200-record batch, with one-minute continuation for productive backlog. Finished move receipts compact after ten minutes; final boards remain 24 hours. Active/recoverable games, manual pauses, account data and unknown records remain protected. Exact signed 64-bit IDs fix the cleaner's old false exclusions. Verified private Firebase archives precede every deletion; changed/recreated data is not counted as confirmed removal.
+
+The usage counter reads all bingo/# retained topics, not just cleanup filters. This deployment refuses root #; other applications can consume additional shared capacity. A failed inventory displays unknown/last-known values. Current automated checks: 194 backend tests and 45 browser checks passed; a real EMQX/Firebase test compacted two owned receipts and preserved two final boards. Android source, APKs, update feeds and historical release artifacts were not changed for maintenance. Known status-bar issue remains deferred.
+
+MC-001 through MC-004 in AUTOMATIC_MQTT_CLEANUP.md map to permanent tests. Preserve every existing regression assertion. Disable future automatic runs with MQTT_AUTOCLEAN_ENABLED="false" and redeploy; do not delete control-v1 storage or replay old gameplay archives onto an active match.

@@ -95,6 +95,7 @@ const env = {
   TEST_TARGETED_RELEASES: selectedPublication.publisher,
   TEST_BROKER: async (args) => {
     if (failPresence) throw Error("offline");
+    if(args?.inventory)return{retainedUsage:{used:1987+Object.keys(cleanupRecords).length,limit:2000,observedAt:Date.now(),scope:"broker-visible-topics"}};
     if(args?.rawFilters) {
       if(args.guardedGroups){for(const g of args.guardedGroups)for(const t of g.topics){cleanupWrites.push(t);delete cleanupRecords[t];}return{cleanup:{acknowledged:[...cleanupWrites],skipped:0}};}
       return{retainedRecords:structuredClone(cleanupRecords)};
@@ -1222,12 +1223,21 @@ try {
     await page.locator('#preview-mqtt-cleanup').click();
     await page.waitForFunction(()=>document.querySelector('#mqtt-cleanup-status').textContent.includes('1 eligible records'));
     assert.equal(cleanupWrites.length,0);
+    assert.ok((await page.locator('#mqtt-usage-count').textContent()).includes('1,987'));
     await page.screenshot({path:evidence+'/45-cleanup-preview.png',fullPage:true});
     page.once('dialog',dialog=>dialog.accept());
     await page.locator('#run-mqtt-cleanup').click();
     await page.waitForFunction(()=>document.querySelector('#mqtt-cleanup-status').textContent.includes('1 records removed and verified'));
     assert.equal(cleanupWrites.length,1);assert.equal(cleanupArchive.size,1);
     await page.screenshot({path:evidence+'/46-cleanup-finished.png',fullPage:true});
+    assert.ok((await page.locator('#mqtt-usage-count').textContent()).includes('1,987'));
+    failPresence=true;
+    await page.locator('#refresh-mqtt-usage').click();
+    await page.waitForFunction(()=>document.querySelector('#mqtt-usage-count').textContent.includes('last known'));
+    assert.ok((await page.locator('#mqtt-usage-count').textContent()).includes('1,987'));
+    failPresence=false;
+    await page.locator('#refresh-mqtt-usage').click();
+    await page.waitForFunction(()=>!document.querySelector('#mqtt-usage-count').textContent.includes('last known'));
     if(await page.locator('#menu-button').getAttribute('aria-expanded')==='false')await page.locator('#menu-button').click();
     await page.locator('#navigation button[data-tab=players]').click();
   });

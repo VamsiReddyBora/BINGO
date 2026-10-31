@@ -24,6 +24,8 @@ import { ContentPublisher } from "./content.js";
 import { TargetedReleasePublisher } from "./targeted-releases.js";
 import { brokerTcp } from "./mqtt.js";
 import { CLEANUP_FILTERS, firebaseCleanupView, planRetainedCleanup, cleanupSummary, executeRetainedCleanup } from "./retained-cleanup.js";
+import { automaticCleanupEnabled, ensureCleanupAlarm, runAutomaticCleanup, automaticCleanupStatus } from "./automatic-cleanup.js";
+import { refreshRetainedUsage } from "./retained-usage.js";
 
 import { json, readBody as body } from "./http.js";
 import { PasskeySecurity } from "./passkeys.js";
@@ -50,6 +52,7 @@ export default {
           service: "bingo-admin-control",
           version: 2,
           authenticationConfigured: !!env.ADMIN_CREDENTIALS,
+          automaticCleanupEnabled: automaticCleanupEnabled(env),
         });
       else
         response = await env.ADMIN.get(
@@ -80,6 +83,9 @@ export class AdminControl {
     this.mutations = Promise.resolve();
     this.cachedSnapshot = null;
     this.security = new PasskeySecurity(this);
+    if (automaticCleanupEnabled(env)) {
+      state.blockConcurrencyWhile(() => ensureCleanupAlarm(this));
+    }
   }
   async fetch(request) {
     try {
@@ -469,9 +475,15 @@ export class AdminControl {
     return this.cachedSnapshot;
   }
   async read(path, url, session) {
+    if (path === "/api/mqtt-cleanup/status") {
+      const [automatic, usage] = await Promise.all([
+        automaticCleanupStatus(this), refreshRetainedUsage(this, {force:url.searchParams.get("refresh")==="1"}),
+      ]);
+      return json({...automatic,usage});
+    }
     if (path === "/api/mqtt-cleanup") {
-      const [snapshot, firebase] = await Promise.all([
-        this.broker({snapshot:true,rawFilters:CLEANUP_FILTERS}), firebaseCleanupView(this.legacy),
+      const [snapshot, firebase, usage] = await Promise.all([
+        this.broker({snapshot:true,rawFilters:CLEANUP_FILTERS}), firebaseCleanupView(this.legacy), refreshRetainedUsage(this),
       ]);
       requireThat(snapshot.retainedRecords,503,"Broker inventory unavailable; no cleanup plan created");
       const plan = await planRetainedCleanup(snapshot.retainedRecords,firebase);
@@ -480,7 +492,7 @@ export class AdminControl {
       // Bound preview metadata; previews and refreshes never delete MQTT records.
       for (const [key,value] of await this.storage.list({prefix:"mqtt-cleanup:plan:"}))
         if (value.expiresAt <= Date.now()) await this.storage.delete(key);
-      return json({...cleanupSummary(plan),planId,lastRun:await this.storage.get("mqtt-cleanup:last") || null});
+      return json({...cleanupSummary(plan),planId,lastRun:await this.storage.get("mqtt-cleanup:last") || null,automatic:await automaticCleanupStatus(this),usage});
     }
     if (path === "/api/session")
       return json({
@@ -938,6 +950,7 @@ export class AdminControl {
         await this.storage.put("mqtt-cleanup:last",result);
         await this.storage.put("operation:"+operationId,{...op,status:"SYNCED",updatedAt:Date.now(),result});
         await this.audit(session,"MQTT_CLEANUP","Expired MQTT records",null,result);
+        result.usage=await refreshRetainedUsage(this,{force:true});
         return json(result);
       } catch (error) {
         await this.storage.put("operation:"+operationId,{...op,status:"FAILED",updatedAt:Date.now(),error:"Manual cleanup interrupted; preview again. Recovery archives were preserved."});
@@ -1347,7 +1360,9 @@ export class AdminControl {
       ...(await this.storage.list({ prefix: "operation:" })).values(),
     ].some((op) => op.status === "PENDING");
     const activeSessions = await this.storage.list({ prefix: "session:" });
-    if (remaining || activeSessions.size)
-      await this.storage.setAlarm(now + (remaining ? 60000 : 300000));
+    const cleanupDue = await runAutomaticCleanup(this);
+    const normalDue = remaining || activeSessions.size ? Date.now() + (remaining ? 60000 : 300000) : Infinity;
+    const nextAlarm = Math.min(normalDue, cleanupDue || Infinity);
+    if (Number.isFinite(nextAlarm)) await this.storage.setAlarm(nextAlarm);
   }
 }

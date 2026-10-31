@@ -28,10 +28,10 @@ export function mqttConnect(id, user, password) {
     ),
   );
 }
-export function mqttSubscribe(topics, id = 1) {
+export function mqttSubscribe(topics, id = 1, qos = 0) {
   return packet(
     130,
-    bytes(word(id), ...topics.map((t) => bytes(string(t), [0]))),
+    bytes(word(id), ...topics.map((t) => bytes(string(t), [qos]))),
   );
 }
 export function mqttPublish(topic, payload, retain = false, id = 1) {
@@ -82,7 +82,7 @@ export class PacketStream {
   buffer = new Uint8Array();
   push(input) {
     this.buffer = bytes(this.buffer, input);
-    if (this.buffer.length > 512000)
+    if (this.buffer.length > 2 * 1024 * 1024)
       throw new Problem(503, "MQTT frame exceeds limit");
     const result = [];
     let consumed = 0;
@@ -181,11 +181,13 @@ export async function brokerTcp(env, args, connectFactory) {
 /** Short-lived retained snapshot. Gameplay is never routed through this service. */
 export async function brokerExchange(
   env,
-  { messages = [], snapshot = false, rawFilters = null, guardedGroups = null } = {},
+  { messages = [], snapshot = false, rawFilters = null, guardedGroups = null, inventory = false } = {},
   transport = fetch,
 ) {
   if (!env.MQTT_USERNAME || !env.MQTT_PASSWORD)
     throw new Problem(503, "Admin broker connection is not configured");
+  if (inventory && (!snapshot || messages.length || rawFilters || guardedGroups))
+    throw new Problem(400, "Broker usage inventory is read-only");
   const url = env.MQTT_URL.replace(/^wss:/, "https:").replace(/^ws:/, "http:");
   const upgrade = await transport(url, {
     headers: { Upgrade: "websocket", "Sec-WebSocket-Protocol": "mqtt" },
@@ -195,8 +197,11 @@ export async function brokerExchange(
   if (!socket) throw new Problem(503, "Broker WebSocket unavailable");
   socket.accept();
   const state = { presence: {}, rooms: {}, registry: {}, connected: false };
-  const fenceTopic = rawFilters ? "bingo/emqx7/probe/cleanup_"+crypto.randomUUID() : null;
-  const subscriptionFilters = rawFilters ? [...rawFilters,fenceTopic] : ["bingo/v3/presence/#","bingo/v3/room_meta/#","bingo/v3/registry/#","bingo/emqx7/metadata/+/state"];
+  const fenceTopic = rawFilters || inventory ? "bingo/emqx7/probe/cleanup_"+crypto.randomUUID() : null;
+  // Serverless EMQX rejects a root '#' subscription. Count the complete Bingo
+  // namespace rather than just the eight filters eligible for deletion.
+  const subscriptionFilters = inventory ? ["bingo/#"] : rawFilters ? [...rawFilters,fenceTopic] : ["bingo/v3/presence/#","bingo/v3/room_meta/#","bingo/v3/registry/#","bingo/emqx7/metadata/+/state"];
+  const retainedTopics = inventory ? new Set() : null;
   if (rawFilters) {
     if (!snapshot || messages.length || rawFilters.length > 8 || rawFilters.some(t => !t.startsWith("bingo/")))
       throw new Problem(400, "Invalid maintenance scope");
@@ -210,7 +215,7 @@ export async function brokerExchange(
       nextId = 10,
       subscribed = false,
       deleting = false,
-      fenceSeen = !rawFilters;
+      fenceSeen = !fenceTopic;
     const ackWaiters = new Map();
     const startedAt = Date.now();
     const stream = new PacketStream();
@@ -248,13 +253,18 @@ export async function brokerExchange(
     const settle = () => {
       clearTimeout(quiet);
       if (snapshot && subscribed && fenceSeen && !pending.size && !deleting)
-        quiet = setTimeout(() => guardedGroups ? guardedDelete() : finish(), rawFilters ? Math.max(1200,2500-(Date.now()-startedAt)) : 500);
+        quiet = setTimeout(() => guardedGroups ? guardedDelete() : finish(), rawFilters || inventory ? Math.max(1200,2500-(Date.now()-startedAt)) : 500);
     };
     const finish = (error) => {
       if (complete) return;
       complete = true;
       clearTimeout(timeout);
       clearTimeout(quiet);
+      if (inventory && !error) {
+        const bingo = [...retainedTopics].filter(t => t.startsWith("bingo/")).length;
+        state.retainedUsage = { used: retainedTopics.size, limit: 2000, bingo, other: retainedTopics.size-bingo,
+          observedAt: Date.now(), scope: "bingo-topics" };
+      }
       try {
         socket.send(Uint8Array.of(224, 0));
         socket.close(1000, "Snapshot complete");
@@ -264,11 +274,11 @@ export async function brokerExchange(
     const timeout = setTimeout(
       () =>
         finish(
-          !rawFilters && state.connected && subscribed && messages.length === 0
+          !rawFilters && !inventory && state.connected && subscribed && messages.length === 0
             ? null
             : new Problem(503, "Broker acknowledgement timed out"),
         ),
-      rawFilters ? (guardedGroups ? 120000 : 20000) : 7500,
+      rawFilters || inventory ? (guardedGroups ? 120000 : 20000) : 7500,
     );
     socket.addEventListener("error", () =>
       finish(new Problem(503, "Broker connection failed")),
@@ -296,6 +306,9 @@ export async function brokerExchange(
             }
             if (snapshot)
               socket.send(
+                // QoS 1 retained fan-out can overflow Serverless's 1,000-entry
+                // subscriber queue before all ~2,000 records arrive. Inventory
+                // uses the existing QoS 0 TCP snapshot path instead.
                 mqttSubscribe(subscriptionFilters),
               );
             else if (!pending.size) return finish();
@@ -322,12 +335,22 @@ export async function brokerExchange(
                 if (p.qos === 1) socket.send(bytes([64, 2], word(p.id)));
                 settle(); continue;
               }
+              if (inventory) {
+                if (p.retained && p.payload) retainedTopics.add(p.topic);
+                if (p.qos === 1) socket.send(bytes([64, 2], word(p.id)));
+                // Ongoing live traffic is not retained usage and must not keep
+                // postponing the end of a usage snapshot during a busy match.
+                if (p.retained) settle();
+                continue;
+              }
               if (rawFilters && p.payload.length <= 700000) {
                 if (!p.payload) delete state.retainedRecords[p.topic];
                 else if (p.retained || Object.hasOwn(state.retainedRecords,p.topic) ||
                   guardedGroups?.some(g => g.prefixes.some(prefix => prefix.endsWith('/') ? p.topic.startsWith(prefix) : p.topic === prefix)))
                   state.retainedRecords[p.topic] = p.payload;
               }
+              if (rawFilters && p.retained && p.payload.length > 700000)
+                state.retainedRecords[p.topic] = null; // Oversized/unknown data blocks group cleanup.
               const current = /^bingo\/emqx7\/metadata\/([^/]+)\/state$/.exec(
                 p.topic,
               );

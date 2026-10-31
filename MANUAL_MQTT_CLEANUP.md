@@ -1,6 +1,6 @@
-# Manual MQTT cleanup — Bingo 1.0.6, Build 85
+# Manual MQTT cleanup
 
-This maintenance runs only when the owner requests it. No scheduled, periodic, startup or background cleanup is installed. It does not change the rules or close an active match.
+Updated 31 October 2026: the owner has now authorized automatic maintenance. See [AUTOMATIC_MQTT_CLEANUP.md](AUTOMATIC_MQTT_CLEANUP.md) for the current retention policy, usage counter and background service. The local CLI remains manually invoked. Manual admin runs still require a fresh preview and passkey approval. Gameplay rules are unchanged.
 
 ## Admin console
 
@@ -41,3 +41,4 @@ The script saves a private local before snapshot, Firebase comparison, plan and 
 The executor rereads current data, skips changed groups, checks the group before each exact-topic deletion, waits for broker acknowledgement, and uses a new subscription to confirm absence. Commands are deleted before final snapshots so a large match remains verifiable in a later batch. MQTT does not offer conditional delete transactions: a publisher can still recreate a record concurrently. Such records are reported separately; they are never counted as a confirmed deletion. Closing old app versions during maintenance avoids recreation of redundant retained account mirrors.
 
 If a connection fails partway through, the verified archive remains. Some acknowledged deletions may already have occurred; the operation is not reported as success. Preview again and inspect actual results. Restoring an archive is a deliberate operator action; do not blindly replay stale gameplay over a live match.
+

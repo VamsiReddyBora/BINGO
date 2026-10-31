@@ -2321,8 +2321,9 @@ $("preview-mqtt-cleanup")?.addEventListener("click", async () => {
   try {
     const preview=await api("mqtt-cleanup");
     mqttCleanupPreview=preview;
+    renderRetainedUsage(preview.usage);
     const categories=Object.entries(preview.categories || {}).map(([name,n])=>`${name.replaceAll("_"," ")}: ${n}`).join(" · ");
-    status.textContent=`${preview.eligibleRecords} eligible records · ${preview.batchRecords} in this batch.${categories ? " "+categories+"." : ""} Cleanup runs only when you choose it.`;
+    status.textContent=`${preview.eligibleRecords} eligible records · ${preview.batchRecords} in this batch.${categories ? " "+categories+"." : ""} ${cleanupScheduleText(preview.automatic)}`;
     runButton.disabled=preview.batchRecords===0;
   } catch (error) {status.textContent=error.message;}
   finally {previewButton.disabled=false;}
@@ -2335,11 +2336,50 @@ $("run-mqtt-cleanup")?.addEventListener("click", async () => {
   status.textContent="Cleaning verified records…";
   try {
     const result=await api("mqtt-cleanup/run",{method:"POST",data:{planId:preview.planId}});
+    if(result.usage)renderRetainedUsage(result.usage);
     status.textContent=`${result.deletedConfirmed} records removed and verified · ${result.skippedChanged} changed records kept · ${result.recreatedOrStillPresent} records still present. Preview again to check any remaining entries.`;
   } catch (error) {status.textContent=error.message+" Preview again to inspect the current records.";}
   finally {previewButton.disabled=false;}
 });
+function cleanupScheduleText(status) {
+  if (!status?.enabled) return "Automatic maintenance is disabled.";
+  const run = status.lastRun;
+  if (!run) return "Automatic maintenance is enabled; its first run is pending.";
+  const next = run.nextRunAt ? ` Next check: ${new Date(run.nextRunAt).toLocaleString()}.` : "";
+  if (run.status === "FAILED") return "Automatic maintenance was interrupted; saved recovery archives are preserved." + next;
+  if (run.status === "RUNNING") return "Automatic maintenance is running.";
+  return `Last automatic run removed and verified ${run.result?.deletedConfirmed || 0} records.` + next;
+}
+function renderRetainedUsage(usage) {
+  const count=$("mqtt-usage-count"), meter=$("mqtt-usage-meter"), detail=$("mqtt-usage-detail"), root=$("mqtt-usage");
+  const known=Number.isSafeInteger(usage?.used) && usage.used>=0;
+  count.textContent=known ? `${usage.used.toLocaleString()} / 2,000${usage.stale ? " · last known" : ""}` : "— / 2,000";
+  meter.hidden=!known;
+  if(known)meter.value=Math.min(usage.used,2000);
+  root.dataset.level=!known || usage.stale ? "unknown" : usage.used>=1800 ? "critical" : usage.used>=1500 ? "warning" : "normal";
+  if(!known){detail.textContent=usage?.error || "Broker usage is unavailable. Refresh to try again.";return;}
+  const observed=usage.observedAt ? new Date(usage.observedAt).toLocaleString() : "unknown";
+  const free=Math.max(0,2000-usage.used).toLocaleString();
+  detail.textContent=`${Math.round(usage.used/2000*1000)/10}% of capacity · ${free} slots remaining before other topics · ${usage.stale ? "Previous reading" : "Observed"} ${observed}. ${usage.stale ? usage.error || "Refresh required." : "Counts every Bingo retained topic. Other applications on this broker may use additional slots."}`;
+}
+async function renderCleanupStatus(force=false) {
+  const generation = state.generation;
+  try {
+    const status = await api("mqtt-cleanup/status"+(force ? "?refresh=1" : ""));
+    if (generation === state.generation) {
+      renderRetainedUsage(status.usage);
+      if(!mqttCleanupPreview)$("mqtt-cleanup-status").textContent = cleanupScheduleText(status);
+    }
+  } catch (error) {
+    if (generation === state.generation) $("mqtt-cleanup-status").textContent = error.message;
+  }
+}
+$("refresh-mqtt-usage")?.addEventListener("click",async()=>{
+  const button=$("refresh-mqtt-usage");button.disabled=true;
+  try{await renderCleanupStatus(true);}finally{button.disabled=false;}
+});
 async function renderSecurity() {
+  void renderCleanupStatus();
   renderStorageAudit();
   const root = $("security-content"),
     generation = state.generation;

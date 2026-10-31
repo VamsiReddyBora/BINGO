@@ -9,6 +9,7 @@ PASSKEY_RP_ID = "vamsireddybora.github.io"
 PUBLIC_URL = "https://bingo-admin-control.vamsireddy2534.workers.dev"
 LEGACY_API_URL = "https://keyvalue.immanuel.co/api/KeyVal"
 MQTT_URL = "wss://p0812f88.ala.asia-southeast1.emqxsl.com:8084/mqtt"
+MQTT_AUTOCLEAN_ENABLED = "true"
 
 [[durable_objects.bindings]]
 name = "ADMIN"

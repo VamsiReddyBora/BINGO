@@ -21,6 +21,9 @@ export class MemoryStorage {
   async setAlarm(n) {
     this.alarmAt = n;
   }
+  async getAlarm() {
+    return this.alarmAt || null;
+  }
   async transaction(action) {
     const task = this.queue.then(async () => {
       const old = structuredClone(this.map);
