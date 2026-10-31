@@ -486,7 +486,7 @@
               <progress id="mqtt-usage-meter" max="2000" value="0" aria-label="Retained message storage used" hidden></progress>
               <p id="mqtt-usage-detail" class="muted small">Checking broker usage…</p>
             </div>
-            <p class="muted small">Automatic maintenance runs every 15 minutes. Completed move records are compacted after 10 minutes; final boards stay for 24 hours. Active games and Firebase player data are preserved.</p>
+            <p class="muted small">Automatic maintenance checks every 15 minutes and waits during gameplay or the five-minute rejoin grace period. Completed move records are compacted after 10 minutes; final boards stay for 24 hours. Player data is preserved.</p>
             <div class="actions">
               <button id="refresh-mqtt-usage">↻ Refresh usage</button>
               <button id="preview-mqtt-cleanup">Preview cleanup</button>

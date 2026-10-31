@@ -2322,6 +2322,7 @@ $("preview-mqtt-cleanup")?.addEventListener("click", async () => {
     const preview=await api("mqtt-cleanup");
     mqttCleanupPreview=preview;
     renderRetainedUsage(preview.usage);
+    if(preview.deferred){mqttCleanupPreview=null;status.textContent="Cleanup is waiting for gameplay and the rejoin grace period to finish. Preview again afterwards.";return;}
     const categories=Object.entries(preview.categories || {}).map(([name,n])=>`${name.replaceAll("_"," ")}: ${n}`).join(" · ");
     status.textContent=`${preview.eligibleRecords} eligible records · ${preview.batchRecords} in this batch.${categories ? " "+categories+"." : ""} ${cleanupScheduleText(preview.automatic)}`;
     runButton.disabled=preview.batchRecords===0;
@@ -2337,7 +2338,7 @@ $("run-mqtt-cleanup")?.addEventListener("click", async () => {
   try {
     const result=await api("mqtt-cleanup/run",{method:"POST",data:{planId:preview.planId}});
     if(result.usage)renderRetainedUsage(result.usage);
-    status.textContent=`${result.deletedConfirmed} records removed and verified · ${result.skippedChanged} changed records kept · ${result.recreatedOrStillPresent} records still present. Preview again to check any remaining entries.`;
+    status.textContent=`${result.deletedConfirmed} records removed and verified · ${result.skippedChanged} changed records kept · ${result.recreatedOrStillPresent} records still present. ${result.deferred ? "Cleanup stopped for gameplay/rejoin activity. Preview again afterwards." : "Preview again to check any remaining entries."}`;
   } catch (error) {status.textContent=error.message+" Preview again to inspect the current records.";}
   finally {previewButton.disabled=false;}
 });
@@ -2346,6 +2347,7 @@ function cleanupScheduleText(status) {
   const run = status.lastRun;
   if (!run) return "Automatic maintenance is enabled; its first run is pending.";
   const next = run.nextRunAt ? ` Next check: ${new Date(run.nextRunAt).toLocaleString()}.` : "";
+  if (run.status === "DEFERRED") return `Cleanup is waiting for gameplay and the rejoin grace period to finish.${run.result?.deletedConfirmed ? " "+run.result.deletedConfirmed+" old records were verified removed before it stopped." : ""}` + next;
   if (run.status === "FAILED") return "Automatic maintenance was interrupted; saved recovery archives are preserved." + next;
   if (run.status === "RUNNING") return "Automatic maintenance is running.";
   return `Last automatic run removed and verified ${run.result?.deletedConfirmed || 0} records.` + next;
