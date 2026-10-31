@@ -1,6 +1,7 @@
 package com.bingo.multiplayer
 
 import android.content.Intent
+import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -8,9 +9,11 @@ import androidx.activity.compose.setContent
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.core.view.WindowCompat
 import com.bingo.multiplayer.core.designsystem.BingoAppTheme
+import com.bingo.multiplayer.core.designsystem.AnimationPreferences
+import com.bingo.multiplayer.core.designsystem.AppSystemBars
+import com.bingo.multiplayer.core.designsystem.AppNativeTheme
 import com.bingo.multiplayer.core.designsystem.ThemePreferences
 import com.bingo.multiplayer.domain.network.AppLifecycleObserver
 import com.bingo.multiplayer.domain.network.AppUpdateManager
@@ -38,6 +41,8 @@ class MainActivity : ComponentActivity() {
     private val launchReady = MutableStateFlow(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Select the platform theme before Activity creates its native window/decor.
+        AppNativeTheme.apply(this, AppNativeTheme.savedDark(this))
         super.onCreate(savedInstanceState)
         requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         WindowCompat.setDecorFitsSystemWindows(window, true)
@@ -46,18 +51,9 @@ class MainActivity : ComponentActivity() {
         ThemePreferences.init(applicationContext)
         com.bingo.multiplayer.core.designsystem.NotificationPreferences.init(applicationContext)
         com.bingo.multiplayer.core.designsystem.SoundPreferences.init(applicationContext)
-        com.bingo.multiplayer.core.designsystem.AnimationPreferences.init(applicationContext)
+        AnimationPreferences.init(applicationContext)
 
-        // Immediately enforce window background and system bar icon contrast matching theme before UI composition
-        val initIsDark = ThemePreferences.isDarkTheme.value
-        val initBg = if (initIsDark) android.graphics.Color.BLACK else android.graphics.Color.parseColor("#FAFAFC")
-        window.statusBarColor = initBg
-        window.navigationBarColor = initBg
-        window.decorView.setBackgroundColor(initBg)
-        window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(initBg))
-        val initialInsetsController = WindowCompat.getInsetsController(window, window.decorView)
-        initialInsetsController.isAppearanceLightStatusBars = !initIsDark
-        initialInsetsController.isAppearanceLightNavigationBars = !initIsDark
+        applySystemBarStyle()
 
         // Initialize Notification Channels and background WorkManager checks
         BingoNotificationManager.init(applicationContext)
@@ -102,20 +98,11 @@ class MainActivity : ComponentActivity() {
         setContent {
             val isDark = ThemePreferences.isDarkTheme.value
             val accentId = ThemePreferences.accentColorId.value
-
-            val insetsController = remember(isDark) {
-                WindowCompat.getInsetsController(window, window.decorView)
-            }
+            val hideStatusBar = AnimationPreferences.hideStatusBar
 
             SideEffect {
-                // Status and navigation bar icons compatible with active theme (Light vs Pure Black)
-                insetsController.isAppearanceLightStatusBars = !isDark
-                insetsController.isAppearanceLightNavigationBars = !isDark
-                val effectiveBg = if (isDark) android.graphics.Color.BLACK else android.graphics.Color.parseColor("#FAFAFC")
-                window.statusBarColor = effectiveBg
-                window.navigationBarColor = effectiveBg
-                window.decorView.setBackgroundColor(effectiveBg)
-                window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(effectiveBg))
+                AppNativeTheme.apply(this@MainActivity, isDark)
+                AppSystemBars.apply(window, isDark, hideStatusBar)
             }
 
             val customMyPick = ThemePreferences.customMyPickHex.value
@@ -151,9 +138,28 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        applySystemBarStyle()
         AppLifecycleObserver.onForegroundImmediate()
         BingoNotificationManager.onAppForeground(applicationContext)
         AppUpdateManager.resumePendingInstall(this)
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) applySystemBarStyle()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        applySystemBarStyle()
+        // uiMode is handled without recreating this activity. Apply once more after the
+        // framework finishes dispatching its native theme/decor configuration update.
+        window.decorView.post { applySystemBarStyle() }
+    }
+
+    private fun applySystemBarStyle() {
+        AppNativeTheme.apply(this, ThemePreferences.isDarkTheme.value)
+        AppSystemBars.apply(window, ThemePreferences.isDarkTheme.value, AnimationPreferences.hideStatusBar)
     }
 
     override fun onNewIntent(intent: Intent) {

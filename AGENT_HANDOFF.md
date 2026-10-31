@@ -1,23 +1,29 @@
-# Agent handoff — Bingo 1.0.6, Build 85
+# Agent handoff — Bingo 1.0.7, Build 95
 
-This is the clean release source. Main and tag v1.0.6 identify this version; keep previous release tags, APKs and source ZIPs unchanged. Read SimplifiedGameRules.md before gameplay work. Preserve all intentional behavior and valid production-path regression coverage.
+This is the clean release source for main/tag v1.0.7. Preserve previous releases, their tags, source ZIPs and APKs. Read SimplifiedGameRules.md before gameplay work.
 
-## Current change
+## Features included since public Build 85
 
-Read MANUAL_MQTT_CLEANUP.md. Owner-requested cleanup is manual only, through Settings → MQTT record cleanup or `node tools/cleanup-retained.mjs --apply`. There is no scheduler or automatic retry. Both use the same production planner/executor, exact-topic checks, verified private Firebase recovery archive and fresh broker readback. Waiting/playing lobbies, active matches and unverified accounts are protected. One invocation is bounded; the owner can request another batch.
+- Request to join a friend's waiting lobby, using the compact Join action; existing direct invites remain.
+- Latest-only compact speech bubbles above lobby avatars with the accepted fixed placement and bounce animation. Compose messages inline by tapping Chat; Enter or keyboard dismissal sends, blank dismissal closes, long-press offers Delete/Cancel. No presets or temporary tuning gear.
+- Live typing indicators and an in-game theme switch.
+- Optional Hide status bar switch in Animations, off by default.
+- Native light/dark theme alignment and live system-bar diagnostics in Copy app diagnostics.
 
-AccountSessionManager now publishes legacy registry/Google account announcements live with retain=false. Firebase remains durable account storage; no gameplay or authorization policy changes were made. The old retained-publication test was intentionally replaced by a live-publication requirement, while its identity/payload assertions remain. The AuthRepository public-key publication test now captures the actual live publication rather than relying on the retired retained copy; stable-key/restart/rename/avatar/career assertions remain.
+## Known unresolved issue
 
-## Preserve existing features
+The owner confirmed Build 94 still displays a dark status bar when the phone is dark and Bingo is light. The owner explicitly deferred further repair and authorized 1.0.7/build95 publication. This is NOT fixed and must not be described as fixed. Use the new live native/window diagnostics before another speculative change. This release changes only version metadata from the current app; no additional gameplay or networking policy was introduced for publication.
 
-MQTT transports invitations, rooms and gameplay. Firebase stores players. The authenticated notification relay handles background pushes. Existing admin profile/statistics/photo/friendship sync, migrated accounts, 30-minute friend-online interval, update channels and result animations remain included. Preserve SimplifiedGameRules.md, turn clocks, pause, recovery, wins, invitations, nearby mode and existing support links. This package contains Bingo only.
+## Preserve existing behavior
 
-Read OTA_CONTENT_UPDATES.md and APK_UPDATE_CHANNELS.md before publication. Preserve all current public/targeted update manifests and past APKs. OTA remains bounded data, never downloaded executable code. Package updates retain Android installer consent and signature/hash checks.
+MQTT carries gameplay/invitations; Firebase stores player data. Preserve SimplifiedGameRules.md, turns, pause/rejoin/wins, nearby mode, avatars, friends, push notifications, existing result animations and approved support contact links. Manual MQTT cleanup remains manual only. This package contains Bingo, without the Sudoku experiment.
+
+Read APK_UPDATE_CHANNELS.md and OTA_CONTENT_UPDATES.md. OTA remains bounded data, not executable code. Package updates require Android installer consent and retain signing/hash checks. Keep historical public/targeted update assets separate.
 
 ## Build and verification
 
-Use JDK 17 and SDK 34. Supply Firebase client config, deployment values and release signing inputs privately using README.md and local.release.properties.example. SOURCE_MANIFEST.json records checks and hashes. No signing keys, service account, device addresses, passwords, player data or operator logs belong in public source.
+Use JDK17 and Android SDK34. Supply google-services.json, deployment values and optional release signing inputs privately as described in README.md/local.release.properties.example. No private credentials, player records, signing keys, device addresses or local logs belong in the public source.
 
-The new regression reproduced retained account copies before the fix. Shared maintenance tests cover protected records, archive failures, changed packets, exact deletes, fresh passkey approval and absence of scheduled cleanup. The browser harness exercises the actual admin UI and service with virtual WebAuthn. The live cleanup check uses only newly created owned fixture records on the real broker and a verified private Firebase archive; it does not delete user records. Android/JVM and browser checks do not replace physical-device notification, installer, animation or FPS testing.
+Automated verification is recorded in SOURCE_MANIFEST.json. It does not establish physical-device status-bar appearance, Android installer behavior, notification delivery or frame rate. Optional real-device/live tests require explicit opt-in; no emulator or physical phone is used for release packaging.
 
-Verification: 1,252 Android tests passed, zero failures and eight optional live/device skips. The clean public source passed the same cases. All gameplay regressions were retained; retired retained-account checks were replaced by live-publication checks preserving their payload/key assertions. Release lint: zero errors, 34 existing warnings. Original signing certificate and APK alignment verified. No new physical-device/FPS measurement was performed.
+Verification: 1,340 automated Android tests passed, zero failures and nine unchanged optional skips. Clean-source case IDs/results match Build94; gameplay and networking logic are unchanged from that build. Android lint: zero errors, 34 warnings. Original signing certificate and APK alignment verified. The known status-bar appearance issue remains unresolved; no new physical-device UI/FPS verification is claimed.

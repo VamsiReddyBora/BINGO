@@ -37,6 +37,9 @@ import androidx.compose.material.icons.filled.PauseCircle
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.LightMode
+import com.bingo.multiplayer.core.designsystem.ThemePreferences
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -60,21 +63,16 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.graphics.toArgb
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import com.bingo.multiplayer.domain.model.InGameChatMessage
 
-import android.app.Activity
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.platform.LocalView
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -191,7 +189,6 @@ fun GameScreen(
 ) {
     val tokens = BingoTheme.colors
     val haptic = LocalHapticFeedback.current
-    val view = LocalView.current
     val context = LocalContext.current
     val quickChatPhrases = remember { QuickChatPreferences.getPhrases(context) }
     var showQuickChat by remember { mutableStateOf(false) }
@@ -385,21 +382,7 @@ fun GameScreen(
         }
     }
 
-    // Requirement 4: Match app background and adapt status bar icons (black/white) without hiding them
-    val isDarkTheme = tokens.isDark
-    val statusBarColor = tokens.background
-    DisposableEffect(isDarkTheme, statusBarColor) {
-        val window = (view.context as? Activity)?.window
-        if (window != null) {
-            val insetsController = WindowCompat.getInsetsController(window, view)
-            insetsController.show(WindowInsetsCompat.Type.statusBars())
-            insetsController.isAppearanceLightStatusBars = !isDarkTheme
-            insetsController.isAppearanceLightNavigationBars = !isDarkTheme
-            window.statusBarColor = statusBarColor.toArgb()
-            window.navigationBarColor = statusBarColor.toArgb()
-        }
-        onDispose { }
-    }
+    // The activity owns system-bar colours and visibility across every destination.
     var showSurrenderDialog by remember { mutableStateOf(false) }
     var isExitingMatch by remember { mutableStateOf(false) }
 
@@ -683,14 +666,14 @@ fun GameScreen(
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 4.dp)
                 ) {
-                    // Item 1: Top Left Door Open Exit Button
+                    // Header-only theme change uses the same persisted preference as Home.
+                    Row(Modifier.align(Alignment.CenterStart), verticalAlignment = Alignment.CenterVertically) {
                     IconButton(
                         onClick = {
                             showSurrenderDialog = true
                         },
                         modifier = Modifier
                             .size(36.dp)
-                            .align(Alignment.CenterStart)
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ExitToApp,
@@ -698,6 +681,16 @@ fun GameScreen(
                             tint = tokens.cellNeutralText.copy(alpha = 0.8f),
                             modifier = Modifier.size(24.dp)
                         )
+                    }
+                    Surface(onClick = { ThemePreferences.setDarkTheme(context, !tokens.isDark) },
+                        shape = CircleShape, color = tokens.backgroundSecondary,
+                        border = BorderStroke(1.dp, tokens.surfaceBorder), modifier = Modifier.size(36.dp)) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Icon(if (tokens.isDark) Icons.Default.LightMode else Icons.Default.DarkMode,
+                                contentDescription = if (tokens.isDark) "Switch to Light Theme" else "Switch to Dark Theme",
+                                tint = tokens.accentBrand, modifier = Modifier.size(18.dp))
+                        }
+                    }
                     }
 
                     // Item 2: Top Center 🛜 Wifi Icon + Ping (Updates once every 1 second, perfectly centered!)

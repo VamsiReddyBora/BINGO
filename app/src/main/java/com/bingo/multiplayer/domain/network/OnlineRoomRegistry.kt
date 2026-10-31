@@ -473,7 +473,8 @@ object OnlineRoomRegistry {
         roomCode: String,
         joiner: Player,
         expectedSessionId: String? = null,
-        expectedHostId: String? = null
+        expectedHostId: String? = null,
+        waitingOnly: Boolean = false
     ): RoomJoinResult = withContext(Dispatchers.IO) {
 
         val cleanCode = roomCode.trim().uppercase()
@@ -518,6 +519,7 @@ object OnlineRoomRegistry {
             }
 
             if (session.status == "PLAYING") {
+                if (waitingOnly) return@withContext RoomJoinResult.AlreadyStarted("That match has already started. Your current lobby is unchanged.")
                 if (!isCanonicalVerified) {
                     return@withContext RoomJoinResult.Error("Cannot rejoin active match from unverified discovery candidate.")
                 }

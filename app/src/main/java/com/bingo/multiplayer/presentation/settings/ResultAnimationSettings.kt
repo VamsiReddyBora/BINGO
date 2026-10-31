@@ -42,5 +42,18 @@ internal fun ResultAnimationSettingsContent() {
                 uncheckedTrackColor = tokens.cellNeutralBorder.copy(alpha = .25f),
                 uncheckedBorderColor = tokens.cellNeutralBorder.copy(alpha = .35f)))
         }
+        Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f).padding(end = 8.dp)) {
+                Text("Hide status bar", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = tokens.textPrimary)
+                Text("Hide the clock, battery and signal icons. Swipe down to reveal them.",
+                    fontSize = 11.sp, color = tokens.textMuted)
+            }
+            Switch(checked = AnimationPreferences.hideStatusBar, onCheckedChange = {
+                AnimationPreferences.setHideStatusBar(context, it)
+            }, colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accent,
+                checkedBorderColor = Color.Transparent, uncheckedThumbColor = tokens.textMuted,
+                uncheckedTrackColor = tokens.cellNeutralBorder.copy(alpha = .25f),
+                uncheckedBorderColor = tokens.cellNeutralBorder.copy(alpha = .35f)))
+        }
     }
 }

@@ -1,7 +1,6 @@
 package com.bingo.multiplayer
 
 import android.app.Application
-import android.content.Context
 import androidx.appcompat.app.AppCompatDelegate
 
 class BingoApplication : Application() {
@@ -11,13 +10,8 @@ class BingoApplication : Application() {
         com.bingo.multiplayer.domain.notifications.NotificationRuntime.init(this)
         com.bingo.multiplayer.domain.network.OnlineRoomRegistry.reloadDurableClosures()
         try {
-            val prefs = getSharedPreferences("bingo_theme_prefs", Context.MODE_PRIVATE)
-            val authPrefs = getSharedPreferences("bingo_auth_prefs", Context.MODE_PRIVATE)
-            val isDark = if (prefs.contains("is_dark_theme")) {
-                prefs.getBoolean("is_dark_theme", false)
-            } else {
-                authPrefs.getBoolean("settings_dark_theme", false)
-            }
+            val isDark = com.bingo.multiplayer.core.designsystem.AppNativeTheme.savedDark(this)
+            com.bingo.multiplayer.core.designsystem.AppNativeTheme.apply(this, isDark)
             val targetMode = if (isDark) {
                 AppCompatDelegate.MODE_NIGHT_YES
             } else {
@@ -26,17 +20,7 @@ class BingoApplication : Application() {
             if (AppCompatDelegate.getDefaultNightMode() != targetMode) {
                 AppCompatDelegate.setDefaultNightMode(targetMode)
             }
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                val uiModeManager = getSystemService(Context.UI_MODE_SERVICE) as? android.app.UiModeManager
-                val targetNightMode = if (isDark) {
-                    android.app.UiModeManager.MODE_NIGHT_YES
-                } else {
-                    android.app.UiModeManager.MODE_NIGHT_NO
-                }
-                if (uiModeManager != null && uiModeManager.nightMode != targetNightMode) {
-                    uiModeManager.setApplicationNightMode(targetNightMode)
-                }
-            }
+            com.bingo.multiplayer.core.designsystem.AppNativeTheme.syncApplicationNightMode(this, isDark)
         } catch (_: Throwable) {
             // Safe fallback if preferences or AppCompatDelegate fail
         }

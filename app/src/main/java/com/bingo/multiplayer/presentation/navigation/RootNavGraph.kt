@@ -74,6 +74,11 @@ import com.bingo.multiplayer.domain.network.SimplifiedMatchPacketGate
 import com.bingo.multiplayer.domain.network.SavedMatchOpening
 import com.bingo.multiplayer.domain.network.PostMatchLobbyAccess
 import com.bingo.multiplayer.domain.network.PostMatchLobbyStatus
+import com.bingo.multiplayer.domain.network.LobbyJoinRequests
+import com.bingo.multiplayer.domain.network.LobbyJoinIdentity
+import com.bingo.multiplayer.domain.network.LobbyJoinRequest
+import com.bingo.multiplayer.domain.network.LobbyMessageSession
+import com.bingo.multiplayer.domain.network.LobbyRoomTransfer
 import com.bingo.multiplayer.domain.network.RoomMetadataApi
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -210,6 +215,9 @@ fun RootNavGraph(
 
     var peerTurnClock by remember { mutableStateOf<MultiplayerTurnClock?>(null) }
     val matchClock = remember { com.bingo.multiplayer.domain.network.MatchClockSession() }
+    val lobbyMessageSession = remember { LobbyMessageSession() }
+    val lobbyProfileMessages by lobbyMessageSession.messages.collectAsState()
+    val lobbyTypingPlayers by lobbyMessageSession.typingPlayerIds.collectAsState()
     val nearbySession = remember { com.bingo.multiplayer.domain.network.NearbyMatchSession() }
     val nearbyAvailability by nearbySession.availability.collectAsState()
     val nearbyConnectionReady by lanP2pSync.connectionReady.collectAsState()
@@ -773,6 +781,43 @@ fun RootNavGraph(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
+    val lobbyJoinRequests = remember(currentAuthUser?.uid, currentAuthUser?.username) {
+        currentAuthUser?.let { LobbyJoinRequests(LobbyJoinIdentity(it.uid, it.username, it.displayName)) }
+    }
+    val incomingLobbyJoin = lobbyJoinRequests?.incoming?.collectAsState()?.value
+    val acceptedLobbyJoin = lobbyJoinRequests?.accepted?.collectAsState()?.value
+    var joinLeaveWarning by remember(currentAuthUser?.uid) { mutableStateOf<LobbyJoinRequest?>(null) }
+    var respondingToJoin by remember { mutableStateOf(false) }
+    DisposableEffect(lobbyJoinRequests) {
+        lobbyJoinRequests?.start()
+        onDispose { lobbyJoinRequests?.close() }
+    }
+    val lobbyHostId = realTimePlayers.firstOrNull { it.isHost }?.id.orEmpty()
+    val lobbyMessageSessionId = if (currentGameMode == GameMode.ONLINE_ROOM) onlineRoomSync.currentLobbySessionId
+        else "nearby:$roomCode:$lobbyHostId"
+    val lobbyMessageMembers = realTimePlayers.filter { it.lobbyReadyStatus != LobbyLifecycleEngine.STATUS_LEFT_LOBBY }.map { it.id }.toSet()
+    LaunchedEffect(currentRoute, roomCode, lobbyMessageSessionId, currentAuthUser?.uid, lobbyHostId,
+        lobbyMessageMembers, lobbyCountdownSeconds, isHosting, peerConnectionReady, nearbyConnectionReady,
+        isJoiningRoom, isCheckingMatchCompatibility) {
+        val inLobby = currentRoute == Screen.Lobby.route && lobbyCountdownSeconds < 0
+        lobbyJoinRequests?.updateLocation("$currentRoute|$roomCode|$lobbyMessageSessionId|${lobbyCountdownSeconds >= 0}",
+            roomCode, lobbyMessageSessionId, inLobby && isHosting && currentGameMode == GameMode.ONLINE_ROOM && !isJoiningRoom && !isCheckingMatchCompatibility)
+        if (inLobby && currentGameMode in setOf(GameMode.ONLINE_ROOM, GameMode.NEARBY_NETWORK)) {
+            lobbyMessageSession.bind(roomCode, lobbyMessageSessionId, getLocalUid(), lobbyHostId,
+                lobbyMessageMembers)
+            lobbyMessageSession.request()?.let { request ->
+                if (currentGameMode == GameMode.NEARBY_NETWORK) lanP2pSync.broadcastPacket(request)
+                else onlineRoomSync.broadcastPacket(request)
+            }
+        } else lobbyMessageSession.clear()
+    }
+    LaunchedEffect(currentRoute, lobbyMessageSession) {
+        if (currentRoute == Screen.Lobby.route) while (isActive) {
+            lobbyMessageSession.expireTyping()
+            delay(500L)
+        }
+    }
+
     LaunchedEffect(currentRoute) {
         if (currentRoute != null && currentRoute != Screen.AuthGate.route) {
             withFrameNanos { } // Destination composition is committed before startup dialogs are allowed.
@@ -1107,7 +1152,8 @@ fun RootNavGraph(
         }
     }
 
-    fun acceptAndJoinRoom(targetRoomCode: String, sourceInvite: com.bingo.multiplayer.domain.network.GameInvite? = null) {
+    fun acceptAndJoinRoom(targetRoomCode: String, sourceInvite: com.bingo.multiplayer.domain.network.GameInvite? = null,
+        approvedRequest: LobbyJoinRequest? = null) {
         if (isJoiningRoom) return
         val cleanCode = targetRoomCode.trim().uppercase()
         val account = NotificationRuntime.account(context)
@@ -1121,6 +1167,11 @@ fun RootNavGraph(
             Toast.makeText(context, "This invitation has expired or is no longer available.", Toast.LENGTH_SHORT).show()
             return
         }
+        val sourceRoom = roomCode
+        val sourceSession = onlineRoomSync.currentLobbySessionId
+        val sourceHost = isHosting
+        val sourceOtherIds = realTimePlayers.filter { it.id != getLocalUid() && it.lobbyReadyStatus != LobbyLifecycleEngine.STATUS_LEFT_LOBBY }.map { it.id }.toSet()
+        val sourceRoute = navController.currentDestination?.route
         isJoiningRoom = true
         incomingInvite = null
         com.bingo.multiplayer.domain.network.GameInviteManager.clearForegroundInvite()
@@ -1161,7 +1212,25 @@ fun RootNavGraph(
                     isCurrentAccount = { NotificationRuntime.account(context) == account },
                     finishInvite = { NotificationRuntime.finishInvite(context, it) }
                 ) {
-                    com.bingo.multiplayer.domain.network.OnlineRoomRegistry.joinRoom(cleanCode, localJoiner, sourceInvite)
+                    if (approvedRequest == null) {
+                        com.bingo.multiplayer.domain.network.OnlineRoomRegistry.joinRoom(cleanCode, localJoiner, sourceInvite)
+                    } else {
+                        LobbyRoomTransfer.join(
+                            admit = { com.bingo.multiplayer.domain.network.OnlineRoomRegistry.validateAndJoinRoom(cleanCode, localJoiner,
+                                expectedSessionId = approvedRequest.lobbySessionId, expectedHostId = approvedRequest.hostId, waitingOnly = true) },
+                            isCurrent = { NotificationRuntime.account(context) == account && roomCode == sourceRoom &&
+                                navController.currentDestination?.route == sourceRoute && lobbyCountdownSeconds < 0 &&
+                                approvedRequest.expiresAt > System.currentTimeMillis() },
+                            depart = {
+                                if (sourceRoom.isBlank() || sourceRoute != Screen.Lobby.route) true
+                                else if (sourceHost) {
+                                    LobbyRoomTransfer.departHostedLobby(sourceRoom, sourceSession, uid, sourceOtherIds)
+                                } else onlineRoomSync.sendImmediateAndAcknowledge(RoomMessagePacket(type = "READY_STATUS",
+                                    playerId = uid, senderPlayerId = uid, readyStatus = "LEFT_LOBBY", readyVersion = System.currentTimeMillis()))
+                            },
+                            rollback = { com.bingo.multiplayer.domain.network.OnlineRoomRegistry.removePlayerFromRoom(cleanCode, uid) }
+                        )
+                    }
                 } ?: return@launch
                 if (NotificationRuntime.account(context) != account) return@launch
                 when (result) {
@@ -1217,6 +1286,44 @@ fun RootNavGraph(
         }
     }
 
+    fun requestToJoinFriend(username: String) {
+        val requester = lobbyJoinRequests ?: return
+        val expectedAccount = currentAuthUser?.uid
+        val expectedSource = roomCode
+        val expectedRoute = navController.currentDestination?.route
+        coroutineScope.launch {
+            val presence = com.bingo.multiplayer.domain.network.PresenceManager.presenceFlow.value[username.trim().lowercase().removePrefix("@")]
+            val targetCode = presence?.currentRoomCode.orEmpty()
+            if (targetCode.isBlank() || targetCode == roomCode) {
+                Toast.makeText(context, "That friend has no other lobby available to join.", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val destination = com.bingo.multiplayer.domain.network.OnlineRoomRegistry.getRoom(targetCode)
+            if (NotificationRuntime.account(context)?.uid != expectedAccount || roomCode != expectedSource ||
+                navController.currentDestination?.route != expectedRoute || lobbyCountdownSeconds >= 0) return@launch
+            if (destination == null || destination.status != "WAITING" || destination.isTerminalClosed) {
+                Toast.makeText(context, "That lobby is no longer waiting for players.", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val result = requester.request(destination)
+            Toast.makeText(context, if (result.isSuccess) "Join request sent to ${destination.hostDisplayName}."
+                else result.exceptionOrNull()?.message ?: "Couldn’t send the join request. Please try again.", Toast.LENGTH_LONG).show()
+        }
+    }
+    fun joinApprovedLobby(request: LobbyJoinRequest) {
+        if (lobbyJoinRequests?.consumeAcceptance(request) != true) {
+            Toast.makeText(context, "That join request has expired.", Toast.LENGTH_SHORT).show(); return
+        }
+        acceptAndJoinRoom(request.roomCode, approvedRequest = request)
+    }
+    LaunchedEffect(acceptedLobbyJoin?.id) {
+        val request = acceptedLobbyJoin ?: return@LaunchedEffect
+        if (isHosting && currentRoute == Screen.Lobby.route &&
+            realTimePlayers.count { it.id != getLocalUid() && it.lobbyReadyStatus != LobbyLifecycleEngine.STATUS_LEFT_LOBBY } > 0)
+            joinLeaveWarning = request
+        else joinApprovedLobby(request)
+    }
+
     LaunchedEffect(currentAuthUser?.uid, currentAuthUser?.username) {
         incomingInvite = null
         NotificationRuntime.bind(context, currentAuthUser?.uid, currentAuthUser?.username)
@@ -1225,6 +1332,9 @@ fun RootNavGraph(
         val active = (currentRoute == Screen.Game.route || currentRoute == Screen.ManualBoardDesign.route) && !isGameOver
         NotificationRuntime.updateMatchActive(context, active)
         if (active) incomingInvite = null
+    }
+    LaunchedEffect(lobbyJoinRequests) {
+        lobbyJoinRequests?.notices?.collect { Toast.makeText(context, it, Toast.LENGTH_LONG).show() }
     }
     val notificationAction by com.bingo.multiplayer.domain.network.BingoNotificationManager.pendingAction.collectAsState()
     var notificationFriendTarget by remember { mutableStateOf<String?>(null) }
@@ -3316,6 +3426,15 @@ fun RootNavGraph(
     }
 
     fun handleIncomingPacket(original: RoomMessagePacket) {
+        if (original.type in LobbyMessageSession.TYPES) {
+            if (navController.currentDestination?.route == Screen.Lobby.route && lobbyCountdownSeconds < 0) {
+                lobbyMessageSession.receive(original)?.let { reply ->
+                    if (currentGameMode == GameMode.NEARBY_NETWORK) lanP2pSync.broadcastPacket(reply)
+                    else onlineRoomSync.broadcastPacket(reply)
+                }
+            }
+            return
+        }
         // A lobby can close while its completed boards are still on screen. This is not a
         // surrender in the finished match and must precede the live-game seed checks.
         if (isGameOver && currentGameMode == GameMode.ONLINE_ROOM &&
@@ -5438,7 +5557,9 @@ fun RootNavGraph(
                     val availability = com.bingo.multiplayer.domain.network.FriendPlayAvailability.of(
                         com.bingo.multiplayer.domain.network.PresenceManager.presenceFlow.value[
                             friend.username.trim().lowercase().removePrefix("@")])
-                    if (availability == com.bingo.multiplayer.domain.network.FriendPlayAvailability.BUSY) {
+                    if (availability == com.bingo.multiplayer.domain.network.FriendPlayAvailability.IN_LOBBY) {
+                        requestToJoinFriend(friend.username)
+                    } else if (availability == com.bingo.multiplayer.domain.network.FriendPlayAvailability.BUSY) {
                         coroutineScope.launch {
                             val result = com.bingo.multiplayer.domain.network.GameInviteManager.sendPlayRequest(
                                 friend.username, friend.uid, getPlayerDisplayName())
@@ -5540,7 +5661,9 @@ fun RootNavGraph(
                     val availability = com.bingo.multiplayer.domain.network.FriendPlayAvailability.of(
                         com.bingo.multiplayer.domain.network.PresenceManager.presenceFlow.value[
                             friend.username.trim().lowercase().removePrefix("@")])
-                    if (availability == com.bingo.multiplayer.domain.network.FriendPlayAvailability.BUSY) {
+                    if (availability == com.bingo.multiplayer.domain.network.FriendPlayAvailability.IN_LOBBY) {
+                        requestToJoinFriend(friend.username)
+                    } else if (availability == com.bingo.multiplayer.domain.network.FriendPlayAvailability.BUSY) {
                         coroutineScope.launch {
                             val result = com.bingo.multiplayer.domain.network.GameInviteManager.sendPlayRequest(
                                 friend.username, friend.uid, getPlayerDisplayName())
@@ -5639,7 +5762,9 @@ fun RootNavGraph(
                     val availability = com.bingo.multiplayer.domain.network.FriendPlayAvailability.of(
                         com.bingo.multiplayer.domain.network.PresenceManager.presenceFlow.value[
                             friend.username.trim().lowercase().removePrefix("@")])
-                    if (availability == com.bingo.multiplayer.domain.network.FriendPlayAvailability.BUSY) {
+                    if (availability == com.bingo.multiplayer.domain.network.FriendPlayAvailability.IN_LOBBY) {
+                        requestToJoinFriend(friend.username)
+                    } else if (availability == com.bingo.multiplayer.domain.network.FriendPlayAvailability.BUSY) {
                         coroutineScope.launch {
                             val result = com.bingo.multiplayer.domain.network.GameInviteManager.sendPlayRequest(
                                 friend.username, friend.uid, getPlayerDisplayName())
@@ -5927,6 +6052,13 @@ fun RootNavGraph(
             if (isKnownHost && !isHosting) {
                 isHosting = true
             }
+            val publishLobbyMessage: suspend (RoomMessagePacket) -> Boolean = { packet ->
+                if (navController.currentDestination?.route != Screen.Lobby.route || lobbyCountdownSeconds >= 0) false
+                else if (currentGameMode == GameMode.ONLINE_ROOM) onlineRoomSync.sendImmediateAndAcknowledge(packet, 2500L)
+                else if (currentGameMode == GameMode.NEARBY_NETWORK && nearbyConnectionReady) {
+                    kotlinx.coroutines.withTimeoutOrNull(1800L) { lanP2pSync.sendBeforeDisconnect(packet); true } ?: false
+                } else false
+            }
             LobbyScreen(
                 roomCode = roomCode,
                 players = realTimePlayers,
@@ -5940,6 +6072,27 @@ fun RootNavGraph(
                 isNearbyNetwork = (currentGameMode == GameMode.NEARBY_NETWORK),
                 hasActiveMatch = hasActiveOngoing,
                 lobbyCountdownSeconds = lobbyCountdownSeconds,
+                lobbyMessages = lobbyProfileMessages,
+                lobbyTypingPlayerIds = lobbyTypingPlayers,
+                onSetLobbyTyping = { active ->
+                    if (navController.currentDestination?.route == Screen.Lobby.route && lobbyCountdownSeconds < 0) {
+                        lobbyMessageSession.typingPacket(active)?.let { packet ->
+                            if (currentGameMode == GameMode.NEARBY_NETWORK) lanP2pSync.broadcastPacket(packet)
+                            else if (currentGameMode == GameMode.ONLINE_ROOM) onlineRoomSync.broadcastPacket(packet)
+                        }
+                    }
+                },
+                onRequestToJoin = ::requestToJoinFriend,
+                onSendLobbyMessage = { text ->
+                    val sent = lobbyMessageSession.send(text, publishLobbyMessage)
+                    if (sent) lobbyInactivityResetToken++
+                    sent
+                },
+                onDeleteLobbyMessage = { id ->
+                    val sent = lobbyMessageSession.delete(id, publishLobbyMessage)
+                    if (sent) lobbyInactivityResetToken++
+                    sent
+                },
                 onRejoinMatch = {
                     val data = ongoingMatchData ?: return@LobbyScreen
                     restoreAndRejoinOngoingMatch(data)
@@ -7482,6 +7635,38 @@ fun RootNavGraph(
             containerColor = BingoTheme.colors.surface,
             shape = RoundedCornerShape(16.dp)
         )
+    }
+
+    if (incomingLobbyJoin != null && currentInvite == null && joinLeaveWarning == null) {
+        val request = incomingLobbyJoin
+        fun answer(approve: Boolean) {
+            if (respondingToJoin) return
+            respondingToJoin = true
+            coroutineScope.launch {
+                try {
+                    val current = com.bingo.multiplayer.domain.network.OnlineRoomRegistry.getRoom(request.roomCode)
+                    val available = current?.status == "WAITING" && current.sessionId == request.lobbySessionId &&
+                        current.hostId == getLocalUid() && lobbyCountdownSeconds < 0 && currentRoute == Screen.Lobby.route
+                    if (approve && !available) Toast.makeText(context, "Your lobby is no longer available for this request.", Toast.LENGTH_LONG).show()
+                    if (lobbyJoinRequests?.respond(request, approve && available) != true)
+                        Toast.makeText(context, "Couldn’t send the response. Please try again.", Toast.LENGTH_SHORT).show()
+                } finally { respondingToJoin = false }
+            }
+        }
+        AlertDialog(onDismissRequest = { answer(false) },
+            title = { Text("Request to join", color = BingoTheme.colors.cellNeutralText) },
+            text = { Text("${request.requesterName} (@${request.requesterUsername}) wants to join your lobby.", color = BingoTheme.colors.cellNeutralText) },
+            confirmButton = { Button(enabled = !respondingToJoin, onClick = { answer(true) }) { Text("Accept") } },
+            dismissButton = { TextButton(enabled = !respondingToJoin, onClick = { answer(false) }) { Text("Decline") } },
+            containerColor = BingoTheme.colors.surface)
+    }
+    joinLeaveWarning?.let { request ->
+        AlertDialog(onDismissRequest = { lobbyJoinRequests?.consumeAcceptance(request); joinLeaveWarning = null },
+            title = { Text("Close your lobby?", color = BingoTheme.colors.cellNeutralText) },
+            text = { Text("Joining this lobby will close the lobby you host and return its other players to Home.", color = BingoTheme.colors.cellNeutralText) },
+            confirmButton = { Button(onClick = { joinLeaveWarning = null; joinApprovedLobby(request) }) { Text("Leave and join") } },
+            dismissButton = { TextButton(onClick = { lobbyJoinRequests?.consumeAcceptance(request); joinLeaveWarning = null }) { Text("Stay here") } },
+            containerColor = BingoTheme.colors.surface)
     }
 
     // Opponent Surrender Notification Dialog

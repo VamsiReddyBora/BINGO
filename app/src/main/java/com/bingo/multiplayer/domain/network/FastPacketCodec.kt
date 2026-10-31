@@ -26,6 +26,7 @@ object FastPacketCodec {
     }
 
     fun encode(packet: RoomMessagePacket): String {
+        if (packet.type == "LOBBY_TYPING") return encodeCompact(packet)
         if (packet.nearbyControl != null) return encodeCompact(packet)
         if (packet.clockOffsetMillis != 0L) return encodeCompact(packet)
         if (packet.lobbySessionId.isNotBlank() && packet.type in setOf("READY_STATUS", "HEARTBEAT")) return encodeCompact(packet)

@@ -2123,7 +2123,7 @@ fun SettingsScreen(
                 Column(Modifier.fillMaxWidth()) {
                     SettingsCardHeader(
                         title = "ANIMATIONS",
-                        subtitle = "Match result effects",
+                        subtitle = "Match effects and status bar",
                         icon = Icons.Default.Star,
                         isExpanded = isAnimationsExpanded,
                         onToggle = { isAnimationsExpanded = !isAnimationsExpanded }

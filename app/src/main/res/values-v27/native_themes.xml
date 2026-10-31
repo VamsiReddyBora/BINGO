@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.BingoMultiplayer.Light" parent="Theme.BingoMultiplayer.NativeLight">
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+    <style name="Theme.BingoMultiplayer.Dark" parent="Theme.BingoMultiplayer.NativeDark">
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>

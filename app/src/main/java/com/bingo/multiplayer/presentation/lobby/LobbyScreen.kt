@@ -22,6 +22,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.bingo.multiplayer.core.designsystem.ThemePreferences
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -94,13 +100,15 @@ fun LobbyScreen(
     isCheckingCompatibility: Boolean = false,
     lobbyCountdownSeconds: Int = -1,
     onRejoinMatch: () -> Unit = {},
+    lobbyMessages: Map<String, com.bingo.multiplayer.domain.network.LobbyProfileMessage> = emptyMap(),
+    lobbyTypingPlayerIds: Set<String> = emptySet(),
+    onSetLobbyTyping: (Boolean) -> Unit = {},
+    onSendLobbyMessage: (suspend (String) -> Boolean)? = null,
+    onDeleteLobbyMessage: (suspend (String) -> Boolean)? = null,
+    onRequestToJoin: (String) -> Unit = {},
     onStartGame: () -> Unit,
     onBack: () -> Unit
 ) {
-    BackHandler(enabled = lobbyCountdownSeconds < 0) {
-        onBack()
-    }
-
     val context = LocalContext.current
     val tokens = BingoTheme.colors
     val haptic = LocalHapticFeedback.current
@@ -135,6 +143,89 @@ fun LobbyScreen(
             }
         }
     }
+
+    val bubbleTuning = remember { LobbyBubbleTuning().normalized() }
+    val messageDraft = remember(roomCode, localUid) { LobbyInlineMessageDraft() }
+    var messageFocusRequest by remember(roomCode, localUid) { mutableIntStateOf(0) }
+    var messageInputFocused by remember(roomCode, localUid) { mutableStateOf(false) }
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    var foreground by remember(lifecycle) { mutableStateOf(lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) }
+    val windowFocused = LocalWindowInfo.current.isWindowFocused
+    val keyboardVisible = rememberLobbyKeyboardVisible()
+    val latestTypingCallback by rememberUpdatedState(onSetLobbyTyping)
+    LaunchedEffect(messageDraft.text, messageDraft.editing, messageDraft.sending, keyboardVisible, foreground) {
+        val active = messageDraft.editing && !messageDraft.sending && keyboardVisible && foreground && messageDraft.text.isNotBlank()
+        latestTypingCallback(active)
+        if (active) {
+            delay(2500L)
+            latestTypingCallback(false)
+        }
+    }
+    DisposableEffect(roomCode, localUid) {
+        onDispose { latestTypingCallback(false) }
+    }
+    val latestSend by rememberUpdatedState(onSendLobbyMessage)
+    fun submitLobbyDraft() {
+        if (lobbyCountdownSeconds >= 0 || isCheckingCompatibility) return
+        keyboard?.hide()
+        focusManager.clearFocus()
+        coroutineScope.launch { messageDraft.submit { latestSend?.invoke(it) ?: false } }
+    }
+    BackHandler(enabled = lobbyCountdownSeconds < 0) {
+        if (messageDraft.editing) submitLobbyDraft() else onBack()
+    }
+    DisposableEffect(lifecycle, messageDraft) {
+        val observer = LifecycleEventObserver { _, _ ->
+            foreground = lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+            if (!foreground) messageDraft.keyboardChanged(false, false)
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(keyboardVisible, foreground, windowFocused, messageInputFocused, messageDraft.editing) {
+        if (messageDraft.settledKeyboardChanged(keyboardVisible, foreground, windowFocused, messageInputFocused)) submitLobbyDraft()
+    }
+    LaunchedEffect(lobbyCountdownSeconds, isCheckingCompatibility) {
+        if (lobbyCountdownSeconds >= 0 || isCheckingCompatibility) {
+            messageDraft.closeForMatchStart()
+            keyboard?.hide()
+            focusManager.clearFocus()
+        }
+    }
+    fun openLobbyDraft() {
+        messageDraft.open()
+        messageFocusRequest++
+    }
+    var deletingMessage by remember(roomCode, localUid) { mutableStateOf<com.bingo.multiplayer.domain.network.LobbyProfileMessage?>(null) }
+    var deletingBusy by remember(roomCode, localUid) { mutableStateOf(false) }
+    var deletionError by remember(roomCode, localUid) { mutableStateOf<String?>(null) }
+    LaunchedEffect(lobbyCountdownSeconds, isCheckingCompatibility) {
+        if (lobbyCountdownSeconds >= 0 || isCheckingCompatibility) deletingMessage = null
+    }
+    deletingMessage?.let { target ->
+        AlertDialog(onDismissRequest = { if (!deletingBusy) deletingMessage = null },
+            containerColor = tokens.surface,
+            title = { Text("Delete message?", color = tokens.textPrimary) },
+            text = { Text(deletionError ?: "Remove your message from everyone's lobby.", color = tokens.textSecondary) },
+            confirmButton = {
+                TextButton(enabled = !deletingBusy, onClick = {
+                    deletingBusy = true; deletionError = null
+                    coroutineScope.launch {
+                        try {
+                            if (onDeleteLobbyMessage?.invoke(target.id) == true) deletingMessage = null
+                            else deletionError = "Couldn't delete. Check the connection and try again."
+                        } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                        catch (_: Exception) { deletionError = "Couldn't delete. Check the connection and try again." }
+                        finally { deletingBusy = false }
+                    }
+                }) { Text(if (deletingBusy) "Deleting…" else "Delete", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(enabled = !deletingBusy, onClick = { deletingMessage = null }) {
+                Text("Cancel", color = tokens.textPrimary)
+            } })
+        }
 
     var searchQuery by remember { mutableStateOf("") }
     var isSearching by remember { mutableStateOf(false) }
@@ -255,6 +346,7 @@ fun LobbyScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(tokens.background)
+            .imePadding()
     ) {
         Column(
             modifier = Modifier
@@ -517,6 +609,27 @@ fun LobbyScreen(
                                 color = tokens.surfaceBorder.copy(alpha = 0.5f),
                                 modifier = Modifier.padding(vertical = 6.dp)
                             )
+                        }
+
+                        val ownsBubble = LobbyLifecycleEngine.isPlayerMe(player, localUid,
+                            currentUser?.username ?: "", currentUser?.displayName ?: "", isHost)
+                        val inlineEditing = ownsBubble && messageDraft.editing
+                        val showTyping = !ownsBubble && player.id in lobbyTypingPlayerIds
+                        val bubbleMessage = lobbyMessages[player.id]
+                        if (player.lobbyReadyStatus != LobbyLifecycleEngine.STATUS_LEFT_LOBBY &&
+                            (bubbleMessage != null || inlineEditing || showTyping)) {
+                            Box(Modifier.fillMaxWidth().padding(start = bubbleTuning.xDp.dp, end = 8.dp,
+                                top = bubbleTuning.topGapDp.dp, bottom = bubbleTuning.avatarGapDp.dp)) {
+                                if (inlineEditing) LobbyInlineMessageField(messageDraft, bubbleTuning,
+                                    messageFocusRequest, keyboardVisible, ::submitLobbyDraft,
+                                    onFocusChanged = { messageInputFocused = it })
+                                else if (showTyping) LobbyProfileTypingBubble(player.id, player.displayName, bubbleTuning)
+                                else LobbyProfileMessageBox(bubbleMessage, bubbleTuning,
+                                    onDeleteRequest = if (ownsBubble && onDeleteLobbyMessage != null &&
+                                        lobbyCountdownSeconds < 0 && !isCheckingCompatibility) ({
+                                            deletionError = null; deletingMessage = bubbleMessage
+                                        }) else null)
+                            }
                         }
 
                         Row(
@@ -907,14 +1020,17 @@ fun LobbyScreen(
 
                                     Spacer(modifier = Modifier.width(8.dp))
 
-                                    val isRequest = com.bingo.multiplayer.domain.network.FriendPlayAvailability.of(
-                                        presenceMap[friend.username.trim().lowercase().removePrefix("@")]) == com.bingo.multiplayer.domain.network.FriendPlayAvailability.BUSY
+                                    val availability = com.bingo.multiplayer.domain.network.FriendPlayAvailability.of(
+                                        presenceMap[friend.username.trim().lowercase().removePrefix("@")])
+                                    val isJoinRequest = availability == com.bingo.multiplayer.domain.network.FriendPlayAvailability.IN_LOBBY
+                                    val isRequest = isJoinRequest || availability == com.bingo.multiplayer.domain.network.FriendPlayAvailability.BUSY
                                     val isInviteCooldown = if (isRequest) ActionCooldownManager.isPlayRequestOnCooldown(friend.username)
                                         else ActionCooldownManager.isInviteOnCooldown(friend.username)
                                     Button(
                                         onClick = {
                                             if (isRequest) ActionCooldownManager.startPlayRequestCooldown(friend.username)
                                             else ActionCooldownManager.startInviteCooldown(friend.username)
+                                            if (isJoinRequest) { onRequestToJoin(friend.username); return@Button }
                                             val fromUser = currentUser?.username?.ifBlank { null }
                                                 ?: players.firstOrNull { it.isHost }?.username?.ifBlank { null }
                                                 ?: players.firstOrNull { it.isHost }?.id
@@ -963,7 +1079,7 @@ fun LobbyScreen(
                                         )
                                         Spacer(modifier = Modifier.width(4.dp))
                                         Text(
-                                            text = if (isRequest) { if (isInviteCooldown) "Requested" else "Request" } else { if (isInviteCooldown) "Invited" else "Invite" },
+                                            text = if (isJoinRequest) { if (isInviteCooldown) "Requested" else "Join" } else if (isRequest) { if (isInviteCooldown) "Requested" else "Request" } else { if (isInviteCooldown) "Invited" else "Invite" },
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = if (isInviteCooldown) tokens.textMuted else tokens.primaryButtonText
@@ -1162,14 +1278,17 @@ fun LobbyScreen(
                                         }
                                     }
 
-                                    val isRequest = com.bingo.multiplayer.domain.network.FriendPlayAvailability.of(
-                                        presenceMap[result.username.trim().lowercase().removePrefix("@")]) == com.bingo.multiplayer.domain.network.FriendPlayAvailability.BUSY
+                                    val availability = com.bingo.multiplayer.domain.network.FriendPlayAvailability.of(
+                                        presenceMap[result.username.trim().lowercase().removePrefix("@")])
+                                    val isJoinRequest = availability == com.bingo.multiplayer.domain.network.FriendPlayAvailability.IN_LOBBY
+                                    val isRequest = isJoinRequest || availability == com.bingo.multiplayer.domain.network.FriendPlayAvailability.BUSY
                                     val isInviteCooldown = if (isRequest) ActionCooldownManager.isPlayRequestOnCooldown(result.username)
                                         else ActionCooldownManager.isInviteOnCooldown(result.username)
                                     Button(
                                         onClick = {
                                             if (isRequest) ActionCooldownManager.startPlayRequestCooldown(result.username)
                                             else ActionCooldownManager.startInviteCooldown(result.username)
+                                            if (isJoinRequest) { onRequestToJoin(result.username); return@Button }
                                             val fromUser = currentUser?.username?.ifBlank { null }
                                                 ?: players.firstOrNull { it.isHost }?.username?.ifBlank { null }
                                                 ?: players.firstOrNull { it.isHost }?.id
@@ -1218,7 +1337,7 @@ fun LobbyScreen(
                                         )
                                         Spacer(modifier = Modifier.width(3.dp))
                                         Text(
-                                            text = if (isRequest) { if (isInviteCooldown) "Requested" else "Request" } else { if (isInviteCooldown) "Invited" else "Invite" },
+                                            text = if (isJoinRequest) { if (isInviteCooldown) "Requested" else "Join" } else if (isRequest) { if (isInviteCooldown) "Requested" else "Request" } else { if (isInviteCooldown) "Invited" else "Invite" },
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = if (isInviteCooldown) tokens.textMuted else tokens.primaryButtonText
@@ -1378,6 +1497,8 @@ fun LobbyScreen(
                     )
                 }
 
+                LobbyActionRow(onSendLobbyMessage != null && lobbyCountdownSeconds < 0 && !isCheckingCompatibility && !messageDraft.sending && !deletingBusy,
+                    onChat = ::openLobbyDraft) {
                 Button(
                     onClick = {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -1414,6 +1535,7 @@ fun LobbyScreen(
                         fontSize = 15.sp,
                         color = if (allReady && lobbyCountdownSeconds < 0) tokens.primaryButtonText else tokens.textMuted
                     )
+                }
                 }
             } else {
                 Column(
@@ -1480,6 +1602,8 @@ fun LobbyScreen(
                         }
                     }
 
+                    LobbyActionRow(onSendLobbyMessage != null && lobbyCountdownSeconds < 0 && !messageDraft.sending && !deletingBusy,
+                        onChat = ::openLobbyDraft) {
                     if (isMyReadyState) {
                         OutlinedButton(
                             onClick = {
@@ -1529,6 +1653,7 @@ fun LobbyScreen(
                         }
                     }
 
+                    }
                     Spacer(modifier = Modifier.height(10.dp))
 
                     Text(

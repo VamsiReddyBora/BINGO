@@ -40,6 +40,7 @@ object AppExitDiagnostics {
     /** Only copied by the user's Settings action. Nothing is uploaded. */
     fun read(context: Context): String = buildString {
         append("Bingo ${version(context)}; Android SDK ${Build.VERSION.SDK_INT}\n")
+        append("Build ${com.bingo.multiplayer.domain.network.NetworkConfig.APP_VERSION_CODE}\n")
         try {
             val file = File(context.filesDir, FILE)
             if (file.exists()) append(file.inputStream().bufferedReader().use { it.readText().take(16_384) })
@@ -57,5 +58,9 @@ object AppExitDiagnostics {
             append("\nProfile synchronization:\n")
             append(com.bingo.multiplayer.domain.repository.AuthRepository.activeInstance?.profileSyncDiagnostics() ?: "Cloud profile: not initialized\n")
         } catch (_: Exception) { append("Notification diagnostics unavailable.\n") }
+        try {
+            append("\nSystem bars and native theme:\n")
+            append(SystemBarDiagnostics.read(context))
+        } catch (_: Exception) { append("System-bar diagnostics unavailable.\n") }
     }
 }

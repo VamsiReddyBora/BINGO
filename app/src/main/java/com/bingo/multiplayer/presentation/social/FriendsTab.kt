@@ -618,14 +618,15 @@ fun FriendCard(
 
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 val availability = com.bingo.multiplayer.domain.network.FriendPlayAvailability.of(livePres)
-                val isRequest = availability == com.bingo.multiplayer.domain.network.FriendPlayAvailability.BUSY
+                val isJoinRequest = availability == com.bingo.multiplayer.domain.network.FriendPlayAvailability.IN_LOBBY
+                val isRequest = isJoinRequest || availability == com.bingo.multiplayer.domain.network.FriendPlayAvailability.BUSY
                 val isInviteCooldown = if (isRequest) ActionCooldownManager.isPlayRequestOnCooldown(cleanFriend) else ActionCooldownManager.isInviteOnCooldown(cleanFriend)
                 Button(
                     onClick = {
                         if (isRequest) ActionCooldownManager.startPlayRequestCooldown(cleanFriend) else ActionCooldownManager.startInviteCooldown(cleanFriend)
                         onInvite()
                     },
-                    enabled = !isInviteCooldown && availability.canContact,
+                    enabled = !isInviteCooldown && (availability.canContact || isJoinRequest),
                     shape = RoundedCornerShape(8.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = if (isInviteCooldown) (if (tokens.isDark) Color(0xFF222222) else Color(0xFFE2E8F0)) else tokens.primaryButtonBg,
@@ -643,7 +644,7 @@ fun FriendCard(
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        text = if (isRequest) { if (isInviteCooldown) "Requested" else "Request" } else { if (isInviteCooldown) "Invited" else "Invite" },
+                        text = if (isJoinRequest) { if (isInviteCooldown) "Requested" else "Join" } else if (isRequest) { if (isInviteCooldown) "Requested" else "Request" } else { if (isInviteCooldown) "Invited" else "Invite" },
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = if (isInviteCooldown) tokens.textMuted else tokens.primaryButtonText

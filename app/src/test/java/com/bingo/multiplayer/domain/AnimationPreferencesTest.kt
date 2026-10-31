@@ -88,4 +88,39 @@ class AnimationPreferencesTest {
             }
         }
     }
+    @Test fun statusBarIsVisibleByDefaultIncludingAnUpgradeWithOnlyEmojiPreferences() {
+        val prefs = FakeSharedPreferences()
+        AnimationPreferences.load(prefs); assertFalse(AnimationPreferences.hideStatusBar)
+        prefs.edit().putBoolean("winning_emoji_animation", false).apply()
+        val before = prefs.all.toMap()
+        AnimationPreferences.load(prefs)
+        assertFalse(AnimationPreferences.hideStatusBar)
+        assertFalse(AnimationPreferences.winningEmojiAnimationEnabled)
+        assertEquals(before, prefs.all)
+    }
+
+    @Test fun statusBarOptInPersistsAcrossReloadAndCanBeTurnedOff() {
+        val prefs = FakeSharedPreferences()
+        AnimationPreferences.saveHideStatusBar(prefs, true)
+        AnimationPreferences.load(FakeSharedPreferences()); assertFalse(AnimationPreferences.hideStatusBar)
+        AnimationPreferences.load(prefs); assertTrue(AnimationPreferences.hideStatusBar)
+        AnimationPreferences.saveHideStatusBar(prefs, false)
+        AnimationPreferences.load(prefs); assertFalse(AnimationPreferences.hideStatusBar)
+    }
+
+    @Test fun statusBarAndWinningAnimationSwitchesNeverOverwriteEachOther() {
+        val prefs = FakeSharedPreferences()
+        AnimationPreferences.save(prefs, false)
+        AnimationPreferences.saveHideStatusBar(prefs, true)
+        AnimationPreferences.load(prefs)
+        assertTrue(AnimationPreferences.hideStatusBar); assertFalse(AnimationPreferences.winningEmojiAnimationEnabled)
+        AnimationPreferences.save(prefs, true)
+        AnimationPreferences.load(prefs)
+        assertTrue(AnimationPreferences.hideStatusBar); assertTrue(AnimationPreferences.winningEmojiAnimationEnabled)
+        AnimationPreferences.saveHideStatusBar(prefs, false)
+        AnimationPreferences.load(prefs)
+        assertFalse(AnimationPreferences.hideStatusBar); assertTrue(AnimationPreferences.winningEmojiAnimationEnabled)
+        assertEquals(2, prefs.all.size)
+    }
+
 }

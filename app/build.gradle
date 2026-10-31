@@ -22,8 +22,8 @@ android {
         applicationId "com.bingo.multiplayer"
         minSdk 24
         targetSdk 34
-        versionCode 85
-        versionName "1.0.6"
+        versionCode 95
+        versionName "1.0.7"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField "String", "BINGO_MQTT_USERNAME", groovy.json.JsonOutput.toJson(releaseValue("BINGO_MQTT_USERNAME"))
@@ -33,6 +33,7 @@ android {
 
     testOptions {
         unitTests.returnDefaultValues = true
+        unitTests.includeAndroidResources = true
     }
 
     signingConfigs {
@@ -134,6 +135,7 @@ dependencies {
     implementation 'com.google.firebase:firebase-auth-ktx'
     implementation 'com.google.guava:guava:33.2.1-android'
 
+    testImplementation 'org.robolectric:robolectric:4.11.1'
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3'
     testImplementation 'org.json:json:20231013'

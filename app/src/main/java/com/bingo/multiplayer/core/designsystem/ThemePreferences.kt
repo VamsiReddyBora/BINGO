@@ -291,19 +291,7 @@ object ThemePreferences {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val authPrefs = context.getSharedPreferences("bingo_auth_prefs", Context.MODE_PRIVATE)
         setDarkTheme(prefs, authPrefs, isDark)
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-            try {
-                val uiModeManager = context.getSystemService(Context.UI_MODE_SERVICE) as? android.app.UiModeManager
-                val targetNightMode = if (isDark) {
-                    android.app.UiModeManager.MODE_NIGHT_YES
-                } else {
-                    android.app.UiModeManager.MODE_NIGHT_NO
-                }
-                if (uiModeManager != null && uiModeManager.nightMode != targetNightMode) {
-                    uiModeManager.setApplicationNightMode(targetNightMode)
-                }
-            } catch (_: Throwable) {}
-        }
+        AppNativeTheme.syncApplicationNightMode(context, isDark)
     }
 
     fun setDarkTheme(context: Context, isDark: Boolean) {

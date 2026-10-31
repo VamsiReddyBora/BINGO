@@ -1,3 +1,10 @@
+# 1.0.7 — Build 95
+
+- Added lobby Join requests, compact latest-message speech bubbles, inline composing and live typing indicators.
+- Added in-game theme switching, optional status-bar hiding and native/window diagnostics.
+- Preserved the existing Bingo gameplay, MQTT/Firebase design, invitations, notifications, cleanup and result animations.
+- Known issue: the status bar can remain dark with phone dark / Bingo light. Further repair is deferred.
+
 # 1.0.6 — Build 85
 
 - Added manual MQTT cleanup preview/run controls and a local operator script. No cleanup scheduler is enabled.

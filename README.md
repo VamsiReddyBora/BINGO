@@ -1,8 +1,12 @@
-# Bingo 1.0.6 — Build 85
+# Bingo 1.0.7 — Build 95
 
 Android Bingo with AI, MQTT multiplayer, Nearby Network play, friends and notifications.
 
 ## This release
+
+- Compact lobby profile messages, inline keyboard sending, typing indicators and join requests.
+- In-game theme switching, optional status-bar hiding, and expanded app diagnostics.
+- **Known issue:** with the phone in dark mode and Bingo in light mode, the status bar may remain dark on some devices. This is not fixed in this release.
 
 - Manual retained-message maintenance is available in admin Settings and an operator script. No automatic cleanup is enabled. Redundant account announcements are now live-only; Firebase account storage and gameplay remain unchanged. See [MANUAL_MQTT_CLEANUP.md](MANUAL_MQTT_CLEANUP.md).
 
@@ -45,3 +49,5 @@ Versions 1.0, 1.0.1, 1.0.2, 1.0.3, 1.0.4 1.0.5 and 1.0.6 have separate Git tags,
 See `AGENT_HANDOFF.md` for verification results and remaining hardware acceptance limits.
 
 The admin console has a website-only usability update: validated session restoration, coherent app versions, clearer status, black dark theme and combined player controls. See ADMIN_USABILITY.md. This release adds the manual maintenance controls to the admin service and site.
+
+Verification: 1,340 automated Android tests passed, zero failures and nine unchanged optional skips. Clean-source case IDs/results match Build94; gameplay and networking logic are unchanged from that build. Android lint: zero errors, 34 warnings. Original signing certificate and APK alignment verified. The known status-bar appearance issue remains unresolved; no new physical-device UI/FPS verification is claimed.

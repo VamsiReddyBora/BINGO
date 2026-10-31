@@ -94,6 +94,8 @@ data class RoomMessagePacket(
     val lifecycleSequence: Long = 0L,
     val isMatchFinished: Boolean = false,
     val chatMessages: List<InGameChatMessage> = emptyList(),
+    @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
+    val lobbyMessages: List<LobbyProfileMessage> = emptyList(),
     val turnClock: MultiplayerTurnClock? = null,
     val lastPlayerActivityAt: Long = 0L,
     val boardNumbers: Map<String, List<Int>> = emptyMap(),
