@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "2778fa42104c3f64703c5fe9abcbd76b356a4167176fac0a22ee08f22f11b3f9",
-  "revision": 13,
+  "revision": 14,
   "enabled": true,
   "release": {
     "versionName": "1.0.6",
-    "versionCode": 92,
+    "versionCode": 93,
     "tagName": "v1.0.6",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.6-build92-64d868d0a13f2891d5aa10b75750868c155e70d48aadf3da0872df4427adb6cc.apk",
-    "apkSize": 8220371,
-    "sha256": "64d868d0a13f2891d5aa10b75750868c155e70d48aadf3da0872df4427adb6cc",
-    "releaseNotes": "Private update for Bob and Vampire.\nRestore the visible, theme-matched phone status bar by default. Settings > Animations > Hide status bar now saves your choice.\nOpen the inline lobby Chat only after its field is placed and focused; ignore keyboard transitions from other fields.\nKeep auto-send on keyboard close, typing dots, profile bubbles and existing gameplay."
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.6-build93-a82cca9b9a0f934c820e4d22732fa7ff424440189ef98ed72e3c582b71d88cd2.apk",
+    "apkSize": 8229903,
+    "sha256": "a82cca9b9a0f934c820e4d22732fa7ff424440189ef98ed72e3c582b71d88cd2",
+    "releaseNotes": "Private update for Bob and Vampire.\nCorrect status-bar background and icon contrast in light and dark modes.\nReapply the complete native window style after resume, focus and Android theme changes; disable automatic decor recolouring.\nKeep the Hide status bar preference, inline lobby Chat and existing gameplay."
   }
 }
