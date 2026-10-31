@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "492e92d03b7d4c82194ec0a5c453b9a052ec6e36cbc8ea45f8d2c408fd135b6f",
-  "revision": 7,
+  "revision": 8,
   "enabled": true,
   "release": {
     "versionName": "1.0.6",
-    "versionCode": 93,
+    "versionCode": 94,
     "tagName": "v1.0.6",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.6-build93-a82cca9b9a0f934c820e4d22732fa7ff424440189ef98ed72e3c582b71d88cd2.apk",
-    "apkSize": 8229903,
-    "sha256": "a82cca9b9a0f934c820e4d22732fa7ff424440189ef98ed72e3c582b71d88cd2",
-    "releaseNotes": "Private update for Bob and Vampire.\nCorrect status-bar background and icon contrast in light and dark modes.\nReapply the complete native window style after resume, focus and Android theme changes; disable automatic decor recolouring.\nKeep the Hide status bar preference, inline lobby Chat and existing gameplay."
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.6-build94-9feff59651e9771db5134a293fa37d02cfc5a5eee085dfb0de33ae66c2743d20.apk",
+    "apkSize": 8230787,
+    "sha256": "9feff59651e9771db5134a293fa37d02cfc5a5eee085dfb0de33ae66c2743d20",
+    "releaseNotes": "Private update for Bob and Vampire.\nAlign the Android native theme with Bingo, including phone dark / app light.\nCorrect stale app night-mode selection and include device-readable system-bar diagnostics.\nKeep the Hide status bar preference, inline lobby Chat and existing gameplay."
   }
 }
