@@ -1,9 +1,9 @@
 {
-  "versionName": "1.0.6",
-  "versionCode": 85,
-  "tagName": "v1.0.6",
-  "downloadUrl": "https://vamsireddybora.github.io/BINGO/Bingo-1.0.6-build85.apk",
-  "apkSize": 8171225,
-  "sha256": "54b42ff9751435d17bc539e3b19ddbf5acd2851243843b47226721bbed3016a5",
-  "releaseNotes": "Manual MQTT cleanup in admin Settings or the local operator script.\nNo automatic cleanup is enabled.\nVerified archives and fresh broker checks protect active or changed data.\nAvoid redundant retained account copies; existing gameplay preserved."
+  "versionName": "1.0.7",
+  "versionCode": 95,
+  "tagName": "v1.0.7",
+  "downloadUrl": "https://vamsireddybora.github.io/BINGO/Bingo-1.0.7-build95.apk",
+  "apkSize": 8230790,
+  "sha256": "520367ff761d89fda319ff428150caa50f561a0c814efc36b71f2600936ccf04",
+  "releaseNotes": "Lobby Join requests, compact inline messages and live typing indicators.\nIn-game theme switching, optional status-bar hiding and improved app diagnostics.\nExisting Bingo gameplay and networking preserved.\nKnown issue: status bar may remain dark with phone dark / Bingo light; fix deferred."
 }
