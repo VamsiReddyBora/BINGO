@@ -481,12 +481,18 @@
           </div>
           <section class="panel settings" id="mqtt-maintenance">
             <h2>MQTT record cleanup</h2>
-            <p class="muted small">Manual only. Preview expired records, then verify on your device to clean them. Active games and Firebase player data are preserved.</p>
+            <div class="mqtt-usage" id="mqtt-usage" aria-live="polite">
+              <div class="mqtt-usage-heading"><span>Bingo retained messages</span><strong id="mqtt-usage-count">— / 2,000</strong></div>
+              <progress id="mqtt-usage-meter" max="2000" value="0" aria-label="Retained message storage used" hidden></progress>
+              <p id="mqtt-usage-detail" class="muted small">Checking broker usage…</p>
+            </div>
+            <p class="muted small">Automatic maintenance runs every 15 minutes. Completed move records are compacted after 10 minutes; final boards stay for 24 hours. Active games and Firebase player data are preserved.</p>
             <div class="actions">
+              <button id="refresh-mqtt-usage">↻ Refresh usage</button>
               <button id="preview-mqtt-cleanup">Preview cleanup</button>
               <button id="run-mqtt-cleanup" disabled>Clean old records</button>
             </div>
-            <p id="mqtt-cleanup-status" class="muted small" role="status" aria-live="polite">No cleanup is scheduled.</p>
+            <p id="mqtt-cleanup-status" class="muted small" role="status" aria-live="polite">Loading automatic maintenance status…</p>
           </section>
           <section id="storage-audit" class="panel settings"></section>
           <div
