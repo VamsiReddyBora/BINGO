@@ -50,7 +50,7 @@ test("MC-004 broker-wide inventory can never be combined with deletion or retain
 });
 test("MC-004 usage cache coalesces refreshes and preserves a marked last-known value on outage",async()=>{
  const storage=new MemoryStorage();let calls=0,fail=false;
- const c={storage,broker:async()=>{calls++;if(fail)throw Error("offline");return{retainedUsage:{used:1988,limit:2000,observedAt:Date.now(),scope:"broker-visible-topics"}};}};
+ const c={storage,broker:async args=>{if(fail)throw Error("offline");if(args.rawFilters)return{retainedRecords:{}};calls++;return{retainedUsage:{used:1988,limit:2000,observedAt:Date.now(),scope:"bingo-topics"}};}};
  const results=await Promise.all([refreshRetainedUsage(c),refreshRetainedUsage(c)]);
  assert.equal(calls,1);assert.equal(results[0].used,1988);assert.equal(results[0].free,12);assert.equal(results[0].percent,99.4);
  await refreshRetainedUsage(c);assert.equal(calls,1);
@@ -59,4 +59,10 @@ test("MC-004 usage cache coalesces refreshes and preserves a marked last-known v
 test("MC-004 first read failure shows unknown instead of a fabricated zero",async()=>{
  const result=await refreshRetainedUsage({storage:new MemoryStorage(),broker:async()=>{throw Error("down");}});
  assert.equal(result.used,null);assert.equal(result.stale,true);
+});
+test("MC-006 usage refresh defers the broad inventory during a running match",async()=>{
+ const storage=new MemoryStorage();let inventoryCalls=0;
+ await storage.put("mqtt-cleanup:usage",{used:646,limit:2000,observedAt:Date.now()-60000});
+ const c={storage,broker:async args=>{if(args.inventory){inventoryCalls++;throw Error("Must not scan broadly");}return{retainedRecords:{"bingo/emqx7/metadata/ACTIVE/state":JSON.stringify({status:"PLAYING",lastHeartbeat:Date.now()})}};}};
+ const p=await refreshRetainedUsage(c,{force:true});assert.equal(p.used,646);assert.equal(p.stale,true);assert.equal(p.deferred,true);assert.equal(inventoryCalls,0);
 });

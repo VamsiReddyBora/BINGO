@@ -53,3 +53,5 @@ The admin console has a website-only usability update: validated session restora
 Verification: 1,340 automated Android tests passed, zero failures and nine unchanged optional skips. Clean-source case IDs/results match Build94; gameplay and networking logic are unchanged from that build. Android lint: zero errors, 34 warnings. Original signing certificate and APK alignment verified. The known status-bar appearance issue remains unresolved; no new physical-device UI/FPS verification is claimed.
 
 Current main includes service-only automatic retained-message maintenance and the admin usage counter. See AUTOMATIC_MQTT_CLEANUP.md. Android 1.0.7 / Build 95 and its release assets are unchanged.
+
+Cleanup now defers during gameplay and the five-minute rejoin grace period, stops remaining deletes when play begins, and guards every match category with room availability. See AUTOMATIC_MQTT_CLEANUP.md for production-client verification and its limits.

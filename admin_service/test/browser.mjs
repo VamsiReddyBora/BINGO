@@ -1238,6 +1238,16 @@ try {
     failPresence=false;
     await page.locator('#refresh-mqtt-usage').click();
     await page.waitForFunction(()=>!document.querySelector('#mqtt-usage-count').textContent.includes('last known'));
+    const busyTopic='bingo/emqx7/metadata/browser_busy/state';
+    cleanupRecords[busyTopic]=JSON.stringify({status:'PLAYING',lastHeartbeat:Date.now()});
+    await page.locator('#preview-mqtt-cleanup').click();
+    await page.waitForFunction(()=>document.querySelector('#mqtt-cleanup-status').textContent.includes('waiting for gameplay'));
+    assert.equal(await page.locator('#run-mqtt-cleanup').isDisabled(),true);
+    assert.equal(cleanupWrites.length,1);
+    await page.locator('#refresh-mqtt-usage').click();
+    await page.waitForFunction(()=>document.querySelector('#mqtt-usage-count').textContent.includes('last known'));
+    await page.screenshot({path:evidence+'/47-cleanup-waiting-for-gameplay.png',fullPage:true});
+    delete cleanupRecords[busyTopic];
     if(await page.locator('#menu-button').getAttribute('aria-expanded')==='false')await page.locator('#menu-button').click();
     await page.locator('#navigation button[data-tab=players]').click();
   });

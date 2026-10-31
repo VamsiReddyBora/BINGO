@@ -1,4 +1,5 @@
 import { Problem, rememberRoom } from "./model.js";
+import { hasGameplayActivity, isLiveGameplayTopic } from "./cleanup-activity.js";
 const encoder = new TextEncoder(),
   decoder = new TextDecoder();
 const bytes = (...parts) =>
@@ -181,7 +182,8 @@ export async function brokerTcp(env, args, connectFactory) {
 /** Short-lived retained snapshot. Gameplay is never routed through this service. */
 export async function brokerExchange(
   env,
-  { messages = [], snapshot = false, rawFilters = null, guardedGroups = null, inventory = false } = {},
+  { messages = [], snapshot = false, rawFilters = null, guardedGroups = null, inventory = false,
+    deferOnGameplay = false, cleanupExpiresAt = null } = {},
   transport = fetch,
 ) {
   if (!env.MQTT_USERNAME || !env.MQTT_PASSWORD)
@@ -200,13 +202,13 @@ export async function brokerExchange(
   const fenceTopic = rawFilters || inventory ? "bingo/emqx7/probe/cleanup_"+crypto.randomUUID() : null;
   // Serverless EMQX rejects a root '#' subscription. Count the complete Bingo
   // namespace rather than just the eight filters eligible for deletion.
-  const subscriptionFilters = inventory ? ["bingo/#"] : rawFilters ? [...rawFilters,fenceTopic] : ["bingo/v3/presence/#","bingo/v3/room_meta/#","bingo/v3/registry/#","bingo/emqx7/metadata/+/state"];
+  const subscriptionFilters = inventory ? ["bingo/#"] : rawFilters ? [...new Set([...rawFilters,...(deferOnGameplay?["bingo/emqx7/reliable/+/+/state"]:[])]),fenceTopic] : ["bingo/v3/presence/#","bingo/v3/room_meta/#","bingo/v3/registry/#","bingo/emqx7/metadata/+/state"];
   const retainedTopics = inventory ? new Set() : null;
   if (rawFilters) {
     if (!snapshot || messages.length || rawFilters.length > 8 || rawFilters.some(t => !t.startsWith("bingo/")))
       throw new Problem(400, "Invalid maintenance scope");
     state.retainedRecords = {};
-    state.cleanup = { acknowledged: [], skipped: 0 };
+    state.cleanup = { acknowledged: [], skipped: 0, deferred: false };
   }
   return new Promise((resolve, reject) => {
     let complete = false,
@@ -216,6 +218,7 @@ export async function brokerExchange(
       subscribed = false,
       deleting = false,
       fenceSeen = !fenceTopic;
+    let gameplayObserved = false;
     const ackWaiters = new Map();
     const startedAt = Date.now();
     const stream = new PacketStream();
@@ -231,6 +234,12 @@ export async function brokerExchange(
           for (let position=0;position<group.topics.length;position++) {
             const topic=group.topics[position];
             if (complete) return;
+            if ((deferOnGameplay && (gameplayObserved || hasGameplayActivity(state.retainedRecords))) ||
+                (cleanupExpiresAt && Date.now()>=cleanupExpiresAt)) {
+              state.cleanup.deferred=true;
+              state.cleanup.skipped+=guardedGroups.reduce((n,g)=>n+g.topics.length,0)-state.cleanup.acknowledged.length-state.cleanup.skipped;
+              finish();return;
+            }
             const observed=Object.fromEntries(Object.entries(state.retainedRecords).filter(([t])=>!removed.has(t) && group.prefixes.some(p=>p.endsWith('/')?t.startsWith(p):t===p)));
             const expected=Object.entries(group.entries).filter(([t])=>!removed.has(t));
             if(Object.keys(observed).length!==expected.length || expected.some(([t,p])=>observed[t]!==p)) {
@@ -252,6 +261,7 @@ export async function brokerExchange(
     }
     const settle = () => {
       clearTimeout(quiet);
+      if(rawFilters && deferOnGameplay && (gameplayObserved || hasGameplayActivity(state.retainedRecords)))state.cleanup.deferred=true;
       if (snapshot && subscribed && fenceSeen && !pending.size && !deleting)
         quiet = setTimeout(() => guardedGroups ? guardedDelete() : finish(), rawFilters || inventory ? Math.max(1200,2500-(Date.now()-startedAt)) : 500);
     };
@@ -343,6 +353,7 @@ export async function brokerExchange(
                 if (p.retained) settle();
                 continue;
               }
+              if(rawFilters && deferOnGameplay && !p.retained && isLiveGameplayTopic(p.topic,p.payload))gameplayObserved=true;
               if (rawFilters && p.payload.length <= 700000) {
                 if (!p.payload) delete state.retainedRecords[p.topic];
                 else if (p.retained || Object.hasOwn(state.retainedRecords,p.topic) ||

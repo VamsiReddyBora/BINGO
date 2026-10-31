@@ -27,10 +27,12 @@ Match IDs are compared as exact signed 64-bit JSON tokens. Negative IDs and valu
 ## Execution and recovery
 
 - The existing admin Durable Object alarm checks every **15 minutes**, independent of any browser or phone. There is no workstation cron, new gameplay server or HTTP request per pick.
+- Before any bulk inventory, a small read-only liveness check looks for active rooms and recent match/presence snapshots. Gameplay or activity within the normal **five-minute rejoin grace period** defers cleanup and schedules a one-minute recheck. Manual previews and usage refreshes also defer bulk reads; the usage display explicitly shows last-known values while waiting.
 - One run handles at most **200 records / 700 KB of archived payloads**. A productive run with remaining eligible backlog schedules the next batch one minute later.
 - The existing serialized mutation queue prevents overlapping cleanup runs and conflicting manual mutations. Repeated alarms consult persisted next-run state.
 - Every selected batch is archived privately in Firebase `mqttMaintenanceArchives` and read back before deletion. Raw 64-bit JSON payloads are preserved exactly.
-- The service rereads eligibility, compares whole-group fingerprints and watches live changes before individual retained clears. Returned players, new commands or changed results cause affected records to be kept.
+- The service rereads eligibility, compares whole-group fingerprints and watches live changes before individual retained clears. Every match category also depends on its room metadata, lobby and availability records, including previously absent records. Returned players can invalidate a deletion before their next board snapshot arrives.
+- If gameplay begins during a cleanup batch, the live publication watcher stops the remaining deletions. Each deletion also checks the plan deadline. Already confirmed removals remain reported, with the rest marked deferred. These controls only govern housekeeping; they do not pause matches or alter timers, picks, wins or recovery rules.
 - Retained empty publishes require broker acknowledgements, followed by an independent absence check. Acknowledgement alone is not reported as confirmed deletion.
 - Broker/archive failures preserve the recovery archive and schedule a fresh later attempt. The UI distinguishes failures, running jobs and confirmed results. Usage refresh failure does not undo or conceal the recorded cleanup result.
 - Unknown or protected data is never force-deleted just to reach a quota target. An exceptionally large number of active games can still fill a fixed broker quota.
@@ -45,5 +47,7 @@ MQTT 3.1.1 has no conditional delete transaction. The rereads and change guards 
 - MC-002: finished receipt compaction, recent/unfinished/disagreeing boards protected, exact archives and retained final boards.
 - MC-003: actual AdminControl alarm path, default-off behavior, restart/duplicate serialization, archive failure and bounded backlog scheduling.
 - MC-004: actual MQTT codec/inventory, all Bingo families, duplicate/large/live packets, denied subscriptions, stale cache, authenticated API and browser usage display.
+- MC-005: `cleanup-gameplay-guard.test.js` covers active/rejoining rooms, live gameplay starting during a batch, room dependencies on every match category, closed-lobby reconnection, pause/rejoin grace and invalid clocks. `retained-usage.test.js` and the browser cleanup scenario cover deferred bulk reads and disabled manual deletion while playing.
+- MC-006: the opt-in `CleanupGameplayLiveTest` uses unchanged production Android sync/recovery classes against real EMQX and the real Node cleaner/Firebase archive path. It verifies picks during cleanup, actual automatic-alarm deferral, one-client rejoin and both-clients-closed cold recovery, preserving boards, selected numbers, turn, exact timer deadline and chat. It owns isolated test rooms and removes its fixtures afterwards. This is headless production-client evidence, not a physical-device lifecycle or frame-rate test.
 
 Run `npm test` and `npm run test:browser` in `admin_service`. Real broker/Firebase verification and deployment IDs belong in the private operator job report, not the public source. No emulator/physical-device gameplay test is claimed for this service-only change.

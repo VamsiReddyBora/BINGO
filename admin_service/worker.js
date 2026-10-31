@@ -26,6 +26,7 @@ import { brokerTcp } from "./mqtt.js";
 import { CLEANUP_FILTERS, firebaseCleanupView, planRetainedCleanup, cleanupSummary, executeRetainedCleanup } from "./retained-cleanup.js";
 import { automaticCleanupEnabled, ensureCleanupAlarm, runAutomaticCleanup, automaticCleanupStatus } from "./automatic-cleanup.js";
 import { refreshRetainedUsage } from "./retained-usage.js";
+import { ACTIVITY_FILTERS, hasGameplayActivity } from "./cleanup-activity.js";
 
 import { json, readBody as body } from "./http.js";
 import { PasskeySecurity } from "./passkeys.js";
@@ -482,10 +483,18 @@ export class AdminControl {
       return json({...automatic,usage});
     }
     if (path === "/api/mqtt-cleanup") {
+      const activity=await this.broker({snapshot:true,rawFilters:ACTIVITY_FILTERS,deferOnGameplay:true});
+      requireThat(activity.retainedRecords,503,"Gameplay activity unavailable; cleanup preview will wait");
+      if(activity.cleanup?.deferred || hasGameplayActivity(activity.retainedRecords)) {
+        const usage=await this.storage.get("mqtt-cleanup:usage")||{used:null,limit:2000,observedAt:null};
+        return json({deferred:true,planId:null,batchRecords:0,eligibleRecords:null,categories:{},
+          usage:{...usage,stale:true,deferred:true,error:"Usage refresh is waiting for gameplay and the rejoin grace period to finish."},automatic:await automaticCleanupStatus(this)});
+      }
       const [snapshot, firebase, usage] = await Promise.all([
-        this.broker({snapshot:true,rawFilters:CLEANUP_FILTERS}), firebaseCleanupView(this.legacy), refreshRetainedUsage(this),
+        this.broker({snapshot:true,rawFilters:CLEANUP_FILTERS,deferOnGameplay:true}), firebaseCleanupView(this.legacy), refreshRetainedUsage(this),
       ]);
       requireThat(snapshot.retainedRecords,503,"Broker inventory unavailable; no cleanup plan created");
+      if(snapshot.cleanup?.deferred)return json({deferred:true,planId:null,batchRecords:0,eligibleRecords:null,categories:{},usage,automatic:await automaticCleanupStatus(this)});
       const plan = await planRetainedCleanup(snapshot.retainedRecords,firebase);
       const planId = crypto.randomUUID();
       await this.storage.put("mqtt-cleanup:plan:"+planId,{...plan,sessionKey:session.key});

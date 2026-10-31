@@ -1,5 +1,6 @@
 /** Shared guarded maintenance for the console, local script and authorized service alarm. */
 import { digest, requireThat } from "./model.js";
+import { roomHasGameplayActivity } from "./cleanup-activity.js";
 export const CLEANUP_FILTERS = [
   "bingo/emqx7/match/#", "bingo/emqx7/metadata/+/+",
   "bingo/emqx7/room/+/availability/+", "bingo/emqx7/room/+",
@@ -64,13 +65,17 @@ export async function planRetainedCleanup(records, firebase, now = Date.now(), {
   }
   for (const [prefix, entries] of matchGroups) {
     const [, , , room, seed] = prefix.split("/");
+    if (roomHasGameplayActivity(records,room,now)) continue;
+    const roomGuardPrefixes=[`bingo/emqx7/metadata/${room}/`,`bingo/emqx7/room/${room}/availability/`,`bingo/emqx7/room/${room}`];
+    const dependencies=Object.fromEntries(Object.entries(records).filter(([t])=>matches(t,roomGuardPrefixes)));
+    const guardedEntries={...entries,...dependencies}, guardedPrefixes=[prefix,...roomGuardPrefixes];
     const packets = Object.entries(entries).map(([topic,raw]) => ({topic, raw, packet:parse(raw)}));
     if (packets.some(({packet:p,raw}) => !p || exactSeed(raw) !== seed || p.roomCode !== room)) continue;
     const states = packets.filter(({topic,packet:p}) => topic.startsWith(prefix+"state/") && p.type === "GAME_SYNC").map(x=>x.packet);
     if (!states.length || states.some(p => !stamp(p.timestamp))) continue;
     // Use the host clock domain. Implausible/missing times never authorize deletion.
     const activity = packets.flatMap(({packet:p}) => [stamp(p.timestamp) && p.timestamp-(p.clockOffsetMillis||0), stamp(p.lastPlayerActivityAt) && p.lastPlayerActivityAt-(p.clockOffsetMillis||0)]).filter(Boolean);
-    if (!activity.length || activity.some(t => !Number.isSafeInteger(t) || t > now + 300000)) continue;
+    if (!activity.length || activity.some(t => !Number.isSafeInteger(t) || t<=0 || t > now + 300000)) continue;
     const latest = Math.max(...activity);
     const completed = states.every(p => p.isMatchFinished === true && typeof p.winnerPlayerId === "string" && p.winnerPlayerId && Object.hasOwn(p.boardNumbers || {},p.winnerPlayerId)) && new Set(states.map(p=>p.winnerPlayerId)).size === 1;
     if (completed && latest <= now-FINISHED_RECEIPT_AGE_MS && latest > now-CLEANUP_AGE_MS) {
@@ -78,7 +83,7 @@ export async function planRetainedCleanup(records, firebase, now = Date.now(), {
       // for unfinished recovery, but need not occupy two topics per past turn
       // for a full day after every saved board agrees on the final result.
       const receipts = packets.filter(({topic}) => /\/(command|outcome|exit|accepted_exit)\//.test(topic.slice(prefix.length-1))).map(x=>x.topic);
-      await add(prefix,"finished_move_receipts",[prefix],entries,receipts);
+      await add(prefix,"finished_move_receipts",guardedPrefixes,guardedEntries,receipts);
       continue;
     }
     if (latest > now-CLEANUP_AGE_MS) continue;
@@ -91,13 +96,13 @@ export async function planRetainedCleanup(records, firebase, now = Date.now(), {
       return live?.type === "PLAYER_DISCONNECTED" || ["OFFLINE","BACKGROUND","MINIMIZED"].includes(latest?.status || live?.presenceStatus);
     });
     const expired = !completed && states.every(p => !p.isMatchFinished && !p.isPaused && stamp(p.lastPlayerActivityAt) && now-(p.lastPlayerActivityAt-(p.clockOffsetMillis||0)) > 300000) && allAbsent;
-    if (completed) await add(prefix,"finished_matches",[prefix],entries);
+    if (completed) await add(prefix,"finished_matches",guardedPrefixes,guardedEntries,Object.keys(entries));
     else if (expired) {
       // Presence is a read-only deletion dependency: a returning participant
       // must invalidate the old-match cleanup even before a new state arrives.
       const presenceTopics=[...ids].map(id=>`bingo/emqx7/room/${room}/availability/${id}`);
-      await add(prefix,"expired_inactive_matches",[prefix,...presenceTopics],{
-        ...entries,...Object.fromEntries(presenceTopics.map(t=>[t,records[t]])),
+      await add(prefix,"expired_inactive_matches",[...guardedPrefixes,...presenceTopics],{
+        ...guardedEntries,...Object.fromEntries(presenceTopics.map(t=>[t,records[t]])),
       },Object.keys(entries));
     }
   }
@@ -105,6 +110,7 @@ export async function planRetainedCleanup(records, firebase, now = Date.now(), {
   for (const [topic, raw] of Object.entries(records)) {
     const m = /^bingo\/emqx7\/metadata\/([A-Z0-9]{3,12})\/state$/.exec(topic), room = m?.[1], state = parse(raw);
     if (!room || !state || state.roomCode !== room || !(state.status === "CLOSED" || state.tc === true || state.isTerminalClosed === true)) continue;
+    if (roomHasGameplayActivity(records,room,now)) continue;
     if (!stamp(state.lastHeartbeat) || state.lastHeartbeat > now-CLEANUP_AGE_MS || stamp(state.createdAt)>now-CLEANUP_AGE_MS) continue;
     if ([...matchGroups].some(([p, entries]) => p.startsWith(`bingo/emqx7/match/${room}/`) && !groups.some(g => g.key === p))) continue;
     const prefixes = [`bingo/emqx7/metadata/${room}/`, `bingo/emqx7/room/${room}/`, `bingo/emqx7/room/${room}`];
@@ -165,7 +171,8 @@ export async function archiveCleanupGroup(store, group, entries, now) {
 /** Fresh plans, verified archives and unchanged broker data are required in both modes. */
 export async function executeRetainedCleanup(plan, {broker, store, now=Date.now}) {
   requireThat(plan?.format===1 && (plan.manualOnly===true || (plan.automatic===true && plan.manualOnly===false)) && plan.expiresAt>now(),409,"Cleanup preview expired; preview again");
-  const [snapshot, firebase] = await Promise.all([broker({snapshot:true,rawFilters:CLEANUP_FILTERS}),firebaseCleanupView(store)]);
+  const [snapshot, firebase] = await Promise.all([broker({snapshot:true,rawFilters:CLEANUP_FILTERS,deferOnGameplay:true}),firebaseCleanupView(store)]);
+  if (snapshot.cleanup?.deferred) return {manualOnly:!plan.automatic,automatic:!!plan.automatic,deferred:true,requested:plan.batchRecords,acknowledged:0,deletedConfirmed:0,recreatedOrStillPresent:0,skippedChanged:plan.batchRecords,archivedGroups:0,completedAt:now(),categories:{}};
   const current = await planRetainedCleanup(snapshot.retainedRecords || {},firebase,now(),{automatic:plan.automatic===true});
   const approved=[]; let skipped=0;
   for (const group of plan.groups) {
@@ -180,9 +187,9 @@ export async function executeRetainedCleanup(plan, {broker, store, now=Date.now}
     // invitation or room. Every payload about to be deleted is included.
     await archiveCleanupGroup(store,{key:"batch:"+hash,category:plan.automatic?"automatic_cleanup_batch":"manual_cleanup_batch",hash,topics:Object.keys(entries)},entries,now());
   }
-  const deletion = approved.length ? await broker({snapshot:true,rawFilters:CLEANUP_FILTERS,guardedGroups:approved}) : {cleanup:{acknowledged:[],skipped:0}};
+  const deletion = approved.length ? await broker({snapshot:true,rawFilters:CLEANUP_FILTERS,guardedGroups:approved,deferOnGameplay:true,cleanupExpiresAt:plan.expiresAt}) : {cleanup:{acknowledged:[],skipped:0}};
   const after = await broker({snapshot:true,rawFilters:CLEANUP_FILTERS});
   const acknowledged=deletion.cleanup?.acknowledged || [];
   const absent=acknowledged.filter(t=>!Object.hasOwn(after.retainedRecords || {},t));
-  return {manualOnly:!plan.automatic,automatic:!!plan.automatic,requested:plan.batchRecords,acknowledged:acknowledged.length,deletedConfirmed:absent.length,recreatedOrStillPresent:acknowledged.length-absent.length,skippedChanged:skipped+(deletion.cleanup?.skipped||0),scannedRecordsAfter:Object.keys(after.retainedRecords||{}).length,archivedGroups:approved.length,completedAt:now(),categories:plan.categories};
+  return {manualOnly:!plan.automatic,automatic:!!plan.automatic,deferred:!!deletion.cleanup?.deferred,requested:plan.batchRecords,acknowledged:acknowledged.length,deletedConfirmed:absent.length,recreatedOrStillPresent:acknowledged.length-absent.length,skippedChanged:skipped+(deletion.cleanup?.skipped||0),scannedRecordsAfter:Object.keys(after.retainedRecords||{}).length,archivedGroups:approved.length,completedAt:now(),categories:plan.categories};
 }

@@ -1,5 +1,6 @@
 import { CLEANUP_FILTERS, firebaseCleanupView, planRetainedCleanup, executeRetainedCleanup } from "./retained-cleanup.js";
 import { refreshRetainedUsage } from "./retained-usage.js";
+import { ACTIVITY_FILTERS, hasGameplayActivity } from "./cleanup-activity.js";
 
 export const AUTO_CLEANUP_INTERVAL_MS = 15 * 60000;
 export const AUTO_CLEANUP_BACKLOG_MS = 60000;
@@ -25,6 +26,15 @@ export async function runAutomaticCleanup(control, now = Date.now()) {
     nextRunAt: now + AUTO_CLEANUP_INTERVAL_MS };
   await control.storage.put(KEY, state);
   try {
+    // A small read comes first. Bulk inventories and deletes are deferred while
+    // anyone is playing, joining or inside the normal five-minute rejoin grace.
+    const activity=await control.broker({snapshot:true,rawFilters:ACTIVITY_FILTERS,deferOnGameplay:true});
+    if(!activity.retainedRecords)throw Error("Gameplay activity inventory unavailable");
+    if(activity.cleanup?.deferred || hasGameplayActivity(activity.retainedRecords)) {
+      const saved={...state,status:"DEFERRED",completedAt:Date.now(),nextRunAt:Date.now()+AUTO_CLEANUP_BACKLOG_MS,
+        reason:"Gameplay or recent rejoin activity; bulk cleanup will wait."};
+      await control.storage.put(KEY,saved);return saved.nextRunAt;
+    }
     const [snapshot, firebase] = await Promise.all([
       control.broker({ snapshot: true, rawFilters: CLEANUP_FILTERS }), firebaseCleanupView(control.legacy),
     ]);
@@ -35,10 +45,10 @@ export async function runAutomaticCleanup(control, now = Date.now()) {
       : { automatic: true, manualOnly: false, requested: 0, deletedConfirmed: 0,
           scannedRecordsAfter: plan.scannedRecords, completedAt: Date.now(), categories: {} };
     const backlog = plan.eligibleRecords > plan.batchRecords && result.deletedConfirmed > 0;
-    const saved = { ...state, status: "OK", result, completedAt: Date.now(),
-      nextRunAt: Date.now() + (backlog ? AUTO_CLEANUP_BACKLOG_MS : AUTO_CLEANUP_INTERVAL_MS) };
+    const saved = { ...state, status: result.deferred ? "DEFERRED" : "OK", result, completedAt: Date.now(),
+      nextRunAt: Date.now() + (backlog || result.deferred ? AUTO_CLEANUP_BACKLOG_MS : AUTO_CLEANUP_INTERVAL_MS) };
     await control.storage.put(KEY, saved);
-    await refreshRetainedUsage(control, { force: true });
+    if(!result.deferred)await refreshRetainedUsage(control, { force: true });
     return saved.nextRunAt;
   } catch (error) {
     // Never acknowledge a failed cleanup as success or consume normal admin

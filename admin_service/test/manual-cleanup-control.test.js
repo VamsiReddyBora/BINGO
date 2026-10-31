@@ -37,3 +37,10 @@ test('idempotent retry returns the recorded result without deleting again',async
 test('manual cleanup has no cron trigger; automatic maintenance requires the explicit deployment flag',async()=>{const config=await fs.readFile(new URL('../wrangler.toml',import.meta.url),'utf8'),source=await fs.readFile(new URL('../automatic-cleanup.js',import.meta.url),'utf8');assert.doesNotMatch(config,/\[triggers\]|\bcrons\s*=/);assert.match(source,/env.MQTT_AUTOCLEAN_ENABLED === "true"/);});
 test('authenticated usage includes records outside cleanup scope',async()=>{const f=await fixture(),r=await f.request('/api/mqtt-cleanup/status'),p=await r.json();assert.equal(r.status,200);assert.equal(p.usage.used,1801);assert.equal(p.usage.limit,2000);assert.equal(f.brokerWrites.length,0);});
 test('unauthenticated usage endpoint remains private',async()=>{const f=await fixture(),r=await f.control.fetch(new Request('https://admin.test/api/mqtt-cleanup/status'));assert.equal(r.status,401);});
+test('MC-005 manual preview defers without creating a plan during gameplay',async()=>{
+ const f=await fixture();f.records['bingo/emqx7/metadata/ACTIVE/state']=JSON.stringify({status:'PLAYING',lastHeartbeat:Date.now()});
+ const r=await f.request('/api/mqtt-cleanup'),p=await r.json();
+ assert.equal(r.status,200);assert.equal(p.deferred,true);assert.equal(p.planId,null);assert.equal(p.batchRecords,0);
+ assert.equal((await f.storage.list({prefix:'mqtt-cleanup:plan:'})).size,0);
+ assert.equal(f.brokerWrites.length,0);assert.equal(f.archive.size,0);
+});

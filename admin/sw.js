@@ -1,6 +1,6 @@
 // Admin cache only. Never delete the Bingo game's origin caches or cache API data.
 const PREFIX = "bingo-admin-";
-const CACHE = PREFIX + "maintenance-v4";
+const CACHE = PREFIX + "gameplay-guard-v5";
 const base = new URL("./", self.location.href);
 self.addEventListener("install", (event) =>
   event.waitUntil(self.skipWaiting()),
