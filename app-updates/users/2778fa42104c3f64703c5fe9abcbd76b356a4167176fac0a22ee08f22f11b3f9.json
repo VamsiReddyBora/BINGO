@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "2778fa42104c3f64703c5fe9abcbd76b356a4167176fac0a22ee08f22f11b3f9",
-  "revision": 17,
+  "revision": 18,
   "enabled": true,
   "release": {
     "versionName": "1.0.7",
-    "versionCode": 97,
+    "versionCode": 98,
     "tagName": "v1.0.7",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.7-build97-ee3770c0344dd623bf69d232d1da66049d00b76a5d292f038b12dbeeaaf0cada.apk",
-    "apkSize": 8230790,
-    "sha256": "ee3770c0344dd623bf69d232d1da66049d00b76a5d292f038b12dbeeaaf0cada",
-    "releaseNotes": "Private update for Bob.\nFix status bar appearance when system is in Dark mode and Bingo is in Light mode.\nConfigure layoutInDisplayCutoutMode to prevent letterboxing on punch-hole / notch displays.\nExisting Bingo gameplay and networking preserved."
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.7-build98-0452a603e8b3524dfd683f309c18ee59e628272e3a24d7f2d4be778d2a8c7747.apk",
+    "apkSize": 8238979,
+    "sha256": "0452a603e8b3524dfd683f309c18ee59e628272e3a24d7f2d4be778d2a8c7747",
+    "releaseNotes": "Private update for Bob.\nAdd Live Game Status feature toggle to Lobby and GameScreen.\nDisplay dynamic, scrollable player line completion status strip in 2-player and multiplayer matches.\nMove active turn status message near B-I-N-G-O letters when enabled.\nPreserve all existing Bingo gameplay, networking, and theme fixes."
   }
 }
