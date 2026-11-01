@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "492e92d03b7d4c82194ec0a5c453b9a052ec6e36cbc8ea45f8d2c408fd135b6f",
-  "revision": 8,
+  "revision": 9,
   "enabled": true,
   "release": {
-    "versionName": "1.0.6",
-    "versionCode": 94,
-    "tagName": "v1.0.6",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.6-build94-9feff59651e9771db5134a293fa37d02cfc5a5eee085dfb0de33ae66c2743d20.apk",
-    "apkSize": 8230787,
-    "sha256": "9feff59651e9771db5134a293fa37d02cfc5a5eee085dfb0de33ae66c2743d20",
-    "releaseNotes": "Private update for Bob and Vampire.\nAlign the Android native theme with Bingo, including phone dark / app light.\nCorrect stale app night-mode selection and include device-readable system-bar diagnostics.\nKeep the Hide status bar preference, inline lobby Chat and existing gameplay."
+    "versionName": "1.0.7",
+    "versionCode": 98,
+    "tagName": "v1.0.7",
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.7-build98-0452a603e8b3524dfd683f309c18ee59e628272e3a24d7f2d4be778d2a8c7747.apk",
+    "apkSize": 8238979,
+    "sha256": "0452a603e8b3524dfd683f309c18ee59e628272e3a24d7f2d4be778d2a8c7747",
+    "releaseNotes": "Private update for Vampire.\nAdd Live Game Status feature toggle to Lobby and GameScreen.\nDisplay dynamic, scrollable player line completion status strip in 2-player and multiplayer matches.\nMove active turn status message near B-I-N-G-O letters when enabled.\nPreserve all existing Bingo gameplay, networking, and theme fixes."
   }
 }
