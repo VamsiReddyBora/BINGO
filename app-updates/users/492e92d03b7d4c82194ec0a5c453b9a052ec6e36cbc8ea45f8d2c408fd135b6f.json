@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "492e92d03b7d4c82194ec0a5c453b9a052ec6e36cbc8ea45f8d2c408fd135b6f",
-  "revision": 11,
+  "revision": 12,
   "enabled": true,
   "release": {
     "versionName": "1.0.7",
-    "versionCode": 100,
+    "versionCode": 101,
     "tagName": "v1.0.7",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.7-build100-5a68306d0f3ebe377179d772c284a49cb284b7dd20267e5611e2a4d8d17a2cbf.apk",
-    "apkSize": 8251266,
-    "sha256": "5a68306d0f3ebe377179d772c284a49cb284b7dd20267e5611e2a4d8d17a2cbf",
-    "releaseNotes": "Private update for Vampire.\nInteractive Live Game Screen UI Tuner added via Home screen gear icon.\nAllows real-time visual calibration of status strip, message placement, and pill badge dimensions.\nPreserve all existing Bingo gameplay, networking, and theme fixes."
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.7-build101-e3e1396852efad91bd37f9f195d54a003a0d7c0d550f84e4d20209378adf4e11.apk",
+    "apkSize": 8243069,
+    "sha256": "e3e1396852efad91bd37f9f195d54a003a0d7c0d550f84e4d20209378adf4e11",
+    "releaseNotes": "Private update for Vampire.\nFinalized Live Game Status layout calibrated to exact measurements.\nOptimized strip height, card padding, line badges, and turn status placement.\nRemoved temporary UI tuner for clean release.\nPreserve all existing Bingo gameplay, networking, and theme fixes."
   }
 }
