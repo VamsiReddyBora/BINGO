@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "2778fa42104c3f64703c5fe9abcbd76b356a4167176fac0a22ee08f22f11b3f9",
-  "revision": 19,
+  "revision": 20,
   "enabled": true,
   "release": {
     "versionName": "1.0.7",
-    "versionCode": 99,
+    "versionCode": 100,
     "tagName": "v1.0.7",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.7-build99-77339b3a7d03f6098ef46b1a4ac678e32dde7b253e6b03daad88bffd9161c406.apk",
-    "apkSize": 8243089,
-    "sha256": "77339b3a7d03f6098ef46b1a4ac678e32dde7b253e6b03daad88bffd9161c406",
-    "releaseNotes": "Private update for Bob.\nRefined Live Game Status strip UI with dedicated line completion badges.\nEliminated vertical clipping on player cards.\nPreserve all existing Bingo gameplay, networking, and theme fixes."
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.7-build100-5a68306d0f3ebe377179d772c284a49cb284b7dd20267e5611e2a4d8d17a2cbf.apk",
+    "apkSize": 8251266,
+    "sha256": "5a68306d0f3ebe377179d772c284a49cb284b7dd20267e5611e2a4d8d17a2cbf",
+    "releaseNotes": "Private update for Bob.\nInteractive Live Game Screen UI Tuner added via Home screen gear icon.\nAllows real-time visual calibration of status strip, message placement, and pill badge dimensions.\nPreserve all existing Bingo gameplay, networking, and theme fixes."
   }
 }
