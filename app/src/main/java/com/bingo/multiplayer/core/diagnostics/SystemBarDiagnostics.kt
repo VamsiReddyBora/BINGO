@@ -37,6 +37,9 @@ internal object SystemBarDiagnostics {
         append("Status-bar colour readback: #${Integer.toHexString(window.statusBarColor)}\n")
         append("Dark status icons requested: ${WindowCompat.getInsetsController(window, decor).isAppearanceLightStatusBars}\n")
         append("Window flags: 0x${Integer.toHexString(window.attributes.flags)}\n")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            append("Cutout mode: ${window.attributes.layoutInDisplayCutoutMode}\n")
+        }
         append("Decor system-UI flags: 0x${Integer.toHexString(decor.systemUiVisibility)}\n")
         append("Decor attached/focused: ${decor.isAttachedToWindow}/${decor.hasWindowFocus()}\n")
         append("Decor size: ${decor.width}x${decor.height}\n")

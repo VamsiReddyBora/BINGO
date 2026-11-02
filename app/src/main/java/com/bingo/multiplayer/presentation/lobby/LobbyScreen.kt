@@ -95,6 +95,16 @@ fun LobbyScreen(
     onDynamicBoardChange: ((Boolean) -> Unit)? = null,
     selectedDynamicGridSize: Int = 5,
     onDynamicGridSizeChange: ((Int) -> Unit)? = null,
+    isLiveGameStatus: Boolean = false,
+    onLiveGameStatusChange: ((Boolean) -> Unit)? = null,
+    isBotsEnabled: Boolean = false,
+    onBotsEnabledChange: ((Boolean) -> Unit)? = null,
+    selectedBotDifficulty: com.bingo.multiplayer.domain.engine.AiDifficulty = com.bingo.multiplayer.domain.engine.AiDifficulty.HARD,
+    onBotDifficultyChange: ((com.bingo.multiplayer.domain.engine.AiDifficulty) -> Unit)? = null,
+    selectedBotSpeedMs: Long = 1000L,
+    onBotSpeedChange: ((Long) -> Unit)? = null,
+    onAddBot: (() -> Unit)? = null,
+    onRemoveBot: (() -> Unit)? = null,
     isNearbyNetwork: Boolean = false,
     hasActiveMatch: Boolean = false,
     isCheckingCompatibility: Boolean = false,
@@ -645,6 +655,7 @@ fun LobbyScreen(
                                 myDisplayName = currentUser?.displayName ?: "",
                                 isHost = isHost
                             )
+                            val isBotPlayer = player.isAi || player.id.startsWith("bot_")
 
                             @OptIn(ExperimentalFoundationApi::class)
                             Row(
@@ -728,14 +739,16 @@ fun LobbyScreen(
                                 val livePres = presenceMap[cleanUser]
                                 val effectiveTs = livePres?.timestamp?.takeIf { it > 0L } ?: player.lastSeenTimestamp
                                 if (ticker >= 0L) Unit
-                                val rawStatus = if (isMe) {
-                                    when (com.bingo.multiplayer.domain.network.PresenceManager.currentActivityState) {
-                                        com.bingo.multiplayer.domain.network.AppActivityState.IN_LOBBY -> "in-lobby"
-                                        com.bingo.multiplayer.domain.network.AppActivityState.PLAYING -> "playing"
-                                        com.bingo.multiplayer.domain.network.AppActivityState.ONLINE -> "online"
+                                val rawStatus = when {
+                                    isBotPlayer -> if (roomCode.isNotBlank()) "in-lobby ($roomCode)" else "in-lobby"
+                                    isMe -> {
+                                        when (com.bingo.multiplayer.domain.network.PresenceManager.currentActivityState) {
+                                            com.bingo.multiplayer.domain.network.AppActivityState.IN_LOBBY -> "in-lobby"
+                                            com.bingo.multiplayer.domain.network.AppActivityState.PLAYING -> "playing"
+                                            com.bingo.multiplayer.domain.network.AppActivityState.ONLINE -> "online"
+                                        }
                                     }
-                                } else {
-                                    com.bingo.multiplayer.domain.network.PresenceManager.getRichDisplayStatus(cleanUser, effectiveTs)
+                                    else -> com.bingo.multiplayer.domain.network.PresenceManager.getRichDisplayStatus(cleanUser, effectiveTs)
                                 }
                                 val statusColor = com.bingo.multiplayer.domain.network.PresenceManager.getStatusColor(rawStatus)
 
@@ -749,7 +762,7 @@ fun LobbyScreen(
                                 )
                             }
 
-                            if (!isMe && friendsRepository != null) {
+                            if (!isMe && !player.isAi && !player.id.startsWith("bot_") && friendsRepository != null) {
                                 val isAlreadyFriend = friendsRepository.isFriend(player.id) || friendsRepository.isFriend(player.displayName)
                                 val hasSent = friendsRepository.hasSentRequest(player.displayName) || friendsRepository.hasSentRequest(player.id)
 
@@ -833,18 +846,22 @@ fun LobbyScreen(
 
                             val isPlayerLeft = (lobbyStatus == LobbyLifecycleEngine.PlayerLobbyStatus.LEFT_LOBBY)
 
-                            if (isHost && !player.isHost && isPlayerLeft) {
+                            if (isHost && !player.isHost && (isPlayerLeft || isBotPlayer)) {
                                 IconButton(
                                     onClick = {
                                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        playerToKick = player
+                                        if (isBotPlayer) {
+                                            onRemovePlayer?.invoke(player.id)
+                                        } else {
+                                            playerToKick = player
+                                        }
                                     },
                                     modifier = Modifier.size(24.dp)
                                 ) {
                                     Icon(
-                                        imageVector = readyIcon,
-                                        contentDescription = "Remove Left Player",
-                                        tint = readyTint,
+                                        imageVector = if (isBotPlayer) Icons.Default.Close else readyIcon,
+                                        contentDescription = if (isBotPlayer) "Remove Bot" else "Remove Left Player",
+                                        tint = if (isBotPlayer) Color(0xFFEF4444) else readyTint,
                                         modifier = Modifier.size(20.dp)
                                     )
                                 }
@@ -1470,7 +1487,7 @@ fun LobbyScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(bottom = 12.dp)
+                        .padding(bottom = 8.dp)
                         .clip(RoundedCornerShape(10.dp))
                         .background(tokens.surface)
                         .toggleable(
@@ -1495,6 +1512,227 @@ fun LobbyScreen(
                         onCheckedChange = null,
                         colors = boardSwitchColors
                     )
+                }
+
+                // Live game status option
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 12.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(tokens.surface)
+                        .toggleable(
+                            value = isLiveGameStatus,
+                            role = Role.Switch,
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onValueChange = { onLiveGameStatusChange?.invoke(it) }
+                        )
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Live game status",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = tokens.cellNeutralText
+                    )
+                    Switch(
+                        checked = isLiveGameStatus,
+                        onCheckedChange = null,
+                        colors = boardSwitchColors
+                    )
+                }
+
+                // Bots option
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = if (isBotsEnabled) 8.dp else 12.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(tokens.surface)
+                        .toggleable(
+                            value = isBotsEnabled,
+                            role = Role.Switch,
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onValueChange = { onBotsEnabledChange?.invoke(it) }
+                        )
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.SmartToy,
+                            contentDescription = null,
+                            tint = tokens.accentBrand,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Bots",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = tokens.cellNeutralText
+                        )
+                    }
+                    Switch(
+                        checked = isBotsEnabled,
+                        onCheckedChange = null,
+                        colors = boardSwitchColors
+                    )
+                }
+
+                if (isBotsEnabled) {
+                    val botCount = effectivePlayers.count { it.isAi || it.id.startsWith("bot_") }
+                    val canAddBot = effectivePlayers.size < 8 && botCount < 4
+                    val canRemoveBot = botCount > 0
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 12.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(tokens.surface)
+                            .padding(horizontal = 14.dp, vertical = 10.dp)
+                    ) {
+                        // Difficulty selector
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Bot Level",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = tokens.cellNeutralText
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                val difficulties = listOf(
+                                    com.bingo.multiplayer.domain.engine.AiDifficulty.EASY to "Easy",
+                                    com.bingo.multiplayer.domain.engine.AiDifficulty.HARD to "Master"
+                                )
+                                difficulties.forEach { (diff, label) ->
+                                    val isSelected = (selectedBotDifficulty == diff)
+                                    Surface(
+                                        onClick = { onBotDifficultyChange?.invoke(diff) },
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = if (isSelected) tokens.accentBrand else tokens.backgroundSecondary,
+                                        border = if (isSelected) null else BorderStroke(0.5.dp, tokens.surfaceBorder)
+                                    ) {
+                                        Text(
+                                            text = label,
+                                            fontSize = 12.sp,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (isSelected) (if (tokens.isDark) Color.Black else Color.White) else tokens.cellNeutralText,
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Speed selector
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Speed (${when (selectedBotSpeedMs) { 2000L -> "2s"; 1500L -> "1.5s"; else -> "1s" }})",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = tokens.cellNeutralText
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                val speedOptions = listOf(
+                                    "L" to 1000L,
+                                    "M" to 1500L,
+                                    "H" to 2000L
+                                )
+                                speedOptions.forEach { (label, speedMs) ->
+                                    val isSelected = (selectedBotSpeedMs == speedMs)
+                                    Surface(
+                                        onClick = { onBotSpeedChange?.invoke(speedMs) },
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = if (isSelected) tokens.accentBrand else tokens.backgroundSecondary,
+                                        border = if (isSelected) null else BorderStroke(0.5.dp, tokens.surfaceBorder)
+                                    ) {
+                                        Text(
+                                            text = label,
+                                            fontSize = 12.sp,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (isSelected) (if (tokens.isDark) Color.Black else Color.White) else tokens.cellNeutralText,
+                                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 5.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Bot management: Add / Remove buttons
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Bots: $botCount / 4",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = tokens.cellNeutralText
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                if (canRemoveBot) {
+                                    Surface(
+                                        onClick = {
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            onRemoveBot?.invoke()
+                                        },
+                                        enabled = canRemoveBot,
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = tokens.backgroundSecondary,
+                                        border = BorderStroke(0.5.dp, tokens.surfaceBorder)
+                                    ) {
+                                        Text(
+                                            text = "- Remove",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = Color(0xFFEF4444),
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                        )
+                                    }
+                                }
+                                Surface(
+                                    onClick = {
+                                        if (canAddBot) {
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            onAddBot?.invoke()
+                                        }
+                                    },
+                                    enabled = canAddBot,
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (canAddBot) tokens.accentBrand else tokens.backgroundSecondary.copy(alpha = 0.5f),
+                                    border = if (canAddBot) null else BorderStroke(0.5.dp, tokens.surfaceBorder)
+                                ) {
+                                    Text(
+                                        text = "+ Add Bot",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (canAddBot) (if (tokens.isDark) Color.Black else Color.White) else tokens.cellNeutralText.copy(alpha = 0.5f),
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
 
                 LobbyActionRow(onSendLobbyMessage != null && lobbyCountdownSeconds < 0 && !isCheckingCompatibility && !messageDraft.sending && !deletingBusy,
@@ -1579,7 +1817,7 @@ fun LobbyScreen(
                             border = BorderStroke(1.dp, tokens.accentBrand.copy(alpha = 0.3f)),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(bottom = 12.dp)
+                                .padding(bottom = 8.dp)
                         ) {
                             Row(
                                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
@@ -1594,6 +1832,69 @@ fun LobbyScreen(
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = "Manual Designed Board enabled by Host",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = tokens.accentBrand
+                                )
+                            }
+                        }
+                    }
+
+                    if (isLiveGameStatus) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = tokens.accentBrand.copy(alpha = 0.12f),
+                            border = BorderStroke(1.dp, tokens.accentBrand.copy(alpha = 0.3f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Visibility,
+                                    contentDescription = null,
+                                    tint = tokens.accentBrand,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Live Game Status enabled by Host",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = tokens.accentBrand
+                                )
+                            }
+                        }
+                    }
+
+                    if (isBotsEnabled) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = tokens.accentBrand.copy(alpha = 0.12f),
+                            border = BorderStroke(1.dp, tokens.accentBrand.copy(alpha = 0.3f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.SmartToy,
+                                    contentDescription = null,
+                                    tint = tokens.accentBrand,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                val diffLabel = if (selectedBotDifficulty == com.bingo.multiplayer.domain.engine.AiDifficulty.EASY) "Easy" else "Master"
+                                val speedGrade = when (selectedBotSpeedMs) { 2000L -> "H"; 1500L -> "M"; else -> "L" }
+                                val speedSec = when (selectedBotSpeedMs) { 2000L -> "2s"; 1500L -> "1.5s"; else -> "1s" }
+                                Text(
+                                    text = "Bots enabled by Host ($diffLabel • $speedGrade ($speedSec))",
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = tokens.accentBrand

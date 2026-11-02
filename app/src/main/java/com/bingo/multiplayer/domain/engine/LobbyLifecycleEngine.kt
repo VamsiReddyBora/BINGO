@@ -316,6 +316,7 @@ object LobbyLifecycleEngine {
      * 2. Not local player, last seen > 60 seconds ago, and presence is offline.
      */
     fun isPlayerLeft(player: Player, isMe: Boolean, rawPresenceStatus: String): Boolean {
+        if (player.isAi || player.id.startsWith("bot_")) return false
         if (player.lobbyReadyStatus == STATUS_LEFT_LOBBY) return true
         if (!isMe && (System.currentTimeMillis() - player.lastSeenTimestamp) > 60_000L &&
             !com.bingo.multiplayer.domain.network.PresenceManager.isStatusOnline(rawPresenceStatus)) {

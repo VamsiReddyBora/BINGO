@@ -1,3 +1,12 @@
+# 1.0.8 — Build 108
+
+- Added host toggle and controls to add AI bots to multiplayer waiting lobbies.
+- Added lobby bot speed selector: switch between Low (1.0s), Medium (1.5s), and High (2.0s).
+- Guaranteed permanent bot deletion across cloud room metadata and peer lobby rosters without resurrection.
+- Fixed chat leak where bot canned responses were triggered during multiplayer matches under player names.
+- Hardened packet ingress validation against sender spoofing in online rooms and Nearby LAN sessions.
+- Preserved existing Bingo gameplay, networking, notifications, live status strip layout, and theme preferences.
+
 # 1.0.7 — Build 95
 
 - Added lobby Join requests, compact latest-message speech bubbles, inline composing and live typing indicators.

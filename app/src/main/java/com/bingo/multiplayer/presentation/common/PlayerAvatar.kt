@@ -309,13 +309,21 @@ fun PlayerAvatar(
                 modifier = Modifier.fillMaxSize()
             )
         } else {
-            val initial = displayName.trim().take(1).uppercase().ifEmpty { "P" }
-            Text(
-                text = initial,
-                fontSize = (size.value * 0.44f).sp,
-                fontWeight = FontWeight.Bold,
-                color = if (tokens.isDark) Color.White else tokens.accentBrand
-            )
+            val isBot = cleanUser?.startsWith("bot") == true || displayName.startsWith("bot", ignoreCase = true)
+            if (isBot) {
+                Text(
+                    text = "🤖",
+                    fontSize = (size.value * 0.48f).sp
+                )
+            } else {
+                val initial = displayName.trim().take(1).uppercase().ifEmpty { "P" }
+                Text(
+                    text = initial,
+                    fontSize = (size.value * 0.44f).sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (tokens.isDark) Color.White else tokens.accentBrand
+                )
+            }
         }
     }
 }

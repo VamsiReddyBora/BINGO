@@ -28,6 +28,10 @@ data class MultiplayerGameplayContext(
         return LobbyLifecycleEngine.calculateNextTurnPlayerId(
             participants, excludedPlayerIds + surrendered, picker, localId, seed, turnOrder)
     }
+
+    fun isBot(id: String): Boolean = participants.any {
+        (it.id == id || LobbyLifecycleEngine.isPlayerIdMatch(it.id, id)) && (it.isAi || it.id.startsWith("bot_"))
+    } || id.startsWith("bot_")
 }
 
 data class MultiplayerGameplayState(
@@ -91,10 +95,12 @@ object MultiplayerGameplayReducer {
         val picker = context.participantId(packet.playerId) ?: return reject(state, "Unknown picker")
         val origin = context.participantId(sender(packet))
         val closedTurn = packet.closedTurnNumber.takeIf { it > 0 } ?: (packet.turnNumber - 1)
+        val isPickerBot = context.isBot(picker)
+        val isAuthorizedOrigin = (origin == picker) || (isPickerBot && origin == context.hostId) || (!context.strictIdentity && origin == context.hostId)
         if (closedTurn != state.turnNumber || packet.turnNumber != state.turnNumber + 1 ||
             !LobbyLifecycleEngine.isPlayerIdMatch(picker, state.currentPlayerId) ||
             picker in context.excludedPlayerIds || picker in state.surrenderedPlayerIds ||
-            (origin != picker && (context.strictIdentity || origin != context.hostId))) return reject(state, "Closed or unexpected turn")
+            !isAuthorizedOrigin) return reject(state, "Closed or unexpected turn")
         if (packet.number !in 1..(state.playerBoard.size * state.playerBoard.size) || state.picks.any { it.number == packet.number || it.turn == closedTurn })
             return reject(state, "Duplicate or invalid selection")
         if (state.turnClock?.frozenRemainingMillis != null)

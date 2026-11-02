@@ -128,6 +128,10 @@ fun RootNavGraph(
     var isCheckingMatchCompatibility by remember { mutableStateOf(false) }
     var isManualBoard by remember { mutableStateOf(false) }
     var isDynamicBoard by remember { mutableStateOf(false) }
+    var isLiveGameStatus by remember { mutableStateOf(false) }
+    var isBotsEnabled by remember { mutableStateOf(false) }
+    var selectedBotDifficulty by remember { mutableStateOf(com.bingo.multiplayer.domain.engine.AiDifficulty.HARD) }
+    var selectedBotSpeedMs by remember { mutableStateOf(1000L) }
     var selectedDynamicGridSize by remember { mutableIntStateOf(5) }
     var isHostLeftGame by remember { mutableStateOf(false) }
     var lobbyCountdownSeconds by remember { mutableIntStateOf(-1) }
@@ -273,6 +277,9 @@ fun RootNavGraph(
         }
         isManualBoard = false
         isDynamicBoard = false
+        isLiveGameStatus = false
+        isBotsEnabled = false
+        selectedBotSpeedMs = 1000L
         selectedDynamicGridSize = 5
         roomCode = ""
         isHostLeftGame = false
@@ -423,7 +430,7 @@ fun RootNavGraph(
         val existing = OngoingMatchStore.getOngoingMatch(context, uid)
         if (existing != null && existing.matchSeed != currentMatchSeed && existing.startedAt > matchStartTimeMs) return
         val data = OngoingMatchData(roomCode = roomCode, matchSeed = currentMatchSeed, boardSize = boardSize,
-            isDynamicBoard = isDynamicBoard, isManualBoard = isManualBoard, isHost = isHosting,
+            isDynamicBoard = isDynamicBoard, isManualBoard = isManualBoard, isLiveGameStatus = isLiveGameStatus, isHost = isHosting,
             participants = matchParticipants, playerBoard = playerBoard, opponentBoard = opponentBoard,
             allPlayerBoards = allPlayerBoards, pickedNumbers = pickedNumbersHistory.toList(),
             pickedByPlayers = pickedByPlayerHistory.toList(), turnIds = pickedTurnIdsHistory.toList(),
@@ -1243,6 +1250,7 @@ fun RootNavGraph(
                         isHosting = false
                         isManualBoard = result.room.isManualBoard
                         isDynamicBoard = result.room.isDynamicBoard
+                        isLiveGameStatus = result.room.isLiveGameStatus
                         val returnedPlayer = result.room.players.find { it.id == localJoiner.id }
                         val effJoiner = if (returnedPlayer != null) {
                             localJoiner.copy(readyVersion = returnedPlayer.readyVersion)
@@ -1747,6 +1755,17 @@ fun RootNavGraph(
         playerBoard = Board(size = 0, cells = emptyList())
         opponentBoard = Board(size = 0, cells = emptyList())
         manualReadyAtById.clear()
+
+        val botPlayers = roster.filter { it.isAi || it.id.startsWith("bot_") }
+        if (botPlayers.isNotEmpty()) {
+            val initialBoards = mutableMapOf<String, Board>()
+            botPlayers.forEachIndexed { index, bot ->
+                val botBoard = engine.generateBoard(size, seed + index + 42L)
+                initialBoards[bot.id] = botBoard
+                manualReadyAtById[bot.id] = System.currentTimeMillis()
+            }
+            allPlayerBoards = initialBoards
+        }
         isLocalBoardReady = false
         isOpponentBoardReady = false
         countdownSeconds = -1
@@ -2122,6 +2141,7 @@ fun RootNavGraph(
                     matchSeed = currentMatchSeed,
                     boardSize = boardSize,
                     isDynamicBoard = isDynamicBoard,
+                    isLiveGameStatus = isLiveGameStatus,
                     isManualBoard = isManualBoard,
                     isHost = isHosting,
                     participants = matchParticipants,
@@ -2308,6 +2328,7 @@ fun RootNavGraph(
                         matchId = expectedSeed.toString(), playerId = myUid, senderPlayerId = myUid,
                         players = matchParticipants, boardSize = boardSize, isManualBoard = true,
                         manualPreparationComplete = true, isDynamicBoard = isDynamicBoard,
+                        isLiveGameStatus = isLiveGameStatus,
                         boardNumbers = allPlayerBoards.mapValues { it.value.cells.map { cell -> cell.number } },
                         currentTurnPlayerId = currentTurnPlayerId, turnClock = peerTurnClock,
                         simplifiedRulesVersion = 1, protocolVersion = if (matchParticipants.size == 2) 2 else 0,
@@ -2319,6 +2340,7 @@ fun RootNavGraph(
                             roomCode = expectedRoom, status = "PLAYING", seed = expectedSeed,
                             expectedSeed = expectedSeed, isManualBoard = true,
                             boardSize = completedStart.boardSize, isDynamicBoard = completedStart.isDynamicBoard,
+                            isLiveGameStatus = completedStart.isLiveGameStatus,
                             currentTurnPlayerId = completedStart.currentTurnPlayerId, turnClock = completedStart.turnClock,
                             protocolVersion = completedStart.protocolVersion,
                             startCommitDeadline = completedStart.startCommitDeadline,
@@ -2336,6 +2358,7 @@ fun RootNavGraph(
                             matchSeed = currentMatchSeed,
                             boardSize = boardSize,
                             isDynamicBoard = isDynamicBoard,
+                            isLiveGameStatus = isLiveGameStatus,
                             isManualBoard = isManualBoard,
                             isHost = isHosting,
                             participants = matchParticipants,
@@ -2417,6 +2440,7 @@ fun RootNavGraph(
         currentGameMode = GameMode.ONLINE_ROOM
         boardSize = matchData.boardSize
         isDynamicBoard = matchData.isDynamicBoard
+        isLiveGameStatus = matchData.isLiveGameStatus
         isManualBoard = matchData.isManualBoard
         currentMatchSeed = matchData.matchSeed
         multiplayerSnapshotCheckpoint = matchData.multiplayerSnapshotCheckpoint
@@ -2559,6 +2583,11 @@ fun RootNavGraph(
         onlineRoomSync.recordCompletedSeed(expiredSeed)
         disconnectRoom()
         currentMatchSeed = 0L
+        isBotsEnabled = false
+        if (isHosting) {
+            if (currentGameMode == GameMode.ONLINE_ROOM) onlineRoomSync.removeAllBots()
+            else if (currentGameMode == GameMode.NEARBY_NETWORK) lanP2pSync.removeAllBots()
+        }
         isGameOver = false
         isGamePaused = false
         isReconcilingMatch = false
@@ -2968,6 +2997,11 @@ fun RootNavGraph(
         disconnectRoom()
         pendingExitRevision += 1L
         currentMatchSeed = 0L
+        isBotsEnabled = false
+        if (isHosting) {
+            if (currentGameMode == GameMode.ONLINE_ROOM) onlineRoomSync.removeAllBots()
+            else if (currentGameMode == GameMode.NEARBY_NETWORK) lanP2pSync.removeAllBots()
+        }
         isHosting = false
         isGameOver = false
         isReconcilingMatch = false
@@ -3691,6 +3725,7 @@ fun RootNavGraph(
 
                     if (packet.isManualBoard) {
                         isManualBoard = true
+                        isLiveGameStatus = packet.isLiveGameStatus
                         currentMatchSeed = packet.seed
                         boardSize = packet.boardSize
                         if (currentGameMode == GameMode.ONLINE_ROOM && roomCode.isNotBlank() && packet.seed != 0L) {
@@ -3756,6 +3791,7 @@ fun RootNavGraph(
                         }
                     } else {
                         isManualBoard = false
+                        isLiveGameStatus = packet.isLiveGameStatus
                         currentMatchSeed = packet.seed
                         boardSize = packet.boardSize
                         isLocalBoardReady = true
@@ -3866,6 +3902,7 @@ fun RootNavGraph(
                     latestIncomingChatMessage = null
                     if (packet.isManualBoard || isManualBoard) {
                         isManualBoard = true
+                        isLiveGameStatus = packet.isLiveGameStatus
                         currentMatchSeed = packet.seed
                         multiplayerSnapshotCheckpoint = MultiplayerSnapshotCheckpoint()
                         surrenderedPlayerIds = emptySet()
@@ -3912,6 +3949,7 @@ fun RootNavGraph(
                         navController.navigate(Screen.ManualBoardDesign.route)
                     } else {
                         isManualBoard = false
+                        isLiveGameStatus = packet.isLiveGameStatus
                         currentMatchSeed = packet.seed
                         boardSize = packet.boardSize
                         isLocalBoardReady = true
@@ -5102,6 +5140,14 @@ fun RootNavGraph(
                 if (!isHosting && isLobbyPhase && isSenderHost) {
                     isManualBoard = packet.isManualBoard
                     isDynamicBoard = packet.isDynamicBoard
+                    isLiveGameStatus = packet.isLiveGameStatus
+                    isBotsEnabled = packet.isBotsEnabled
+                    if (packet.botDifficulty.isNotBlank()) {
+                        selectedBotDifficulty = if (packet.botDifficulty == "EASY") com.bingo.multiplayer.domain.engine.AiDifficulty.EASY else com.bingo.multiplayer.domain.engine.AiDifficulty.HARD
+                    }
+                    if (packet.botSpeedMs in setOf(1000L, 1500L, 2000L)) {
+                        selectedBotSpeedMs = packet.botSpeedMs
+                    }
                     if (packet.boardSize in 5..10) {
                         boardSize = packet.boardSize
                         selectedDynamicGridSize = packet.boardSize
@@ -5852,6 +5898,7 @@ fun RootNavGraph(
                     currentGameMode = GameMode.ONLINE_ROOM
                     isUsingP2p = false
                     isHosting = true
+                    isBotsEnabled = false
                     val effUser = getEffectiveUser()
                     val myUid = getLocalUid()
                     val myName = getPlayerDisplayName()
@@ -5927,6 +5974,7 @@ fun RootNavGraph(
                             isHosting = false
                             isManualBoard = result.room.isManualBoard
                             isDynamicBoard = result.room.isDynamicBoard
+                            isLiveGameStatus = result.room.isLiveGameStatus
                             val returnedPlayer = result.room.players.find { it.id == localJoiner.id }
                             val effJoiner = if (returnedPlayer != null) {
                                 localJoiner.copy(readyVersion = returnedPlayer.readyVersion)
@@ -5971,6 +6019,7 @@ fun RootNavGraph(
                                     )
                                     isManualBoard = result.room.isManualBoard
                                     isDynamicBoard = result.room.isDynamicBoard
+                                    isLiveGameStatus = result.room.isLiveGameStatus
                                     if (result.room.isManualBoard) {
                                         playerBoard = Board(size = 0, cells = emptyList())
                                         opponentBoard = Board(size = 0, cells = emptyList())
@@ -5985,6 +6034,7 @@ fun RootNavGraph(
                                     return@JoinRoomScreen null
                                 }
                             }
+                            isBotsEnabled = false
                             navController.navigate(Screen.Lobby.route) {
                                 popUpTo(Screen.JoinRoom.route) { inclusive = true }
                             }
@@ -6155,10 +6205,11 @@ fun RootNavGraph(
                     }
                 },
                 onRemovePlayer = { targetId ->
+                    val isBot = targetId.startsWith("bot_") || realTimePlayers.any { it.id == targetId && it.isAi }
                     if (currentGameMode == GameMode.ONLINE_ROOM) {
-                        onlineRoomSync.removePlayer(targetId)
+                        if (isBot) onlineRoomSync.removeBot(targetId) else onlineRoomSync.removePlayer(targetId)
                     } else if (currentGameMode == GameMode.NEARBY_NETWORK) {
-                        lanP2pSync.removePlayer(targetId)
+                        if (isBot) lanP2pSync.removeBot(targetId) else lanP2pSync.removePlayer(targetId)
                     }
                 },
                 isManualBoard = isManualBoard,
@@ -6169,7 +6220,12 @@ fun RootNavGraph(
                             type = "SETTINGS_UPDATE",
                             playerId = getLocalUid(),
                             isManualBoard = manual,
-                            isDynamicBoard = isDynamicBoard
+                            isDynamicBoard = isDynamicBoard,
+                            isLiveGameStatus = isLiveGameStatus,
+                            isBotsEnabled = isBotsEnabled,
+                            botDifficulty = if (selectedBotDifficulty == com.bingo.multiplayer.domain.engine.AiDifficulty.EASY) "EASY" else "MASTER",
+                            botSpeedMs = selectedBotSpeedMs,
+                            boardSize = boardSize
                         )
                     )
                 },
@@ -6184,6 +6240,10 @@ fun RootNavGraph(
                             playerId = getLocalUid(),
                             isManualBoard = isManualBoard,
                             isDynamicBoard = dynamic,
+                            isLiveGameStatus = isLiveGameStatus,
+                            isBotsEnabled = isBotsEnabled,
+                            botDifficulty = if (selectedBotDifficulty == com.bingo.multiplayer.domain.engine.AiDifficulty.EASY) "EASY" else "MASTER",
+                            botSpeedMs = selectedBotSpeedMs,
                             boardSize = effSize
                         )
                     )
@@ -6198,9 +6258,107 @@ fun RootNavGraph(
                             playerId = getLocalUid(),
                             isManualBoard = isManualBoard,
                             isDynamicBoard = isDynamicBoard,
+                            isLiveGameStatus = isLiveGameStatus,
+                            isBotsEnabled = isBotsEnabled,
+                            botDifficulty = if (selectedBotDifficulty == com.bingo.multiplayer.domain.engine.AiDifficulty.EASY) "EASY" else "MASTER",
+                            botSpeedMs = selectedBotSpeedMs,
                             boardSize = newSize
                         )
                     )
+                },
+                isLiveGameStatus = isLiveGameStatus,
+                onLiveGameStatusChange = { liveStatus ->
+                    isLiveGameStatus = liveStatus
+                    broadcastPacket(
+                        RoomMessagePacket(
+                            type = "SETTINGS_UPDATE",
+                            playerId = getLocalUid(),
+                            isManualBoard = isManualBoard,
+                            isDynamicBoard = isDynamicBoard,
+                            isLiveGameStatus = liveStatus,
+                            isBotsEnabled = isBotsEnabled,
+                            botDifficulty = if (selectedBotDifficulty == com.bingo.multiplayer.domain.engine.AiDifficulty.EASY) "EASY" else "MASTER",
+                            botSpeedMs = selectedBotSpeedMs,
+                            boardSize = boardSize
+                        )
+                    )
+                },
+                isBotsEnabled = isBotsEnabled,
+                onBotsEnabledChange = { enabled ->
+                    isBotsEnabled = enabled
+                    if (!enabled) {
+                        if (currentGameMode == GameMode.ONLINE_ROOM) onlineRoomSync.removeAllBots()
+                        else if (currentGameMode == GameMode.NEARBY_NETWORK) lanP2pSync.removeAllBots()
+                    }
+                    broadcastPacket(
+                        RoomMessagePacket(
+                            type = "SETTINGS_UPDATE",
+                            playerId = getLocalUid(),
+                            isManualBoard = isManualBoard,
+                            isDynamicBoard = isDynamicBoard,
+                            isLiveGameStatus = isLiveGameStatus,
+                            isBotsEnabled = enabled,
+                            botDifficulty = if (selectedBotDifficulty == com.bingo.multiplayer.domain.engine.AiDifficulty.EASY) "EASY" else "MASTER",
+                            botSpeedMs = selectedBotSpeedMs,
+                            boardSize = boardSize
+                        )
+                    )
+                },
+                selectedBotDifficulty = selectedBotDifficulty,
+                onBotDifficultyChange = { diff ->
+                    selectedBotDifficulty = diff
+                    broadcastPacket(
+                        RoomMessagePacket(
+                            type = "SETTINGS_UPDATE",
+                            playerId = getLocalUid(),
+                            isManualBoard = isManualBoard,
+                            isDynamicBoard = isDynamicBoard,
+                            isLiveGameStatus = isLiveGameStatus,
+                            isBotsEnabled = isBotsEnabled,
+                            botDifficulty = if (diff == com.bingo.multiplayer.domain.engine.AiDifficulty.EASY) "EASY" else "MASTER",
+                            botSpeedMs = selectedBotSpeedMs,
+                            boardSize = boardSize
+                        )
+                    )
+                },
+                selectedBotSpeedMs = selectedBotSpeedMs,
+                onBotSpeedChange = { speedMs ->
+                    selectedBotSpeedMs = speedMs
+                    broadcastPacket(
+                        RoomMessagePacket(
+                            type = "SETTINGS_UPDATE",
+                            playerId = getLocalUid(),
+                            isManualBoard = isManualBoard,
+                            isDynamicBoard = isDynamicBoard,
+                            isLiveGameStatus = isLiveGameStatus,
+                            isBotsEnabled = isBotsEnabled,
+                            botDifficulty = if (selectedBotDifficulty == com.bingo.multiplayer.domain.engine.AiDifficulty.EASY) "EASY" else "MASTER",
+                            botSpeedMs = speedMs,
+                            boardSize = boardSize
+                        )
+                    )
+                },
+                onAddBot = {
+                    val currentBots = realTimePlayers.filter { it.isAi || it.id.startsWith("bot_") }
+                    val nextIndex = (1..10).firstOrNull { idx -> currentBots.none { it.displayName.equals("bot$idx", ignoreCase = true) } } ?: (currentBots.size + 1)
+                    val botName = "bot$nextIndex"
+                    if (currentGameMode == GameMode.ONLINE_ROOM) {
+                        onlineRoomSync.addBot(botName)
+                    } else if (currentGameMode == GameMode.NEARBY_NETWORK) {
+                        lanP2pSync.addBot(botName)
+                    }
+                    android.widget.Toast.makeText(context, "Added $botName", android.widget.Toast.LENGTH_SHORT).show()
+                },
+                onRemoveBot = {
+                    val lastBot = realTimePlayers.lastOrNull { it.isAi || it.id.startsWith("bot_") }
+                    if (lastBot != null) {
+                        if (currentGameMode == GameMode.ONLINE_ROOM) {
+                            onlineRoomSync.removeBot(lastBot.id)
+                        } else if (currentGameMode == GameMode.NEARBY_NETWORK) {
+                            lanP2pSync.removeBot(lastBot.id)
+                        }
+                        android.widget.Toast.makeText(context, "Removed ${lastBot.displayName}", android.widget.Toast.LENGTH_SHORT).show()
+                    }
                 },
                 isCheckingCompatibility = isCheckingMatchCompatibility,
                 onStartGame = start@{
@@ -6258,7 +6416,7 @@ fun RootNavGraph(
 
                             // NR-02: Host preparation barrier. Send PREPARE_START and await ACKs from all remote guests.
                             val verifiedHost = onlineRoomSync.currentHostId ?: (if (isHosting) myId else null) ?: sanitizedList.firstOrNull { it.isHost }?.id ?: myId
-                            val requiredAcks = sanitizedList.filter { it.id != verifiedHost && it.id != myId }.map { it.id }
+                            val requiredAcks = sanitizedList.filter { it.id != verifiedHost && it.id != myId && !it.isAi && !it.id.startsWith("bot_") }.map { it.id }
                             val startGen = if (currentGameMode == GameMode.ONLINE_ROOM) onlineRoomSync.roomConnectionId else java.util.UUID.randomUUID().toString()
                             val getLiveConnectionGen: () -> String = {
                                 if (currentGameMode == GameMode.ONLINE_ROOM) onlineRoomSync.roomConnectionId else startGen
@@ -6273,6 +6431,7 @@ fun RootNavGraph(
                                 isManualBoard = manualMode,
                                 manualPreparationComplete = !manualMode,
                                 isDynamicBoard = isDynamicBoard,
+                                isLiveGameStatus = isLiveGameStatus,
                                 playerId = myId,
                                 senderPlayerId = myId,
                                 players = sanitizedList,
@@ -6396,6 +6555,7 @@ fun RootNavGraph(
                                 isManualBoard = manualMode,
                                 manualPreparationComplete = !manualMode,
                                 isDynamicBoard = isDynamicBoard,
+                                isLiveGameStatus = isLiveGameStatus,
                                 startCommitDeadline = commitDeadline,
                                 startClockOffsets = lobbyStartClock.offsets(),
                                 players = sanitizedList
@@ -6411,6 +6571,7 @@ fun RootNavGraph(
                                         isManualBoard = manualMode,
                                         boardSize = targetSize,
                                         isDynamicBoard = isDynamicBoard,
+                                isLiveGameStatus = isLiveGameStatus,
                                         currentTurnPlayerId = chosenFirstTurnUid,
                                         turnClock = startingClock,
                                         simplifiedRulesVersion = 1,
@@ -6537,10 +6698,12 @@ fun RootNavGraph(
             NearbyChoiceScreen(
                 onHostGame = {
                     isNearbyHostMode = true
+                    isBotsEnabled = false
                     navController.navigate(Screen.NearbyLobby.route)
                 },
                 onJoinGame = {
                     isNearbyHostMode = false
+                    isBotsEnabled = false
                     navController.navigate(Screen.NearbyLobby.route)
                 },
                 onBack = {
@@ -6739,6 +6902,15 @@ fun RootNavGraph(
                         updatedBoards = updatedBoards + ("ai_bot" to aiBoard)
                     }
 
+                    val botPlayers = getActiveParticipants().filter { it.isAi || it.id.startsWith("bot_") }
+                    botPlayers.forEachIndexed { index, bot ->
+                        if (!updatedBoards.containsKey(bot.id)) {
+                            val botBoard = engine.generateBoard(boardSize, currentMatchSeed + index + 42L)
+                            updatedBoards = updatedBoards + (bot.id to botBoard)
+                            manualReadyAtById[bot.id] = System.currentTimeMillis()
+                        }
+                    }
+
                     allPlayerBoards = updatedBoards
                     manualReadyAtById[myUid] = System.currentTimeMillis()
                     isLocalBoardReady = true
@@ -6831,6 +7003,11 @@ fun RootNavGraph(
                         onlineRoomSync.recordCompletedSeed(currentMatchSeed)
                     }
                     currentMatchSeed = 0L
+        isBotsEnabled = false
+        if (isHosting) {
+            if (currentGameMode == GameMode.ONLINE_ROOM) onlineRoomSync.removeAllBots()
+            else if (currentGameMode == GameMode.NEARBY_NETWORK) lanP2pSync.removeAllBots()
+        }
                     pickedNumbersHistory.clear()
                     pickedByPlayerHistory.clear()
                     pickedTurnIdsHistory.clear()
@@ -6908,6 +7085,41 @@ fun RootNavGraph(
                             difficulty = currentAiDifficulty
                         )
                         executePick(number = aiPick, isOwnPick = false, pickerId = "ai_bot")
+                    }
+                }
+            }
+
+            // Multiplayer Bot Turn Handler (Host executes moves on behalf of bots)
+            LaunchedEffect(turnNumber, currentTurnPlayerId, isGameOver, isGamePaused) {
+                if (isGameOver || isGamePaused) return@LaunchedEffect
+                if (!isHosting) return@LaunchedEffect
+                val isCurrentTurnBot = matchParticipants.any {
+                    it.id == currentTurnPlayerId && (it.isAi || it.id.startsWith("bot_"))
+                } || currentTurnPlayerId.startsWith("bot_")
+
+                if (isCurrentTurnBot && currentTurnPlayerId.isNotBlank()) {
+                    val botId = currentTurnPlayerId
+                    val currentTurn = turnNumber
+                    val seed = currentMatchSeed
+
+                    // Pick speed set according to selected speed (L: 1s, M: 1.5s, H: 2s)
+                    delay(selectedBotSpeedMs)
+
+                    if (isActive && turnNumber == currentTurn && currentTurnPlayerId == botId &&
+                        currentMatchSeed == seed && !isGameOver && !isGamePaused
+                    ) {
+                        val botBoard = allPlayerBoards[botId] ?: playerBoard
+                        val aiPick = aiPlayer.decideNextMove(
+                            aiBoard = botBoard,
+                            opponentBoard = playerBoard,
+                            difficulty = selectedBotDifficulty,
+                            skipDelay = true
+                        )
+                        if (isActive && turnNumber == currentTurn && currentTurnPlayerId == botId &&
+                            currentMatchSeed == seed && !isGameOver && !isGamePaused
+                        ) {
+                            executePick(number = aiPick, isOwnPick = false, pickerId = botId, shouldBroadcast = true)
+                        }
                     }
                 }
             }
@@ -7120,6 +7332,7 @@ fun RootNavGraph(
             }
 
             GameScreen(
+                isLiveGameStatus = isLiveGameStatus,
                 gameplaySuspended = currentGameMode == GameMode.NEARBY_NETWORK && isMultiplayerSuspended,
                 hostUnavailable = currentGameMode == GameMode.NEARBY_NETWORK && nearbyAvailability.hostUnavailable,
                 canControlPause = isCurrentHost,
@@ -7396,6 +7609,7 @@ fun RootNavGraph(
                                 isManualBoard = isManualBoard,
                                 manualPreparationComplete = !isManualBoard,
                                 isDynamicBoard = isDynamicBoard,
+                                isLiveGameStatus = isLiveGameStatus,
                                 startCommitDeadline = rematchDeadline,
                                 startClockOffsets = rematchOffsets,
                                 players = sanitizedList
@@ -7410,6 +7624,7 @@ fun RootNavGraph(
                                         isManualBoard = isManualBoard,
                                         boardSize = targetSize,
                                         isDynamicBoard = isDynamicBoard,
+                                isLiveGameStatus = isLiveGameStatus,
                                         currentTurnPlayerId = first,
                                         turnClock = rematchClock,
                                         simplifiedRulesVersion = 1,

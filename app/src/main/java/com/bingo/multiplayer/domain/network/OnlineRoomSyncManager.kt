@@ -54,6 +54,10 @@ data class RoomMessagePacket(
     val isManualBoard: Boolean = false,
     val manualPreparationComplete: Boolean? = null,
     val isDynamicBoard: Boolean = false,
+    val isLiveGameStatus: Boolean = false,
+    val isBotsEnabled: Boolean = false,
+    val botDifficulty: String = "MASTER",
+    val botSpeedMs: Long = 1000L,
     val senderInstanceId: String = "",
     // Originating device account; playerId can instead identify a skipped player.
     val senderPlayerId: String = "",
@@ -720,6 +724,7 @@ open class OnlineRoomSyncManager(
             isManualBoard = session.isManualBoard,
             manualPreparationComplete = session.manualPreparationComplete,
             isDynamicBoard = session.isDynamicBoard,
+            isLiveGameStatus = session.isLiveGameStatus,
             playerId = session.hostId,
             senderPlayerId = session.hostId,
             players = participants,
@@ -1236,9 +1241,14 @@ open class OnlineRoomSyncManager(
             val now = System.currentTimeMillis()
             var hasNewPlayer = false
 
+            val isHost = localP.isHost
             cloudSession.players.forEach { p ->
                 val pCleanUser = p.username.trim().lowercase().removePrefix("@")
                 val pCleanDisplay = p.displayName.trim().lowercase()
+                val isBot = p.isAi || p.id.startsWith("bot_")
+                if (isHost && isBot && !playerRegistry.containsKey(p.id)) {
+                    return@forEach
+                }
                 if (p.id.isNotBlank() && p.id !in kickedPlayerIds && pCleanUser !in kickedPlayerIds && pCleanDisplay !in kickedPlayerIds) {
                     val isLocal = (p.id == localP.id) ||
                         (localP.username.isNotBlank() && p.username.equals(localP.username, ignoreCase = true))
@@ -1325,6 +1335,19 @@ open class OnlineRoomSyncManager(
                         lobbyReadyStatus = effReady,
                         readyVersion = effVer
                     )
+                }
+            }
+
+            if (!isHost) {
+                val cloudPlayerIds = cloudSession.players.map { it.id }.toSet()
+                val botsToRemove = playerRegistry.keys.filter { key ->
+                    val pl = playerRegistry[key]
+                    val isBot = pl?.isAi == true || key.startsWith("bot_")
+                    isBot && (key !in cloudPlayerIds || key in kickedPlayerIds)
+                }
+                botsToRemove.forEach {
+                    kickedPlayerIds.add(it)
+                    playerRegistry.remove(it)
                 }
             }
 
@@ -1508,14 +1531,30 @@ open class OnlineRoomSyncManager(
         if (activePeerSeed == 0L) {
             currentHostId = session.hostId
             val ids = session.players.map { it.id }.toSet()
-            playerRegistry.keys.retainAll(ids)
+            val isHost = localPlayer?.isHost == true
+            playerRegistry.keys.retainAll { id ->
+                val isBot = id.startsWith("bot_") || playerRegistry[id]?.isAi == true
+                if (isHost && isBot) {
+                    id !in kickedPlayerIds
+                } else {
+                    id in ids && id !in kickedPlayerIds
+                }
+            }
             session.players.forEach { p ->
-                val old = playerRegistry[p.id]
-                val ready = LobbyLifecycleEngine.reconcileReadyStatus(old?.lobbyReadyStatus.orEmpty(), old?.readyVersion ?: 0L,
-                    p.lobbyReadyStatus, p.readyVersion)
-                playerRegistry[p.id] = p.copy(avatarUrl = old?.avatarUrl ?: p.avatarUrl,
-                    isHost = p.id == session.hostId, lobbyReadyStatus = ready.first, readyVersion = ready.second,
-                    lastSeenTimestamp = maxOf(old?.lastSeenTimestamp ?: 0L, p.lastSeenTimestamp))
+                val pcUser = p.username.trim().lowercase().removePrefix("@")
+                val pcDisplay = p.displayName.trim().lowercase()
+                val isBot = p.isAi || p.id.startsWith("bot_")
+                if (isHost && isBot && !playerRegistry.containsKey(p.id)) {
+                    return@forEach
+                }
+                if (p.id !in kickedPlayerIds && pcUser !in kickedPlayerIds && pcDisplay !in kickedPlayerIds) {
+                    val old = playerRegistry[p.id]
+                    val ready = LobbyLifecycleEngine.reconcileReadyStatus(old?.lobbyReadyStatus.orEmpty(), old?.readyVersion ?: 0L,
+                        p.lobbyReadyStatus, p.readyVersion)
+                    playerRegistry[p.id] = p.copy(avatarUrl = old?.avatarUrl ?: p.avatarUrl,
+                        isHost = p.id == session.hostId, lobbyReadyStatus = ready.first, readyVersion = ready.second,
+                        lastSeenTimestamp = maxOf(old?.lastSeenTimestamp ?: 0L, p.lastSeenTimestamp))
+                }
             }
             _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
         }
@@ -1619,14 +1658,18 @@ open class OnlineRoomSyncManager(
             "ROOM_STATE" -> {
                 val actor = packet.playerId
                 val sender = packet.senderPlayerId.ifBlank { packet.playerId }
-                // NR-08: Only verified host can broadcast ROOM_STATE.
-                // Reject unauthorized ROOM_STATE if known host is set and sender or actor is not host.
-                if (currentHostId != null) {
-                    if (actor != currentHostId || (packet.senderPlayerId.isNotBlank() && packet.senderPlayerId != currentHostId)) {
-                        Log.w(TAG, "Ignoring ROOM_STATE from unauthorized actor/sender: actor=$actor, sender=$sender, expected host: $currentHostId")
+                val expectedHost = currentHostId ?: playerRegistry.values.firstOrNull { it.isHost }?.id
+                if (expectedHost != null) {
+                    val isHostActor = actor == expectedHost || com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(actor, expectedHost)
+                    val isHostSender = sender.isBlank() || sender == expectedHost || com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(sender, expectedHost)
+                    if (!isHostActor || !isHostSender) {
+                        Log.w(TAG, "Ignoring ROOM_STATE from unauthorized actor/sender: actor=$actor, sender=$sender, expected host: $expectedHost")
                         return
                     }
                 }
+
+                val incomingIds = packet.players.map { it.id }.toSet()
+                val isLocalHost = localPlayer?.isHost == true
 
                 packet.players.forEach { p ->
                     val pcUser = p.username.trim().lowercase().removePrefix("@")
@@ -1678,6 +1721,19 @@ open class OnlineRoomSyncManager(
                         )
                     }
                 }
+
+                // For non-host (guest) clients: immediately purge any bots that host removed from ROOM_STATE!
+                if (!isLocalHost) {
+                    val staleBots = playerRegistry.keys.filter { key ->
+                        val p = playerRegistry[key]
+                        (p?.isAi == true || key.startsWith("bot_")) && key !in incomingIds
+                    }
+                    staleBots.forEach { staleKey ->
+                        kickedPlayerIds.add(staleKey)
+                        playerRegistry.remove(staleKey)
+                    }
+                }
+
                 _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
             }
 
@@ -1778,16 +1834,45 @@ open class OnlineRoomSyncManager(
                 }
             }
 
-            "KICK_PLAYER" -> {
+            "BOT_JOIN" -> {
                 if (activePeerSeed != 0L) return
                 val expectedHost = currentHostId ?: playerRegistry.values.firstOrNull { it.isHost }?.id
                 val senderId = packet.senderPlayerId.ifBlank { packet.playerId }
                 if (expectedHost.isNullOrBlank() || packet.playerId != expectedHost || (senderId.isNotBlank() && senderId != expectedHost)) {
+                    Log.w(TAG, "Rejected unauthorized BOT_JOIN from ${packet.playerId} (expected host: $expectedHost)")
+                    return
+                }
+                val botId = packet.targetPlayerId.ifBlank { packet.playerId }
+                val bot = Player(
+                    id = botId,
+                    displayName = packet.displayName.ifBlank { "bot1" },
+                    username = packet.username.ifBlank { packet.displayName.ifBlank { "bot1" } },
+                    isHost = false,
+                    isAi = true,
+                    lobbyReadyStatus = "READY",
+                    lastSeenTimestamp = System.currentTimeMillis()
+                )
+                playerRegistry[botId] = bot
+                _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+            }
+
+            "KICK_PLAYER" -> {
+                if (activePeerSeed != 0L) return
+                val expectedHost = currentHostId ?: playerRegistry.values.firstOrNull { it.isHost }?.id
+                val senderId = packet.senderPlayerId.ifBlank { packet.playerId }
+                val isActorHost = expectedHost != null && (packet.playerId == expectedHost || com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(packet.playerId, expectedHost))
+                val isSenderHost = expectedHost != null && (senderId.isBlank() || senderId == expectedHost || com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(senderId, expectedHost))
+                if (!isActorHost || !isSenderHost) {
                     Log.w(TAG, "Rejected unauthorized KICK_PLAYER from ${packet.playerId} (expected host: $expectedHost)")
                     return
                 }
                 val targetId = packet.targetPlayerId.ifBlank { packet.playerId }
                 if (targetId.isNotEmpty()) {
+                    kickedPlayerIds.add(targetId)
+                    val target = playerRegistry[targetId]
+                    if (target != null && target.username.isNotBlank()) {
+                        kickedPlayerIds.add(target.username.trim().lowercase())
+                    }
                     playerRegistry.remove(targetId)
                     _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
                 }
@@ -1976,6 +2061,134 @@ open class OnlineRoomSyncManager(
             broadcastPacket(kickPacket)
             delay(300L)
             broadcastPacket(kickPacket)
+        }
+    }
+
+    fun broadcastRoomState() {
+        val localP = localPlayer ?: return
+        if (!localP.isHost) return
+        scope.launch(Dispatchers.IO) {
+            broadcastPacket(
+                RoomMessagePacket(
+                    type = "ROOM_STATE",
+                    playerId = localP.id,
+                    displayName = localP.displayName,
+                    username = localP.username,
+                    isHost = true,
+                    avatarUrl = localP.avatarUrl,
+                    gamesPlayed = localP.gamesPlayed,
+                    gamesWon = localP.gamesWon,
+                    currentStreak = localP.currentStreak,
+                    level = localP.level,
+                    players = playerRegistry.values.toList(),
+                    timestamp = System.currentTimeMillis()
+                )
+            )
+        }
+    }
+
+    fun addBot(name: String): Player {
+        val cleanName = name.trim().lowercase()
+        kickedPlayerIds.remove(cleanName)
+        val botId = "bot_${UUID.randomUUID().toString().take(8)}"
+        kickedPlayerIds.remove(botId)
+        val bot = Player(
+            id = botId,
+            displayName = name,
+            username = name,
+            isHost = false,
+            isAi = true,
+            lobbyReadyStatus = "READY",
+            lastSeenTimestamp = System.currentTimeMillis()
+        )
+        playerRegistry[botId] = bot
+        _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+        val code = currentRoomCode
+        val me = localPlayer
+        if (code != null && me != null && me.isHost) {
+            scope.launch(Dispatchers.IO) {
+                try {
+                    roomRegistry.sync(code, me, playerRegistry.values.toList(), kickedPlayerIds)
+                } catch (_: Exception) {}
+            }
+        }
+        scope.launch(Dispatchers.IO) {
+            val botPacket = RoomMessagePacket(
+                type = "BOT_JOIN",
+                playerId = localPlayer?.id ?: "",
+                targetPlayerId = botId,
+                displayName = name,
+                username = name
+            )
+            broadcastPacket(botPacket)
+            delay(100L)
+            broadcastRoomState()
+        }
+        return bot
+    }
+
+    fun removeBot(botId: String) {
+        val target = playerRegistry[botId]
+        kickedPlayerIds.add(botId)
+        if (target != null && target.username.isNotBlank()) {
+            kickedPlayerIds.add(target.username.trim().lowercase())
+        }
+        playerRegistry.remove(botId)
+        _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+        val code = currentRoomCode
+        val me = localPlayer
+        if (code != null && me != null && me.isHost) {
+            scope.launch(Dispatchers.IO) {
+                try {
+                    roomRegistry.remove(code, botId)
+                    roomRegistry.sync(code, me, playerRegistry.values.toList(), kickedPlayerIds)
+                } catch (_: Exception) {}
+            }
+        }
+        scope.launch(Dispatchers.IO) {
+            val kickPacket = RoomMessagePacket(
+                type = "KICK_PLAYER",
+                targetPlayerId = botId,
+                playerId = localPlayer?.id ?: ""
+            )
+            broadcastPacket(kickPacket)
+            delay(50L)
+            broadcastRoomState()
+        }
+    }
+
+    fun removeAllBots() {
+        val bots = playerRegistry.values.filter { it.isAi || it.id.startsWith("bot_") }
+        bots.forEach { b ->
+            kickedPlayerIds.add(b.id)
+            if (b.username.isNotBlank()) kickedPlayerIds.add(b.username.trim().lowercase())
+            playerRegistry.remove(b.id)
+        }
+        _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+        val code = currentRoomCode
+        val me = localPlayer
+        if (code != null && me != null && me.isHost) {
+            scope.launch(Dispatchers.IO) {
+                try {
+                    bots.forEach { roomRegistry.remove(code, it.id) }
+                    roomRegistry.sync(code, me, playerRegistry.values.toList(), kickedPlayerIds)
+                } catch (_: Exception) {}
+            }
+        }
+        scope.launch(Dispatchers.IO) {
+            bots.forEach { b ->
+                broadcastPacket(
+                    RoomMessagePacket(
+                        type = "KICK_PLAYER",
+                        targetPlayerId = b.id,
+                        playerId = localPlayer?.id ?: ""
+                    )
+                )
+            }
+            if (bots.isNotEmpty()) {
+                delay(50L)
+                broadcastRoomState()
+            }
         }
     }
 

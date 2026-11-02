@@ -12,10 +12,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -24,6 +26,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -182,6 +185,7 @@ fun GameScreen(
     onCheckLobby: (() -> Unit)? = null,
     typingPlayerName: String? = null,
     onSetTyping: (Boolean) -> Unit = {},
+    isLiveGameStatus: Boolean = false,
     onResumeGame: () -> Unit = onTogglePause,
     pauseRemainingSeconds: Int = 0,
     canExtendPause: Boolean = false,
@@ -232,11 +236,7 @@ fun GameScreen(
             isCustomChatFocused = false
             isFullLengthChatActive = false
 
-            val opponentIsAi = opponentName.contains("ai bot", ignoreCase = true) ||
-                    opponentUsername?.contains("ai_bot", ignoreCase = true) == true ||
-                    players.any { it.isAi || it.id == "ai_bot" || it.username == "ai_bot" }
-
-            if (opponentIsAi) {
+            if (isAiMode) {
                 coroutineScope.launch {
                     localAiTypingName = opponentName
                     delay((1200..2400).random().toLong())
@@ -331,10 +331,7 @@ fun GameScreen(
 
     // Quick chat style message "Your turn" when local player's turn arrives (only for >2 players and not AI)
     LaunchedEffect(isMyTurn, isGameOver) {
-        val opponentIsAi = opponentName.contains("ai bot", ignoreCase = true) ||
-                opponentUsername?.contains("ai_bot", ignoreCase = true) == true ||
-                players.any { it.isAi || it.id == "ai_bot" || it.username == "ai_bot" }
-        if (isMyTurn && !isGameOver && !opponentIsAi && players.size > 2) {
+        if (isMyTurn && !isGameOver && !isAiMode && players.size > 2) {
             spawnEmote("Your turn", isSelf = true, scaleMultiplier = 1.15f)
         }
     }
@@ -1056,8 +1053,10 @@ fun GameScreen(
                 // Reserved empty space between top bar and Bingo board: Stamped badge on game over OR turn status
                 Box(
                     modifier = Modifier
-                        .weight(0.12f)
-                        .fillMaxWidth(),
+                        .then(
+                            if (isLiveGameStatus && !isGameOver) Modifier.fillMaxWidth().wrapContentHeight()
+                            else Modifier.weight(0.12f).fillMaxWidth()
+                        ),
                     contentAlignment = Alignment.Center
                 ) {
                     if (isGameOver && showStampBadge && !isExitingMatch) {
@@ -1128,18 +1127,54 @@ fun GameScreen(
                             }
                         }
 
-                        Text(
-                            text = statusMessage,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = statusColor,
-                            textAlign = TextAlign.Center,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier
-                                .align(Alignment.Center)
-                                .padding(bottom = 4.dp)
-                        )
+                        if (isLiveGameStatus) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 7.dp, bottom = 4.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                LiveGameStatusStrip(
+                                    players = players,
+                                    allPlayerBoards = allPlayerBoards,
+                                    board = board,
+                                    opponentBoard = opponentBoard,
+                                    myPlayerId = myPlayerId,
+                                    myUsername = myUsername,
+                                    myDisplayName = myDisplayName,
+                                    myAvatarUrl = myAvatarUrl,
+                                    isHost = isHost,
+                                    currentTurnPlayerId = currentTurnPlayerId,
+                                    disconnectedPlayerIds = disconnectedPlayerIds
+                                )
+
+                                Spacer(modifier = Modifier.height(24.dp))
+
+                                Text(
+                                    text = statusMessage,
+                                    fontSize = 12.8.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = statusColor,
+                                    textAlign = TextAlign.Center,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(bottom = 2.dp)
+                                )
+                            }
+                        } else {
+                            Text(
+                                text = statusMessage,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = statusColor,
+                                textAlign = TextAlign.Center,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .align(Alignment.Center)
+                                    .padding(bottom = 4.dp)
+                            )
+                        }
                     }
                 }
 
@@ -1539,6 +1574,244 @@ private fun InGameBottomBar(
                             rotationZ = animatedRefreshAngle
                         }
                 )
+            }
+        }
+    }
+}
+
+private data class PlayerLiveStatus(
+    val player: Player,
+    val isLocal: Boolean,
+    val linesCount: Int,
+    val isBingo: Boolean,
+    val isDisconnected: Boolean,
+    val originalIndex: Int
+)
+
+@Composable
+private fun LiveGameStatusStrip(
+    players: List<Player>,
+    allPlayerBoards: Map<String, Board>,
+    board: Board,
+    opponentBoard: Board?,
+    myPlayerId: String,
+    myUsername: String?,
+    myDisplayName: String?,
+    myAvatarUrl: String?,
+    isHost: Boolean,
+    currentTurnPlayerId: String,
+    disconnectedPlayerIds: List<String>,
+    modifier: Modifier = Modifier
+) {
+    val tokens = BingoTheme.colors
+    val effectivePlayers = remember(players, myPlayerId, myDisplayName, myAvatarUrl, myUsername) {
+        if (players.isNotEmpty()) players
+        else listOf(
+            Player(id = myPlayerId.ifBlank { "local" }, displayName = myDisplayName ?: "You", avatarUrl = myAvatarUrl, username = myUsername ?: ""),
+            Player(id = "opponent", displayName = "Opponent")
+        )
+    }
+
+    val sortedStatusList = remember(effectivePlayers, allPlayerBoards, board, opponentBoard, disconnectedPlayerIds, myPlayerId, myUsername, myDisplayName, isHost) {
+        effectivePlayers.mapIndexed { index, player ->
+            val isLocal = com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerMe(
+                player, myPlayerId, myUsername ?: "", myDisplayName ?: "", isHost
+            ) || player.id == myPlayerId || player.id == "local"
+
+            val pBoard = allPlayerBoards[player.id]
+                ?: if (isLocal) board
+                else if (effectivePlayers.size == 2 || player.id != myPlayerId) (opponentBoard ?: board)
+                else null
+
+            val linesCount = pBoard?.completedLinesCount ?: 0
+            val isBingo = pBoard?.isBingo == true
+            val isDisconnected = disconnectedPlayerIds.any {
+                com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(it, player.id)
+            }
+
+            PlayerLiveStatus(
+                player = player,
+                isLocal = isLocal,
+                linesCount = linesCount,
+                isBingo = isBingo,
+                isDisconnected = isDisconnected,
+                originalIndex = index
+            )
+        }.sortedWith(
+            compareByDescending<PlayerLiveStatus> { it.linesCount }
+                .thenBy { it.originalIndex }
+        )
+    }
+
+    val scrollState = rememberScrollState()
+    val isTwoPlayer = sortedStatusList.size <= 2
+
+    BoxWithConstraints(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(40.dp)
+    ) {
+        val availableWidth = maxWidth
+        val itemSpacing = 6.dp
+        val itemWidth = if (isTwoPlayer) {
+            (availableWidth - itemSpacing) / 2f
+        } else {
+            (availableWidth - (itemSpacing * 2)) / 3f
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .horizontalScroll(scrollState),
+            horizontalArrangement = Arrangement.spacedBy(itemSpacing),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            sortedStatusList.forEach { item ->
+                val p = item.player
+                val isTurn = com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(p.id, currentTurnPlayerId)
+                val cardBg = if (item.isLocal) tokens.accentBrand.copy(alpha = 0.08f) else tokens.surface
+                val cardBorder = when {
+                    item.isBingo -> BorderStroke(1.5.dp, Color(0xFFEAB308))
+                    isTurn -> BorderStroke(1.5.dp, tokens.accentBrand)
+                    item.isLocal -> BorderStroke(1.dp, tokens.accentBrand.copy(alpha = 0.6f))
+                    else -> BorderStroke(0.5.dp, tokens.surfaceBorder)
+                }
+
+                val statusText = when {
+                    item.isDisconnected -> "Offline"
+                    item.isBingo -> "👑 BINGO"
+                    item.linesCount == 1 -> "1 Line"
+                    else -> "${item.linesCount} Lines"
+                }
+
+                val (badgeBg, badgeBorder, statusTextColor) = when {
+                    item.isDisconnected -> Triple(
+                        Color(0xFFEF4444).copy(alpha = 0.15f),
+                        BorderStroke(0.5.dp, Color(0xFFEF4444).copy(alpha = 0.5f)),
+                        Color(0xFFEF4444)
+                    )
+                    item.isBingo -> Triple(
+                        Color(0xFFFEF08A).copy(alpha = 0.22f),
+                        BorderStroke(1.dp, Color(0xFFEAB308)),
+                        Color(0xFFFBBF24)
+                    )
+                    item.linesCount > 0 -> Triple(
+                        tokens.accentBrand.copy(alpha = 0.18f),
+                        BorderStroke(1.dp, tokens.accentBrand.copy(alpha = 0.7f)),
+                        tokens.accentBrand
+                    )
+                    else -> Triple(
+                        tokens.surfaceBorder.copy(alpha = 0.45f),
+                        BorderStroke(0.5.dp, tokens.surfaceBorder),
+                        tokens.cellNeutralText.copy(alpha = 0.9f)
+                    )
+                }
+
+                val name = if (item.isLocal) "You" else (p.displayName.ifBlank { p.username.ifBlank { "Player" } })
+
+                Surface(
+                    shape = RoundedCornerShape(13.dp),
+                    color = cardBg,
+                    border = cardBorder,
+                    modifier = Modifier
+                        .width(itemWidth)
+                        .fillMaxHeight()
+                ) {
+                    if (isTwoPlayer) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 5.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                PlayerAvatar(
+                                    avatarPathOrUri = if (item.isLocal) (myAvatarUrl ?: p.avatarUrl) else p.avatarUrl,
+                                    displayName = if (item.isLocal) (myDisplayName ?: "You") else p.displayName,
+                                    username = if (item.isLocal) myUsername else p.username,
+                                    size = 31.dp
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = name,
+                                    fontSize = 12.85.sp,
+                                    fontWeight = if (item.isLocal) FontWeight.Bold else FontWeight.SemiBold,
+                                    color = if (item.isLocal) tokens.accentBrand else tokens.cellNeutralText,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = badgeBg,
+                                border = badgeBorder
+                            ) {
+                                Text(
+                                    text = statusText,
+                                    fontSize = 11.8.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = statusTextColor,
+                                    maxLines = 1,
+                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 1.dp)
+                                )
+                            }
+                        }
+                    } else {
+                        val multiStatusText = when {
+                            item.isDisconnected -> "Off"
+                            item.isBingo -> "👑"
+                            else -> "${item.linesCount}L"
+                        }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 5.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                PlayerAvatar(
+                                    avatarPathOrUri = if (item.isLocal) (myAvatarUrl ?: p.avatarUrl) else p.avatarUrl,
+                                    displayName = if (item.isLocal) (myDisplayName ?: "You") else p.displayName,
+                                    username = if (item.isLocal) myUsername else p.username,
+                                    size = 24.dp
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = name,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (item.isLocal) FontWeight.Bold else FontWeight.SemiBold,
+                                    color = if (item.isLocal) tokens.accentBrand else tokens.cellNeutralText,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Surface(
+                                shape = RoundedCornerShape(5.dp),
+                                color = badgeBg,
+                                border = badgeBorder
+                            ) {
+                                Text(
+                                    text = multiStatusText,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = statusTextColor,
+                                    maxLines = 1,
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }

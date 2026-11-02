@@ -17,6 +17,18 @@ internal object AppSystemBars {
         val background = if (dark) Color.BLACK else Color.rgb(250, 250, 252)
         window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
         window.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val lp = window.attributes
+            val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            } else {
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+            if (lp.layoutInDisplayCutoutMode != mode) {
+                lp.layoutInDisplayCutoutMode = mode
+                window.attributes = lp
+            }
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             // Compose already renders both themes; Android must not recolour the decor again.
             window.decorView.isForceDarkAllowed = false
@@ -37,5 +49,22 @@ internal object AppSystemBars {
         window.setBackgroundDrawable(ColorDrawable(background))
         controller.isAppearanceLightStatusBars = !dark
         controller.isAppearanceLightNavigationBars = !dark
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            var flags = window.decorView.systemUiVisibility
+            flags = if (!dark) {
+                flags or android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+            } else {
+                flags and android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv()
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                flags = if (!dark) {
+                    flags or android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+                } else {
+                    flags and android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR.inv()
+                }
+            }
+            window.decorView.systemUiVisibility = flags
+        }
     }
 }

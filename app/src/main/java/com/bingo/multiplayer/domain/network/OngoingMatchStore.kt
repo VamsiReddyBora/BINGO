@@ -21,6 +21,7 @@ data class OngoingMatchData(
     val matchSeed: Long,
     val boardSize: Int,
     val isDynamicBoard: Boolean = false,
+    val isLiveGameStatus: Boolean = false,
     val isManualBoard: Boolean = false,
     val isHost: Boolean = false,
     val participants: List<Player> = emptyList(),

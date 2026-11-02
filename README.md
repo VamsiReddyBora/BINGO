@@ -1,9 +1,14 @@
-# Bingo 1.0.7 — Build 95
+# Bingo 1.0.8 — Build 108
 
 Android Bingo with AI, MQTT multiplayer, Nearby Network play, friends and notifications.
 
 ## This release
 
+- Host controls to add/remove AI bots in multiplayer waiting lobbies with dynamic bot count.
+- In-lobby bot speed selector: switch between Low (1.0s), Medium (1.5s), and High (2.0s).
+- Robust bot lifecycle synchronization: deleted bots are immediately and permanently removed on all players' screens without cloud metadata resurrection.
+- Eliminated multiplayer chat leak so offline AI canned responses never trigger during online matches.
+- Hardened ingress packet validation against sender ID spoofing in online and LAN games.
 - Compact lobby profile messages, inline keyboard sending, typing indicators and join requests.
 - In-game theme switching, optional status-bar hiding, and expanded app diagnostics.
 - **Known issue:** with the phone in dark mode and Bingo in light mode, the status bar may remain dark on some devices. This is not fixed in this release.
@@ -51,7 +56,3 @@ See `AGENT_HANDOFF.md` for verification results and remaining hardware acceptanc
 The admin console has a website-only usability update: validated session restoration, coherent app versions, clearer status, black dark theme and combined player controls. See ADMIN_USABILITY.md. This release adds the manual maintenance controls to the admin service and site.
 
 Verification: 1,340 automated Android tests passed, zero failures and nine unchanged optional skips. Clean-source case IDs/results match Build94; gameplay and networking logic are unchanged from that build. Android lint: zero errors, 34 warnings. Original signing certificate and APK alignment verified. The known status-bar appearance issue remains unresolved; no new physical-device UI/FPS verification is claimed.
-
-Current main includes service-only automatic retained-message maintenance and the admin usage counter. See AUTOMATIC_MQTT_CLEANUP.md. Android 1.0.7 / Build 95 and its release assets are unchanged.
-
-Cleanup now defers during gameplay and the five-minute rejoin grace period, stops remaining deletes when play begins, and guards every match category with room availability. See AUTOMATIC_MQTT_CLEANUP.md for production-client verification and its limits.

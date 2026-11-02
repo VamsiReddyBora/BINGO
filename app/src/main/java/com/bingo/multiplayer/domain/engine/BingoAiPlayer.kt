@@ -27,15 +27,18 @@ class BingoAiPlayer(
     suspend fun decideNextMove(
         aiBoard: Board,
         opponentBoard: Board? = null,
-        difficulty: AiDifficulty = AiDifficulty.HARD
+        difficulty: AiDifficulty = AiDifficulty.HARD,
+        skipDelay: Boolean = false
     ): Int {
-        val delayTime = if (maxDelayMs > minDelayMs) {
-            Random.nextLong(minDelayMs, maxDelayMs)
-        } else {
-            minDelayMs
-        }
-        if (delayTime > 0L) {
-            delay(delayTime)
+        if (!skipDelay) {
+            val delayTime = if (maxDelayMs > minDelayMs) {
+                Random.nextLong(minDelayMs, maxDelayMs)
+            } else {
+                minDelayMs
+            }
+            if (delayTime > 0L) {
+                delay(delayTime)
+            }
         }
 
         val unmarkedNumbers = aiBoard.cells

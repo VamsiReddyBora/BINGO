@@ -40,11 +40,29 @@ class MainActivity : ComponentActivity() {
     private lateinit var friendsRepository: FriendsRepository
     private val launchReady = MutableStateFlow(false)
 
+    override fun attachBaseContext(newBase: android.content.Context) {
+        val isDark = AppNativeTheme.savedDark(newBase)
+        val config = Configuration(newBase.resources.configuration).apply {
+            uiMode = (uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or
+                    (if (isDark) Configuration.UI_MODE_NIGHT_YES else Configuration.UI_MODE_NIGHT_NO)
+        }
+        super.attachBaseContext(newBase.createConfigurationContext(config))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // Select the platform theme before Activity creates its native window/decor.
         AppNativeTheme.apply(this, AppNativeTheme.savedDark(this))
         super.onCreate(savedInstanceState)
         requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val lp = window.attributes
+            lp.layoutInDisplayCutoutMode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            } else {
+                android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+            window.attributes = lp
+        }
         WindowCompat.setDecorFitsSystemWindows(window, true)
 
         // Initialize Theme & Notification Preferences from persistent storage immediately before composing UI
@@ -54,6 +72,7 @@ class MainActivity : ComponentActivity() {
         AnimationPreferences.init(applicationContext)
 
         applySystemBarStyle()
+        window.decorView.post { applySystemBarStyle() }
 
         // Initialize Notification Channels and background WorkManager checks
         BingoNotificationManager.init(applicationContext)
@@ -151,6 +170,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        val isDark = ThemePreferences.isDarkTheme.value
+        newConfig.uiMode = (newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or
+                (if (isDark) Configuration.UI_MODE_NIGHT_YES else Configuration.UI_MODE_NIGHT_NO)
         applySystemBarStyle()
         // uiMode is handled without recreating this activity. Apply once more after the
         // framework finishes dispatching its native theme/decor configuration update.

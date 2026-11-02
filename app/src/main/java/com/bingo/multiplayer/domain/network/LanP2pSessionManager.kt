@@ -28,6 +28,7 @@ import java.io.InputStreamReader
 import java.io.PrintWriter
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 class LanP2pSessionManager(
@@ -661,15 +662,68 @@ class LanP2pSessionManager(
                 }
             }
 
-            "KICK_PLAYER" -> {
+            "BOT_JOIN" -> {
                 val expectedHost = playerRegistry.values.firstOrNull { it.isHost }?.id ?: localPlayer?.takeIf { it.isHost }?.id
                 val senderId = packet.senderPlayerId.ifBlank { packet.playerId }
                 if (expectedHost.isNullOrBlank() || packet.playerId != expectedHost || (senderId.isNotBlank() && senderId != expectedHost)) {
+                    Log.w("LanP2p", "Rejected unauthorized Nearby BOT_JOIN from ${packet.playerId} (expected host: $expectedHost)")
+                    return
+                }
+                val botId = packet.targetPlayerId.ifBlank { packet.playerId }
+                val bot = Player(
+                    id = botId,
+                    displayName = packet.displayName.ifBlank { "bot1" },
+                    username = packet.username.ifBlank { packet.displayName.ifBlank { "bot1" } },
+                    isHost = false,
+                    isAi = true,
+                    lobbyReadyStatus = "READY",
+                    lastSeenTimestamp = System.currentTimeMillis()
+                )
+                playerRegistry[botId] = bot
+                _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+            }
+
+            "ROOM_STATE" -> {
+                val expectedHost = playerRegistry.values.firstOrNull { it.isHost }?.id ?: localPlayer?.takeIf { it.isHost }?.id
+                val senderId = packet.senderPlayerId.ifBlank { packet.playerId }
+                val isActorHost = expectedHost == null || packet.playerId == expectedHost || com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(packet.playerId, expectedHost)
+                val isSenderHost = expectedHost == null || senderId.isBlank() || senderId == expectedHost || com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(senderId, expectedHost)
+                if (!isActorHost || !isSenderHost) return
+                if (localPlayer?.isHost != true) {
+                    val incomingIds = packet.players.map { it.id }.toSet()
+                    val staleBots = playerRegistry.keys.filter { key ->
+                        val p = playerRegistry[key]
+                        (p?.isAi == true || key.startsWith("bot_")) && key !in incomingIds
+                    }
+                    staleBots.forEach { staleKey ->
+                        kickedPlayerIds.add(staleKey)
+                        playerRegistry.remove(staleKey)
+                    }
+                    packet.players.forEach { p ->
+                        if (p.id.isNotBlank() && p.id !in kickedPlayerIds) {
+                            playerRegistry[p.id] = p
+                        }
+                    }
+                    _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+                }
+            }
+
+            "KICK_PLAYER" -> {
+                val expectedHost = playerRegistry.values.firstOrNull { it.isHost }?.id ?: localPlayer?.takeIf { it.isHost }?.id
+                val senderId = packet.senderPlayerId.ifBlank { packet.playerId }
+                val isActorHost = expectedHost != null && (packet.playerId == expectedHost || com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(packet.playerId, expectedHost))
+                val isSenderHost = expectedHost != null && (senderId.isBlank() || senderId == expectedHost || com.bingo.multiplayer.domain.engine.LobbyLifecycleEngine.isPlayerIdMatch(senderId, expectedHost))
+                if (!isActorHost || !isSenderHost) {
                     Log.w("LanP2p", "Rejected unauthorized Nearby KICK_PLAYER from ${packet.playerId} (expected host: $expectedHost)")
                     return
                 }
                 val targetId = packet.targetPlayerId.ifBlank { packet.playerId }
                 if (targetId.isNotEmpty()) {
+                    kickedPlayerIds.add(targetId)
+                    val target = playerRegistry[targetId]
+                    if (target != null && target.username.isNotBlank()) {
+                        kickedPlayerIds.add(target.username.trim().lowercase())
+                    }
                     playerRegistry.remove(targetId)
                     _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
                 }
@@ -778,6 +832,84 @@ class LanP2pSessionManager(
             broadcastPacket(kickPacket)
             delay(300L)
             broadcastPacket(kickPacket)
+        }
+    }
+
+    fun addBot(name: String): Player {
+        val botId = "bot_${UUID.randomUUID().toString().take(8)}"
+        val bot = Player(
+            id = botId,
+            displayName = name,
+            username = name,
+            isHost = false,
+            isAi = true,
+            lobbyReadyStatus = "READY",
+            lastSeenTimestamp = System.currentTimeMillis()
+        )
+        playerRegistry[botId] = bot
+        _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+        scope.launch(Dispatchers.IO) {
+            val botPacket = RoomMessagePacket(
+                type = "BOT_JOIN",
+                playerId = localPlayer?.id ?: "",
+                targetPlayerId = botId,
+                displayName = name,
+                username = name
+            )
+            broadcastPacket(botPacket)
+        }
+        return bot
+    }
+
+    fun removeBot(botId: String) {
+        playerRegistry.remove(botId)
+        _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+        scope.launch(Dispatchers.IO) {
+            val kickPacket = RoomMessagePacket(
+                type = "KICK_PLAYER",
+                targetPlayerId = botId,
+                playerId = localPlayer?.id ?: ""
+            )
+            broadcastPacket(kickPacket)
+            delay(50L)
+            broadcastPacket(
+                RoomMessagePacket(
+                    type = "ROOM_STATE",
+                    playerId = localPlayer?.id ?: "",
+                    isHost = true,
+                    players = playerRegistry.values.toList()
+                )
+            )
+        }
+    }
+
+    fun removeAllBots() {
+        val botIds = playerRegistry.values.filter { it.isAi || it.id.startsWith("bot_") }.map { it.id }
+        botIds.forEach { botId ->
+            playerRegistry.remove(botId)
+        }
+        _players.value = playerRegistry.values.toList().sortedByDescending { it.isHost }
+        scope.launch(Dispatchers.IO) {
+            botIds.forEach { botId ->
+                broadcastPacket(
+                    RoomMessagePacket(
+                        type = "KICK_PLAYER",
+                        targetPlayerId = botId,
+                        playerId = localPlayer?.id ?: ""
+                    )
+                )
+            }
+            if (botIds.isNotEmpty()) {
+                delay(50L)
+                broadcastPacket(
+                    RoomMessagePacket(
+                        type = "ROOM_STATE",
+                        playerId = localPlayer?.id ?: "",
+                        isHost = true,
+                        players = playerRegistry.values.toList()
+                    )
+                )
+            }
         }
     }
 

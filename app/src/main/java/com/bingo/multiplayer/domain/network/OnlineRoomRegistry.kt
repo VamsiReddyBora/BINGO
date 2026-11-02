@@ -55,6 +55,8 @@ data class OnlineRoomSession(
     val currentSeed: Long = 0L,
     val isManualBoard: Boolean = false,
     val isDynamicBoard: Boolean = false,
+    @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
+    val isLiveGameStatus: Boolean = false,
     val currentTurnPlayerId: String = "",
     val turnClock: MultiplayerTurnClock? = null,
     val simplifiedRulesVersion: Int = 1,
@@ -768,8 +770,9 @@ object OnlineRoomRegistry {
             val playerExists = session.players.any {
                 it.id == safeLocal.id || (it.username.isNotBlank() && it.username.equals(safeLocal.username, ignoreCase = true))
             }
+            val nonBotSessionPlayers = session.players.filterNot { it.isAi || it.id.startsWith("bot_") }
             val updatedPlayers = if (playerExists) {
-                session.players.map { existing ->
+                nonBotSessionPlayers.map { existing ->
                     if (existing.id == safeLocal.id || (existing.username.isNotBlank() && existing.username.equals(safeLocal.username, ignoreCase = true))) {
                         safeLocal
                     } else if (existing.id == session.hostId || (session.hostUsername.isNotBlank() && existing.username.equals(session.hostUsername, ignoreCase = true))) {
@@ -800,7 +803,7 @@ object OnlineRoomRegistry {
                     }
                 }
             } else {
-                session.players.map { existing ->
+                nonBotSessionPlayers.map { existing ->
                     if (existing.id == session.hostId || (session.hostUsername.isNotBlank() && existing.username.equals(session.hostUsername, ignoreCase = true))) {
                         existing.copy(isHost = true)
                     } else if (existing.isHost && isHostAlive) {
@@ -811,9 +814,17 @@ object OnlineRoomRegistry {
                 } + safeLocal
             }
 
+            val cleanBanned = bannedPlayerIds.map { it.trim().lowercase().removePrefix("@") }.toSet()
+            val bots = if (isLocalActuallyHost) {
+                knownPlayers.filter { (it.isAi || it.id.startsWith("bot_")) && it.id !in cleanBanned }
+            } else {
+                session.players.filter { (it.isAi || it.id.startsWith("bot_")) && it.id !in cleanBanned && it.username.trim().lowercase().removePrefix("@") !in cleanBanned }
+            }
+            val finalUpdatedPlayers = (updatedPlayers + bots).distinctBy { it.id }
+
             val newHeartbeat = if (isLocalActuallyHost) now else session.lastHeartbeat
             val updatedSession = session.copy(
-                players = updatedPlayers,
+                players = finalUpdatedPlayers,
                 lastHeartbeat = newHeartbeat
             )
 
@@ -827,16 +838,26 @@ object OnlineRoomRegistry {
                 val synced = mutateCloudSession(cleanCode) { cur ->
                     if (cur.status == "CLOSED" || cur.isTerminalClosed) return@mutateCloudSession null
                     val mergedPlayers = if (isLocalActuallyHost) {
-                        cur.players.map { cp ->
+                        val nonBots = cur.players.filterNot { it.isAi || it.id.startsWith("bot_") }
+                        val base = nonBots.map { cp ->
                             val up = updatedSession.players.find { it.id == cp.id }
                             up ?: cp
                         }
+                        (base + bots).distinctBy { it.id }
                     } else {
-                        cur.players.map { cp ->
+                        // Non-hosts (guests) MUST NEVER alter or synthesize bots into cloud session!
+                        // They only update their own status/entry in cur.players, while filtering banned IDs.
+                        val unbannedCur = cur.players.filterNot {
+                            it.id in cleanBanned || it.username.trim().lowercase().removePrefix("@") in cleanBanned
+                        }
+                        var localFound = false
+                        val updated = unbannedCur.map { cp ->
                             if (cp.id == safeLocal.id || (cp.username.isNotBlank() && cp.username.equals(safeLocal.username, ignoreCase = true))) {
+                                localFound = true
                                 safeLocal
                             } else cp
                         }
+                        if (!localFound) (updated + safeLocal).distinctBy { it.id } else updated
                     }
                     cur.copy(
                         players = mergedPlayers,
@@ -938,6 +959,7 @@ object OnlineRoomRegistry {
         isManualBoard: Boolean = false,
         boardSize: Int = 5,
         isDynamicBoard: Boolean = false,
+        isLiveGameStatus: Boolean = false,
         administrativeHost: Player? = null,
         departedIds: Set<String> = emptySet(),
         expectedSeed: Long? = null,
@@ -989,6 +1011,7 @@ object OnlineRoomRegistry {
                     isManualBoard = if (status in setOf("STARTING", "PLAYING")) isManualBoard else (if (status == "WAITING") false else current.isManualBoard),
                     boardSize = if (boardSize > 0) boardSize else current.boardSize,
                     isDynamicBoard = if (status in setOf("STARTING", "PLAYING")) isDynamicBoard else (if (status == "WAITING") false else current.isDynamicBoard),
+                    isLiveGameStatus = if (status in setOf("STARTING", "PLAYING")) isLiveGameStatus else (if (status == "WAITING") false else current.isLiveGameStatus),
                     currentTurnPlayerId = if (status in setOf("STARTING", "PLAYING") && currentTurnPlayerId.isNotBlank()) currentTurnPlayerId else current.currentTurnPlayerId,
                     turnClock = if (status in setOf("STARTING", "PLAYING") && turnClock != null) turnClock else current.turnClock,
                     simplifiedRulesVersion = if (status in setOf("STARTING", "PLAYING")) simplifiedRulesVersion else current.simplifiedRulesVersion,
