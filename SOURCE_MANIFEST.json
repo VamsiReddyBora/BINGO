@@ -1,9 +1,9 @@
 {
-  "versionName": "1.0.8",
-  "versionCode": 108,
+  "versionName": "1.0.9",
+  "versionCode": 109,
   "package": "com.bingo.multiplayer",
-  "apkSha256": "7cf6a654607f9a82fdb3df1e8f2478faf6061362630060014e9cae0e4e0c2860",
-  "apkSize": 8263557,
+  "apkSha256": "fce530a44f05b491300981b1db6632db422ea953b8584d047416f5e385d07e5f",
+  "apkSize": 8259459,
   "certificateSha256": "39a428942c3c2629ff3490c944b8b82c7625b22d660b7a2cdf682456d81f60a4",
   "validation": {
     "cleanSourceTests": {

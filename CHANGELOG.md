@@ -1,3 +1,10 @@
+# 1.0.9 — Build 109
+
+- Relocated the Chat button in the waiting lobby into the Players in Lobby card, positioned directly after the Sync button.
+- Updated lobby action buttons (Start Match, I'm Ready, I'm Not Ready) to span full card width cleanly.
+- Preserved multiplayer bots with host toggle and speed selector (Low/Medium/High).
+- Preserved chat leak fix, hardened ingress validation, theme switching, and all gameplay mechanics.
+
 # 1.0.8 — Build 108
 
 - Added host toggle and controls to add AI bots to multiplayer waiting lobbies.

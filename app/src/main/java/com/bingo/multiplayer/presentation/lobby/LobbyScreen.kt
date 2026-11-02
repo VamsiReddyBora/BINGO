@@ -591,23 +591,49 @@ fun LobbyScreen(
 
                         }
 
-                        TextButton(
-                            onClick = onRefresh,
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Refresh,
-                                contentDescription = null,
-                                modifier = Modifier.size(13.dp),
-                                tint = if (tokens.isDark) Color.White else tokens.accentBrand
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "Sync",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = if (tokens.isDark) Color.White else tokens.accentBrand
-                            )
+                            TextButton(
+                                onClick = onRefresh,
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(13.dp),
+                                    tint = if (tokens.isDark) Color.White else tokens.accentBrand
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Sync",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (tokens.isDark) Color.White else tokens.accentBrand
+                                )
+                            }
+
+                            val chatEnabled = onSendLobbyMessage != null && lobbyCountdownSeconds < 0 && !isCheckingCompatibility && !messageDraft.sending && !deletingBusy
+                            TextButton(
+                                onClick = ::openLobbyDraft,
+                                enabled = chatEnabled,
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.ChatBubbleOutline,
+                                    contentDescription = "Chat",
+                                    modifier = Modifier.size(13.dp),
+                                    tint = if (chatEnabled) (if (tokens.isDark) Color.White else tokens.accentBrand) else tokens.textMuted
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Chat",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (chatEnabled) (if (tokens.isDark) Color.White else tokens.accentBrand) else tokens.textMuted
+                                )
+                            }
                         }
                     }
 
@@ -1735,8 +1761,6 @@ fun LobbyScreen(
                     }
                 }
 
-                LobbyActionRow(onSendLobbyMessage != null && lobbyCountdownSeconds < 0 && !isCheckingCompatibility && !messageDraft.sending && !deletingBusy,
-                    onChat = ::openLobbyDraft) {
                 Button(
                     onClick = {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -1773,7 +1797,6 @@ fun LobbyScreen(
                         fontSize = 15.sp,
                         color = if (allReady && lobbyCountdownSeconds < 0) tokens.primaryButtonText else tokens.textMuted
                     )
-                }
                 }
             } else {
                 Column(
@@ -1903,8 +1926,6 @@ fun LobbyScreen(
                         }
                     }
 
-                    LobbyActionRow(onSendLobbyMessage != null && lobbyCountdownSeconds < 0 && !messageDraft.sending && !deletingBusy,
-                        onChat = ::openLobbyDraft) {
                     if (isMyReadyState) {
                         OutlinedButton(
                             onClick = {
@@ -1952,8 +1973,6 @@ fun LobbyScreen(
                                 color = tokens.primaryButtonText
                             )
                         }
-                    }
-
                     }
                     Spacer(modifier = Modifier.height(10.dp))
 

@@ -1,9 +1,10 @@
-# Bingo 1.0.8 — Build 108
+# Bingo 1.0.9 — Build 109
 
 Android Bingo with AI, MQTT multiplayer, Nearby Network play, friends and notifications.
 
 ## This release
 
+- Relocated lobby Chat button to the Players in Lobby card directly after the Sync button; full-width action buttons.
 - Host controls to add/remove AI bots in multiplayer waiting lobbies with dynamic bot count.
 - In-lobby bot speed selector: switch between Low (1.0s), Medium (1.5s), and High (2.0s).
 - Robust bot lifecycle synchronization: deleted bots are immediately and permanently removed on all players' screens without cloud metadata resurrection.
