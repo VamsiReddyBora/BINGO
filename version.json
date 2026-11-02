@@ -1,9 +1,9 @@
 {
-  "versionName": "1.0.8",
-  "versionCode": 108,
-  "tagName": "v1.0.8",
-  "downloadUrl": "https://vamsireddybora.github.io/BINGO/Bingo-1.0.8-build108.apk",
-  "apkSize": 8263557,
-  "sha256": "7cf6a654607f9a82fdb3df1e8f2478faf6061362630060014e9cae0e4e0c2860",
-  "releaseNotes": "Lobby bots with speed selector (Low/Medium/High).\nPermanent bot removal sync across cloud and guest screens.\nMultiplayer chat leak fix and hardened ingress packet validation.\nExisting Bingo gameplay and networking preserved."
+  "versionName": "1.0.9",
+  "versionCode": 109,
+  "tagName": "v1.0.9",
+  "downloadUrl": "https://vamsireddybora.github.io/BINGO/Bingo-1.0.9-build109.apk",
+  "apkSize": 8259459,
+  "sha256": "fce530a44f05b491300981b1db6632db422ea953b8584d047416f5e385d07e5f",
+  "releaseNotes": "Relocated Chat button to Players in Lobby card directly after the Sync button.\nFull-width action buttons for Start Game and Ready controls.\nMultiplayer bots with speed selector and synchronized removal.\nExisting Bingo gameplay and networking preserved."
 }
