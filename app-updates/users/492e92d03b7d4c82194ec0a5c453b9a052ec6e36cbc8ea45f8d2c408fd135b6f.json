@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "492e92d03b7d4c82194ec0a5c453b9a052ec6e36cbc8ea45f8d2c408fd135b6f",
-  "revision": 17,
+  "revision": 18,
   "enabled": true,
   "release": {
     "versionName": "1.0.7",
-    "versionCode": 106,
+    "versionCode": 107,
     "tagName": "v1.0.7",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.7-build106-c60327fd56ee0553d813c0714a33d5c7292cad2c1bc853b804263c9ba9a798f7.apk",
-    "apkSize": 8259459,
-    "sha256": "c60327fd56ee0553d813c0714a33d5c7292cad2c1bc853b804263c9ba9a798f7",
-    "releaseNotes": "Private update for Vampire.\nLobby Bots fix: Guaranteed permanent bot removal across cloud metadata and local roster.\nBots toggle preserves across matches in same lobby, resets to OFF for new lobby.\nBot Speed selector in lobby: switch between L (1s), M (1.5s), and H (2s).\nAll existing gameplay, networking, live status strip layout, and theme fixes preserved."
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.7-build107-0654dd3d2d489ce012591f2655e561b3830c728d7abfff20a7db9482618eb27e.apk",
+    "apkSize": 8263547,
+    "sha256": "0654dd3d2d489ce012591f2655e561b3830c728d7abfff20a7db9482618eb27e",
+    "releaseNotes": "Private update for Vampire (Build 107).\nFix: Eliminated chat message leak where AI canned chat triggered in multiplayer with player name.\nFix: Deleted bots removed immediately & permanently on guest screens without cloud resurrection.\nBots toggle preserves across matches in same lobby, resets to OFF for new lobby.\nBot Speed selector in lobby: switch between L (1s), M (1.5s), and H (2s).\nAll existing gameplay, networking, live status strip layout, and theme fixes preserved."
   }
 }
