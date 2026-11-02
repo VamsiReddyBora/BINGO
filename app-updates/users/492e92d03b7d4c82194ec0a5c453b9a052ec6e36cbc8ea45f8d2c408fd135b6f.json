@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "492e92d03b7d4c82194ec0a5c453b9a052ec6e36cbc8ea45f8d2c408fd135b6f",
-  "revision": 16,
+  "revision": 17,
   "enabled": true,
   "release": {
     "versionName": "1.0.7",
-    "versionCode": 105,
+    "versionCode": 106,
     "tagName": "v1.0.7",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.7-build105-12e92ccceb162f60f9111c135b7a0c3cf0fdd3ad680eadeee274f2eea0c41444.apk",
-    "apkSize": 8259467,
-    "sha256": "12e92ccceb162f60f9111c135b7a0c3cf0fdd3ad680eadeee274f2eea0c41444",
-    "releaseNotes": "Private update for Vampire.\nLobby Bots refinement: Fixed bot removal locally and in cloud room metadata.\nRemoved [BOT] badge in lobby roster.\nBots toggle defaults to OFF on next matches / rematch.\nBot turn pick speed tuned to 750ms.\nBot lobby status displays 'in-lobby (room code)'.\nAll existing gameplay, networking, live status strip layout, and theme fixes preserved."
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.7-build106-c60327fd56ee0553d813c0714a33d5c7292cad2c1bc853b804263c9ba9a798f7.apk",
+    "apkSize": 8259459,
+    "sha256": "c60327fd56ee0553d813c0714a33d5c7292cad2c1bc853b804263c9ba9a798f7",
+    "releaseNotes": "Private update for Vampire.\nLobby Bots fix: Guaranteed permanent bot removal across cloud metadata and local roster.\nBots toggle preserves across matches in same lobby, resets to OFF for new lobby.\nBot Speed selector in lobby: switch between L (1s), M (1.5s), and H (2s).\nAll existing gameplay, networking, live status strip layout, and theme fixes preserved."
   }
 }
