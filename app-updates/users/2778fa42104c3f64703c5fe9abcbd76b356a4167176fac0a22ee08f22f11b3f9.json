@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "2778fa42104c3f64703c5fe9abcbd76b356a4167176fac0a22ee08f22f11b3f9",
-  "revision": 31,
+  "revision": 32,
   "enabled": true,
   "release": {
-    "versionName": "1.0.12",
-    "versionCode": 112,
-    "tagName": "v1.0.12",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.12-build112-440106564c5b2ec9a8009d6a90d8e36bf682d56a916a84d8d982a5deaa280705.apk",
-    "apkSize": 8275852,
-    "sha256": "440106564c5b2ec9a8009d6a90d8e36bf682d56a916a84d8d982a5deaa280705",
-    "releaseNotes": "Private update for Bob (Build 112).\n\u2022 Added dedicated Admin Control Center page for @bob directly above developer note.\n\u2022 Live EMQX retained message capacity gauge (/2,000 slots) with real-time tier monitoring.\n\u2022 On-demand Clean Retained Messages Now action with confirmation.\n\u2022 All gameplay, themes, animations, bot speed controls, and networking preserved."
+    "versionName": "1.0.13",
+    "versionCode": 113,
+    "tagName": "v1.0.13",
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.13-build113-512fce01e890400d8f25eef84202dcee167a2641d7e438a4bad9881498ed09d6.apk",
+    "apkSize": 8275848,
+    "sha256": "512fce01e890400d8f25eef84202dcee167a2641d7e438a4bad9881498ed09d6",
+    "releaseNotes": "Private update for Bob (Build 113).\n\u2022 Fixed retained message count with 100% EMQX Cloud console parity (settled stream drain).\n\u2022 Real-time Topic Distribution (Matches, Lobbies, Presence, Profiles, System & Metadata).\n\u2022 Live capacity gauge (/2,000 slots) with real-time tier monitoring and active gameplay guard.\n\u2022 On-demand Clean Retained Messages Now action with confirmation.\n\u2022 Dedicated Admin Control Center page for @bob directly above developer note."
   }
 }
