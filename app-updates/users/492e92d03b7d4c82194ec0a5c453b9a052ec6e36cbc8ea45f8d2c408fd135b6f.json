@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "492e92d03b7d4c82194ec0a5c453b9a052ec6e36cbc8ea45f8d2c408fd135b6f",
-  "revision": 18,
+  "revision": 19,
   "enabled": true,
   "release": {
-    "versionName": "1.0.7",
-    "versionCode": 107,
-    "tagName": "v1.0.7",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.7-build107-0654dd3d2d489ce012591f2655e561b3830c728d7abfff20a7db9482618eb27e.apk",
-    "apkSize": 8263547,
-    "sha256": "0654dd3d2d489ce012591f2655e561b3830c728d7abfff20a7db9482618eb27e",
-    "releaseNotes": "Private update for Vampire (Build 107).\nFix: Eliminated chat message leak where AI canned chat triggered in multiplayer with player name.\nFix: Deleted bots removed immediately & permanently on guest screens without cloud resurrection.\nBots toggle preserves across matches in same lobby, resets to OFF for new lobby.\nBot Speed selector in lobby: switch between L (1s), M (1.5s), and H (2s).\nAll existing gameplay, networking, live status strip layout, and theme fixes preserved."
+    "versionName": "1.0.8",
+    "versionCode": 109,
+    "tagName": "v1.0.8",
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.8-build109-3f2226bb6f456c4f8ab131dac225829faaea2eef876e3dab6c7830626dbea7d4.apk",
+    "apkSize": 8259468,
+    "sha256": "3f2226bb6f456c4f8ab131dac225829faaea2eef876e3dab6c7830626dbea7d4",
+    "releaseNotes": "Private update for Vampire (Build 109).\nRelocated Chat button to Players in Lobby card directly after the Sync button.\nFull width action buttons for Start Game and Ready controls.\nAll existing gameplay, networking, bot controls, and theme fixes preserved."
   }
 }
