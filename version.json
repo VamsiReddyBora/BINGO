@@ -1,9 +1,9 @@
 {
-  "versionName": "1.0.7",
-  "versionCode": 95,
-  "tagName": "v1.0.7",
-  "downloadUrl": "https://vamsireddybora.github.io/BINGO/Bingo-1.0.7-build95.apk",
-  "apkSize": 8230790,
-  "sha256": "520367ff761d89fda319ff428150caa50f561a0c814efc36b71f2600936ccf04",
-  "releaseNotes": "Lobby Join requests, compact inline messages and live typing indicators.\nIn-game theme switching, optional status-bar hiding and improved app diagnostics.\nExisting Bingo gameplay and networking preserved.\nKnown issue: status bar may remain dark with phone dark / Bingo light; fix deferred."
+  "versionName": "1.0.8",
+  "versionCode": 108,
+  "tagName": "v1.0.8",
+  "downloadUrl": "https://vamsireddybora.github.io/BINGO/Bingo-1.0.8-build108.apk",
+  "apkSize": 8263557,
+  "sha256": "7cf6a654607f9a82fdb3df1e8f2478faf6061362630060014e9cae0e4e0c2860",
+  "releaseNotes": "Lobby bots with speed selector (Low/Medium/High).\nPermanent bot removal sync across cloud and guest screens.\nMultiplayer chat leak fix and hardened ingress packet validation.\nExisting Bingo gameplay and networking preserved."
 }
