@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "2778fa42104c3f64703c5fe9abcbd76b356a4167176fac0a22ee08f22f11b3f9",
-  "revision": 23,
+  "revision": 24,
   "enabled": true,
   "release": {
     "versionName": "1.0.7",
-    "versionCode": 103,
+    "versionCode": 104,
     "tagName": "v1.0.7",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.7-build103-69f28c657c99780a88dc924b4ebb101324c7064d8b1a8a59423e95e035858e7c.apk",
-    "apkSize": 8251271,
-    "sha256": "69f28c657c99780a88dc924b4ebb101324c7064d8b1a8a59423e95e035858e7c",
-    "releaseNotes": "Private update for Bob.\nLobby Bots support added: Host can toggle bots, configure difficulty level (Easy/Master), and add/remove bots (bot1, bot2, etc.).\nBots auto-generate boards and ready instantly in manual board design mode.\nPreserve all existing Bingo gameplay, networking, live status strip layout, and theme fixes."
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.7-build104-295d26907d83961ad45672bdb13614ee9f598baf70aedae5a2d77b44753b925a.apk",
+    "apkSize": 8255367,
+    "sha256": "295d26907d83961ad45672bdb13614ee9f598baf70aedae5a2d77b44753b925a",
+    "releaseNotes": "Private update for Bob.\nLobby Bots fix: Resolved online room metadata pruning issue so added bots persist in the lobby roster.\nHost can toggle bots, configure difficulty (Easy/Master), and add/remove bots.\nAuto-generated boards and instant readiness in manual board design.\nPreserve all existing Bingo gameplay, networking, live status strip layout, and theme fixes."
   }
 }
