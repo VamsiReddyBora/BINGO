@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "2778fa42104c3f64703c5fe9abcbd76b356a4167176fac0a22ee08f22f11b3f9",
-  "revision": 44,
+  "revision": 45,
   "enabled": true,
   "release": {
-    "versionName": "1.0.25",
-    "versionCode": 125,
-    "tagName": "v1.0.25",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.25-build125-26791d20fd580ab87374c1f46df76eb106f68a596e0e80a7122cf8f9d6f259e6.apk",
-    "apkSize": 8296381,
-    "sha256": "26791d20fd580ab87374c1f46df76eb106f68a596e0e80a7122cf8f9d6f259e6",
-    "releaseNotes": "Private update for Bob (Build 125 - Speedometer Digital Readout Relocation).\n\u2022 Value Relocation: Moved the retained messages count and label to the upper quadrant above the center pivot hub (under 800/1200).\n\u2022 Clear Cockpit Hierarchy: Dial face open below the pivot hub with the primary value prominently visible at top center.\n\u2022 Realistic Speedometer: 3D tapered needle, numeric range scale, ambient backlit gradient light, and redline zone."
+    "versionName": "1.0.26",
+    "versionCode": 126,
+    "tagName": "v1.0.26",
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.26-build126-63a0426336a7eefbae67c7ba3ded1946080dd089a3ad6385c46206ed4f38a2b6.apk",
+    "apkSize": 8316858,
+    "sha256": "63a0426336a7eefbae67c7ba3ded1946080dd089a3ad6385c46206ed4f38a2b6",
+    "releaseNotes": "Private update for Bob (Build 126 - Full Admin Page UI Adjustment Controller).\n\u2022 Full UI Controller: Tap [ \ud83c\udf9b\ufe0f Adjust UI ] in the top header to reveal interactive real-time tuning panel.\n\u2022 Gauge Tuning: Live adjust Speedometer size, needle length/width, glow, ambient dial backlight, and redline threshold.\n\u2022 Central Readout & Messages: Nudge vertical readout Y-offset, font sizes, status pill position, live sync and alert banners.\n\u2022 Every Card Adjustable: Toggle visibility, card corner radius, padding, waveform height, tech specs, topic matrix, retention timeouts, and action dock height.\n\u2022 Instant Feedback & Persistence: Changes reflect instantly on screen and persist automatically with single-tap Reset Defaults."
   }
 }
