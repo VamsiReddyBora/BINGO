@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "2778fa42104c3f64703c5fe9abcbd76b356a4167176fac0a22ee08f22f11b3f9",
-  "revision": 34,
+  "revision": 35,
   "enabled": true,
   "release": {
-    "versionName": "1.0.15",
-    "versionCode": 115,
-    "tagName": "v1.0.15",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.15-build115-598a061a9ac57f91a3cf50565744e97fbb4e461e372032cea1b0dde3739d5d57.apk",
-    "apkSize": 8288189,
-    "sha256": "598a061a9ac57f91a3cf50565744e97fbb4e461e372032cea1b0dde3739d5d57",
-    "releaseNotes": "Private update for Bob (Build 115).\n\u2022 Fingerprint security integration: biometric prompt required to open Admin Control, modify retention timeouts, and confirm cleanup.\n\u2022 Locked timeout configuration preventing accidental taps with one-touch fingerprint unlock.\n\u2022 Live animated status ticker during broker fetching and real-time purge progress bar with batch percentage.\n\u2022 Transparent cleanup confirmation showing exact eligible record count (~681) and estimated duration (~2s).\n\u2022 Smooth count-up animations for broker storage metrics matching native BingoTheme."
+    "versionName": "1.0.16",
+    "versionCode": 116,
+    "tagName": "v1.0.16",
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.16-build116-7d6e707ec730bc55741d669dda75bf4853c9bd67537ff0e7fb1ae06c832a3458.apk",
+    "apkSize": 8296375,
+    "sha256": "7d6e707ec730bc55741d669dda75bf4853c9bd67537ff0e7fb1ae06c832a3458",
+    "releaseNotes": "Private update for Bob (Build 116 - Extended Animation Suite).\n\u2022 Triple-ring Sonar Radar ripple with soft radial aura & live Heartbeat waveform for EMQX cluster.\n\u2022 Proportional multi-category segmented breakdown bar with dynamic animated widths.\n\u2022 Continuous metallic shimmer sweep & pulsing tip glow on storage progress track.\n\u2022 Dynamic color-shifting utilization meter (Emerald -> Amber -> Crimson) and rolling decimal count.\n\u2022 Biometric laser scanline animation inside the purge confirmation dialog.\n\u2022 Barber-pole striped progress bar with animated broom tilt during purge.\n\u2022 Micro-bounce, category accents, and percentage share on topic breakdown pills.\n\u2022 Breathing pulse border glow when timeouts are biometric unlocked.\n\u2022 VIP floating crown badge with breathing scale for @bob."
   }
 }
