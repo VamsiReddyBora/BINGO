@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "2778fa42104c3f64703c5fe9abcbd76b356a4167176fac0a22ee08f22f11b3f9",
-  "revision": 38,
+  "revision": 39,
   "enabled": true,
   "release": {
-    "versionName": "1.0.19",
-    "versionCode": 119,
-    "tagName": "v1.0.19",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.19-build119-db7e4d81a1af7b86c36b4bade5e802e1e76bdcdcb37b9c85445f7ae0494287c3.apk",
-    "apkSize": 8288182,
-    "sha256": "db7e4d81a1af7b86c36b4bade5e802e1e76bdcdcb37b9c85445f7ae0494287c3",
-    "releaseNotes": "Private update for Bob (Build 119 - Perfectly Balanced Full-Screen Fit).\n\u2022 Harmonious full-screen distribution: all cards and action buttons fill the viewport naturally with zero blank void.\n\u2022 Compact 2-row topic matrix (Matches, Lobbies, Presence, Profiles, System).\n\u2022 Prominent 26dp live socket oscilloscope trace and real-time throughput metrics.\n\u2022 Balanced inline retention timeout selectors.\n\u2022 Refresh and Clean Expired buttons fit cleanly without any scrollbar."
+    "versionName": "1.0.20",
+    "versionCode": 120,
+    "tagName": "v1.0.20",
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.20-build120-9da69294a71495248f9207615c9dcd9e7112c14b316005847e5d9019f56542f9.apk",
+    "apkSize": 8288199,
+    "sha256": "9da69294a71495248f9207615c9dcd9e7112c14b316005847e5d9019f56542f9",
+    "releaseNotes": "Private update for Bob (Build 120 - Masterwork Black Admin Cockpit Redesign).\n\u2022 Complete Masterwork Cockpit redesign in stealth OLED black (#000000) with minimal emerald accents.\n\u2022 Proportional weighted card layout fills 100% of the viewport seamlessly with zero blank void and zero scrolling.\n\u2022 Unified Broker Vitality Core: 240\u00b0 radial vector gauge flanked by live 60 FPS oscilloscope latency and ingress throughput.\n\u2022 5-Partition Topic Matrix with micro proportion gauges and tactile bounce response.\n\u2022 Biometric-authenticated retention policy engine with animated lock state.\n\u2022 Precision fixed command dock with instant refresh and biometric laser scanline cleanup modal."
   }
 }
