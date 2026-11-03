@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "2778fa42104c3f64703c5fe9abcbd76b356a4167176fac0a22ee08f22f11b3f9",
-  "revision": 37,
+  "revision": 38,
   "enabled": true,
   "release": {
-    "versionName": "1.0.18",
-    "versionCode": 118,
-    "tagName": "v1.0.18",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.18-build118-27154ba76f4c48ad22c680232718eba2d3e05d15b9dd7a205c337f4fb87e0939.apk",
-    "apkSize": 8292291,
-    "sha256": "27154ba76f4c48ad22c680232718eba2d3e05d15b9dd7a205c337f4fb87e0939",
-    "releaseNotes": "Private update for Bob (Build 118 - Ultra-Compact Single-Screen Layout).\n\u2022 Single-screen fit with ZERO scrolling: entire dashboard and action buttons fit cleanly within viewport.\n\u2022 Compact 2-row topic pills (Matches, Lobbies, Presence, Profiles, System).\n\u2022 Slim 65dp Server Telemetry card (Ping + mini 60 FPS waveform + Throughput + Singapore specs).\n\u2022 Inline compact retention timeout rows.\n\u2022 Bottom Refresh and Clean Expired buttons always visible without scrolling."
+    "versionName": "1.0.19",
+    "versionCode": 119,
+    "tagName": "v1.0.19",
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.19-build119-db7e4d81a1af7b86c36b4bade5e802e1e76bdcdcb37b9c85445f7ae0494287c3.apk",
+    "apkSize": 8288182,
+    "sha256": "db7e4d81a1af7b86c36b4bade5e802e1e76bdcdcb37b9c85445f7ae0494287c3",
+    "releaseNotes": "Private update for Bob (Build 119 - Perfectly Balanced Full-Screen Fit).\n\u2022 Harmonious full-screen distribution: all cards and action buttons fill the viewport naturally with zero blank void.\n\u2022 Compact 2-row topic matrix (Matches, Lobbies, Presence, Profiles, System).\n\u2022 Prominent 26dp live socket oscilloscope trace and real-time throughput metrics.\n\u2022 Balanced inline retention timeout selectors.\n\u2022 Refresh and Clean Expired buttons fit cleanly without any scrollbar."
   }
 }
