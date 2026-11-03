@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "2778fa42104c3f64703c5fe9abcbd76b356a4167176fac0a22ee08f22f11b3f9",
-  "revision": 36,
+  "revision": 37,
   "enabled": true,
   "release": {
-    "versionName": "1.0.17",
-    "versionCode": 117,
-    "tagName": "v1.0.17",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.17-build117-e68c3169e38a7a22090bbe3caf7d277fd689f8de497fc4d2c60a3ebbb80246ad.apk",
-    "apkSize": 8296393,
-    "sha256": "e68c3169e38a7a22090bbe3caf7d277fd689f8de497fc4d2c60a3ebbb80246ad",
-    "releaseNotes": "Private update for Bob (Build 117 - Minimalist Technical Architecture).\n\u2022 Compact header with zero subtext, matching native app typography.\n\u2022 Primary Hero Card: Retained Storage (765 / 2,000 quota) with integrated topic matrix.\n\u2022 Dedicated Server Telemetry Card: Live 60 FPS socket ping oscilloscope (24 ms), throughput (142 msg/s), and Singapore ap-southeast-1 specs.\n\u2022 Pure OLED black minimalist monochrome aesthetic.\n\u2022 Fingerprint biometric-protected retention timeouts and purge confirmation."
+    "versionName": "1.0.18",
+    "versionCode": 118,
+    "tagName": "v1.0.18",
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.18-build118-27154ba76f4c48ad22c680232718eba2d3e05d15b9dd7a205c337f4fb87e0939.apk",
+    "apkSize": 8292291,
+    "sha256": "27154ba76f4c48ad22c680232718eba2d3e05d15b9dd7a205c337f4fb87e0939",
+    "releaseNotes": "Private update for Bob (Build 118 - Ultra-Compact Single-Screen Layout).\n\u2022 Single-screen fit with ZERO scrolling: entire dashboard and action buttons fit cleanly within viewport.\n\u2022 Compact 2-row topic pills (Matches, Lobbies, Presence, Profiles, System).\n\u2022 Slim 65dp Server Telemetry card (Ping + mini 60 FPS waveform + Throughput + Singapore specs).\n\u2022 Inline compact retention timeout rows.\n\u2022 Bottom Refresh and Clean Expired buttons always visible without scrolling."
   }
 }
