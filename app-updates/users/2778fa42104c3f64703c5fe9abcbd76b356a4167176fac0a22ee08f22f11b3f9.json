@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "2778fa42104c3f64703c5fe9abcbd76b356a4167176fac0a22ee08f22f11b3f9",
-  "revision": 39,
+  "revision": 40,
   "enabled": true,
   "release": {
-    "versionName": "1.0.20",
-    "versionCode": 120,
-    "tagName": "v1.0.20",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.20-build120-9da69294a71495248f9207615c9dcd9e7112c14b316005847e5d9019f56542f9.apk",
-    "apkSize": 8288199,
-    "sha256": "9da69294a71495248f9207615c9dcd9e7112c14b316005847e5d9019f56542f9",
-    "releaseNotes": "Private update for Bob (Build 120 - Masterwork Black Admin Cockpit Redesign).\n\u2022 Complete Masterwork Cockpit redesign in stealth OLED black (#000000) with minimal emerald accents.\n\u2022 Proportional weighted card layout fills 100% of the viewport seamlessly with zero blank void and zero scrolling.\n\u2022 Unified Broker Vitality Core: 240\u00b0 radial vector gauge flanked by live 60 FPS oscilloscope latency and ingress throughput.\n\u2022 5-Partition Topic Matrix with micro proportion gauges and tactile bounce response.\n\u2022 Biometric-authenticated retention policy engine with animated lock state.\n\u2022 Precision fixed command dock with instant refresh and biometric laser scanline cleanup modal."
+    "versionName": "1.0.21",
+    "versionCode": 121,
+    "tagName": "v1.0.21",
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.21-build121-7ababf679fab63090a2dcc480b101144a49e61e856c5582262e563afac152772.apk",
+    "apkSize": 8288194,
+    "sha256": "7ababf679fab63090a2dcc480b101144a49e61e856c5582262e563afac152772",
+    "releaseNotes": "Private update for Bob (Build 121 - Masterwork Cockpit Enhanced Polish).\n\u2022 Sonar Radar Sweep: 360\u00b0 faint rotating beam and 16-point aviation chronometer tick marks around the reactor arc.\n\u2022 CRT Phosphor DSP Oscilloscope: Area glow chart with reticle grid lines and leading phosphor pulse.\n\u2022 Topic Matrix Enhancements: MQTT topic filter slugs (/match/*, /lobby/*, /presence/*) and exact share percentages.\n\u2022 60s Auto-Lock Security: Live auto-lock countdown timer with automatic security re-locking for retention policies.\n\u2022 Live Purge Feedback: Live percentage progress bar and breathing action beacon when records are eligible for cleanup.\n\u2022 Holographic Biometric Scanner: Expanding sonar ripple aura on fingerprint verification."
   }
 }
