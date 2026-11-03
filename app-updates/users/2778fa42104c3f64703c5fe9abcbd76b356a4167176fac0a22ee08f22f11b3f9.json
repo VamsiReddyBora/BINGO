@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "2778fa42104c3f64703c5fe9abcbd76b356a4167176fac0a22ee08f22f11b3f9",
-  "revision": 33,
+  "revision": 34,
   "enabled": true,
   "release": {
-    "versionName": "1.0.14",
-    "versionCode": 114,
-    "tagName": "v1.0.14",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.14-build114-982774c7c83c32a6cd5e9f7fda876640e713fd1f346f8a34acf6b7dea3295620.apk",
-    "apkSize": 8275845,
-    "sha256": "982774c7c83c32a6cd5e9f7fda876640e713fd1f346f8a34acf6b7dea3295620",
-    "releaseNotes": "Private update for Bob (Build 114).\n\u2022 Home screen admin button matched with active app theme palette.\n\u2022 Minimal, streamlined Admin Control UI matching the native app design system.\n\u2022 Removed all unwanted cards; displays only useful quota & breakdown metrics.\n\u2022 Dynamically controlled retention & timeout configuration chips with immediate persistence.\n\u2022 Robust selective cleanup engine with parallel batching and force clean option."
+    "versionName": "1.0.15",
+    "versionCode": 115,
+    "tagName": "v1.0.15",
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.15-build115-598a061a9ac57f91a3cf50565744e97fbb4e461e372032cea1b0dde3739d5d57.apk",
+    "apkSize": 8288189,
+    "sha256": "598a061a9ac57f91a3cf50565744e97fbb4e461e372032cea1b0dde3739d5d57",
+    "releaseNotes": "Private update for Bob (Build 115).\n\u2022 Fingerprint security integration: biometric prompt required to open Admin Control, modify retention timeouts, and confirm cleanup.\n\u2022 Locked timeout configuration preventing accidental taps with one-touch fingerprint unlock.\n\u2022 Live animated status ticker during broker fetching and real-time purge progress bar with batch percentage.\n\u2022 Transparent cleanup confirmation showing exact eligible record count (~681) and estimated duration (~2s).\n\u2022 Smooth count-up animations for broker storage metrics matching native BingoTheme."
   }
 }
