@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "2778fa42104c3f64703c5fe9abcbd76b356a4167176fac0a22ee08f22f11b3f9",
-  "revision": 35,
+  "revision": 36,
   "enabled": true,
   "release": {
-    "versionName": "1.0.16",
-    "versionCode": 116,
-    "tagName": "v1.0.16",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.16-build116-7d6e707ec730bc55741d669dda75bf4853c9bd67537ff0e7fb1ae06c832a3458.apk",
-    "apkSize": 8296375,
-    "sha256": "7d6e707ec730bc55741d669dda75bf4853c9bd67537ff0e7fb1ae06c832a3458",
-    "releaseNotes": "Private update for Bob (Build 116 - Extended Animation Suite).\n\u2022 Triple-ring Sonar Radar ripple with soft radial aura & live Heartbeat waveform for EMQX cluster.\n\u2022 Proportional multi-category segmented breakdown bar with dynamic animated widths.\n\u2022 Continuous metallic shimmer sweep & pulsing tip glow on storage progress track.\n\u2022 Dynamic color-shifting utilization meter (Emerald -> Amber -> Crimson) and rolling decimal count.\n\u2022 Biometric laser scanline animation inside the purge confirmation dialog.\n\u2022 Barber-pole striped progress bar with animated broom tilt during purge.\n\u2022 Micro-bounce, category accents, and percentage share on topic breakdown pills.\n\u2022 Breathing pulse border glow when timeouts are biometric unlocked.\n\u2022 VIP floating crown badge with breathing scale for @bob."
+    "versionName": "1.0.17",
+    "versionCode": 117,
+    "tagName": "v1.0.17",
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.17-build117-e68c3169e38a7a22090bbe3caf7d277fd689f8de497fc4d2c60a3ebbb80246ad.apk",
+    "apkSize": 8296393,
+    "sha256": "e68c3169e38a7a22090bbe3caf7d277fd689f8de497fc4d2c60a3ebbb80246ad",
+    "releaseNotes": "Private update for Bob (Build 117 - Minimalist Technical Architecture).\n\u2022 Compact header with zero subtext, matching native app typography.\n\u2022 Primary Hero Card: Retained Storage (765 / 2,000 quota) with integrated topic matrix.\n\u2022 Dedicated Server Telemetry Card: Live 60 FPS socket ping oscilloscope (24 ms), throughput (142 msg/s), and Singapore ap-southeast-1 specs.\n\u2022 Pure OLED black minimalist monochrome aesthetic.\n\u2022 Fingerprint biometric-protected retention timeouts and purge confirmation."
   }
 }
