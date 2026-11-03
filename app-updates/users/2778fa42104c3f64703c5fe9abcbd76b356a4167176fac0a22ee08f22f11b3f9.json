@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "2778fa42104c3f64703c5fe9abcbd76b356a4167176fac0a22ee08f22f11b3f9",
-  "revision": 42,
+  "revision": 43,
   "enabled": true,
   "release": {
-    "versionName": "1.0.23",
-    "versionCode": 123,
-    "tagName": "v1.0.23",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.23-build123-43900f5c17a8330e38fec7f1e41e07c4d02e0dad119b3d3281d0f355dacd6cf3.apk",
-    "apkSize": 8296388,
-    "sha256": "43900f5c17a8330e38fec7f1e41e07c4d02e0dad119b3d3281d0f355dacd6cf3",
-    "releaseNotes": "Private update for Bob (Build 123 - Single-Stroke Speedometer & Cockpit Refinements).\n\u2022 Single-Stroke Engine Rev: Eliminated multi-trigger bounce; single decisive throttle rev to 92% and smooth spring settle.\n\u2022 Speedometer Placement: Removed header text above the speedometer for an ultra-clean hero focal dial.\n\u2022 Status Directly Below Speedometer: Quota pill, live sync status, and broker alerts sit immediately under the dial.\n\u2022 Independent Cards: Large latency oscilloscope waveform, technical cluster specs, topic breakdown, and retention controls.\n\u2022 Pinned Bottom Dock: Permanent docked Refresh and Clean Expired actions."
+    "versionName": "1.0.24",
+    "versionCode": 124,
+    "tagName": "v1.0.24",
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.24-build124-b77ec287d68fc28150aed7e0e8eb719d4f2af3e67a707a090dc15324cbd27e87.apk",
+    "apkSize": 8296377,
+    "sha256": "b77ec287d68fc28150aed7e0e8eb719d4f2af3e67a707a090dc15324cbd27e87",
+    "releaseNotes": "Private update for Bob (Build 124 - Realistic Speedometer Instrument Cluster).\n\u2022 Real Numeric Range Scale: Printed range values (0, 400, 800, 1200, 1600, 2000) with precision major/medium/minor tick divisions.\n\u2022 Authentic 3D Sports Needle: Tapered blade with counterweight tail, 3D drop shadow, faceted spine, and illuminated pointer tip.\n\u2022 Ambient Backlit Dial Lighting: Radial cockpit backlighting, brushed metallic bezel, and dynamic halo following needle sweep.\n\u2022 Tachometer Redline Zone: 1600 to 2000 quota warned with crimson redline arc and red tick marks.\n\u2022 Lower Digital Readout: Speedometer numbers centered in the lower open quadrant of the arc without needle obstruction."
   }
 }
