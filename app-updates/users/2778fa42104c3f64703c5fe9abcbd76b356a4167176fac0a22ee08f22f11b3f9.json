@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "2778fa42104c3f64703c5fe9abcbd76b356a4167176fac0a22ee08f22f11b3f9",
-  "revision": 41,
+  "revision": 42,
   "enabled": true,
   "release": {
-    "versionName": "1.0.22",
-    "versionCode": 122,
-    "tagName": "v1.0.22",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.22-build122-2b9eabd38494a39272cbc06d2ece1722c30f99b7faf58c088842ca5791f691bf.apk",
-    "apkSize": 8296383,
-    "sha256": "2b9eabd38494a39272cbc06d2ece1722c30f99b7faf58c088842ca5791f691bf",
-    "releaseNotes": "Private update for Bob (Build 122 - Hero Speedometer & Scrollable Cockpit).\n\u2022 Hero Retained Gauge: Prominently centered outside all cards with tachometer/speedometer engine rev animation.\n\u2022 Dedicated Latency & Socket Card: Large 86dp DSP oscilloscope waveform trace with reticle grid and real-time jitter.\n\u2022 Technical Specifications Card: Full cluster details (Singapore datacenter, port 8883 SSL, TLS 1.3, ALPN mqtt, synchronized topology).\n\u2022 Topic Partitions Card: Matches, Lobbies, Presence, Profiles, System with topic slugs and share meters.\n\u2022 Pinned Action Dock: Refresh and Clean Expired buttons remain permanently docked in place during scrolling."
+    "versionName": "1.0.23",
+    "versionCode": 123,
+    "tagName": "v1.0.23",
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.23-build123-43900f5c17a8330e38fec7f1e41e07c4d02e0dad119b3d3281d0f355dacd6cf3.apk",
+    "apkSize": 8296388,
+    "sha256": "43900f5c17a8330e38fec7f1e41e07c4d02e0dad119b3d3281d0f355dacd6cf3",
+    "releaseNotes": "Private update for Bob (Build 123 - Single-Stroke Speedometer & Cockpit Refinements).\n\u2022 Single-Stroke Engine Rev: Eliminated multi-trigger bounce; single decisive throttle rev to 92% and smooth spring settle.\n\u2022 Speedometer Placement: Removed header text above the speedometer for an ultra-clean hero focal dial.\n\u2022 Status Directly Below Speedometer: Quota pill, live sync status, and broker alerts sit immediately under the dial.\n\u2022 Independent Cards: Large latency oscilloscope waveform, technical cluster specs, topic breakdown, and retention controls.\n\u2022 Pinned Bottom Dock: Permanent docked Refresh and Clean Expired actions."
   }
 }
