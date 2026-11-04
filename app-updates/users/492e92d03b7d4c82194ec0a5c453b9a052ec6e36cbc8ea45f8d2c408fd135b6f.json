@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "492e92d03b7d4c82194ec0a5c453b9a052ec6e36cbc8ea45f8d2c408fd135b6f",
-  "revision": 23,
+  "revision": 24,
   "enabled": true,
   "release": {
-    "versionName": "1.0.32",
-    "versionCode": 132,
-    "tagName": "v1.0.32",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.32-build132-282edb6b5ca16cde1e6ae18b7170954c3e8f57818a9acee5546cac7360105198.apk",
-    "apkSize": 8329159,
-    "sha256": "282edb6b5ca16cde1e6ae18b7170954c3e8f57818a9acee5546cac7360105198",
-    "releaseNotes": "Admin latency history and account recovery\n• White/yellow/red latency graph follows the 250/500 ms thresholds.\n• Live, 1h, 1 day and custom history ranges; up to 7 days recorded on this device.\n• No fabricated history during app closure or missing measurements.\n• Reconnect the existing admin Google account if cleanup authentication needs renewal.\n• Broker disconnection grayscales the speedometer without an error banner.\n• Home admin and Developer Note actions moved another 50 dp down."
+    "versionName": "1.0.33",
+    "versionCode": 133,
+    "tagName": "v1.0.33",
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.33-build133-3ef343e276e8918a10c669ac984eafa1adb44f38d521b4c8a691f235b356cc11.apk",
+    "apkSize": 8325061,
+    "sha256": "3ef343e276e8918a10c669ac984eafa1adb44f38d521b4c8a691f235b356cc11",
+    "releaseNotes": "Compact admin telemetry and light theme contrast\n• Removed the automatic cleanup ON/OFF subtext.\n• Removed the latency color legend.\n• Smaller Live, 1h, 1 day and Custom buttons with tighter spacing.\n• Light theme uses dark graph traces with readable amber/red latency colors.\n• Home admin shield and Developer Note moved another 100 dp down.\n• Existing 15 dp page spacing, history and fingerprint checks are preserved."
   }
 }
