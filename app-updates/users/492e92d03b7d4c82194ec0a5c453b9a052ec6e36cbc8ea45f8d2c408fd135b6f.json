@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "492e92d03b7d4c82194ec0a5c453b9a052ec6e36cbc8ea45f8d2c408fd135b6f",
-  "revision": 20,
+  "revision": 21,
   "enabled": true,
   "release": {
-    "versionName": "1.0.29",
-    "versionCode": 129,
-    "tagName": "v1.0.29",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.29-build129-46e08ac9499019123a9cf31ccf648e19f63ec53c8d79ce4d3c44e6bfdaa142c4.apk",
-    "apkSize": 8300476,
-    "sha256": "46e08ac9499019123a9cf31ccf648e19f63ec53c8d79ce4d3c44e6bfdaa142c4",
-    "releaseNotes": "Final Admin Control layout for Bob and Vampire\n• Permanently applies all 87 approved dashboard values.\n• Removes temporary Adjust UI, adjustment tabs, copy and reset controls.\n• Includes the rose graph with 100 ms display sampling and compact topic cards.\n• Admin Control is available to both registered accounts, with existing fingerprint confirmations."
+    "versionName": "1.0.30",
+    "versionCode": 130,
+    "tagName": "v1.0.30",
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.30-build130-fa7a3db7ea71789b3fd856fad746ccb1e68e9a3fdc9000b68873e53a22bfaa85.apk",
+    "apkSize": 8308684,
+    "sha256": "fa7a3db7ea71789b3fd856fad746ccb1e68e9a3fdc9000b68873e53a22bfaa85",
+    "releaseNotes": "Live page padding controls on Home\n• Open Home → Page padding to adjust the top gap for every app page.\n• Use the 0–80 dp slider or enter a value; changes apply live and are saved.\n• Tap Copy values and paste the JSON into our conversation for finalisation.\n• Dialog and popup layouts keep their existing spacing.\n• Final admin dashboard values and both registered-account access rules are preserved."
   }
 }
