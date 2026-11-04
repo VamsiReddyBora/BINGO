@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "492e92d03b7d4c82194ec0a5c453b9a052ec6e36cbc8ea45f8d2c408fd135b6f",
-  "revision": 19,
+  "revision": 20,
   "enabled": true,
   "release": {
-    "versionName": "1.0.8",
-    "versionCode": 109,
-    "tagName": "v1.0.8",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.8-build109-3f2226bb6f456c4f8ab131dac225829faaea2eef876e3dab6c7830626dbea7d4.apk",
-    "apkSize": 8259468,
-    "sha256": "3f2226bb6f456c4f8ab131dac225829faaea2eef876e3dab6c7830626dbea7d4",
-    "releaseNotes": "Private update for Vampire (Build 109).\nRelocated Chat button to Players in Lobby card directly after the Sync button.\nFull width action buttons for Start Game and Ready controls.\nAll existing gameplay, networking, bot controls, and theme fixes preserved."
+    "versionName": "1.0.29",
+    "versionCode": 129,
+    "tagName": "v1.0.29",
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.29-build129-46e08ac9499019123a9cf31ccf648e19f63ec53c8d79ce4d3c44e6bfdaa142c4.apk",
+    "apkSize": 8300476,
+    "sha256": "46e08ac9499019123a9cf31ccf648e19f63ec53c8d79ce4d3c44e6bfdaa142c4",
+    "releaseNotes": "Final Admin Control layout for Bob and Vampire\n• Permanently applies all 87 approved dashboard values.\n• Removes temporary Adjust UI, adjustment tabs, copy and reset controls.\n• Includes the rose graph with 100 ms display sampling and compact topic cards.\n• Admin Control is available to both registered accounts, with existing fingerprint confirmations."
   }
 }
