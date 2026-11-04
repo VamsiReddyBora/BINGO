@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "492e92d03b7d4c82194ec0a5c453b9a052ec6e36cbc8ea45f8d2c408fd135b6f",
-  "revision": 21,
+  "revision": 22,
   "enabled": true,
   "release": {
-    "versionName": "1.0.30",
-    "versionCode": 130,
-    "tagName": "v1.0.30",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.30-build130-fa7a3db7ea71789b3fd856fad746ccb1e68e9a3fdc9000b68873e53a22bfaa85.apk",
-    "apkSize": 8308684,
-    "sha256": "fa7a3db7ea71789b3fd856fad746ccb1e68e9a3fdc9000b68873e53a22bfaa85",
-    "releaseNotes": "Live page padding controls on Home\n• Open Home → Page padding to adjust the top gap for every app page.\n• Use the 0–80 dp slider or enter a value; changes apply live and are saved.\n• Tap Copy values and paste the JSON into our conversation for finalisation.\n• Dialog and popup layouts keep their existing spacing.\n• Final admin dashboard values and both registered-account access rules are preserved."
+    "versionName": "1.0.31",
+    "versionCode": 131,
+    "tagName": "v1.0.31",
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.31-build131-2b08440da150daeea58047f4a0a7596948d4f02d3c7947470f839b807604b5a2.apk",
+    "apkSize": 8304569,
+    "sha256": "2b08440da150daeea58047f4a0a7596948d4f02d3c7947470f839b807604b5a2",
+    "releaseNotes": "Final spacing and shared automatic cleanup control\n• Page content starts 15 dp below the status bar.\n• Original centered launch animation restored; dialogs and popups unchanged.\n• Home admin shield and Developer Note sit below Nearby Network.\n• Automatic cleanup ON/OFF in Admin → Retention Engine, shared between both admins.\n• Every toggle change needs fresh fingerprint verification.\n• Temporary padding adjustments removed."
   }
 }
