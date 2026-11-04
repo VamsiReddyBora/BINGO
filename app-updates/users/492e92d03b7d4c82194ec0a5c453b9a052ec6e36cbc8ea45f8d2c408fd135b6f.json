@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "492e92d03b7d4c82194ec0a5c453b9a052ec6e36cbc8ea45f8d2c408fd135b6f",
-  "revision": 22,
+  "revision": 23,
   "enabled": true,
   "release": {
-    "versionName": "1.0.31",
-    "versionCode": 131,
-    "tagName": "v1.0.31",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.31-build131-2b08440da150daeea58047f4a0a7596948d4f02d3c7947470f839b807604b5a2.apk",
-    "apkSize": 8304569,
-    "sha256": "2b08440da150daeea58047f4a0a7596948d4f02d3c7947470f839b807604b5a2",
-    "releaseNotes": "Final spacing and shared automatic cleanup control\n• Page content starts 15 dp below the status bar.\n• Original centered launch animation restored; dialogs and popups unchanged.\n• Home admin shield and Developer Note sit below Nearby Network.\n• Automatic cleanup ON/OFF in Admin → Retention Engine, shared between both admins.\n• Every toggle change needs fresh fingerprint verification.\n• Temporary padding adjustments removed."
+    "versionName": "1.0.32",
+    "versionCode": 132,
+    "tagName": "v1.0.32",
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.32-build132-282edb6b5ca16cde1e6ae18b7170954c3e8f57818a9acee5546cac7360105198.apk",
+    "apkSize": 8329159,
+    "sha256": "282edb6b5ca16cde1e6ae18b7170954c3e8f57818a9acee5546cac7360105198",
+    "releaseNotes": "Admin latency history and account recovery\n• White/yellow/red latency graph follows the 250/500 ms thresholds.\n• Live, 1h, 1 day and custom history ranges; up to 7 days recorded on this device.\n• No fabricated history during app closure or missing measurements.\n• Reconnect the existing admin Google account if cleanup authentication needs renewal.\n• Broker disconnection grayscales the speedometer without an error banner.\n• Home admin and Developer Note actions moved another 50 dp down."
   }
 }
