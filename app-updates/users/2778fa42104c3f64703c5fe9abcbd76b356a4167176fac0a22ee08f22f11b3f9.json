@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "2778fa42104c3f64703c5fe9abcbd76b356a4167176fac0a22ee08f22f11b3f9",
-  "revision": 46,
+  "revision": 47,
   "enabled": true,
   "release": {
-    "versionName": "1.0.27",
-    "versionCode": 127,
-    "tagName": "v1.0.27",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.27-build127-d04fef5a15551c04734eb9126097dc652891bc857752775b692ee16e930c6898.apk",
-    "apkSize": 8316857,
-    "sha256": "d04fef5a15551c04734eb9126097dc652891bc857752775b692ee16e930c6898",
-    "releaseNotes": "Copy all Admin UI values\n• Open Admin Control → Adjust UI → Copy all values.\n• Copies all 42 current slider and toggle settings from every tab as readable JSON.\n• Includes fractional values and settings for hidden cards.\n• Your saved adjustments are preserved; copying does not reset them.\nPaste the copied values into our conversation to finalise the layout."
+    "versionName": "1.0.28",
+    "versionCode": 128,
+    "tagName": "v1.0.28",
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.28-build128-37b9ef7df1d1a24d3f8f0dbd2d36ccd35a56c4b35bb996692d8a7e1caf83d473.apk",
+    "apkSize": 8320951,
+    "sha256": "37b9ef7df1d1a24d3f8f0dbd2d36ccd35a56c4b35bb996692d8a7e1caf83d473",
+    "releaseNotes": "Final layout and expanded two-card adjustments\n• Applied your pasted values and finalised the gauge, messages, specs, retention appearance and global layout.\n• Only Live latency & throughput and Topic partitions remain adjustable.\n• Tune graph colours, sampling interval, history, scale, line width, fill, grid and details.\n• Tune topic columns, tile height, padding, gaps, corners, fonts, colours and visible details.\n• Reset card resets only the selected card. Copy all values exports all 87 settings.\n• Latency uses measured readings; the existing simulated throughput is labelled as a preview."
   }
 }
