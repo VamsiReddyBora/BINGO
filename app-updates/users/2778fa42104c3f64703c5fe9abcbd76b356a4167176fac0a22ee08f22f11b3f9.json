@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "2778fa42104c3f64703c5fe9abcbd76b356a4167176fac0a22ee08f22f11b3f9",
-  "revision": 52,
+  "revision": 53,
   "enabled": true,
   "release": {
-    "versionName": "1.0.33",
-    "versionCode": 133,
-    "tagName": "v1.0.33",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.33-build133-3ef343e276e8918a10c669ac984eafa1adb44f38d521b4c8a691f235b356cc11.apk",
-    "apkSize": 8325061,
-    "sha256": "3ef343e276e8918a10c669ac984eafa1adb44f38d521b4c8a691f235b356cc11",
-    "releaseNotes": "Compact admin telemetry and light theme contrast\n• Removed the automatic cleanup ON/OFF subtext.\n• Removed the latency color legend.\n• Smaller Live, 1h, 1 day and Custom buttons with tighter spacing.\n• Light theme uses dark graph traces with readable amber/red latency colors.\n• Home admin shield and Developer Note moved another 100 dp down.\n• Existing 15 dp page spacing, history and fingerprint checks are preserved."
+    "versionName": "1.0.34",
+    "versionCode": 134,
+    "tagName": "v1.0.34",
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.34-build134-d0b8de16ff33f5a996ca9634198bad4e3391660e839944788e9cfa960f4a0f94.apk",
+    "apkSize": 8333245,
+    "sha256": "d0b8de16ff33f5a996ca9634198bad4e3391660e839944788e9cfa960f4a0f94",
+    "releaseNotes": "Shared cloud history and a slower precise graph\n• Live phone graph: last 60 seconds, updated every second.\n• Detail 2ms and Overview views with labelled time and latency axes.\n• 1h, 1 day and Custom now fetch shared cloud-monitor history.\n• Cloud recorder checks MQTT every minute, even while both apps are closed.\n• Up to 30 days of average/peak RTT; outages stay gaps, never fake 0ms.\n• History begins when cloud monitoring was enabled; phone recordings are no longer used."
   }
 }
