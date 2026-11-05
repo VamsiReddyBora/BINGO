@@ -1,15 +1,15 @@
 {
   "schema": 1,
   "audience": "2778fa42104c3f64703c5fe9abcbd76b356a4167176fac0a22ee08f22f11b3f9",
-  "revision": 54,
+  "revision": 55,
   "enabled": true,
   "release": {
-    "versionName": "1.0.35",
-    "versionCode": 135,
-    "tagName": "v1.0.35",
-    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.35-build135-c67aadfd4a2211bb3ef64793d3a08894bb1c297da58bc7b64516b946bd917abc.apk",
-    "apkSize": 8341451,
-    "sha256": "c67aadfd4a2211bb3ef64793d3a08894bb1c297da58bc7b64516b946bd917abc",
-    "releaseNotes": "Interactive cloud latency graph\n• Pinch horizontally to zoom time; pinch vertically to zoom latency.\n• Drag to explore up to 30 days of shared cloud history.\n• Tap a recorded point for a crosshair, time, average and peak latency.\n• Double-tap resets the graph to the latest hour.\n• All range and scale buttons removed; newest-edge following pauses during inspection.\n• Cloud monitor records every minute independently; phone RTT stays a separate readout."
+    "versionName": "1.0.36",
+    "versionCode": 136,
+    "tagName": "v1.0.36",
+    "downloadUrl": "https://vamsireddybora.github.io/BINGO/app-updates/apks/Bingo-1.0.36-build136-f251d30f0fd6065de0713ebf0bcd07652584d22fa6b5c6a3b213eabcb558b63f.apk",
+    "apkSize": 8341441,
+    "sha256": "f251d30f0fd6065de0713ebf0bcd07652584d22fa6b5c6a3b213eabcb558b63f",
+    "releaseNotes": "Centered continuous latency graph\n• Cloud recording stays every 60 seconds; no additional broker probes.\n• Per-sample peak stems removed; taps still show actual average and peak values.\n• Reset: latest 60 seconds, 0–250 ms, one-second ticks.\n• Centered pinch zoom with automatic readable scales and recording-range bounds.\n• Recorded points stay connected across missing checks without inventing readings."
   }
 }
