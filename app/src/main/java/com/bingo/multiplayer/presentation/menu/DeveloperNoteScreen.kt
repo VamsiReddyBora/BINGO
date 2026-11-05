@@ -1,5 +1,6 @@
 package com.bingo.multiplayer.presentation.menu
 
+import com.bingo.multiplayer.core.designsystem.appPagePadding
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
@@ -16,7 +17,6 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -83,7 +83,6 @@ fun DeveloperNoteScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(tokens.background)
-            .statusBarsPadding()
             .navigationBarsPadding()
             .imePadding()
     ) {
@@ -91,7 +90,7 @@ fun DeveloperNoteScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 14.dp)
+                .appPagePadding(horizontal = 20.dp, bottom = 14.dp)
         ) {
             // ── Top Navigation Bar ──
             Row(

@@ -1,5 +1,6 @@
 package com.bingo.multiplayer.presentation.auth
 
+import com.bingo.multiplayer.core.designsystem.appPagePadding
 import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -519,12 +520,10 @@ fun LoginScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp, vertical = 28.dp),
+                .appPagePadding(horizontal = 24.dp, bottom = 28.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            Spacer(modifier = Modifier.height(16.dp))
-
             // ── Minimalist Aesthetic Logo Header ──
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally

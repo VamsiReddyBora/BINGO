@@ -1,5 +1,6 @@
 package com.bingo.multiplayer.presentation.settings
 
+import com.bingo.multiplayer.core.designsystem.appPagePadding
 import com.bingo.multiplayer.presentation.common.noRippleClickable
 import com.bingo.multiplayer.presentation.common.NoRippleSurface
 
@@ -871,13 +872,13 @@ fun SettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 22.dp, vertical = 18.dp)
+                .appPagePadding(horizontal = 22.dp, bottom = 18.dp)
         ) {
             // ── Top Bar ──
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 4.dp),
+                    .padding(bottom = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(

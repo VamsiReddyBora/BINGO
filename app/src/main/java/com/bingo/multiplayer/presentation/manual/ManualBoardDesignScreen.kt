@@ -1,5 +1,6 @@
 package com.bingo.multiplayer.presentation.manual
 
+import com.bingo.multiplayer.core.designsystem.appPagePadding
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -262,7 +263,7 @@ fun ManualBoardDesignScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 20.dp),
+                .appPagePadding(horizontal = 20.dp, bottom = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // ── Top Bar ──

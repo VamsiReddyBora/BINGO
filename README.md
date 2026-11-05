@@ -1,59 +1,52 @@
-# Bingo 1.0.9 — Build 109
+# BINGO 2.0 — Build 137
 
-Android Bingo with AI, MQTT multiplayer, Nearby Network play, friends and notifications.
+Android Bingo with AI, MQTT multiplayer, Nearby Network play, lobby bots, friends, notifications and in-app APK updates.
 
-## This release
+## Release 2.0
 
-- Relocated lobby Chat button to the Players in Lobby card directly after the Sync button; full-width action buttons.
-- Host controls to add/remove AI bots in multiplayer waiting lobbies with dynamic bot count.
-- In-lobby bot speed selector: switch between Low (1.0s), Medium (1.5s), and High (2.0s).
-- Robust bot lifecycle synchronization: deleted bots are immediately and permanently removed on all players' screens without cloud metadata resurrection.
-- Eliminated multiplayer chat leak so offline AI canned responses never trigger during online matches.
-- Hardened ingress packet validation against sender ID spoofing in online and LAN games.
-- Compact lobby profile messages, inline keyboard sending, typing indicators and join requests.
-- In-game theme switching, optional status-bar hiding, and expanded app diagnostics.
-- **Known issue:** with the phone in dark mode and Bingo in light mode, the status bar may remain dark on some devices. This is not fixed in this release.
+This release publishes the latest tested Android app, including native Admin Control for the two configured administrator identities, retained-message usage and topic partitions, and biometric-protected shared cleanup settings.
 
-- Manual retained-message maintenance is available in admin Settings and an operator script. No automatic cleanup is enabled. Redundant account announcements are now live-only; Firebase account storage and gameplay remain unchanged. See [MANUAL_MQTT_CLEANUP.md](MANUAL_MQTT_CLEANUP.md).
+The admin latency chart supports centred pinch zoom, horizontal history navigation and tap inspection. Reset opens the latest 60 seconds at 0–250 ms, with one-second tick marks. Automatic scales keep the trace visible. Actual recorded averages are connected across gaps, and peaks appear in the selected record's tooltip. Lines between observations do not create additional measurements.
 
-- Manual retained-message maintenance is available in admin Settings and an operator script. No automatic cleanup is enabled. Redundant account announcements are now live-only; Firebase account storage and gameplay remain unchanged. See [MANUAL_MQTT_CLEANUP.md](MANUAL_MQTT_CLEANUP.md).
+An independent cloud monitor performs the existing three isolated non-retained MQTT echo probes every 60 seconds and stores statistics in Cloudflare SQLite for up to 30 days. Recording continues with the apps closed and is independent of the game-cleanup toggle. Graph history measures monitor-to-broker latency; the phone's raw RTT is a separate readout. The ingress animation remains labelled PREVIEW.
 
-- Win/loss emoji effects use the owner-tested final 50-emoji preset and two colorful fifteen-emoji palettes. Settings retains a simple on/off switch; testing controls are removed. See [RESULT_EMOJI_ANIMATION.md](RESULT_EMOJI_ANIMATION.md).
-
-- Supported Home text, layout values and static images can update in the background, with progress, validation and rollback. Current visuals remain the defaults. See [OTA_CONTENT_UPDATES.md](OTA_CONTENT_UPDATES.md).
-- APK updates can be offered to everyone or one registered account. Downloads verify size, checksum, package, build and signing certificate. Android still asks for installation approval. See [APK_UPDATE_CHANNELS.md](APK_UPDATE_CHANNELS.md).
-- Existing admin profile/statistics/photo/friendship synchronization and legacy account recovery remain included.
-- Existing gameplay rules, MQTT match traffic, Firebase storage and notification behavior are preserved. This release contains Bingo only.
+The permanent page gap is 15 dp, the launch animation is centred and the dashboard appearance is finalized. Existing AI, online matches, Nearby Network, bots, friends and APK installation safeguards remain included. This packaging release changes Android version metadata from the tested build 136 to version 2.0 / build 137. It does not deploy or alter the cloud monitor.
 
 ## Source layout
 
-`app/` contains the Android application and regression tests. `web/` is the companion web client. `cloudflare_worker/` is the authenticated notification relay. Firebase rules are in `firestore.rules`. Read `SimplifiedGameRules.md` and `AGENT_HANDOFF.md` before changing gameplay.
+- `app/`: native Android application and regression tests.
+- `web/`: companion web client.
+- `admin/` and `admin_service/`: admin client and authenticated service, including the separate cloud-history monitor.
+- `cloudflare_worker/`: authenticated notification relay.
+- `firestore.rules`: Firebase rules for existing application data.
+
+Read `SimplifiedGameRules.md` before gameplay changes and `AGENT_HANDOFF.md` for operational constraints. The source is configured for the existing deployment; supply your own private configuration and signing inputs to build another deployment.
 
 ## Android build
 
-Use JDK 17 and Android SDK 34. Set the SDK location through `ANDROID_HOME` or a private `local.properties` file.
+Use JDK 17 and Android SDK 34. Configure `ANDROID_HOME` or a private `local.properties` file.
 
-1. Supply your own `app/google-services.json`; a schema example is included.
+1. Supply your private `app/google-services.json`; a schema example is included.
 2. Copy `local.release.properties.example` to `local.release.properties` and fill deployment values privately.
-3. Run `./gradlew :app:testDebugUnitTest` and `./gradlew :app:assembleDebug`.
-4. For a signed release, supply the keystore path, alias and passwords privately and run `./gradlew :app:assembleRelease`. Without signing configuration the release is unsigned.
+3. Run `./gradlew :app:testDebugUnitTest` for Android tests.
+4. Supply a keystore path, alias and passwords privately, then run `./gradlew :app:lintRelease :app:assembleRelease`.
 
-For release optimization on larger projects, use a 4 GiB Gradle heap when memory permits, for example `./gradlew --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx4096m -XX:ActiveProcessorCount=2 -Dfile.encoding=UTF-8' :app:assembleRelease`.
+The APK is written under `app/build/outputs/apk/release/`. Without release signing inputs, a reproducible owner-signed APK cannot be produced. On smaller machines, use one Gradle worker, a 2 GiB heap and JDK 17.
 
-Outputs are under `app/build/outputs/apk/`. Public source does not copy files to personal devices. Production credentials and the signing key are required to reproduce the owner's deployment; byte-for-byte APK reproduction is not claimed.
+Existing live-test harnesses are opt-in and require separately supplied credentials and owned fixtures. Normal release checks do not enable them or mutate production rooms. Do not enable live cleanup tests merely to package a release.
 
-## Web client and notification relay
+## Services
 
-From `web/`, run `npm ci`, configure `.env.local` from `.env.example`, then run `npm test` or `npm run build`.
+Use `npm ci` and the test scripts in each service's `package.json`. Supply actual secrets using Wrangler secrets or private environment files. Do not deploy `admin_service` without preserving the existing ADMIN and MONITOR Durable Object bindings, migrations and stored state. Its minute Cron records latency and does not invoke game cleanup.
 
-From `cloudflare_worker/`, run `npm ci` and `npm test`. Supply `SERVICE_ACCOUNT_JSON` and `LEGACY_APP_KEY` using Wrangler secrets; `.dev.vars.example` lists local secret names. Existing public identifiers and Durable Object bindings are provided in `wrangler.toml`. Never commit a real service account or private variables file.
+Firebase stores existing account/friend data. The admin cloud latency history in this release is stored in Cloudflare, not Firebase. See the service README files and `APK_UPDATE_CHANNELS.md`, `OTA_CONTENT_UPDATES.md`, `MANUAL_MQTT_CLEANUP.md` and `AUTOMATIC_MQTT_CLEANUP.md` for their respective workflows.
 
-## Versioned releases and privacy
+## Validation and limitations
 
-Versions 1.0, 1.0.1, 1.0.2, 1.0.3, 1.0.4 1.0.5 and 1.0.6 have separate Git tags, APKs and source archives. Main reflects the latest published source. Source packages exclude signing keys, passwords, real Firebase client configuration, account/player data, device addresses, local state, logs and build caches. Existing intentional in-app developer contact links are retained.
+`SOURCE_MANIFEST.json` records source hashes and release verification. The runtime Android source matches build 136, which passed 58 focused Android regression checks including native Robolectric gesture sequences. Release-specific signing, APK identity, update compatibility and lint results are recorded separately in that manifest.
 
-See `AGENT_HANDOFF.md` for verification results and remaining hardware acceptance limits.
+Automated tests do not establish physical-device installation, frame rate, Google consent or biometric interaction. Device-specific light-theme status-bar appearance remains a hardware acceptance limitation. No new gameplay or performance fix is claimed by the version bump.
 
-The admin console has a website-only usability update: validated session restoration, coherent app versions, clearer status, black dark theme and combined player controls. See ADMIN_USABILITY.md. This release adds the manual maintenance controls to the admin service and site.
+## Source privacy and version history
 
-Verification: 1,340 automated Android tests passed, zero failures and nine unchanged optional skips. Clean-source case IDs/results match Build94; gameplay and networking logic are unchanged from that build. Android lint: zero errors, 34 warnings. Original signing certificate and APK alignment verified. The known status-bar appearance issue remains unresolved; no new physical-device UI/FPS verification is claimed.
+Every public release has a separate immutable tag, signed APK and source archive. Previous tags and releases are preserved. Source packages exclude signing keys, deployment passwords, actual Firebase client configuration, player records, local receipts, logs, dependencies and build caches. Public endpoint identifiers and intentional in-app developer contact links remain part of the application.

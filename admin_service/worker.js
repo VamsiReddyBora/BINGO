@@ -24,7 +24,9 @@ import { ContentPublisher } from "./content.js";
 import { TargetedReleasePublisher } from "./targeted-releases.js";
 import { brokerTcp } from "./mqtt.js";
 import { CLEANUP_FILTERS, firebaseCleanupView, planRetainedCleanup, cleanupSummary, executeRetainedCleanup } from "./retained-cleanup.js";
-import { automaticCleanupEnabled, ensureCleanupAlarm, runAutomaticCleanup, automaticCleanupStatus } from "./automatic-cleanup.js";
+import { automaticCleanupEnabled, ensureCleanupAlarm, runAutomaticCleanup, automaticCleanupStatus, cleanupSettings, setCleanupEnabled } from "./automatic-cleanup.js";
+import { verifyNativeAdmin } from "./native-admin.js";
+export { BrokerMonitor } from "./broker-monitor.js";
 import { refreshRetainedUsage } from "./retained-usage.js";
 import { ACTIVITY_FILTERS, hasGameplayActivity } from "./cleanup-activity.js";
 
@@ -32,6 +34,12 @@ import { json, readBody as body } from "./http.js";
 import { PasskeySecurity } from "./passkeys.js";
 
 export default {
+  async scheduled(controller, env, ctx) {
+    if (controller.cron !== "* * * * *") return;
+    ctx.waitUntil(env.MONITOR.get(env.MONITOR.idFromName("broker-monitor-v1"), { locationHint: "apac" })
+      .fetch(new Request("https://monitor.internal/tick", { method: "POST" }))
+      .then(async response => { if (!response.ok) throw Error("Monitor recording failed"); }));
+  },
   async fetch(request, env) {
     const origin = request.headers.get("Origin");
     const headers = {
@@ -92,6 +100,14 @@ export class AdminControl {
     try {
       const url = new URL(request.url),
         path = url.pathname;
+      if (path === "/client/admin/latency-history") return await this.clientAdminRoute(request, path, url);
+      if (path.startsWith("/client/admin/")) {
+        const task = this.mutations.then(() =>
+          this.clientAdminRoute(request, path, url),
+        );
+        this.mutations = task.catch(() => {});
+        return await task;
+      }
       if (path.startsWith("/client/") && request.method === "GET")
         return await this.publicRead(path, url);
       if (path.startsWith("/api/auth/")) {
@@ -283,6 +299,59 @@ export class AdminControl {
     if (typeof photo === "string" && /^https:\/\//.test(photo))
       return Response.redirect(photo, 302);
     throw new Problem(404, "Photo not available");
+  }
+  async clientAdminRoute(request, path, url) {
+    if (path === "/client/admin/latency-history") {
+      await this.nativeAdminIdentity(request);
+      requireThat(request.method === "GET", 405, "Method not allowed");
+      requireThat(this.env.MONITOR, 503, "Cloud monitor is starting");
+      const query = new URLSearchParams();
+      for (const key of ["from", "to", "points"]) if (url.searchParams.has(key)) query.set(key, url.searchParams.get(key));
+      return this.env.MONITOR.get(this.env.MONITOR.idFromName("broker-monitor-v1"), { locationHint: "apac" })
+        .fetch("https://monitor.internal/history?" + query.toString());
+    }
+    if (path === "/client/admin/automatic-cleanup") {
+      const operator = await this.nativeAdminIdentity(request);
+      if (request.method === "GET") return json(await cleanupSettings(this));
+      requireThat(request.method === "POST", 405, "Method not allowed");
+      const input = await body(request);
+      requireThat(typeof input.enabled === "boolean" && Number.isSafeInteger(input.expectedRevision) &&
+        input.expectedRevision >= 0, 400, "A boolean setting and current revision are required");
+      requireThat(!input.enabled || automaticCleanupEnabled(this.env), 409, "Cleanup disabled by deployment configuration");
+      const saved = await setCleanupEnabled(this, input.enabled, input.expectedRevision, operator);
+      requireThat(saved, 409, "Another admin changed this setting; refresh and try again");
+      return json(saved);
+    }
+    const adminUser = (request.headers.get("X-Admin-User") || "").toLowerCase().trim();
+    requireThat(adminUser === "bob", 403, "Administrator identity required");
+    if (path === "/client/admin/mqtt-status" && request.method === "GET") {
+      const [automatic, usage] = await Promise.all([
+        automaticCleanupStatus(this),
+        refreshRetainedUsage(this, { force: url.searchParams.get("refresh") === "1" }),
+      ]);
+      return json({ ...automatic, usage });
+    }
+    if (path === "/client/admin/mqtt-clean" && request.method === "POST") {
+      const now = Date.now();
+      const nextDue = await runAutomaticCleanup(this, now, { force: true });
+      const lastRun = await this.storage.get("mqtt-cleanup:automatic");
+      const usage = await refreshRetainedUsage(this, { force: true }).catch(() => null);
+      return json({
+        ok: true,
+        status: lastRun?.status || "OK",
+        deletedConfirmed: lastRun?.result?.deletedConfirmed || 0,
+        skippedChanged: lastRun?.result?.skippedChanged || 0,
+        deferred: lastRun?.status === "DEFERRED",
+        reason: lastRun?.reason || null,
+        usage,
+        tier: lastRun?.tier || "normal",
+        nextRunAt: nextDue,
+      });
+    }
+    return json({ error: "Unknown admin endpoint" }, 404);
+  }
+  async nativeAdminIdentity(request) {
+    return verifyNativeAdmin(request, this.env);
   }
   async player(name, force = false, cacheOnly = false, registry = null) {
     const policy = await this.policy(name);

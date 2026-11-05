@@ -35,3 +35,24 @@ Worker secrets: `ADMIN_CREDENTIALS`, `MQTT_USERNAME`, `MQTT_PASSWORD`, `SERVICE_
 Publish only `admin/` under that directory on gh-pages. Preserve game assets, APKs, version.json and existing release tags. Source changes go to `admin/` and `admin_service/` on main without staging unrelated app changes. No APK update is needed to open the console. Build 71 or later is needed for the corresponding live Android edit handling. The service worker only owns bingo-admin-prefixed image caches and does not cache authenticated data or code.
 
 Deployments, player changes, notices and releases are separate operations. Testing must not send real broadcasts, erase real records, enroll production test keys or publish a fake update. Retain a private deployment/source/feed backup before publishing. A source rollback must not delete Durable Object storage or tombstones.
+
+
+## Native automatic cleanup switch (Build 131)
+
+The two registered native administrators can read/update `/client/admin/automatic-cleanup` using a verified Firebase Google ID token. POST accepts `enabled` (boolean) and `expectedRevision` (nonnegative integer); stale revisions return 409. The native app requires a fresh fingerprint for every change. The backend verifies account identity; the local biometric prompt is an Android UI gate, not remote biometric attestation.
+
+The control-v1 Durable Object persists `mqtt-cleanup:settings`; disabling pauses automatic scheduling/runs without deleting unrelated alarms or disabling manual native/web cleanup. Deployment variable `MQTT_AUTOCLEAN_ENABLED=false` still overrides the shared switch. The `/health` automatic-cleanup flag describes deployment configuration; the authenticated setting endpoint reports effective runtime state. Preserve Durable Object storage and deployment secrets during updates.
+
+
+Build 132 accepts verified Google OIDC ID tokens from the existing Android web OAuth audience in addition to Firebase Google tokens. Issuer/audience/signature/expiry/issue time and the same registered Google UID hashes are mandatory on both paths. Unverified decoded issuer is used only to select a pinned verifier; it never grants access. The native Reconnect admin account flow must select the current Bingo Google UID, and it does not replace the Bingo player or weaken fresh fingerprint checks.
+
+
+## Shared cloud latency recorder (Build 134)
+
+Worker Cron `* * * * *` calls the separate MONITOR/BrokerMonitor Durable Object named broker-monitor-v1, using an APAC location hint. The original ADMIN/control-v1 namespace, alarms, secrets and cleanup setting are preserved. The recorder runs independently of open apps, admin sessions and MQTT_AUTOCLEAN_ENABLED. Each minute it opens a short-lived TLS/MQTT session, subscribes only to a fresh private probe topic, sends three non-retained nonce echoes, measures RTT after subscription and closes the session. It never inventories or modifies game, account, chat or retained data.
+
+SQLite stores actual check timestamps, mean/minimum/peak RTT, successful/failed probe counts and a bounded failure code for 30 days. Duplicate ticks in the same actual minute are idempotent. Unavailable/unmeasurable checks have null latency, never invented 0ms/sub-millisecond readings. History uses weighted means and real peaks; absent intervals are not backfilled. The sample counter uses metadata instead of scanning all retained history every minute.
+
+Authenticated native GET /client/admin/latency-history accepts epoch-ms from/to and optional points (8–480). Fixed Google/Firebase token verification and both existing UID hashes are mandatory; usernames do not grant access. The handler forwards only validated read parameters to the private object. /tick and /history on that object are not public Worker endpoints. App history uses cloud data exclusively; its previous local archive is preserved but no longer read or written by runtime hooks. Live is a 60-second RAM window of raw phone RTT, sampled for display every second.
+
+Keep both Durable Object exports and all migration entries during updates/rollback. To stop collection operationally, remove the monitor cron while preserving the BrokerMonitor namespace and its data; do not try to roll back by deleting the class/migration. The game cleanup toggle intentionally does not control this recorder or its 30-day telemetry retention. Cron timing is best-effort and initial propagation can take up to 15 minutes. Budget usage includes approximately 1,440 checks/day and three non-retained echoes/check plus connection overhead. No background phone service or new Android permission is used.

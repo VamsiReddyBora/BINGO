@@ -1,5 +1,6 @@
 package com.bingo.multiplayer.presentation.online
 
+import com.bingo.multiplayer.core.designsystem.appPagePadding
 import com.bingo.multiplayer.presentation.common.NoRippleSurface
 
 import androidx.compose.foundation.BorderStroke
@@ -58,7 +59,7 @@ fun OnlineMatchChoiceScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 20.dp)
+                .appPagePadding(horizontal = 20.dp, bottom = 20.dp)
         ) {
             // Top Bar
             Row(

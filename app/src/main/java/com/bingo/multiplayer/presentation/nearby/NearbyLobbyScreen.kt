@@ -1,5 +1,6 @@
 package com.bingo.multiplayer.presentation.nearby
 
+import com.bingo.multiplayer.core.designsystem.appPagePadding
 import com.bingo.multiplayer.presentation.common.noRippleClickable
 
 import androidx.activity.compose.BackHandler
@@ -108,13 +109,13 @@ fun NearbyLobbyScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 20.dp, vertical = 20.dp)
+                .appPagePadding(horizontal = 20.dp, bottom = 20.dp)
         ) {
             // ── Top Header Bar ──
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 4.dp),
+                    .padding(bottom = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(

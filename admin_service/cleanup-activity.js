@@ -17,8 +17,13 @@ export function recordProtectsGameplay(topic,raw,now=Date.now()) {
     const online=["PLAYER_RECONNECTED","PLAYER_PRESENCE"].includes(p.type) && !["OFFLINE","BACKGROUND","MINIMIZED"].includes(p.presenceStatus);
     return recent(p,"timestamp",now,online);
   }
-  if(/^bingo\/emqx7\/match\/[^/]+\/[^/]+\/state\//.test(topic)||/^bingo\/emqx7\/reliable\/[^/]+\/[^/]+\/state$/.test(topic))
+  if(/^bingo\/emqx7\/match\/[^/]+\/[^/]+\/state\//.test(topic)||/^bingo\/emqx7\/reliable\/[^/]+\/[^/]+\/state$/.test(topic)) {
+    if (p.isMatchFinished === true) {
+      const at = (p.timestamp || 0) - (p.clockOffsetMillis || 0);
+      return at > 0 && now - at < 3 * 60000;
+    }
     return recent(p,"timestamp",now) || recent(p,"lastPlayerActivityAt",now);
+  }
   return false;
 }
 export function hasGameplayActivity(records,now=Date.now()) {

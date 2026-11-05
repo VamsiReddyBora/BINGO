@@ -2343,14 +2343,23 @@ $("run-mqtt-cleanup")?.addEventListener("click", async () => {
   finally {previewButton.disabled=false;}
 });
 function cleanupScheduleText(status) {
-  if (!status?.enabled) return "Automatic maintenance is disabled.";
+  if (!status?.enabled) return "Adaptive maintenance is disabled.";
   const run = status.lastRun;
-  if (!run) return "Automatic maintenance is enabled; its first run is pending.";
-  const next = run.nextRunAt ? ` Next check: ${new Date(run.nextRunAt).toLocaleString()}.` : "";
-  if (run.status === "DEFERRED") return `Cleanup is waiting for gameplay and the rejoin grace period to finish.${run.result?.deletedConfirmed ? " "+run.result.deletedConfirmed+" old records were verified removed before it stopped." : ""}` + next;
-  if (run.status === "FAILED") return "Automatic maintenance was interrupted; saved recovery archives are preserved." + next;
-  if (run.status === "RUNNING") return "Automatic maintenance is running.";
-  return `Last automatic run removed and verified ${run.result?.deletedConfirmed || 0} records.` + next;
+  const tierLabels = {
+    idle: "Idle (<25% usage · 1h check)",
+    normal: "Normal (25–50% usage · 15m check)",
+    elevated: "Elevated (50–75% usage · 5m check)",
+    surge: "Surge (≥75% usage · 2m check)",
+    backlog: "Backlog continuation (1m check)",
+  };
+  const tier = run?.tier || status.tier || "normal";
+  const tierBadge = tierLabels[tier] ? `[${tierLabels[tier]}] ` : "";
+  if (!run) return `Adaptive maintenance is active ${tierBadge}— initial run pending.`;
+  const next = run.nextRunAt ? ` Next check: ${new Date(run.nextRunAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}.` : "";
+  if (run.status === "DEFERRED") return `${tierBadge}Paused for live gameplay or 5-min rejoin grace.${run.result?.deletedConfirmed ? " "+run.result.deletedConfirmed+" records were removed before pause." : ""}` + next;
+  if (run.status === "FAILED") return `${tierBadge}Maintenance interrupted; saved recovery archives preserved.` + next;
+  if (run.status === "RUNNING") return `${tierBadge}Maintenance is currently running…`;
+  return `${tierBadge}Last cycle cleaned and verified ${run.result?.deletedConfirmed || 0} records.` + next;
 }
 function renderRetainedUsage(usage) {
   const count=$("mqtt-usage-count"), meter=$("mqtt-usage-meter"), detail=$("mqtt-usage-detail"), root=$("mqtt-usage");

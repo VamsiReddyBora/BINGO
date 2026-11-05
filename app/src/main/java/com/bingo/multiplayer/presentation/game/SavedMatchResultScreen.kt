@@ -1,6 +1,10 @@
 package com.bingo.multiplayer.presentation.game
 
+import com.bingo.multiplayer.core.designsystem.appPagePadding
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
@@ -14,7 +18,7 @@ internal fun SavedMatchResultScreen(result: OngoingMatchData, viewerId: String, 
     val board = result.playerBoard ?: result.allPlayerBoards[viewerId]
     if (board == null) {
         BackHandler(onBack = onClose)
-        Column {
+        Column(Modifier.fillMaxSize().appPagePadding(horizontal = 20.dp, bottom = 20.dp)) {
             Text("This match has finished. Its saved board is unavailable.")
             Button(onClick = onClose) { Text("Back to Home") }
         }

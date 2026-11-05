@@ -2,6 +2,7 @@
 
 package com.bingo.multiplayer.presentation.menu
 
+import com.bingo.multiplayer.core.designsystem.appPagePadding
 import com.bingo.multiplayer.presentation.common.noRippleClickable
 
 import androidx.compose.animation.core.Spring
@@ -47,6 +48,8 @@ import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.ui.platform.LocalContext
 import com.bingo.multiplayer.core.designsystem.ThemePreferences
+import com.bingo.multiplayer.core.security.BiometricAuthManager
+import com.bingo.multiplayer.core.security.findActivity
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -60,6 +63,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
@@ -96,6 +101,7 @@ fun MainMenuScreen(
     onPlayOnline: () -> Unit,
     onPlayNearbyNetwork: () -> Unit,
     onOpenDeveloperNote: () -> Unit = {},
+    onOpenAdminControl: () -> Unit = {},
     onRejoinMatch: ((OngoingMatchData) -> Unit)? = null
 ) {
     val tokens = BingoTheme.colors
@@ -244,25 +250,13 @@ fun MainMenuScreen(
             .fillMaxSize()
             .background(tokens.background)
     ) {
-        val screenHeight = maxHeight
         val compactContentHeader = maxWidth < 340.dp
         com.bingo.multiplayer.presentation.common.ContentHomeBackground(currentAccountUid, contentStatus, Modifier.matchParentSize())
-        // Estimated height of content up to bottom of Nearby Network card:
-        // Top padding 20.dp + Top bar 36.dp + Spacers ~40.dp + AI card ~92.dp + Online card ~72.dp + Nearby card ~72.dp ~= 332.dp
-        // If ongoing match is present, it adds ~88.dp.
-        val topContentHeight = if (ongoingMatch != null && isMatchVerifiedActive) 420.dp else 332.dp
-        // Floating bottom navigation pill clearance from bottom: pill height (~52.dp) + bottom padding (16.dp) + margin = ~80.dp
-        val navPillClearance = 80.dp
-        val buttonHeight = 40.dp
-        // Available space between the Nearby Network card and the Floating Bottom Navigation Pill:
-        val availableSpace = (screenHeight - topContentHeight - navPillClearance - buttonHeight).coerceAtLeast(32.dp)
-        // Split available space equally above and below so the pill button is centered in the gap
-        val middleSpacing = availableSpace / 2
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 20.dp),
+                .appPagePadding(horizontal = 20.dp, bottom = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // ── Minimal Compact Top Bar ──
@@ -502,9 +496,8 @@ fun MainMenuScreen(
                 onClick = onPlayNearbyNetwork
             )
 
-            // Dynamic vertical gap placing the developer note pill directly in the middle
-            // between the Nearby Network card and the bottom navigation pill:
-            Spacer(modifier = Modifier.height(middleSpacing))
+            // Keep Home actions near Nearby Network on every screen height.
+            Spacer(modifier = Modifier.height(185.dp))
 
             // Real-Time EMQX Broker Failure Alert (Horizontal Scrolling Marquee)
             if (showBrokerWarning) {
@@ -546,6 +539,51 @@ fun MainMenuScreen(
                 Spacer(modifier = Modifier.height(10.dp))
             }
 
+            // Admin access uses the same account policy as the destination screen.
+            val isAdminUser = com.bingo.multiplayer.core.security.AdminControlAccess.canAccess(userProfile)
+
+            if (isAdminUser) {
+                Surface(
+                    modifier = Modifier.semantics { contentDescription = "Admin control" },
+                    onClick = {
+                        val activity = context.findActivity()
+                        if (activity != null && BiometricAuthManager.isBiometricAvailable(activity)) {
+                            BiometricAuthManager.authenticate(
+                                activity = activity,
+                                title = "Admin Verification",
+                                subtitle = "Fingerprint required for @${userProfile.username.ifBlank { userProfile.playerId }}",
+                                description = "Confirm biometric authentication to open Admin Controls",
+                                onSuccess = {
+                                    onOpenAdminControl()
+                                },
+                                onError = {
+                                    // Fingerprint cancelled or failed
+                                }
+                            )
+                        } else {
+                            onOpenAdminControl()
+                        }
+                    },
+                    shape = RoundedCornerShape(50),
+                    color = if (tokens.isDark) Color(0xFF18181B) else Color(0xFFF1F5F9),
+                    border = BorderStroke(1.dp, tokens.surfaceBorder)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = "🛡️",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = tokens.cellNeutralText
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+            }
+
             // Developer Note Pill Button
             Surface(
                 onClick = onOpenDeveloperNote,
@@ -567,8 +605,8 @@ fun MainMenuScreen(
                 }
             }
 
-            // Symmetrical bottom spacing + navPillClearance so distance from button to nav pill is exactly middleSpacing
-            Spacer(modifier = Modifier.height(middleSpacing + navPillClearance))
+            // Allow the last action to scroll clear of the floating navigation.
+            Spacer(modifier = Modifier.height(80.dp))
         }
     }
 }

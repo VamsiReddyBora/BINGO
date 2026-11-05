@@ -7,8 +7,12 @@ export const CLEANUP_FILTERS = [
   "bingo/emqx7/social/invite/+/+", "bingo/v3/invites/+",
   "bingo/v3/registry/+", "bingo/v3/google_account/+",
 ];
-export const CLEANUP_AGE_MS = 86400000;
-export const FINISHED_RECEIPT_AGE_MS = 600000;
+export const FINISHED_RECEIPT_AGE_MS = 3 * 60000;   // 3 minutes (compact ephemeral move receipts)
+export const FINISHED_MATCH_AGE_MS = 30 * 60000;     // 30 minutes (clear settled match final boards)
+export const CLOSED_LOBBY_AGE_MS = 60 * 60000;       // 1 hour (remove closed lobby sessions)
+export const ABANDONED_MATCH_AGE_MS = 2 * 3600000;   // 2 hours (inactive abandoned matches)
+export const INVITATION_AGE_MS = 2 * 60000;          // 2 minutes (expired social invitations)
+export const CLEANUP_AGE_MS = 86400000;              // 24 hours (legacy export compatibility)
 const LIMIT = 200;
 const parse = (s) => { try { const x = JSON.parse(s); return x && typeof x === "object" && !Array.isArray(x) ? x : null; } catch { return null; } };
 const exact = (topic) => typeof topic === "string" && topic.startsWith("bingo/") && !/[+#\x00]/.test(topic);
@@ -78,17 +82,23 @@ export async function planRetainedCleanup(records, firebase, now = Date.now(), {
     if (!activity.length || activity.some(t => !Number.isSafeInteger(t) || t<=0 || t > now + 300000)) continue;
     const latest = Math.max(...activity);
     const completed = states.every(p => p.isMatchFinished === true && typeof p.winnerPlayerId === "string" && p.winnerPlayerId && Object.hasOwn(p.boardNumbers || {},p.winnerPlayerId)) && new Set(states.map(p=>p.winnerPlayerId)).size === 1;
-    if (completed && latest <= now-FINISHED_RECEIPT_AGE_MS && latest > now-CLEANUP_AGE_MS) {
-      // Final boards carry the result and selected numbers. Receipts are needed
-      // for unfinished recovery, but need not occupy two topics per past turn
-      // for a full day after every saved board agrees on the final result.
+    if (completed && latest <= now-FINISHED_RECEIPT_AGE_MS && latest > now-FINISHED_MATCH_AGE_MS) {
+      // Final boards carry the result and selected numbers. Ephemeral move receipts
+      // are compacted after FINISHED_RECEIPT_AGE_MS (3 mins), keeping final boards
+      // visible for post-match settlement.
       const receipts = packets.filter(({topic}) => /\/(command|outcome|exit|accepted_exit)\//.test(topic.slice(prefix.length-1))).map(x=>x.topic);
       await add(prefix,"finished_move_receipts",guardedPrefixes,guardedEntries,receipts);
       continue;
     }
-    if (latest > now-CLEANUP_AGE_MS) continue;
-    // Abandoned games are only considered after an additional day of quiet, with
-    // all known participants explicitly absent and no saved manual pause.
+    if (completed && latest <= now-FINISHED_MATCH_AGE_MS) {
+      // Completed match has settled for >= FINISHED_MATCH_AGE_MS (30 mins). All records
+      // including final states can now be safely cleaned.
+      await add(prefix,"finished_matches",guardedPrefixes,guardedEntries,Object.keys(entries));
+      continue;
+    }
+    if (latest > now-ABANDONED_MATCH_AGE_MS) continue;
+    // Abandoned games are only considered after ABANDONED_MATCH_AGE_MS (2 hours) of quiet,
+    // with all known participants explicitly absent and no saved manual pause.
     const ids = new Set(states.flatMap(p => Object.keys(p.boardNumbers || {})));
     const allAbsent = ids.size > 0 && [...ids].every(id => {
       const live = parse(records[`bingo/emqx7/room/${room}/availability/${id}`]);
@@ -96,8 +106,7 @@ export async function planRetainedCleanup(records, firebase, now = Date.now(), {
       return live?.type === "PLAYER_DISCONNECTED" || ["OFFLINE","BACKGROUND","MINIMIZED"].includes(latest?.status || live?.presenceStatus);
     });
     const expired = !completed && states.every(p => !p.isMatchFinished && !p.isPaused && stamp(p.lastPlayerActivityAt) && now-(p.lastPlayerActivityAt-(p.clockOffsetMillis||0)) > 300000) && allAbsent;
-    if (completed) await add(prefix,"finished_matches",guardedPrefixes,guardedEntries,Object.keys(entries));
-    else if (expired) {
+    if (expired) {
       // Presence is a read-only deletion dependency: a returning participant
       // must invalidate the old-match cleanup even before a new state arrives.
       const presenceTopics=[...ids].map(id=>`bingo/emqx7/room/${room}/availability/${id}`);
@@ -111,7 +120,7 @@ export async function planRetainedCleanup(records, firebase, now = Date.now(), {
     const m = /^bingo\/emqx7\/metadata\/([A-Z0-9]{3,12})\/state$/.exec(topic), room = m?.[1], state = parse(raw);
     if (!room || !state || state.roomCode !== room || !(state.status === "CLOSED" || state.tc === true || state.isTerminalClosed === true)) continue;
     if (roomHasGameplayActivity(records,room,now)) continue;
-    if (!stamp(state.lastHeartbeat) || state.lastHeartbeat > now-CLEANUP_AGE_MS || stamp(state.createdAt)>now-CLEANUP_AGE_MS) continue;
+    if (!stamp(state.lastHeartbeat) || state.lastHeartbeat > now-CLOSED_LOBBY_AGE_MS || stamp(state.createdAt)>now-CLOSED_LOBBY_AGE_MS) continue;
     if ([...matchGroups].some(([p, entries]) => p.startsWith(`bingo/emqx7/match/${room}/`) && !groups.some(g => g.key === p))) continue;
     const prefixes = [`bingo/emqx7/metadata/${room}/`, `bingo/emqx7/room/${room}/`, `bingo/emqx7/room/${room}`];
     const entries = Object.fromEntries(Object.entries(records).filter(([t]) => matches(t,prefixes)));

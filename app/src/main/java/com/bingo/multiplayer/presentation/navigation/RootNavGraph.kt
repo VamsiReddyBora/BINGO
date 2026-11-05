@@ -107,6 +107,7 @@ sealed class Screen(val route: String) {
     data object NearbyLobby : Screen("nearby_lobby")
     data object ManualBoardDesign : Screen("manual_board_design")
     data object DeveloperNote : Screen("developer_note")
+    data object AdminControl : Screen("admin_control")
 }
 
 @Composable
@@ -5590,6 +5591,9 @@ fun RootNavGraph(
                 onOpenDeveloperNote = {
                     navController.navigate(Screen.DeveloperNote.route)
                 },
+                onOpenAdminControl = {
+                    navController.navigate(Screen.AdminControl.route)
+                },
                 onSignedOut = {
                     com.bingo.multiplayer.domain.network.PresenceManager.stopPresence()
                     disconnectRoom()
@@ -5694,6 +5698,9 @@ fun RootNavGraph(
                 onOpenDeveloperNote = {
                     navController.navigate(Screen.DeveloperNote.route)
                 },
+                onOpenAdminControl = {
+                    navController.navigate(Screen.AdminControl.route)
+                },
                 onSignedOut = {
                     com.bingo.multiplayer.domain.network.PresenceManager.stopPresence()
                     disconnectRoom()
@@ -5795,6 +5802,9 @@ fun RootNavGraph(
                 onOpenDeveloperNote = {
                     navController.navigate(Screen.DeveloperNote.route)
                 },
+                onOpenAdminControl = {
+                    navController.navigate(Screen.AdminControl.route)
+                },
                 onSignedOut = {
                     com.bingo.multiplayer.domain.network.PresenceManager.stopPresence()
                     disconnectRoom()
@@ -5877,6 +5887,17 @@ fun RootNavGraph(
         composable(Screen.DeveloperNote.route) {
             val user = (authRepository.authState.collectAsState().value as? AuthState.Authenticated)?.user
             com.bingo.multiplayer.presentation.menu.DeveloperNoteScreen(
+                currentUser = user,
+                onBack = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
+        // 3e. Admin Control Screen (account-gated maintenance for @bob and @vampire)
+        composable(Screen.AdminControl.route) {
+            val user = (authRepository.authState.collectAsState().value as? AuthState.Authenticated)?.user
+            com.bingo.multiplayer.presentation.admin.AdminControlScreen(
                 currentUser = user,
                 onBack = {
                     navController.popBackStack()

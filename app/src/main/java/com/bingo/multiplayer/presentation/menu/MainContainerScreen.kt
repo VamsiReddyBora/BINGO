@@ -76,6 +76,7 @@ fun MainContainerScreen(
     onInviteFriendToMatch: (Friend) -> Unit,
     onAcceptInviteToMatch: (GameInvite) -> Unit,
     onOpenDeveloperNote: () -> Unit = {},
+    onOpenAdminControl: () -> Unit = {},
     onRejoinMatch: ((com.bingo.multiplayer.domain.network.OngoingMatchData) -> Unit)? = null,
     initialPage: Int = 0,
     notificationFriendUsername: String? = null,
@@ -129,6 +130,7 @@ fun MainContainerScreen(
                         onPlayOnline = onPlayOnline,
                         onPlayNearbyNetwork = onPlayNearbyNetwork,
                         onOpenDeveloperNote = onOpenDeveloperNote,
+                        onOpenAdminControl = onOpenAdminControl,
                         onRejoinMatch = onRejoinMatch
                     )
                 }

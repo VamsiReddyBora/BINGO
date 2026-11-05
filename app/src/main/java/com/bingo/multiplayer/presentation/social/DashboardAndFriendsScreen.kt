@@ -1,5 +1,6 @@
 package com.bingo.multiplayer.presentation.social
 
+import com.bingo.multiplayer.core.designsystem.appPagePadding
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -172,13 +173,13 @@ fun DashboardAndFriendsScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 20.dp, vertical = 20.dp)
+                .appPagePadding(horizontal = 20.dp, bottom = 20.dp)
         ) {
             // ── Top Bar ──
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 4.dp),
+                    .padding(bottom = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(

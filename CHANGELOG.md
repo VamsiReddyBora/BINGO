@@ -1,3 +1,13 @@
+# 2.0 — Build 137
+
+- Public release of the latest tested Android app, including native Admin Control for both configured administrator identities and biometric-protected cleanup settings.
+- Interactive cloud latency history with centred axis zoom, actual-point inspection, clean automatic scales and connected recorded averages across missing checks.
+- Reset to the latest 60 seconds at 0–250 ms with one-second tick marks; removed the permanent per-point peak stems.
+- Cloud monitoring remains three non-retained echo probes every 60 seconds with 30-day Cloudflare SQLite storage, independent of open apps.
+- Finalized dashboard values, permanent 15 dp page spacing, centred launch and shield-only admin entry.
+- Android version metadata advances from tested build 136 to 2.0 / 137; gameplay and backend cadence are unchanged by this packaging release.
+- Known limitation: physical-device light-theme status-bar appearance remains subject to hardware acceptance.
+
 # 1.0.9 — Build 109
 
 - Relocated the Chat button in the waiting lobby into the Players in Lobby card, positioned directly after the Sync button.

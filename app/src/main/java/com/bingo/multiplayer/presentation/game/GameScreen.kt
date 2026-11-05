@@ -1,5 +1,6 @@
 package com.bingo.multiplayer.presentation.game
 
+import com.bingo.multiplayer.core.designsystem.AppPageLayout
 import com.bingo.multiplayer.presentation.common.NoRippleSurface
 
 import androidx.activity.compose.BackHandler
@@ -654,14 +655,14 @@ fun GameScreen(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 10.dp),
+                    .padding(top = AppPageLayout.TopGap),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 // Modern Aesthetic Top Bar (Items 1, 2, 3)
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                        .padding(start = 16.dp, end = 16.dp, bottom = 4.dp)
                 ) {
                     // Header-only theme change uses the same persisted preference as Home.
                     Row(Modifier.align(Alignment.CenterStart), verticalAlignment = Alignment.CenterVertically) {
