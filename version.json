@@ -1,9 +1,9 @@
 {
-  "versionName": "1.0.9",
-  "versionCode": 109,
-  "tagName": "v1.0.9",
-  "downloadUrl": "https://vamsireddybora.github.io/BINGO/Bingo-1.0.9-build109.apk",
-  "apkSize": 8259459,
-  "sha256": "fce530a44f05b491300981b1db6632db422ea953b8584d047416f5e385d07e5f",
-  "releaseNotes": "Relocated Chat button to Players in Lobby card directly after the Sync button.\nFull-width action buttons for Start Game and Ready controls.\nMultiplayer bots with speed selector and synchronized removal.\nExisting Bingo gameplay and networking preserved."
+  "versionName": "2.0",
+  "versionCode": 137,
+  "tagName": "v2.0",
+  "downloadUrl": "https://vamsireddybora.github.io/BINGO/Bingo-2.0-build137.apk",
+  "apkSize": 8341448,
+  "sha256": "6c56b191d16374ff5112a08d12f9ba0faf6c26626f4a0b7f5936174dac8898c2",
+  "releaseNotes": "BINGO 2.0 \u2014 Build 137 brings the latest tested Android app to the public release channel.\n\n- Native Admin Control for the two configured administrator accounts, with retained-message usage, topic partitions, broker connection appearance and protected cleanup controls.\n- Interactive cloud latency history: centred pinch zoom on either axis, horizontal history navigation and tap-to-inspect timestamps, averages and peaks.\n- Reset the graph to the latest 60 seconds and 0\u2013250 ms; one-second tick marks, automatic readable scales and connected recorded points across gaps. Per-sample peak stems are removed.\n- Shared cloud monitoring continues every 60 seconds while the apps are closed, with up to 30 days of history. The existing three echo probes per check and Cloudflare storage remain unchanged.\n- Fixed 15 dp page spacing, centred launch animation, finalized dashboard appearance and shield-only admin entry.\n- Existing AI, online multiplayer, Nearby Network play, lobby bots, friends and update installation safeguards remain included.\n\nGraph history measures cloud-monitor-to-broker latency. Phone latency is a separate readout. Connecting lines do not create measurements in missing periods. The ingress display remains labelled PREVIEW.\n\nThe Android runtime source matches tested build 136; this public release changes version metadata to 2.0 / 137. The same signing certificate supports upgrading existing installations. Source, version metadata and SHA-256 checksums are attached. Android installation still requires user approval. Physical-device appearance, installation and gameplay performance are not newly certified by this packaging release. Device-specific light-theme status-bar behavior remains a known hardware acceptance limitation.\n"
 }
