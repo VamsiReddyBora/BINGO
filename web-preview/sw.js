@@ -1,5 +1,5 @@
 // Bingo Multiplayer Service Worker - Version 2.9
-const CACHE_NAME = 'bingo-pwa-v2.10';
+const CACHE_NAME = 'bingo-pwa-v2.11';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -41,7 +41,7 @@ self.addEventListener('message', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  if (event.request.method !== 'GET') return;
+  if (event.request.method !== 'GET' || event.request.headers.has('Authorization')) return;
 
   const url = new URL(event.request.url);
   // Skip WebSocket connections and external MQTT / dynamic API endpoints
